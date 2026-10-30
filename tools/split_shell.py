@@ -6,8 +6,8 @@
 
 mapping.json 形如：
     {
-      "target": "crates/lumen-ui/src/shell",       # 输出目录（shell/）
-      "source": "crates/lumen-ui/src/shell.rs",    # 本步拆分前源（第一步是 shell.rs，
+      "target": "crates/aevum-ui/src/shell",       # 输出目录（shell/）
+      "source": "crates/aevum-ui/src/shell.rs",    # 本步拆分前源（第一步是 shell.rs，
                                                     # 之后各步是 shell/mod.rs）
       "modules": {
         "mask":   {"doc": "…模块头注释…", "items": ["MaskGeo", "mask_geos", …]},

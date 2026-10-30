@@ -16,13 +16,14 @@ import re
 import subprocess
 from pathlib import Path
 
-ROOT = Path("E:/code/lumen-studio")
-SHELLD = ROOT / "crates/lumen-ui/src/shell"
+# 仓库根从脚本自身位置推出来，不写死盘符和目录名（改名不该让工具失效）。
+ROOT = Path(__file__).resolve().parents[1]
+SHELLD = ROOT / "crates/aevum-ui/src/shell"
 
 
 def collect_lib_warnings() -> dict[str, dict[tuple[int, int], str]]:
     subprocess.run(["touch"] + [str(p) for p in SHELLD.glob("*.rs")], capture_output=True)
-    proc = subprocess.run(["cargo", "check", "-p", "lumen-ui", "--message-format=short"],
+    proc = subprocess.run(["cargo", "check", "-p", "aevum-ui", "--message-format=short"],
                           capture_output=True, text=True, cwd=str(ROOT))
     warns: dict[str, dict[tuple[int, int], str]] = {}
     pending = False
@@ -97,7 +98,7 @@ def main() -> int:
         for (s, e), names in sorted(stmts.items()):
             stmt = "\n".join(ls[s:e + 1])
             all_names = set(re.findall(r"[A-Za-z_]\w*", stmt)) - {
-                "use", "crate", "super", "self", "std", "egui", "lumen_core", "as"}
+                "use", "crate", "super", "self", "std", "egui", "aevum_core", "as"}
             hosts = []
             for mname, a, b in mods:
                 used = any(

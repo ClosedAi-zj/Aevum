@@ -18,7 +18,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-SRC = Path("E:/code/lumen-studio/crates/lumen-ui/src")
+# 仓库根从脚本自身位置推出来，不写死盘符和目录名：
+# 这一轮产品改名把仓库目录从 lumen-studio 改成 aevum-studio，凡是写死目录名的
+# 工具都会在改名当天集体失效（而且不报错——硬编码路径只是「指向不存在的目录」）。
+# `tools/` 的上一级就是仓库根。
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "crates" / "aevum-ui" / "src"
 SHELL = SRC / "shell"
 DECL = re.compile(r"^(?:(?:pub(?:\((?:crate|super)\))?\s+)?)(fn|struct|enum|const|static|mod|type)\s+([A-Za-z_]\w*)")
 
@@ -98,8 +103,8 @@ def main() -> int:
     for rnd in range(max_rounds):
         idx = build_index()
         proc = subprocess.run(
-            ["cargo", "check", "--all-targets", "--message-format=short", "-p", "lumen-ui"],
-            capture_output=True, text=True, cwd="E:/code/lumen-studio",
+            ["cargo", "check", "--all-targets", "--message-format=short", "-p", "aevum-ui"],
+            capture_output=True, text=True, cwd=str(ROOT),
         )
         out = proc.stdout + proc.stderr
         errs = [l for l in out.split("\n") if ": error[E" in l]
@@ -115,7 +120,7 @@ def main() -> int:
             if not m:
                 continue
             err_file, _, msg = m.group(1), m.group(2), m.group(3)
-            err_file = (Path("E:/code/lumen-studio") / err_file.replace("\\", "/")).resolve()
+            err_file = (ROOT / err_file.replace("\\", "/")).resolve()
             mm = re.search(r"cannot find (?:type|struct, variant or union type|function|value) `([^`]+)`", msg)
             if not mm:
                 continue

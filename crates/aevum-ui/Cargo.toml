@@ -1,0 +1,22 @@
+[package]
+name = "aevum-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aevum-core.workspace = true
+egui.workspace = true
+eframe.workspace = true
+image.workspace = true
+rfd.workspace = true
+# 回环控制与 AI 面板的 JSON-RPC / control.json；工作区里已在编，离线可用。
+serde.workspace = true
+serde_json.workspace = true
+# 胶片条批量解码；用独立线程池，不和预览渲染抢核。
+rayon.workspace = true
+
+[lints.clippy]
+# `as_chunks::<N>().0` 与 `chunks_exact(N)` 生成的迭代一样，但多一层 `.0` 投影；
+# 三步一组的像素循环里保留 `chunks_exact`。整个工作区统一这一种写法。
+chunks_exact_to_as_chunks = "allow"

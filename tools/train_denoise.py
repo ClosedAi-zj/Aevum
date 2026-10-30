@@ -1,4 +1,4 @@
-"""训练 lumen 的 AI 降噪小模型（纯 numpy，无外部权重）。
+"""训练 aevum 的 AI 降噪小模型（纯 numpy，无外部权重）。
 
 为什么是「自己训」：clean-room 下不能拿别人的模型权重，也不引入 PyTorch/ONNX
 这类新依赖；这里用 numpy 手写 4 层 3×3 卷积的前向与反向，训练完把权重导成
@@ -9,9 +9,9 @@ Rust 的 const 数组，Rust 侧只做推理。
 参数少、收敛快，推理时按块先后跑，中间层缓冲复用。
 
 - `--net luma`：1→C→C→C→1，输入 Rec.601 亮度，输出增量（`out = y + delta`）。
-  权重写到 `crates/lumen-core/src/denoise_weights.rs`。
+  权重写到 `crates/aevum-core/src/denoise_weights.rs`。
 - `--net chroma`：2→C→C→C→2，输入 Cb = B − Y、Cr = R − Y，输出两路增量。
-  权重写到 `crates/lumen-core/src/denoise_chroma_weights.rs`。
+  权重写到 `crates/aevum-core/src/denoise_chroma_weights.rs`。
 
 数据：本机真实延时帧（默认 `D:/work/project/pycharm/p/pythonProject4/aligned_lr3`），
 随机裁 48×48；噪声按信号相关的高斯合成（σ = sqrt(a·y + b)），每样本随机取 a、b；
@@ -302,8 +302,8 @@ def main():
     ap.add_argument('--out', default=None)
     ap.add_argument('--eval-only', action='store_true')
     args = ap.parse_args()
-    out = args.out or (f'crates/lumen-core/src/denoise_{args.net}_weights.rs'
-                       if args.net == 'chroma' else 'crates/lumen-core/src/denoise_weights.rs')
+    out = args.out or (f'crates/aevum-core/src/denoise_{args.net}_weights.rs'
+                       if args.net == 'chroma' else 'crates/aevum-core/src/denoise_weights.rs')
     frames = load_frames(args.root, args.frames + args.holdout)
     holdout, train_frames = frames[:args.holdout], frames[args.holdout:]
     print(f'网络 {args.net}，训练帧 {len(train_frames)} 张，留出 {len(holdout)} 张，'

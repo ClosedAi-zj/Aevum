@@ -1,14 +1,14 @@
 # 一个可以直接抄的插件清单。
 #
 # 想看它在菜单里长什么样：
-#   LUMEN_PLUGINS=D:/work/project/pycharm/p/lapse-studio/plugins cargo run --bin lumen -- --demo
+#   AEVUM_PLUGINS=<仓库路径>/plugins cargo run --bin aevum -- --demo
 # 然后打开「插件」菜单，最下面会多出「示例」组。
 
 [plugin]
-id = "lumen.example-invert"
+id = "aevum.example-invert"
 name = "示例：反相"
 version = "1.0"
-vendor = "Lumen"
+vendor = "Aevum"
 # filter = 拿一张图出一张图；decoder = 把 RAW 解成线性图；export = 把成片写出去
 kind = "filter"
 # 入口相对本文件所在目录。空串表示由宿主内部实现，不起独立进程。

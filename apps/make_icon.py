@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""生成 光时 · Lumen Studio 的图标：python apps/make_icon.py
+"""生成 恒晷 · Aevum Studio 的图标：python apps/make_icon.py
 
 主图 1024 用 QPainter 矢量画，不靠外部素材，改配色改几何都在这个文件里；
 再用 Pillow 缩出 16/24/32/48/64/128/256 打包成 assets/app.ico。
@@ -7,7 +7,7 @@ Windows 取 exe 图标用的是 .ico 里那一串尺寸，只给 256 的话任�
 
 图形只有三个元素：一圈开了缺口的镜头环、从圆心穿向缺口的一束光（同时当表针）、中心轴点。
 16px 下只剩「环 + 一撇 + 点」，所以宁可粗、少，不放光圈叶那种小细节。
-配色抄界面令牌（crates/lumen-ui/src/theme.rs）：ACCENT #0A84FF、TEAL #64D2FF、
+配色抄界面令牌（crates/aevum-ui/src/theme.rs）：ACCENT #0A84FF、TEAL #64D2FF、
 TOP 底色取 SURROUND 那一档，任务栏图标和窗口里的高亮才是同一个蓝。
 """
 import math

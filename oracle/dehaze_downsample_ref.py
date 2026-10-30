@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """生成 Rust 单测 dehaze_downsample_matches_python 的参考统计量。
 
-与 crates/lumen-core/src/develop/dehaze.rs::tests::hazy_scene 逐式相同：
+与 crates/aevum-core/src/develop/dehaze.rs::tests::hazy_scene 逐式相同：
 LCG(6364136223846793005, 1442695040888963407) 每像素抽一次透射，场景
 （阶梯 + 渐变）与大气光按 I = J·t + A·(1−t) 在线性域混合。
 

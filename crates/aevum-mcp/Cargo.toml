@@ -1,0 +1,18 @@
+[package]
+name = "aevum-mcp"
+description = "恒晷 · Aevum Studio 的 MCP 无头控制面"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+aevum-core.workspace = true
+serde_json.workspace = true
+# 预览工具要落 PNG；复用工作区已经在编的 image，不额外引依赖树。
+image.workspace = true
+
+[lints.clippy]
+# `as_chunks::<N>().0` 与 `chunks_exact(N)` 生成的迭代一样，但多一层 `.0` 投影；
+# 三步一组的像素循环里保留 `chunks_exact`。整个工作区统一这一种写法。
+chunks_exact_to_as_chunks = "allow"

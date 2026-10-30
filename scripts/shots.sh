@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 重新生成 shots/rust-ui-*.png：每张都由 lumen-studio 自己截，跑完就是当前代码的样子。
+# 重新生成 shots/rust-ui-*.png：每张都由 aevum-studio 自己截，跑完就是当前代码的样子。
 # 用法：bash scripts/shots.sh [--debug]（缺省用 release 包里的 exe）
 set -euo pipefail
 
@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 if [ "${1:-}" = "--debug" ]; then
-    EXE="target/debug/lumen.exe"
+    EXE="target/debug/aevum.exe"
 else
-    EXE="dist/lumen/lumen.exe"
+    EXE="dist/aevum/aevum.exe"
 fi
 [ -f "$EXE" ] || EXE="${EXE%.exe}"
 if [ ! -f "$EXE" ]; then

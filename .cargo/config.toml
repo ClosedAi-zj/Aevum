@@ -1,0 +1,23 @@
+# 为什么会有这段配置（不要随手删）
+#
+# `aevum-core::config_dir::ensure_adopted()` 挂在「第一个读配置的 API」上
+# （`settings::path` / `library::default_path` / `queue::default_path`），
+# 这样 GUI、MCP 无头、`--selftest`、集成测试四个入口都自动覆盖首启迁移。
+# 代价是：**`cargo test` 也是入口** —— 只要开发机上还留着旧版的
+# `%APPDATA%/lumen-studio`，跑一次测试就会把它搬成 `%APPDATA%/aevum-studio`。
+#
+# 所以这里把配置根钉到 `target/test-home/` 下：
+#   * 通过 cargo 跑的进程（`cargo test` / `cargo run`）一律落在 target 里，
+#     不碰开发机真实配置，测试之间也不会互相踩；
+#   * `config_dir::portable()` 只要看到任一 override 就整段跳过首启迁移，
+#     所以连「检查旧目录」都不会发生；
+#   * 直接跑 `target/debug/aevum.exe`（`scripts/*.sh`、双击 exe）不受影响，
+#     仍然用真实的 `%APPDATA%/aevum-studio`。
+#
+# `target/` 已在 .gitignore 里，产物不外泄。要验证真实迁移行为时，
+# 请直接跑二进制，或临时注释掉这一段。
+[env]
+AEVUM_SETTINGS = { value = "target/test-home/settings.json", relative = true }
+AEVUM_LIBRARY = { value = "target/test-home/galleries.json", relative = true }
+AEVUM_RENDER_QUEUE = { value = "target/test-home/render_queue.json", relative = true }
+AEVUM_PLUGINS = { value = "target/test-home/plugins", relative = true }

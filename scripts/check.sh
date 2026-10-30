@@ -28,9 +28,9 @@ echo "==> 3/4 全量测试（含与 Python 基准的金标比对）"
 "${CARGO[@]}" test --workspace $CARGO_FLAGS
 
 echo "==> 4/4 界面布局自检（无显示器）"
-"${CARGO[@]}" build -p lumen-studio $CARGO_FLAGS
-exe="$ROOT/target/debug/lumen.exe"
-[ -f "$exe" ] || exe="$ROOT/target/debug/lumen-studio"
+"${CARGO[@]}" build -p aevum-studio $CARGO_FLAGS
+exe="$ROOT/target/debug/aevum.exe"
+[ -f "$exe" ] || exe="$ROOT/target/debug/aevum-studio"
 "$exe" --selftest
 
 echo "==> 门槛全绿"

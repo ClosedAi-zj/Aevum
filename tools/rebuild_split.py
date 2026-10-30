@@ -13,8 +13,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path("E:/code/lumen-studio")
-SRC = ROOT / "crates/lumen-ui/src"
+# 仓库根从脚本自身位置推出来，不写死盘符和目录名（改名不该让工具失效）。
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "crates/aevum-ui/src"
 SHELL = SRC / "shell"
 BAK = ROOT / "tools/_reconstructed_shell.bak.rs"
 

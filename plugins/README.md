@@ -1,12 +1,12 @@
 # 插件目录
 
 这个目录**不是**运行时会读的目录，是一份可以直接抄的样板。程序读的是
-`%APPDATA%\lumen-studio\plugins`（`LUMEN_PLUGINS` 可以改到别处）。
+`%APPDATA%\aevum-studio\plugins`（`AEVUM_PLUGINS` 可以改到别处）。
 
 想看效果，把这一整个目录指给程序：
 
 ```bash
-LUMEN_PLUGINS=D:/work/project/pycharm/p/lapse-studio/plugins cargo run --bin lumen -- --demo
+AEVUM_PLUGINS=<仓库路径>/plugins cargo run --bin aevum -- --demo
 ```
 
 打开「插件」菜单，最下面会多出「示例」组。
@@ -26,10 +26,10 @@ plugins/
 
 ```toml
 [plugin]
-id = "lumen.example-invert"   # 反向域名，全局唯一；市场靠它判断"同一插件的哪个版本"
+id = "aevum.example-invert"   # 反向域名，全局唯一；市场靠它判断"同一插件的哪个版本"
 name = "示例：反相"
 version = "1.0"
-vendor = "Lumen"
+vendor = "Aevum"
 kind = "filter"               # filter | decoder | export
 entry = "bin/invert.exe"      # 空串 = 宿主内部实现，不起进程
 description = "把每个像素反相，用来验证宿主协议"
