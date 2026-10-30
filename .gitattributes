@@ -1,0 +1,16 @@
+* text=auto
+*.sh text eol=lf
+*.rs text
+*.toml text
+*.json text
+*.md text
+*.py text
+*.svg text
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.ico binary
+*.exe binary

@@ -1,0 +1,56 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/lumen-core",
+    "crates/lumen-ui",
+    "crates/lumen-mcp",
+    "apps/lumen-studio",
+]
+
+[workspace.package]
+version = "0.4.0-beta.1"
+edition = "2024"
+rust-version = "1.88"  # 界面代码用了 let-chain（1.88 起、仅 2024 edition 可用）
+license = "MIT"
+authors = ["Lumen Studio contributors"]
+
+[workspace.dependencies]
+lumen-core = { path = "crates/lumen-core" }
+lumen-ui = { path = "crates/lumen-ui" }
+lumen-mcp = { path = "crates/lumen-mcp" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 插件清单是给第三方作者手写的：要注释、要能分节。JSON 的插件清单最后都会
+# 变成一个几百行、没法写一句说明的大括号。
+toml = "0.9"
+rayon = "1.12"
+thiserror = "2"
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "tiff",
+    "webp",
+] }
+egui = "0.37"
+eframe = { version = "0.37", default-features = false, features = [
+    "glow",
+    "default_fonts",
+] }
+rfd = "0.17"
+# 字形轮廓：水印的文字层自己栅格化，不引第二个字体栈（界面那套字体走 epaint，
+# 两边都读 assets/fonts 里的同一份字节）。版本钉在 egui 已带进锁文件的那个上。
+skrifa = "0.44"
+# RAW 第三方解码后端（CRX/12/14 位打包）：纯 Rust、MIT OR Apache-2.0，
+# 见 crates/lumen-core/Cargo.toml 的 raw-rawler feature 与 docs/依赖许可说明.md。
+# 0.8 起要求 rustc 1.89，高于本仓 MSRV 1.88，钉在 0.7.x。
+rawler = "=0.7.2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

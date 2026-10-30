@@ -1,0 +1,2041 @@
+{
+ "curve_points": [
+  [
+   0,
+   0
+  ],
+  [
+   32,
+   18
+  ],
+  [
+   128,
+   140
+  ],
+  [
+   224,
+   236
+  ],
+  [
+   255,
+   255
+  ]
+ ],
+ "curve_lut": [
+  0.0,
+  0.557349,
+  1.10506,
+  1.644131,
+  2.175559,
+  2.70034,
+  3.219471,
+  3.73395,
+  4.244773,
+  4.752938,
+  5.259441,
+  5.765279,
+  6.27145,
+  6.77895,
+  7.288776,
+  7.801925,
+  8.319395,
+  8.842182,
+  9.371284,
+  9.907696,
+  10.452416,
+  11.006442,
+  11.570769,
+  12.146397,
+  12.73432,
+  13.335535,
+  13.951041,
+  14.581835,
+  15.228911,
+  15.89327,
+  16.575907,
+  17.277817,
+  18.0,
+  18.745367,
+  19.515867,
+  20.311052,
+  21.13047,
+  21.973675,
+  22.840216,
+  23.729645,
+  24.641512,
+  25.575369,
+  26.530766,
+  27.507254,
+  28.504385,
+  29.521708,
+  30.558777,
+  31.615139,
+  32.69035,
+  33.783955,
+  34.895508,
+  36.024563,
+  37.170666,
+  38.33337,
+  39.512226,
+  40.706783,
+  41.916595,
+  43.141212,
+  44.380184,
+  45.63306,
+  46.899399,
+  48.178741,
+  49.470646,
+  50.774658,
+  52.090332,
+  53.417221,
+  54.754871,
+  56.102833,
+  57.460663,
+  58.827908,
+  60.204121,
+  61.588848,
+  62.981647,
+  64.382065,
+  65.789658,
+  67.203964,
+  68.62455,
+  70.050957,
+  71.482735,
+  72.919441,
+  74.360619,
+  75.805832,
+  77.254616,
+  78.706535,
+  80.161133,
+  81.617958,
+  83.076569,
+  84.536514,
+  85.997337,
+  87.458603,
+  88.919846,
+  90.38063,
+  91.8405,
+  93.299011,
+  94.755714,
+  96.210152,
+  97.66188,
+  99.110458,
+  100.555428,
+  101.996338,
+  103.432739,
+  104.864197,
+  106.290245,
+  107.710442,
+  109.124336,
+  110.531487,
+  111.931435,
+  113.32373,
+  114.707932,
+  116.083588,
+  117.450249,
+  118.807465,
+  120.154785,
+  121.491768,
+  122.817955,
+  124.132904,
+  125.436157,
+  126.72728,
+  128.005814,
+  129.271301,
+  130.523315,
+  131.761383,
+  132.985077,
+  134.193939,
+  135.387512,
+  136.565353,
+  137.727005,
+  138.87204,
+  140.0,
+  141.119583,
+  142.239716,
+  143.360291,
+  144.481247,
+  145.602448,
+  146.723831,
+  147.845261,
+  148.966675,
+  150.087936,
+  151.208984,
+  152.329697,
+  153.449997,
+  154.569763,
+  155.688904,
+  156.807327,
+  157.924942,
+  159.041641,
+  160.157318,
+  161.271881,
+  162.385239,
+  163.497299,
+  164.607941,
+  165.717072,
+  166.824615,
+  167.93045,
+  169.0345,
+  170.136642,
+  171.236786,
+  172.334839,
+  173.43071,
+  174.524292,
+  175.615479,
+  176.704178,
+  177.790298,
+  178.873749,
+  179.954407,
+  181.032196,
+  182.10701,
+  183.178741,
+  184.247314,
+  185.312607,
+  186.374542,
+  187.433014,
+  188.487915,
+  189.539154,
+  190.586624,
+  191.630249,
+  192.669922,
+  193.705536,
+  194.737,
+  195.764206,
+  196.787079,
+  197.805496,
+  198.819366,
+  199.828598,
+  200.833084,
+  201.832748,
+  202.827454,
+  203.817139,
+  204.801697,
+  205.781006,
+  206.755005,
+  207.723572,
+  208.686615,
+  209.644028,
+  210.595718,
+  211.541595,
+  212.481552,
+  213.415497,
+  214.343338,
+  215.264954,
+  216.180267,
+  217.089172,
+  217.991577,
+  218.88736,
+  219.776459,
+  220.658752,
+  221.534149,
+  222.402557,
+  223.263855,
+  224.117981,
+  224.964798,
+  225.80423,
+  226.636185,
+  227.460556,
+  228.277237,
+  229.086151,
+  229.887177,
+  230.680222,
+  231.465195,
+  232.242004,
+  233.010529,
+  233.770706,
+  234.5224,
+  235.265533,
+  236.0,
+  236.722672,
+  237.430939,
+  238.125565,
+  238.807251,
+  239.47673,
+  240.134766,
+  240.782059,
+  241.419357,
+  242.047379,
+  242.66687,
+  243.278549,
+  243.883163,
+  244.48143,
+  245.074097,
+  245.661865,
+  246.245499,
+  246.825729,
+  247.403259,
+  247.978836,
+  248.553207,
+  249.127075,
+  249.701202,
+  250.276291,
+  250.853104,
+  251.432343,
+  252.014755,
+  252.601074,
+  253.192017,
+  253.788345,
+  254.390762,
+  255.0
+ ],
+ "vignette": {
+  "size": [
+   64,
+   40
+  ],
+  "params": {
+   "vig_amount": 40.0,
+   "vig_midpoint": 50.0,
+   "vig_roundness": 25.0,
+   "vig_feather": 50.0
+  },
+  "sha256_f32": "f69fe453f66055737e21a386586185d33931e3577d4b0349392e2ef03b845b78",
+  "samples_8x5": [
+   [
+    0.614976,
+    0.704022,
+    0.807606,
+    0.877904,
+    0.89951,
+    0.871706,
+    0.795845,
+    0.690729
+   ],
+   [
+    0.724934,
+    0.879987,
+    0.982115,
+    1.0,
+    1.0,
+    1.0,
+    0.974237,
+    0.861983
+   ],
+   [
+    0.809796,
+    0.965921,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    0.951487
+   ],
+   [
+    0.803687,
+    0.961023,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    0.946089
+   ],
+   [
+    0.710072,
+    0.861352,
+    0.969665,
+    0.999999,
+    1.0,
+    0.999651,
+    0.960405,
+    0.843331
+   ]
+  ]
+ },
+ "defaults": {
+  "exposure": 0.0,
+  "hl_rolloff": 0.0,
+  "contrast": 0.0,
+  "highlights": 0.0,
+  "shadows": 0.0,
+  "whites": 0.0,
+  "blacks": 0.0,
+  "black_soft": 0.0,
+  "white_soft": 0.0,
+  "contrast_linear": 0.0,
+  "temperature": 0.0,
+  "tint": 0.0,
+  "vibrance": 0.0,
+  "saturation": 0.0,
+  "clarity": 0.0,
+  "texture": 0.0,
+  "dehaze": 0.0,
+  "grain": 0.0,
+  "grain_size": 1.0,
+  "grain_freq": 1.0,
+  "grain_lum": 0.0,
+  "vignette": 0.0,
+  "vig_midpoint": 50.0,
+  "vig_roundness": 0.0,
+  "vig_feather": 50.0,
+  "vig_hl_contrast": 0.0,
+  "sharp_amount": 0.0,
+  "sharp_radius": 1.0,
+  "sharp_detail": 25.0,
+  "sharp_masking": 0.0,
+  "sharp_protect": 0.0,
+  "nr_luma": 0.0,
+  "nr_color": 0.0,
+  "nr_luma_detail": 0.0,
+  "nr_luma_contrast": 0.0,
+  "nr_color_smooth": 50.0,
+  "grade_global_h": 0.0,
+  "grade_global_s": 0.0,
+  "grade_global_l": 0.0,
+  "grade_sh_h": 0.0,
+  "grade_sh_s": 0.0,
+  "grade_sh_l": 0.0,
+  "grade_mid_h": 0.0,
+  "grade_mid_s": 0.0,
+  "grade_mid_l": 0.0,
+  "grade_hi_h": 0.0,
+  "grade_hi_s": 0.0,
+  "grade_hi_l": 0.0,
+  "grade_balance": 0.0,
+  "grade_blending": 0.0,
+  "lv_black": 0.0,
+  "lv_white": 255.0,
+  "lv_gamma": 1.0,
+  "lv_out_black": 0.0,
+  "lv_out_white": 255.0,
+  "par_shadows": 0.0,
+  "par_darks": 0.0,
+  "par_lights": 0.0,
+  "par_highlights": 0.0,
+  "par_split1": 25.0,
+  "par_split2": 50.0,
+  "par_split3": 75.0,
+  "mono": 0.0,
+  "mono_h": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "lens_distort": 0.0,
+  "lens_vignette": 0.0,
+  "lens_fringe": 0.0,
+  "hsl_h": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "hsl_s": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "hsl_l": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "masks": [],
+  "curve_rgb": [
+   [
+    0,
+    0
+   ],
+   [
+    255,
+    255
+   ]
+  ],
+  "curve_r": [
+   [
+    0,
+    0
+   ],
+   [
+    255,
+    255
+   ]
+  ],
+  "curve_g": [
+   [
+    0,
+    0
+   ],
+   [
+    255,
+    255
+   ]
+  ],
+  "curve_b": [
+   [
+    0,
+    0
+   ],
+   [
+    255,
+    255
+   ]
+  ],
+  "curve_hdr_tail": 0.0
+ },
+ "presets": {
+  "冷色电影": {
+   "exposure": 0.0,
+   "hl_rolloff": 0.0,
+   "contrast": 16,
+   "highlights": 0.0,
+   "shadows": 12,
+   "whites": 0.0,
+   "blacks": 0.0,
+   "black_soft": 0.0,
+   "white_soft": 0.0,
+   "contrast_linear": 0.0,
+   "temperature": -22,
+   "tint": -6,
+   "vibrance": 0.0,
+   "saturation": -8,
+   "clarity": 0.0,
+   "texture": 0.0,
+   "dehaze": 0.0,
+   "grain": 0.0,
+   "grain_size": 1.0,
+   "grain_freq": 1.0,
+   "grain_lum": 0.0,
+   "vignette": 0.0,
+   "vig_midpoint": 50.0,
+   "vig_roundness": 0.0,
+   "vig_feather": 50.0,
+   "vig_hl_contrast": 0.0,
+   "sharp_amount": 0.0,
+   "sharp_radius": 1.0,
+   "sharp_detail": 25.0,
+   "sharp_masking": 0.0,
+   "sharp_protect": 0.0,
+   "nr_luma": 0.0,
+   "nr_color": 0.0,
+   "nr_luma_detail": 0.0,
+   "nr_luma_contrast": 0.0,
+   "nr_color_smooth": 50.0,
+   "grade_global_h": 0.0,
+   "grade_global_s": 0.0,
+   "grade_global_l": 0.0,
+   "grade_sh_h": 215,
+   "grade_sh_s": 28,
+   "grade_sh_l": 0.0,
+   "grade_mid_h": 0.0,
+   "grade_mid_s": 0.0,
+   "grade_mid_l": 0.0,
+   "grade_hi_h": 35,
+   "grade_hi_s": 12,
+   "grade_hi_l": 0.0,
+   "grade_balance": 0.0,
+   "grade_blending": 0.0,
+   "lv_black": 0.0,
+   "lv_white": 255.0,
+   "lv_gamma": 1.0,
+   "lv_out_black": 0.0,
+   "lv_out_white": 255.0,
+   "par_shadows": 0.0,
+   "par_darks": 0.0,
+   "par_lights": 0.0,
+   "par_highlights": 0.0,
+   "par_split1": 25.0,
+   "par_split2": 50.0,
+   "par_split3": 75.0,
+   "mono": 0.0,
+   "mono_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "lens_distort": 0.0,
+   "lens_vignette": 0.0,
+   "lens_fringe": 0.0,
+   "hsl_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_l": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "masks": [],
+   "curve_rgb": [
+    [
+     0,
+     18
+    ],
+    [
+     64,
+     58
+    ],
+    [
+     192,
+     206
+    ],
+    [
+     255,
+     254
+    ]
+   ],
+   "curve_r": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_g": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_b": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_hdr_tail": 0.0
+  },
+  "原始": {
+   "exposure": 0.0,
+   "hl_rolloff": 0.0,
+   "contrast": 0.0,
+   "highlights": 0.0,
+   "shadows": 0.0,
+   "whites": 0.0,
+   "blacks": 0.0,
+   "black_soft": 0.0,
+   "white_soft": 0.0,
+   "contrast_linear": 0.0,
+   "temperature": 0.0,
+   "tint": 0.0,
+   "vibrance": 0.0,
+   "saturation": 0.0,
+   "clarity": 0.0,
+   "texture": 0.0,
+   "dehaze": 0.0,
+   "grain": 0.0,
+   "grain_size": 1.0,
+   "grain_freq": 1.0,
+   "grain_lum": 0.0,
+   "vignette": 0.0,
+   "vig_midpoint": 50.0,
+   "vig_roundness": 0.0,
+   "vig_feather": 50.0,
+   "vig_hl_contrast": 0.0,
+   "sharp_amount": 0.0,
+   "sharp_radius": 1.0,
+   "sharp_detail": 25.0,
+   "sharp_masking": 0.0,
+   "sharp_protect": 0.0,
+   "nr_luma": 0.0,
+   "nr_color": 0.0,
+   "nr_luma_detail": 0.0,
+   "nr_luma_contrast": 0.0,
+   "nr_color_smooth": 50.0,
+   "grade_global_h": 0.0,
+   "grade_global_s": 0.0,
+   "grade_global_l": 0.0,
+   "grade_sh_h": 0.0,
+   "grade_sh_s": 0.0,
+   "grade_sh_l": 0.0,
+   "grade_mid_h": 0.0,
+   "grade_mid_s": 0.0,
+   "grade_mid_l": 0.0,
+   "grade_hi_h": 0.0,
+   "grade_hi_s": 0.0,
+   "grade_hi_l": 0.0,
+   "grade_balance": 0.0,
+   "grade_blending": 0.0,
+   "lv_black": 0.0,
+   "lv_white": 255.0,
+   "lv_gamma": 1.0,
+   "lv_out_black": 0.0,
+   "lv_out_white": 255.0,
+   "par_shadows": 0.0,
+   "par_darks": 0.0,
+   "par_lights": 0.0,
+   "par_highlights": 0.0,
+   "par_split1": 25.0,
+   "par_split2": 50.0,
+   "par_split3": 75.0,
+   "mono": 0.0,
+   "mono_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "lens_distort": 0.0,
+   "lens_vignette": 0.0,
+   "lens_fringe": 0.0,
+   "hsl_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_l": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "masks": [],
+   "curve_rgb": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_r": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_g": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_b": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_hdr_tail": 0.0
+  },
+  "复古胶片": {
+   "exposure": 0.0,
+   "hl_rolloff": 0.0,
+   "contrast": -8,
+   "highlights": 0.0,
+   "shadows": 0.0,
+   "whites": 0.0,
+   "blacks": -8,
+   "black_soft": 0.0,
+   "white_soft": 0.0,
+   "contrast_linear": 0.0,
+   "temperature": 4,
+   "tint": 0.0,
+   "vibrance": 0.0,
+   "saturation": -24,
+   "clarity": 0.0,
+   "texture": 0.0,
+   "dehaze": 0.0,
+   "grain": 18,
+   "grain_size": 1.0,
+   "grain_freq": 1.0,
+   "grain_lum": 0.0,
+   "vignette": 30,
+   "vig_midpoint": 50.0,
+   "vig_roundness": 0.0,
+   "vig_feather": 50.0,
+   "vig_hl_contrast": 0.0,
+   "sharp_amount": 0.0,
+   "sharp_radius": 1.0,
+   "sharp_detail": 25.0,
+   "sharp_masking": 0.0,
+   "sharp_protect": 0.0,
+   "nr_luma": 0.0,
+   "nr_color": 0.0,
+   "nr_luma_detail": 0.0,
+   "nr_luma_contrast": 0.0,
+   "nr_color_smooth": 50.0,
+   "grade_global_h": 0.0,
+   "grade_global_s": 0.0,
+   "grade_global_l": 0.0,
+   "grade_sh_h": 150,
+   "grade_sh_s": 22,
+   "grade_sh_l": 0.0,
+   "grade_mid_h": 0.0,
+   "grade_mid_s": 0.0,
+   "grade_mid_l": 0.0,
+   "grade_hi_h": 200,
+   "grade_hi_s": 10,
+   "grade_hi_l": 0.0,
+   "grade_balance": 0.0,
+   "grade_blending": 0.0,
+   "lv_black": 0.0,
+   "lv_white": 255.0,
+   "lv_gamma": 1.0,
+   "lv_out_black": 0.0,
+   "lv_out_white": 255.0,
+   "par_shadows": 0.0,
+   "par_darks": 0.0,
+   "par_lights": 0.0,
+   "par_highlights": 0.0,
+   "par_split1": 25.0,
+   "par_split2": 50.0,
+   "par_split3": 75.0,
+   "mono": 0.0,
+   "mono_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "lens_distort": 0.0,
+   "lens_vignette": 0.0,
+   "lens_fringe": 0.0,
+   "hsl_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_l": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "masks": [],
+   "curve_rgb": [
+    [
+     0,
+     24
+    ],
+    [
+     64,
+     70
+    ],
+    [
+     192,
+     215
+    ],
+    [
+     255,
+     248
+    ]
+   ],
+   "curve_r": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_g": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_b": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_hdr_tail": 0.0
+  },
+  "夜景增强": {
+   "exposure": 0.45,
+   "hl_rolloff": 0.0,
+   "contrast": 0.0,
+   "highlights": -25,
+   "shadows": 32,
+   "whites": 0.0,
+   "blacks": 0.0,
+   "black_soft": 0.0,
+   "white_soft": 0.0,
+   "contrast_linear": 0.0,
+   "temperature": -10,
+   "tint": 0.0,
+   "vibrance": 18,
+   "saturation": 0.0,
+   "clarity": 8,
+   "texture": 0.0,
+   "dehaze": 0.0,
+   "grain": 0.0,
+   "grain_size": 1.0,
+   "grain_freq": 1.0,
+   "grain_lum": 0.0,
+   "vignette": 0.0,
+   "vig_midpoint": 50.0,
+   "vig_roundness": 0.0,
+   "vig_feather": 50.0,
+   "vig_hl_contrast": 0.0,
+   "sharp_amount": 0.0,
+   "sharp_radius": 1.0,
+   "sharp_detail": 25.0,
+   "sharp_masking": 50,
+   "sharp_protect": 0.0,
+   "nr_luma": 30,
+   "nr_color": 45,
+   "nr_luma_detail": 0.0,
+   "nr_luma_contrast": 0.0,
+   "nr_color_smooth": 50.0,
+   "grade_global_h": 0.0,
+   "grade_global_s": 0.0,
+   "grade_global_l": 0.0,
+   "grade_sh_h": 0.0,
+   "grade_sh_s": 0.0,
+   "grade_sh_l": 0.0,
+   "grade_mid_h": 0.0,
+   "grade_mid_s": 0.0,
+   "grade_mid_l": 0.0,
+   "grade_hi_h": 0.0,
+   "grade_hi_s": 0.0,
+   "grade_hi_l": 0.0,
+   "grade_balance": 0.0,
+   "grade_blending": 0.0,
+   "lv_black": 0.0,
+   "lv_white": 255.0,
+   "lv_gamma": 1.0,
+   "lv_out_black": 0.0,
+   "lv_out_white": 255.0,
+   "par_shadows": 0.0,
+   "par_darks": 0.0,
+   "par_lights": 0.0,
+   "par_highlights": 0.0,
+   "par_split1": 25.0,
+   "par_split2": 50.0,
+   "par_split3": 75.0,
+   "mono": 0.0,
+   "mono_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "lens_distort": 0.0,
+   "lens_vignette": 0.0,
+   "lens_fringe": 0.0,
+   "hsl_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_l": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "masks": [],
+   "curve_rgb": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_r": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_g": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_b": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_hdr_tail": 0.0
+  },
+  "柔和人像": {
+   "exposure": 0.0,
+   "hl_rolloff": 0.0,
+   "contrast": 0.0,
+   "highlights": -16,
+   "shadows": 20,
+   "whites": 0.0,
+   "blacks": 0.0,
+   "black_soft": 0.0,
+   "white_soft": 0.0,
+   "contrast_linear": 0.0,
+   "temperature": 0.0,
+   "tint": 0.0,
+   "vibrance": 12,
+   "saturation": -4,
+   "clarity": -10,
+   "texture": -25,
+   "dehaze": 0.0,
+   "grain": 0.0,
+   "grain_size": 1.0,
+   "grain_freq": 1.0,
+   "grain_lum": 0.0,
+   "vignette": 0.0,
+   "vig_midpoint": 50.0,
+   "vig_roundness": 0.0,
+   "vig_feather": 50.0,
+   "vig_hl_contrast": 0.0,
+   "sharp_amount": 30,
+   "sharp_radius": 1.0,
+   "sharp_detail": 25.0,
+   "sharp_masking": 60,
+   "sharp_protect": 0.0,
+   "nr_luma": 25,
+   "nr_color": 30,
+   "nr_luma_detail": 0.0,
+   "nr_luma_contrast": 0.0,
+   "nr_color_smooth": 50.0,
+   "grade_global_h": 0.0,
+   "grade_global_s": 0.0,
+   "grade_global_l": 0.0,
+   "grade_sh_h": 0.0,
+   "grade_sh_s": 0.0,
+   "grade_sh_l": 0.0,
+   "grade_mid_h": 0.0,
+   "grade_mid_s": 0.0,
+   "grade_mid_l": 0.0,
+   "grade_hi_h": 0.0,
+   "grade_hi_s": 0.0,
+   "grade_hi_l": 0.0,
+   "grade_balance": 0.0,
+   "grade_blending": 0.0,
+   "lv_black": 0.0,
+   "lv_white": 255.0,
+   "lv_gamma": 1.0,
+   "lv_out_black": 0.0,
+   "lv_out_white": 255.0,
+   "par_shadows": 0.0,
+   "par_darks": 0.0,
+   "par_lights": 0.0,
+   "par_highlights": 0.0,
+   "par_split1": 25.0,
+   "par_split2": 50.0,
+   "par_split3": 75.0,
+   "mono": 0.0,
+   "mono_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "lens_distort": 0.0,
+   "lens_vignette": 0.0,
+   "lens_fringe": 0.0,
+   "hsl_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_l": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "masks": [],
+   "curve_rgb": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_r": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_g": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_b": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_hdr_tail": 0.0
+  },
+  "落日暖调": {
+   "exposure": 0.0,
+   "hl_rolloff": 0.0,
+   "contrast": 0.0,
+   "highlights": -20,
+   "shadows": 10,
+   "whites": 0.0,
+   "blacks": 0.0,
+   "black_soft": 0.0,
+   "white_soft": 0.0,
+   "contrast_linear": 0.0,
+   "temperature": 28,
+   "tint": 6,
+   "vibrance": 22,
+   "saturation": 0.0,
+   "clarity": 10,
+   "texture": 0.0,
+   "dehaze": 0.0,
+   "grain": 0.0,
+   "grain_size": 1.0,
+   "grain_freq": 1.0,
+   "grain_lum": 0.0,
+   "vignette": 0.0,
+   "vig_midpoint": 50.0,
+   "vig_roundness": 0.0,
+   "vig_feather": 50.0,
+   "vig_hl_contrast": 0.0,
+   "sharp_amount": 0.0,
+   "sharp_radius": 1.0,
+   "sharp_detail": 25.0,
+   "sharp_masking": 0.0,
+   "sharp_protect": 0.0,
+   "nr_luma": 0.0,
+   "nr_color": 0.0,
+   "nr_luma_detail": 0.0,
+   "nr_luma_contrast": 0.0,
+   "nr_color_smooth": 50.0,
+   "grade_global_h": 0.0,
+   "grade_global_s": 0.0,
+   "grade_global_l": 0.0,
+   "grade_sh_h": 0.0,
+   "grade_sh_s": 0.0,
+   "grade_sh_l": 0.0,
+   "grade_mid_h": 0.0,
+   "grade_mid_s": 0.0,
+   "grade_mid_l": 0.0,
+   "grade_hi_h": 40,
+   "grade_hi_s": 18,
+   "grade_hi_l": 0.0,
+   "grade_balance": 0.0,
+   "grade_blending": 0.0,
+   "lv_black": 0.0,
+   "lv_white": 255.0,
+   "lv_gamma": 1.0,
+   "lv_out_black": 0.0,
+   "lv_out_white": 255.0,
+   "par_shadows": 0.0,
+   "par_darks": 0.0,
+   "par_lights": 0.0,
+   "par_highlights": 0.0,
+   "par_split1": 25.0,
+   "par_split2": 50.0,
+   "par_split3": 75.0,
+   "mono": 0.0,
+   "mono_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "lens_distort": 0.0,
+   "lens_vignette": 0.0,
+   "lens_fringe": 0.0,
+   "hsl_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_l": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "masks": [],
+   "curve_rgb": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_r": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_g": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_b": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_hdr_tail": 0.0
+  },
+  "通透风光": {
+   "exposure": 0.0,
+   "hl_rolloff": 0.0,
+   "contrast": 10,
+   "highlights": -22,
+   "shadows": 14,
+   "whites": 0.0,
+   "blacks": 0.0,
+   "black_soft": 0.0,
+   "white_soft": 0.0,
+   "contrast_linear": 0.0,
+   "temperature": 0.0,
+   "tint": 0.0,
+   "vibrance": 28,
+   "saturation": 0.0,
+   "clarity": 18,
+   "texture": 10,
+   "dehaze": 18,
+   "grain": 0.0,
+   "grain_size": 1.0,
+   "grain_freq": 1.0,
+   "grain_lum": 0.0,
+   "vignette": 0.0,
+   "vig_midpoint": 50.0,
+   "vig_roundness": 0.0,
+   "vig_feather": 50.0,
+   "vig_hl_contrast": 0.0,
+   "sharp_amount": 45,
+   "sharp_radius": 1.0,
+   "sharp_detail": 25.0,
+   "sharp_masking": 20,
+   "sharp_protect": 0.0,
+   "nr_luma": 0.0,
+   "nr_color": 0.0,
+   "nr_luma_detail": 0.0,
+   "nr_luma_contrast": 0.0,
+   "nr_color_smooth": 50.0,
+   "grade_global_h": 0.0,
+   "grade_global_s": 0.0,
+   "grade_global_l": 0.0,
+   "grade_sh_h": 0.0,
+   "grade_sh_s": 0.0,
+   "grade_sh_l": 0.0,
+   "grade_mid_h": 0.0,
+   "grade_mid_s": 0.0,
+   "grade_mid_l": 0.0,
+   "grade_hi_h": 0.0,
+   "grade_hi_s": 0.0,
+   "grade_hi_l": 0.0,
+   "grade_balance": 0.0,
+   "grade_blending": 0.0,
+   "lv_black": 0.0,
+   "lv_white": 255.0,
+   "lv_gamma": 1.0,
+   "lv_out_black": 0.0,
+   "lv_out_white": 255.0,
+   "par_shadows": 0.0,
+   "par_darks": 0.0,
+   "par_lights": 0.0,
+   "par_highlights": 0.0,
+   "par_split1": 25.0,
+   "par_split2": 50.0,
+   "par_split3": 75.0,
+   "mono": 0.0,
+   "mono_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "lens_distort": 0.0,
+   "lens_vignette": 0.0,
+   "lens_fringe": 0.0,
+   "hsl_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_l": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "masks": [],
+   "curve_rgb": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_r": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_g": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_b": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_hdr_tail": 0.0
+  },
+  "青橙电影": {
+   "exposure": 0.0,
+   "hl_rolloff": 0.0,
+   "contrast": 14,
+   "highlights": 0.0,
+   "shadows": 8,
+   "whites": 0.0,
+   "blacks": 0.0,
+   "black_soft": 0.0,
+   "white_soft": 0.0,
+   "contrast_linear": 0.0,
+   "temperature": -8,
+   "tint": 0.0,
+   "vibrance": 0.0,
+   "saturation": -5,
+   "clarity": 10,
+   "texture": 0.0,
+   "dehaze": 0.0,
+   "grain": 0.0,
+   "grain_size": 1.0,
+   "grain_freq": 1.0,
+   "grain_lum": 0.0,
+   "vignette": 0.0,
+   "vig_midpoint": 50.0,
+   "vig_roundness": 0.0,
+   "vig_feather": 50.0,
+   "vig_hl_contrast": 0.0,
+   "sharp_amount": 0.0,
+   "sharp_radius": 1.0,
+   "sharp_detail": 25.0,
+   "sharp_masking": 0.0,
+   "sharp_protect": 0.0,
+   "nr_luma": 0.0,
+   "nr_color": 0.0,
+   "nr_luma_detail": 0.0,
+   "nr_luma_contrast": 0.0,
+   "nr_color_smooth": 50.0,
+   "grade_global_h": 0.0,
+   "grade_global_s": 0.0,
+   "grade_global_l": 0.0,
+   "grade_sh_h": 210,
+   "grade_sh_s": 35,
+   "grade_sh_l": 0.0,
+   "grade_mid_h": 0.0,
+   "grade_mid_s": 0.0,
+   "grade_mid_l": 0.0,
+   "grade_hi_h": 35,
+   "grade_hi_s": 28,
+   "grade_hi_l": 0.0,
+   "grade_balance": 0.0,
+   "grade_blending": 0.0,
+   "lv_black": 0.0,
+   "lv_white": 255.0,
+   "lv_gamma": 1.0,
+   "lv_out_black": 0.0,
+   "lv_out_white": 255.0,
+   "par_shadows": 0.0,
+   "par_darks": 0.0,
+   "par_lights": 0.0,
+   "par_highlights": 0.0,
+   "par_split1": 25.0,
+   "par_split2": 50.0,
+   "par_split3": 75.0,
+   "mono": 0.0,
+   "mono_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "lens_distort": 0.0,
+   "lens_vignette": 0.0,
+   "lens_fringe": 0.0,
+   "hsl_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_l": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "masks": [],
+   "curve_rgb": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_r": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_g": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_b": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_hdr_tail": 0.0
+  },
+  "鲜艳风光": {
+   "exposure": 0.0,
+   "hl_rolloff": 0.0,
+   "contrast": 12,
+   "highlights": 0.0,
+   "shadows": 0.0,
+   "whites": 0.0,
+   "blacks": 0.0,
+   "black_soft": 0.0,
+   "white_soft": 0.0,
+   "contrast_linear": 0.0,
+   "temperature": 0.0,
+   "tint": 0.0,
+   "vibrance": 35,
+   "saturation": 10,
+   "clarity": 15,
+   "texture": 8,
+   "dehaze": 12,
+   "grain": 0.0,
+   "grain_size": 1.0,
+   "grain_freq": 1.0,
+   "grain_lum": 0.0,
+   "vignette": 0.0,
+   "vig_midpoint": 50.0,
+   "vig_roundness": 0.0,
+   "vig_feather": 50.0,
+   "vig_hl_contrast": 0.0,
+   "sharp_amount": 40,
+   "sharp_radius": 1.0,
+   "sharp_detail": 25.0,
+   "sharp_masking": 25,
+   "sharp_protect": 0.0,
+   "nr_luma": 0.0,
+   "nr_color": 0.0,
+   "nr_luma_detail": 0.0,
+   "nr_luma_contrast": 0.0,
+   "nr_color_smooth": 50.0,
+   "grade_global_h": 0.0,
+   "grade_global_s": 0.0,
+   "grade_global_l": 0.0,
+   "grade_sh_h": 0.0,
+   "grade_sh_s": 0.0,
+   "grade_sh_l": 0.0,
+   "grade_mid_h": 0.0,
+   "grade_mid_s": 0.0,
+   "grade_mid_l": 0.0,
+   "grade_hi_h": 0.0,
+   "grade_hi_s": 0.0,
+   "grade_hi_l": 0.0,
+   "grade_balance": 0.0,
+   "grade_blending": 0.0,
+   "lv_black": 0.0,
+   "lv_white": 255.0,
+   "lv_gamma": 1.0,
+   "lv_out_black": 0.0,
+   "lv_out_white": 255.0,
+   "par_shadows": 0.0,
+   "par_darks": 0.0,
+   "par_lights": 0.0,
+   "par_highlights": 0.0,
+   "par_split1": 25.0,
+   "par_split2": 50.0,
+   "par_split3": 75.0,
+   "mono": 0.0,
+   "mono_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "lens_distort": 0.0,
+   "lens_vignette": 0.0,
+   "lens_fringe": 0.0,
+   "hsl_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_l": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "masks": [],
+   "curve_rgb": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_r": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_g": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_b": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_hdr_tail": 0.0
+  },
+  "黑白对比": {
+   "exposure": 0.0,
+   "hl_rolloff": 0.0,
+   "contrast": 28,
+   "highlights": 0.0,
+   "shadows": 0.0,
+   "whites": 0.0,
+   "blacks": -15,
+   "black_soft": 0.0,
+   "white_soft": 0.0,
+   "contrast_linear": 0.0,
+   "temperature": 0.0,
+   "tint": 0.0,
+   "vibrance": 0.0,
+   "saturation": 0.0,
+   "clarity": 22,
+   "texture": 0.0,
+   "dehaze": 0.0,
+   "grain": 0.0,
+   "grain_size": 1.0,
+   "grain_freq": 1.0,
+   "grain_lum": 0.0,
+   "vignette": 0.0,
+   "vig_midpoint": 50.0,
+   "vig_roundness": 0.0,
+   "vig_feather": 50.0,
+   "vig_hl_contrast": 0.0,
+   "sharp_amount": 35,
+   "sharp_radius": 1.0,
+   "sharp_detail": 25.0,
+   "sharp_masking": 40,
+   "sharp_protect": 0.0,
+   "nr_luma": 0.0,
+   "nr_color": 0.0,
+   "nr_luma_detail": 0.0,
+   "nr_luma_contrast": 0.0,
+   "nr_color_smooth": 50.0,
+   "grade_global_h": 0.0,
+   "grade_global_s": 0.0,
+   "grade_global_l": 0.0,
+   "grade_sh_h": 0.0,
+   "grade_sh_s": 0.0,
+   "grade_sh_l": 0.0,
+   "grade_mid_h": 0.0,
+   "grade_mid_s": 0.0,
+   "grade_mid_l": 0.0,
+   "grade_hi_h": 0.0,
+   "grade_hi_s": 0.0,
+   "grade_hi_l": 0.0,
+   "grade_balance": 0.0,
+   "grade_blending": 0.0,
+   "lv_black": 0.0,
+   "lv_white": 255.0,
+   "lv_gamma": 1.0,
+   "lv_out_black": 0.0,
+   "lv_out_white": 255.0,
+   "par_shadows": 0.0,
+   "par_darks": 0.0,
+   "par_lights": 0.0,
+   "par_highlights": 0.0,
+   "par_split1": 25.0,
+   "par_split2": 50.0,
+   "par_split3": 75.0,
+   "mono": 100,
+   "mono_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "lens_distort": 0.0,
+   "lens_vignette": 0.0,
+   "lens_fringe": 0.0,
+   "hsl_h": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "hsl_l": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "masks": [],
+   "curve_rgb": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_r": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_g": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_b": [
+    [
+     0,
+     0
+    ],
+    [
+     255,
+     255
+    ]
+   ],
+   "curve_hdr_tail": 0.0
+  }
+ },
+ "mask_new": {
+  "linear": {
+   "type": "linear",
+   "x1": 0.5,
+   "y1": 0.3,
+   "x2": 0.5,
+   "y2": 0.62,
+   "feather": 45,
+   "invert": 0,
+   "angle": 0.0,
+   "midpoint": 50.0,
+   "amount": 100.0
+  },
+  "radial": {
+   "type": "radial",
+   "x1": 0.5,
+   "y1": 0.5,
+   "x2": 0.72,
+   "y2": 0.5,
+   "feather": 35,
+   "invert": 0,
+   "angle": 0.0,
+   "midpoint": 50.0,
+   "amount": 100.0
+  }
+ }
+}

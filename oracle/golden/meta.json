@@ -1,0 +1,10 @@
+{
+ "frames_dir": "D:\\work\\project\\pycharm\\p\\pythonProject4\\aligned_lr3",
+ "count": 24,
+ "long_side": 512,
+ "python": "3.13.9",
+ "numpy": "2.5.3",
+ "opencv": "5.0.0",
+ "platform": "Windows-11-10.0.26200-SP0",
+ "luma_sha256": "547d729ce4a000be7be1eb3b452786f82fc3075df85728d222b4d7d78aa52d63"
+}

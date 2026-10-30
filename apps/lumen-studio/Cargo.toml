@@ -1,0 +1,19 @@
+[package]
+name = "lumen-studio"
+description = "光时 · Lumen Studio 桌面程序"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+# 包名跟目录一致，产物叫 lumen.exe。
+[[bin]]
+name = "lumen"
+path = "src/main.rs"
+
+[dependencies]
+lumen-core.workspace = true
+lumen-ui.workspace = true
+lumen-mcp.workspace = true
+eframe.workspace = true
+# 只用来把 assets/app.png 解成窗口图标；工作区里已在编，离线可用。
+image.workspace = true

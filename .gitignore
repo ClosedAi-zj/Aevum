@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtualenv / IDE
+.venv/
+venv/
+.idea/
+
+# 素材与成片（太大，不进版本库）
+aligned*/
+photos/
+out/
+*.mp4
+*.cube
+preview_*.jpg
+
+# 测试产物
+tests/_tmp*/
+# 截图由测试生成、不入库，但目录要在：测试脚本直接往 shots/ 写文件
+shots/*
+!shots/.gitkeep
+
+# 旧实现与内部评审记录（本地保留，不进版本库）
+archive/
+docs/
+
+# 打包产物（onedir 是整个文件夹，不进版本库）
+dist/
+build/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Rust
+target/

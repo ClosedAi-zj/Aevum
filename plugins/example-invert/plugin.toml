@@ -1,0 +1,31 @@
+# 一个可以直接抄的插件清单。
+#
+# 想看它在菜单里长什么样：
+#   LUMEN_PLUGINS=D:/work/project/pycharm/p/lapse-studio/plugins cargo run --bin lumen -- --demo
+# 然后打开「插件」菜单，最下面会多出「示例」组。
+
+[plugin]
+id = "lumen.example-invert"
+name = "示例：反相"
+version = "1.0"
+vendor = "Lumen"
+# filter = 拿一张图出一张图；decoder = 把 RAW 解成线性图；export = 把成片写出去
+kind = "filter"
+# 入口相对本文件所在目录。空串表示由宿主内部实现，不起独立进程。
+entry = "bin/invert.exe"
+description = "把每个像素反相，用来验证宿主协议；强度 0% 时原样返回"
+
+[menu]
+# 第一段只能是 file / edit / develop / view / module / plug / help
+path = "plug/example"
+label = "反相…"
+
+# 面板由这张表生成，插件自己不画 UI。
+[[params.item]]
+key = "strength"
+label = "强度"
+min = 0.0
+max = 100.0
+default = 100.0
+decimals = 0
+unit = "%"

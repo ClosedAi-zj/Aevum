@@ -1,0 +1,101 @@
+{
+  "target": "E:/code/lumen-studio/crates/lumen-ui/src/shell",
+  "source": "E:/code/lumen-studio/crates/lumen-ui/src/shell/mod.rs",
+  "modules": {
+    "chrome": {
+      "doc": "窗口镶边：拖拽缩放区、三枚窗口按钮（mac 红绿灯 / Win 几何）。",
+      "items": [
+        "RESIZE_ZONE",
+        "WINBTN_W",
+        "WINBTN_ZONE_W",
+        "WINBTN_INSET",
+        "WINBTN_R",
+        "WINBTN_STROKE",
+        "WIN_CLOSE_HOT",
+        "window_resize",
+        "window_buttons",
+        "mac_lights",
+        "win_buttons",
+        "chrome_tests"
+      ]
+    },
+    "menu": {
+      "doc": "顶部菜单行与全局输入：菜单/菜单项/四个下拉、键盘与滚轮分发。",
+      "items": [
+        "menu_row",
+        "menu_style",
+        "menu_item",
+        "file_menu",
+        "edit_menu",
+        "develop_menu",
+        "view_menu",
+        "help_menu",
+        "handle_input",
+        "digit_key",
+        "fit_view",
+        "actual_size",
+        "chrome_labels_tests"
+      ]
+    },
+    "dialogs": {
+      "doc": "系统对话框：打开照片/序列、XMP 导入导出、.cube 导入导出、音轨选择。",
+      "items": [
+        "open_dialog",
+        "open_photos_dialog",
+        "rescan",
+        "import_xmp_dialog",
+        "export_xmp_dialog",
+        "import_look_dialog",
+        "export_look_dialog",
+        "choose_audio",
+        "codec_label"
+      ]
+    },
+    "toolbar": {
+      "doc": "选项栏/文档页签/工具轨/状态栏（界面顶部与左右竖条）。",
+      "items": [
+        "options_bar",
+        "doc_tab",
+        "tool_rail",
+        "bar_button",
+        "bar_primary",
+        "bar_chip",
+        "bar_value",
+        "status_bar",
+        "ctx_seg"
+      ]
+    },
+    "canvas": {
+      "doc": "画布区：图像绘制、裁剪/运动叠加、手柄、标尺与空态。",
+      "items": [
+        "canvas_panel",
+        "crop_overlay",
+        "motion_overlay",
+        "resize_cursor",
+        "crop_handles",
+        "chip_label",
+        "draw_rulers",
+        "empty_state"
+      ]
+    },
+    "timeline": {
+      "doc": "底部两行：时间线、曲线、色标、胶片条与走带控制。",
+      "items": [
+        "timeline",
+        "curves",
+        "label_color",
+        "filmstrip",
+        "transport"
+      ]
+    },
+    "dock": {
+      "doc": "右坞骨架：页签容器、直方图与平滑辅助。",
+      "items": [
+        "dock_panel",
+        "histogram",
+        "smooth_twice",
+        "dock_paint_tests"
+      ]
+    }
+  }
+}

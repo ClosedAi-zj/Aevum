@@ -1,0 +1,37 @@
+[package]
+name = "lumen-core"
+description = "光时 · Lumen Studio 的核心：序列、测光、去闪烁、曲线与调色参数"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+image.workspace = true
+skrifa.workspace = true
+rawler = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints.clippy]
+# 金标测试按 Python 基准的写法逐字段填参数结构，读起来跟 oracle 的 dict 更新一对一，
+# 换成结构体初始化反而核对不了。
+field_reassign_with_default = "allow"
+# 像素循环保留下标写法，好跟 numpy 的数组运算逐行对照；改成迭代器会把 w/h 的
+# 行列关系藏进 enumerate，金标比对时更难核。
+needless_range_loop = "allow"
+# `as_chunks::<3>().0` 和 `chunks_exact(3)` 生成的迭代完全一样，但多一层 `.0` 投影，
+# 核心这些三步一组的循环里反而更难读。
+chunks_exact_to_as_chunks = "allow"
+
+[features]
+# RAW 第三方解码后端。默认开启；离线或想回退内置 CFA/预览路径时
+# 用 `--no-default-features` 构建，行为与 v0.3.0 完全一致。
+default = ["raw-rawler"]
+raw-rawler = ["dep:rawler"]
