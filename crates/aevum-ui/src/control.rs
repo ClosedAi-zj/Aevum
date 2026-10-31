@@ -1193,6 +1193,23 @@ mod tests {
         assert_eq!(ids.len(), count, "命令 ID 不能重复");
     }
 
+    /// 命令目录与 `aevum_core::mcp_routes::COMMANDS` 必须逐条一致。
+    ///
+    /// 那张表是 core 侧的 ID 副本，附着模式的工具名生成与路由全靠它。
+    /// 副本漂一条，就是「GUI 能执行、MCP 却路由不到」或者反过来——
+    /// 而这种错在运行时会表现成「未知工具」，没人会想到是两张表对不上。
+    /// 只比集合不比顺序：顺序是给人读的，不影响路由。
+    #[test]
+    fn catalog_matches_core_command_table() {
+        use std::collections::BTreeSet;
+        let actual: BTreeSet<&str> = command_catalog().iter().map(|spec| spec.id).collect();
+        let expected: BTreeSet<&str> = aevum_core::mcp_routes::COMMANDS.iter().copied().collect();
+        let missing: Vec<&str> = expected.difference(&actual).copied().collect();
+        let extra: Vec<&str> = actual.difference(&expected).copied().collect();
+        assert!(missing.is_empty(), "命令目录缺这些 ID：{missing:?}");
+        assert!(extra.is_empty(), "命令目录多出这些 ID：{extra:?}");
+    }
+
     #[test]
     fn attach_command_and_config_mention_the_control_file() {
         let path = Path::new("D:/frames/.aevum/control.json");

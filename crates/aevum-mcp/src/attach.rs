@@ -32,10 +32,12 @@ pub struct ControlTarget {
     pub version: String,
 }
 
-/// 兜底工具表：GUI 没开 / 读不到 `system.commands` 时也能回答 `tools/list`。
+/// GUI 离线时的**描述表**：只提供一行中文说明，工具清单本体另有出处。
 ///
-/// 与 `aevum-ui` 的 `control::command_catalog` 是同一批命令 ID；描述在这里
-/// 压缩成一行，GUI 在线时以 GUI 返回的说明为准。
+/// 清单本体是 [`aevum_core::mcp_routes::COMMANDS`]（命令目录的 ID 副本）。
+/// 这里写到的命令用这段说明，没写到的用 [`GUI_OFFLINE_DESCRIPTION`] 兜底。
+/// 拆开的好处是「清单完整」与「文案齐全」互不牵制：补一条新命令时，
+/// 忘了写描述最坏也就是说明笼统一句，不会让命令本身缺席。
 const FALLBACK_TOOLS: &[(&str, &str)] = &[
     (
         "sequence.info",
@@ -510,13 +512,24 @@ fn tool_list(target: &ControlTarget, warned: &mut bool) -> Vec<Value> {
     }
 }
 
+/// GUI 离线时的工具清单：由命令目录派生，与在线时同为 72 条。
+///
+/// 清单本体不再单独维护。从前这里直接遍历 [`FALLBACK_TOOLS`]，于是「描述表」与
+/// 「清单」是同一份东西：加一条命令时必须记得同时补一条描述，否则它就从离线清单里
+/// 消失，而且看不出来是漏了。现在清单来自 [`aevum_core::mcp_routes::COMMANDS`]，
+/// 描述表只负责文案，漏写一条只会让说明笼统些。
 fn fallback_tools() -> Vec<Value> {
-    FALLBACK_TOOLS
+    aevum_core::mcp_routes::COMMANDS
         .iter()
-        .map(|(id, description)| {
+        .map(|id| {
+            let description = FALLBACK_TOOLS
+                .iter()
+                .find(|(command, _)| command == id)
+                .map(|(_, text)| *text)
+                .unwrap_or(GUI_OFFLINE_DESCRIPTION);
             json!({
                 "name": mcp_name(id),
-                "description": *description,
+                "description": description,
                 "inputSchema": {
                     "type": "object",
                     "additionalProperties": true,
@@ -527,16 +540,20 @@ fn fallback_tools() -> Vec<Value> {
         .collect()
 }
 
+/// 描述表没覆盖到的命令共用这一句。
+///
+/// 眼下 72 条命令的描述都在 [`FALLBACK_TOOLS`] 里，所以这段文案还走不到。
+/// 留着是因为清单来自命令目录、描述靠人工补：将来新增命令时，
+/// 中间那段「清单已有、文案未写」的空窗不该让 agent 读到空字符串。
+const GUI_OFFLINE_DESCRIPTION: &str =
+    "（GUI 离线，暂无详细说明；启动 GUI 后重新拉取 tools/list 可看到参数说明）";
+
 fn call_tool(id: Value, params: &Value, target: &ControlTarget) -> Value {
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return error_response(id, -32602, "tools/call 缺少 name");
     };
     let Some(command) = resolve_command(name) else {
-        return error_response(
-            id,
-            -32602,
-            &format!("未知工具：{name}（附着模式只暴露 GUI 命令，用 tools/list 查看）"),
-        );
+        return error_response(id, -32602, &unknown_tool_message(name));
     };
     let arguments = params
         .get("arguments")
@@ -570,32 +587,59 @@ fn call_tool(id: Value, params: &Value, target: &ControlTarget) -> Value {
 /// MCP 工具名：`sequence.info` → `aevum_sequence_info`。
 ///
 /// 严格客户端只接受 `[A-Za-z0-9_-]`，所以工具名不能带点；命令 ID 仍保留点号。
+/// 实现只有一份，在 `aevum_core::mcp_routes`——本函数只是本地别名。
 pub fn mcp_name(command: &str) -> String {
-    format!("aevum_{}", command.replace('.', "_"))
+    aevum_core::mcp_routes::mcp_name(command)
 }
 
-/// 工具名 → 命令 ID。兼容旧名字（`lumen_*`）与词序不一致的两个命令。
+/// 工具名 → 命令 ID。
 ///
-/// 先做一次命名空间规范化：`lumen_open_sequence` → `aevum_open_sequence`，
-/// 于是**旧名和新名走同一条查表路径**，行为逐字节相同。
+/// 两条查表路径合起来覆盖两个命名空间：
+/// 1. 服务模式的 34 个工具名（`aevum_xmp_read` 这种与命令 ID 对不齐的历史拼法也在此）；
+/// 2. GUI 命令目录的 72 个名字（`aevum_library_add`、`aevum_history_undo` 等）。
+///
+/// 旧前缀 `lumen_*` 先规范化，于是新旧名走**同一条**路，行为逐字节相同。
+///
+/// 返回 `None` 的语义是「这个名字既不是工具、也不是 GUI 命令」；
+/// 「工具存在但 GUI 没这项能力」也是 `None`，调用方用 [`is_known_tool`] 区分。
 pub fn resolve_command(name: &str) -> Option<&'static str> {
-    let name = aevum_core::brand::canonical_tool(name);
-    let name = name.as_ref();
-    const ALIASES: &[(&str, &str)] = &[
-        // 只有「工具名与 mcp_name(命令 ID) 对不上」的才需要显式条目。
-        // `align.run` 的工具名是 `aevum_align`（去掉了 `.run`），但
-        // `mcp_name("align.run")` = `aevum_align_run`，所以它必须显式列出来。
-        ("aevum_align", "align.run"),
-        ("aevum_open_sequence", "sequence.open"),
-        ("aevum_sequence_info", "sequence.info"),
-    ];
-    if let Some((_, command)) = ALIASES.iter().find(|(alias, _)| *alias == name) {
+    let canonical = aevum_core::brand::canonical_tool(name);
+    let name = canonical.as_ref();
+    if let Some(command) = aevum_core::mcp_routes::tool_command(name) {
         return Some(command);
     }
-    FALLBACK_TOOLS
+    // 直接给命令 ID 也认：控制通道的原生客户端就是这么传的，
+    // 早先的 `resolve_command("grade.set")` 一直返回 `Some("grade.set")`。
+    if let Some(command) = aevum_core::mcp_routes::COMMANDS
         .iter()
-        .map(|(id, _)| *id)
-        .find(|id| mcp_name(id) == name || *id == name)
+        .copied()
+        .find(|id| *id == name)
+    {
+        return Some(command);
+    }
+    aevum_core::mcp_routes::command_for_mcp_name(name)
+}
+
+/// 这个名字是不是已知的服务模式工具（不区分附着模式能不能跑）。
+pub fn is_known_tool(name: &str) -> bool {
+    let canonical = aevum_core::brand::canonical_tool(name);
+    aevum_core::mcp_routes::is_known_tool(canonical.as_ref())
+}
+
+/// 解析失败时的提示语：把「名字拼错」和「GUI 没这项能力」分开说。
+///
+/// 以前两种情况共用一句「未知工具」。可 `aevum_measure` 这类名字在服务模式的
+/// `tools/list` 里是实打实存在的，用户把同一条客户端配置切到附着模式之后照旧调用，
+/// 得到「未知工具」，于是一直在检查自己的拼写。
+fn unknown_tool_message(name: &str) -> String {
+    if is_known_tool(name) {
+        format!(
+            "{name} 只在服务模式可用：GUI 控制通道没有对应命令，--attach 附着跑不了它。\
+             改用 aevum --mcp 直连，或 tools/list 查看附着模式支持的 72 条命令"
+        )
+    } else {
+        format!("未知工具：{name}（附着模式只暴露 GUI 命令，用 tools/list 查看）")
+    }
 }
 
 // ---------------------------------------------------------------- 控制通道客户端
@@ -791,6 +835,91 @@ mod tests {
         assert_eq!(resolve_command("aevum_align"), Some("align.run"));
         assert_eq!(resolve_command("aevum_export_video"), Some("export.video"));
         assert_eq!(resolve_command("aevum_nope"), None);
+    }
+
+    /// 附着模式的工具清单是从 GUI 命令目录现生成的（72 条），所以**每一个**名字
+    /// 都必须能路由回去。少一条就是「列在 tools/list 里、一调就报未知工具」。
+    ///
+    /// 这是守卫而非回归：修复前那条兜底表恰好也是 72 条完整覆盖，所以本测试在旧代码上
+    /// 同样会绿。它防的是将来——清单与路由表分家之后，谁也别想靠"我记得补了"过关。
+    #[test]
+    fn every_catalog_command_is_routable_in_attach_mode() {
+        for id in aevum_core::mcp_routes::COMMANDS {
+            let name = mcp_name(id);
+            assert_eq!(resolve_command(&name), Some(*id), "{name} 路由不到 {id}");
+            // 控制通道的原生客户端直接传命令 ID，也得认
+            assert_eq!(resolve_command(id), Some(*id), "{id} 本身应当可路由");
+        }
+    }
+
+    /// 服务模式的 34 个工具名一个都不能漏。历史上漏的正是 `xmp_read/write`
+    /// （命令叫 import/export）与 `align`（命令叫 align.run）。
+    #[test]
+    fn every_server_tool_name_is_recognized() {
+        for route in aevum_core::mcp_routes::TOOL_ROUTES {
+            assert!(is_known_tool(route.tool), "{} 没被认出来", route.tool);
+            match route.command {
+                Some(command) => assert_eq!(
+                    resolve_command(route.tool),
+                    Some(command),
+                    "{} 应当路由到 {command}",
+                    route.tool
+                ),
+                None => assert_eq!(
+                    resolve_command(route.tool),
+                    None,
+                    "{} 在 GUI 侧没有对应命令，不该有路由",
+                    route.tool
+                ),
+            }
+        }
+    }
+
+    /// 离线清单必须和在线清单一样长（72 条），只允许描述详细度不同。
+    /// 同一个客户端换台机器（GUI 开没开）不该看到两套工具集。
+    #[test]
+    fn offline_list_covers_the_whole_catalog() {
+        let tools = fallback_tools();
+        let names: Vec<String> = tools
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert_eq!(names.len(), aevum_core::mcp_routes::COMMANDS.len());
+        for id in aevum_core::mcp_routes::COMMANDS {
+            let name = mcp_name(id);
+            assert!(names.contains(&name), "离线清单缺 {name}");
+        }
+        // 描述不能空着：空字符串会让 agent 以为这个工具没有说明
+        for tool in &tools {
+            assert!(!tool["description"].as_str().unwrap_or("").is_empty());
+        }
+    }
+
+    /// 描述补充表里**不能有**不存在的命令：写错了不会报错，只会让那段文案
+    /// 永远匹配不上、静默失效——而它的作者以为自己写好了。
+    #[test]
+    fn fallback_descriptions_only_describe_real_commands() {
+        for (command, _) in FALLBACK_TOOLS {
+            assert!(
+                aevum_core::mcp_routes::COMMANDS.contains(command),
+                "FALLBACK_TOOLS 里的 {command} 不在命令目录里"
+            );
+        }
+    }
+
+    /// 「名字拼错」与「GUI 没这项能力」必须是两句不同的话。
+    /// 共用一句「未知工具」会让用户对着正确的拼写反复检查。
+    #[test]
+    fn unknown_tool_message_distinguishes_two_causes() {
+        let gui_lacks = unknown_tool_message("aevum_measure");
+        assert!(gui_lacks.contains("只在服务模式"), "{gui_lacks}");
+        assert!(!gui_lacks.contains("未知工具"), "{gui_lacks}");
+        // 旧前缀也要识别成同一个工具
+        assert!(unknown_tool_message("lumen_measure").contains("只在服务模式"));
+
+        let typo = unknown_tool_message("aevum_nope");
+        assert!(typo.contains("未知工具"), "{typo}");
+        assert!(!typo.contains("只在服务模式"), "{typo}");
     }
 
     /// C14：附着模式下用**旧工具名**（改名前的 `lumen_*`）也要能解析到同一个命令。
@@ -1004,5 +1133,672 @@ mod tests {
         assert_eq!(response["result"]["isError"], json!(false));
         let text = response["result"]["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("自定义"), "{text}");
+    }
+}
+
+// ---------------------------------------------------------------- QA 独立验收
+//
+// 刻意单独一个模块：上面的 `tests` 是实现者写的，这里只做**独立复核**——
+// 「列出来的都能调」「调得动的是对的那条」「报错分得清是哪一种」。
+// 只加测试，不碰实现。
+
+/// 独立验收测试：由验收者另写一遍，**故意不复用** `tests` 里的断言。
+///
+/// 同一个错误假设若被同一个人抄两遍，测试只是把错误说了两次。所以这里从公开行为
+/// 出发另立视角：走真实的 stdio 会话、起一个假控制端口，检查「`tools/list` 里出现的
+/// 名字都能调用、调用都落到该落的命令」，并穷举名字被改动后不会误命中。
+///
+/// `qa_newer_gui_extra_command_is_listed_but_unknown_locally` 记录的是**已知限制**：
+/// GUI 比命令行新时，多出来的命令会出现在列表里但本地解析不到——这条不是回归，
+/// 是把现状钉住，等版本比对那一轮再改。
+#[cfg(test)]
+mod qa_acceptance {
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::io::Cursor;
+    use std::net::TcpListener;
+    use std::thread::JoinHandle;
+
+    fn catalog() -> &'static [&'static str] {
+        aevum_core::mcp_routes::COMMANDS
+    }
+
+    fn target_at(port: u16) -> ControlTarget {
+        ControlTarget {
+            port,
+            token: "t".to_owned(),
+            root: String::new(),
+            version: String::new(),
+        }
+    }
+
+    /// 跑一段 stdio 会话，返回逐行解析好的响应。
+    fn stdio_session(requests: &[Value], port: u16) -> Vec<Value> {
+        let mut input = String::new();
+        for request in requests {
+            input.push_str(&serde_json::to_string(request).expect("请求可序列化"));
+            input.push('\n');
+        }
+        let mut output = Vec::new();
+        serve(
+            Cursor::new(input.into_bytes()),
+            &mut output,
+            &target_at(port),
+        )
+        .expect("stdio 会话不该断");
+        String::from_utf8(output)
+            .expect("响应是 UTF-8")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("响应是 JSON"))
+            .collect()
+    }
+
+    fn call(id: u64, name: &str) -> Value {
+        json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+               "params": {"name": name, "arguments": {}}})
+    }
+
+    fn list(id: u64) -> Value {
+        json!({"jsonrpc": "2.0", "id": id, "method": "tools/list", "params": {}})
+    }
+
+    /// 工具（错误响应）里的文案
+    fn error_text(response: &Value) -> String {
+        response["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    /// 工具调用结果里的正文
+    fn result_text(response: &Value) -> String {
+        response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    // ------------------------------------------------------------ 2. 路由完备性
+
+    #[test]
+    fn qa_every_catalog_name_routes_back_to_its_own_command() {
+        for id in catalog() {
+            let name = mcp_name(id);
+            assert_eq!(
+                resolve_command(&name),
+                Some(*id),
+                "{name} 在 tools/list 里出现过，却路由不到 {id}"
+            );
+            // 控制通道原生客户端直接传命令 ID
+            assert_eq!(resolve_command(id), Some(*id), "{id} 本身不可路由");
+        }
+    }
+
+    #[test]
+    fn qa_every_server_tool_name_matches_its_declared_route() {
+        for route in aevum_core::mcp_routes::TOOL_ROUTES {
+            assert!(is_known_tool(route.tool), "{} 不是已知工具", route.tool);
+            match route.command {
+                Some(command) => {
+                    assert_eq!(
+                        resolve_command(route.tool),
+                        Some(command),
+                        "{} 应当路由到 {command}",
+                        route.tool
+                    );
+                    assert!(
+                        catalog().contains(&command),
+                        "{} 指向的 {command} 不在命令目录里",
+                        route.tool
+                    );
+                }
+                None => {
+                    assert_eq!(
+                        resolve_command(route.tool),
+                        None,
+                        "{} 在 GUI 侧没有命令，不该解析出路由",
+                        route.tool
+                    );
+                }
+            }
+        }
+    }
+
+    /// 特别点名的三组：同名双入口、旧前缀、历史错位。
+    #[test]
+    fn qa_named_pairs_resolve_to_the_same_command() {
+        // align.run 有两个可用名字
+        assert_eq!(resolve_command("aevum_align"), Some("align.run"));
+        assert_eq!(resolve_command("aevum_align_run"), Some("align.run"));
+        assert_eq!(
+            resolve_command("aevum_align"),
+            resolve_command("aevum_align_run")
+        );
+
+        // sequence.info：新名、旧名、以及机械名三者必须一致
+        let new = resolve_command("aevum_sequence_info");
+        assert_eq!(new, Some("sequence.info"));
+        assert_eq!(resolve_command("lumen_sequence_info"), new);
+        assert_eq!(
+            resolve_command("lumen_sequence_info"),
+            resolve_command("aevum_sequence_info")
+        );
+
+        // 历史错位：read/write 与 import/export 指同一件事，都得通
+        assert_eq!(resolve_command("aevum_xmp_read"), Some("xmp.import"));
+        assert_eq!(resolve_command("aevum_xmp_import"), Some("xmp.import"));
+        assert_eq!(resolve_command("aevum_xmp_write"), Some("xmp.export"));
+        assert_eq!(resolve_command("aevum_xmp_export"), Some("xmp.export"));
+        // 旧名前缀下也要落到同一个命令
+        assert_eq!(resolve_command("lumen_xmp_read"), Some("xmp.import"));
+        assert_eq!(resolve_command("lumen_xmp_write"), Some("xmp.export"));
+
+        // 其余「词序一致」的不需要别名，机械名就对
+        assert_eq!(
+            resolve_command("aevum_open_sequence"),
+            Some("sequence.open")
+        );
+        assert_eq!(resolve_command("aevum_open_sequence_run"), None);
+    }
+
+    /// 旧前缀与新前缀：72 条命令 + 34 个工具，逐个比对必须逐字节相同。
+    #[test]
+    fn qa_legacy_prefix_agrees_with_new_prefix_everywhere() {
+        for id in catalog() {
+            let suffix = id.replace('.', "_");
+            assert_eq!(
+                resolve_command(&format!("lumen_{suffix}")),
+                resolve_command(&format!("aevum_{suffix}")),
+                "{id} 的新旧前缀解析结果不一致"
+            );
+        }
+        for route in aevum_core::mcp_routes::TOOL_ROUTES {
+            let suffix = route.tool.trim_start_matches("aevum_");
+            assert_eq!(
+                resolve_command(&format!("lumen_{suffix}")),
+                resolve_command(route.tool),
+                "{} 的新旧前缀解析结果不一致",
+                route.tool
+            );
+        }
+        // 裸前缀 / 大小写不对，都不能瞎命中
+        assert_eq!(resolve_command("lumen_"), None);
+        assert_eq!(resolve_command("aevum_"), None);
+        assert_eq!(resolve_command("lumen_nope"), None);
+    }
+
+    // ------------------------------------------------------------ 3. 反例攻击
+
+    #[test]
+    fn qa_mutated_names_never_resolve() {
+        // 一律期望 None：这些都是「不在 tools/list 里」的写法，
+        // 悄悄放行等于给 agent 一条看不见的后门。
+        for name in [
+            "AEVUM_GRADE_GET",
+            "Aevum_grade_get",
+            "aevum_GRADE_GET",
+            "aevum_grade.set",
+            "aevum.sequence.info",
+            "aevum__grade_get",
+            "aevum_grade__get",
+            "_aevum_grade_get",
+            "aevum_grade_get_",
+            "aevum_grade_get_extra",
+            " aevum_grade_get",
+            "aevum_grade_get ",
+            "aevum_grade get",
+            "aevum-grade-get",
+            "evum_grade_get",
+            "aevum_",
+            "lumen_",
+            "",
+            "grade",
+            "grade.Set",
+            "GRADE.SET",
+            "aevum_lumen_grade_get",
+            "lumen_aevum_grade_get",
+            "aevum_align.status",
+            "aevum_sequence.info",
+        ] {
+            assert_eq!(resolve_command(name), None, "{name:?} 不该被解析出来");
+        }
+
+        // 反过来：规范化之后的正确写法必须通
+        for (name, command) in [
+            ("aevum_grade_get", "grade.get"),
+            ("aevum_grade_auto", "grade.auto"),
+            ("aevum_library_stack", "library.stack"),
+            ("aevum_mask_component", "mask.component"),
+            ("aevum_history_jump", "history.jump"),
+            ("aevum_ui_screenshot", "ui.screenshot"),
+            ("aevum_sequence_check", "sequence.check"),
+        ] {
+            assert_eq!(resolve_command(name), Some(command), "{name} 应当通");
+        }
+    }
+
+    /// 查表顺序陷阱：`resolve_command` 先查 TOOL_ROUTES，再查命令 ID，最后机械匹配。
+    /// 如果某个工具名在机械匹配下能命中**另一条**命令，就会「后一条被前一条盖住」。
+    /// 这里把 34 个工具名逐个展开机械匹配集合，要求它要么为空、要么只含自己那条。
+    /// 扫描「工具名 × 机械可达的命令」，返回会被抢走的名字。
+    ///
+    /// 抽成函数是为了做**反例自检**：一个永远返回空表的检测器同样「全绿」，
+    /// 那不能当证据。
+    fn find_shadows(
+        routes: &[(&str, Option<&str>)],
+        commands: &[&str],
+    ) -> BTreeMap<String, Vec<String>> {
+        let mut shadows: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (tool, command) in routes {
+            // 机械路径（mcp_name(命令) == 这个名字）能命中哪几条命令
+            let mechanical: Vec<&str> = commands
+                .iter()
+                .copied()
+                .filter(|id| mcp_name(id) == *tool)
+                .collect();
+            for hit in mechanical {
+                // 命中自己那条命令没问题；命中别人就是覆盖
+                let expected = matches!(command, Some(own) if *own == hit);
+                if !expected {
+                    shadows
+                        .entry((*tool).to_owned())
+                        .or_default()
+                        .push(hit.to_owned());
+                }
+            }
+        }
+        shadows
+    }
+
+    #[test]
+    fn qa_no_tool_name_is_shadowed_by_a_different_command() {
+        let real: Vec<(&str, Option<&str>)> = aevum_core::mcp_routes::TOOL_ROUTES
+            .iter()
+            .map(|route| (route.tool, route.command))
+            .collect();
+        let shadows = find_shadows(&real, catalog());
+        assert!(
+            shadows.is_empty(),
+            "这些工具名会被另一条命令抢走（后一条覆盖前一条）：{shadows:?}"
+        );
+
+        // 反例自检：假设有人加了一条 `cancel` 命令，`aevum_cancel` 仍然标着
+        // 「GUI 没这项能力」——它会被静默抢走，检测器必须报出来。
+        // 同理，若命令目录里另有一条 `xmp.read`，`aevum_xmp_read` 就会同时被
+        // 登记到 `xmp.import` 又能机械命中 `xmp.read`，也必须报出来。
+        let probe = find_shadows(
+            &[
+                ("aevum_cancel", None),
+                ("aevum_xmp_read", Some("xmp.import")),
+            ],
+            &["cancel", "xmp.import", "xmp.read"],
+        );
+        assert_eq!(
+            probe.get("aevum_cancel"),
+            Some(&vec!["cancel".to_owned()]),
+            "检测逻辑抓不到「标了服务模式却被机械匹配抢走」"
+        );
+        assert_eq!(
+            probe.get("aevum_xmp_read"),
+            Some(&vec!["xmp.read".to_owned()]),
+            "检测逻辑抓不到「指向了另一条命令」"
+        );
+        // 正常的那条不该被误报
+        assert_eq!(
+            find_shadows(&[("aevum_xmp_read", Some("xmp.import"))], catalog()),
+            BTreeMap::new()
+        );
+
+        // 三条查表路径里的第二条（直接传命令 ID）也不能抢名字：
+        // 命令 ID 是「组.动作」、工具名是 aevum_ 前缀无点号，两个命名空间必须不相交。
+        for route in aevum_core::mcp_routes::TOOL_ROUTES {
+            assert!(
+                !catalog().contains(&route.tool),
+                "命令目录里出现了与工具同名的 ID：{}",
+                route.tool
+            );
+        }
+    }
+
+    /// 命令名之间也不能撞：两条命令若只差 `.` 与 `_`，机械工具名会重名，
+    /// 其中一条就永远调不到。
+    #[test]
+    fn qa_no_two_commands_share_a_tool_name() {
+        let mut by_name: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+        for id in catalog() {
+            by_name.entry(mcp_name(id)).or_default().push(id);
+        }
+        let clashes: BTreeMap<&String, &Vec<&str>> =
+            by_name.iter().filter(|(_, ids)| ids.len() > 1).collect();
+        assert!(clashes.is_empty(), "工具名重名：{clashes:?}");
+        assert_eq!(by_name.len(), 72, "72 条命令应当正好生成 72 个工具名");
+    }
+
+    /// 离线兜底清单：72 条、不重名、描述不空、每条都能路由。
+    /// 走 `serve` 的 `tools/list` 而不是直接调私有函数——这样验的是客户端真正看到的报文。
+    #[test]
+    fn qa_offline_tool_list_is_well_formed() {
+        // 端口 1 不会有人监听：tools/list 必然回落到内置清单。
+        let responses = stdio_session(&[list(1)], 1);
+        let tools = responses[0]["result"]["tools"]
+            .as_array()
+            .expect("tools 数组")
+            .clone();
+        assert_eq!(tools.len(), 72, "离线清单不是 72 条");
+
+        let mut names = Vec::new();
+        let mut described = 0usize;
+        for tool in &tools {
+            let name = tool["name"].as_str().expect("name 是字符串").to_owned();
+            let description = tool["description"].as_str().unwrap_or_default();
+            assert!(!description.trim().is_empty(), "{name} 的描述是空的");
+            assert!(
+                tool["inputSchema"].is_object(),
+                "{name} 的 inputSchema 不是对象"
+            );
+            if !description.contains("GUI 离线") {
+                described += 1;
+            }
+            assert!(
+                resolve_command(&name).is_some(),
+                "离线清单里的 {name} 路由不到任何命令"
+            );
+            names.push(name);
+        }
+        let unique: BTreeSet<&String> = names.iter().collect();
+        assert_eq!(unique.len(), 72, "离线清单里有重名工具");
+
+        // 期望集合：72 条命令的机械名，逐个比对（顺序无关）
+        let expected: BTreeSet<String> = catalog().iter().map(|id| mcp_name(id)).collect();
+        let got: BTreeSet<String> = names.iter().cloned().collect();
+        assert_eq!(got, expected, "离线清单与命令目录不是同一套名字");
+        assert!(
+            described >= 60,
+            "只有 {described} 条写了具体描述，其余全是通用说明"
+        );
+    }
+
+    // ------------------------------------------------------------ 4. 报错路径
+
+    #[test]
+    fn qa_error_branches_are_reachable_at_runtime() {
+        // 这些名字都过不了 resolve_command，于是走 unknown_tool_message。
+        let gui_lacks = [
+            "aevum_measure",
+            "aevum_deflicker_analyze",
+            "aevum_keyframe_add",
+            "aevum_keyframe_remove",
+            "aevum_keyframe_list",
+            "aevum_render_preview",
+            "aevum_cancel",
+        ];
+        let mut requests = Vec::new();
+        for (index, name) in gui_lacks.iter().enumerate() {
+            requests.push(call(index as u64 + 1, name));
+        }
+        // 旧前缀 + 两个拼错的 + 一个大小写错的
+        requests.push(call(100, "lumen_measure"));
+        requests.push(call(101, "lumen_keyframe_list"));
+        requests.push(call(102, "aevum_nope"));
+        requests.push(call(103, "AEVUM_GRADE_GET"));
+
+        let responses = stdio_session(&requests, 1);
+        assert_eq!(responses.len(), requests.len(), "每条请求都该有响应");
+
+        for (index, name) in gui_lacks.iter().enumerate() {
+            let text = error_text(&responses[index]);
+            assert_eq!(responses[index]["error"]["code"], json!(-32602));
+            assert!(
+                text.contains("只在服务模式"),
+                "{name} 应当报「只在服务模式可用」，实际：{text}"
+            );
+            assert!(!text.contains("未知工具"), "{name} 被误判成拼错了：{text}");
+            assert!(text.contains("72"), "{name} 的提示没给出核对办法：{text}");
+        }
+
+        // 旧名要归到「GUI 没能力」，不是「拼错」
+        for offset in [100usize, 101] {
+            let index = offset - 100 + gui_lacks.len();
+            let text = error_text(&responses[index]);
+            assert!(
+                text.contains("只在服务模式"),
+                "旧名应当报「只在服务模式可用」，实际：{text}"
+            );
+            assert!(!text.contains("未知工具"), "旧名被误判成拼错：{text}");
+        }
+
+        // 拼错的必须报「未知工具」
+        for offset in [102usize, 103] {
+            let index = offset - 100 + gui_lacks.len();
+            let text = error_text(&responses[index]);
+            assert!(
+                text.contains("未知工具"),
+                "拼错的名字应当报「未知工具」，实际：{text}"
+            );
+            assert!(!text.contains("只在服务模式"), "{text}");
+        }
+    }
+
+    // ------------------------------------------------------------ 在线链路（假 GUI）
+
+    /// 假 GUI：`system.commands` 回它的命令目录，其它方法把收到的命令 ID 原样回显。
+    /// 目录外的方法按 `control.rs::rpc_response` 的口径回 -32601。
+    struct FakeGui {
+        port: u16,
+        seen: JoinHandle<Vec<String>>,
+    }
+
+    fn spawn_fake_gui(catalog: Vec<(String, String)>, expected: usize) -> FakeGui {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("绑定假控制端口");
+        // 非阻塞 + 截止时间：连接数对不上时宁可报错，也不要让整个测试二进制挂住。
+        listener.set_nonblocking(true).expect("设置非阻塞");
+        let port = listener.local_addr().expect("本地地址").port();
+        let seen = std::thread::spawn(move || {
+            let mut methods = Vec::new();
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            while methods.len() < expected {
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "假 GUI 等不到第 {} 个连接（预期共 {expected} 个）",
+                            methods.len() + 1
+                        );
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(e) => panic!("接受控制连接失败：{e}"),
+                };
+                stream.set_nonblocking(false).expect("恢复阻塞模式");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("设置读超时");
+                let mut reader = BufReader::new(stream.try_clone().expect("克隆流"));
+                let mut request_line = String::new();
+                reader.read_line(&mut request_line).expect("读请求行");
+                assert!(
+                    request_line.starts_with("POST /rpc HTTP/1.1"),
+                    "{request_line}"
+                );
+                let mut length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).expect("读头") == 0 {
+                        break;
+                    }
+                    let line = line.trim_end_matches(['\r', '\n']);
+                    if line.is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':')
+                        && name.trim().eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().expect("Content-Length");
+                    }
+                }
+                let mut body = vec![0u8; length];
+                reader.read_exact(&mut body).expect("读请求体");
+                let request: Value = serde_json::from_slice(&body).expect("请求是 JSON");
+                let method = request["method"].as_str().unwrap_or_default().to_owned();
+                methods.push(method.clone());
+
+                let payload = if method == "system.commands" {
+                    let commands: Vec<Value> = catalog
+                        .iter()
+                        .map(|(id, summary)| {
+                            json!({
+                                "id": id,
+                                "summary": summary,
+                                "params": "无参数",
+                                "schema": {"type": "object"},
+                            })
+                        })
+                        .collect();
+                    json!({"jsonrpc": "2.0", "id": 1, "result": {"commands": commands}})
+                } else if catalog.iter().any(|(id, _)| *id == method) {
+                    json!({"jsonrpc": "2.0", "id": 1, "result": {"echo": method}})
+                } else {
+                    json!({"jsonrpc": "2.0", "id": 1,
+                           "error": {"code": -32601, "message": format!("未知命令：{method}")}})
+                };
+                let text = serde_json::to_string(&payload).expect("响应可序列化");
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    text.len(),
+                    text
+                )
+                .expect("写响应");
+                stream.flush().expect("刷新");
+            }
+            methods
+        });
+        FakeGui { port, seen }
+    }
+
+    fn full_catalog() -> Vec<(String, String)> {
+        catalog()
+            .iter()
+            .map(|id| ((*id).to_owned(), format!("{id} 的说明")))
+            .collect()
+    }
+
+    /// 在线：`tools/list` 列出的每一条都必须调得动，而且要落到**它自己**那条命令。
+    #[test]
+    fn qa_online_list_entries_are_all_callable_and_land_on_the_right_command() {
+        let gui = spawn_fake_gui(full_catalog(), 1 + 72);
+        let mut requests = vec![list(0)];
+        for (index, id) in catalog().iter().enumerate() {
+            requests.push(call(index as u64 + 1, &mcp_name(id)));
+        }
+        let responses = stdio_session(&requests, gui.port);
+        let seen = gui.seen.join().expect("假 GUI 线程");
+
+        let tools = responses[0]["result"]["tools"]
+            .as_array()
+            .expect("tools 数组");
+        assert_eq!(tools.len(), 72, "在线清单不是 72 条");
+
+        let listed: BTreeSet<String> = tools
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        let expected: BTreeSet<String> = catalog().iter().map(|id| mcp_name(id)).collect();
+        assert_eq!(listed, expected, "在线清单与命令目录不是同一套名字");
+
+        for (index, id) in catalog().iter().enumerate() {
+            let response = &responses[index + 1];
+            assert_eq!(
+                response["result"]["isError"],
+                json!(false),
+                "{id} 调不动：{response}"
+            );
+            let echoed: Value = serde_json::from_str(&result_text(response)).expect("回显是 JSON");
+            assert_eq!(echoed["echo"], json!(id), "{id} 落到了别的命令：{echoed}");
+        }
+
+        // 第一条是拉清单，其后每条都必须正好是它对应的命令 ID，一个不多一个不少
+        assert_eq!(seen[0], "system.commands");
+        let forwarded: BTreeSet<String> = seen[1..].iter().cloned().collect();
+        let expected_ids: BTreeSet<String> = catalog().iter().map(|id| (*id).to_owned()).collect();
+        assert_eq!(forwarded, expected_ids, "转给 GUI 的命令集合不对");
+        assert_eq!(seen.len(), 73);
+    }
+
+    /// 跨版本推演之一：**旧 GUI（60 条）+ 新 MCP（72 条）**。
+    /// `tools/list` 从 GUI 取，于是只列 60 条，而这 60 条都能路由——
+    /// 不会产生新的「列出来调不动」。本地多出来的 12 条没被列出，但若被硬调，
+    /// 会被 GUI 以 -32601 拒掉，落到 isError:true 的业务错误（不挂、不报「未知工具」）。
+    #[test]
+    fn qa_older_gui_subset_is_listed_and_callable() {
+        let older = full_catalog().into_iter().take(60).collect::<Vec<_>>();
+        let absent: Vec<&str> = catalog().iter().skip(60).copied().collect();
+        assert_eq!(absent.len(), 12, "跨版本场景按 60/72 推演");
+
+        let gui = spawn_fake_gui(older, 1 + 60 + 1);
+        let mut requests = vec![list(0)];
+        for (index, id) in catalog().iter().take(60).enumerate() {
+            requests.push(call(index as u64 + 1, &mcp_name(id)));
+        }
+        // 再硬调一条旧 GUI 没有的
+        requests.push(call(999, &mcp_name(absent[0])));
+
+        let responses = stdio_session(&requests, gui.port);
+        let _ = gui.seen.join().expect("假 GUI 线程");
+
+        let tools = responses[0]["result"]["tools"]
+            .as_array()
+            .expect("tools 数组");
+        assert_eq!(tools.len(), 60, "旧 GUI 只报 60 条");
+
+        for (index, id) in catalog().iter().take(60).enumerate() {
+            let response = &responses[index + 1];
+            assert_eq!(
+                response["result"]["isError"],
+                json!(false),
+                "{id} 在旧 GUI 上列出来了却调不动：{response}"
+            );
+            let echoed: Value = serde_json::from_str(&result_text(response)).expect("回显是 JSON");
+            assert_eq!(echoed["echo"], json!(id));
+        }
+
+        // 本地表里多出来的那条：路由得到（本地表是新的），但 GUI 拒收 → 业务错误
+        let extra = &responses[61];
+        assert!(extra.get("error").is_none(), "不该是协议错误：{extra}");
+        assert_eq!(extra["result"]["isError"], json!(true));
+        let text = result_text(extra);
+        assert!(text.contains("未知命令"), "应当是 GUI 侧的未知命令：{text}");
+        assert!(
+            !text.contains("只在服务模式"),
+            "不该说成「只在服务模式」：{text}"
+        );
+    }
+
+    /// 跨版本推演之二：**新 GUI（72+）+ 旧 MCP**。这是真正会「列出来调不动」的方向：
+    /// `tools/list` 从 GUI 取，本地表却认不出新命令。
+    #[test]
+    fn qa_newer_gui_extra_command_is_listed_but_unknown_locally() {
+        let mut newer = full_catalog();
+        newer.push(("library.tags".to_owned(), "新命令".to_owned()));
+        // 只有一次连接：那条新命令在本地就解析不出来，压根到不了 GUI。
+        let gui = spawn_fake_gui(newer, 1);
+        let responses = stdio_session(&[list(0), call(1, "aevum_library_tags")], gui.port);
+        let _ = gui.seen.join().expect("假 GUI 线程");
+
+        let tools = responses[0]["result"]["tools"]
+            .as_array()
+            .expect("tools 数组");
+        assert_eq!(tools.len(), 73);
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool["name"] == json!("aevum_library_tags")),
+            "新 GUI 的命令会出现在 tools/list 里"
+        );
+
+        let response = &responses[1];
+        assert_eq!(response["error"]["code"], json!(-32602));
+        assert!(error_text(response).contains("未知工具"), "{response}");
     }
 }

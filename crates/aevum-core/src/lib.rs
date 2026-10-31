@@ -31,6 +31,7 @@ pub mod lcp;
 pub mod lensdb;
 pub mod library;
 pub mod mask;
+pub mod mcp_routes;
 pub mod measures;
 pub mod metrics;
 pub mod pano;

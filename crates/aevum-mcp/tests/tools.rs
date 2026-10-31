@@ -825,3 +825,48 @@ fn every_tool_has_an_explicit_write_classification() {
         );
     }
 }
+
+/// 工具集与 `aevum_core::mcp_routes::TOOL_ROUTES` 必须一一对应。
+///
+/// 那张表记录「每个工具在附着模式下落到哪条 GUI 命令」。多一个工具没登记，
+/// 附着模式就路由不到它；登记了一个不存在的工具，就是一条永远不会被调到的死路。
+///
+/// 价值同上一张表：新建工具时忘了登记，这里会红在本地，而不是上线之后
+/// 由用户报告「附着模式不认识 aevum_xxx」。
+#[test]
+fn tool_set_matches_the_mcp_route_table() {
+    use std::collections::BTreeSet;
+
+    let actual: BTreeSet<&str> = aevum_mcp::commands().iter().map(|c| c.id).collect();
+    let routed: BTreeSet<&str> = aevum_core::mcp_routes::TOOL_ROUTES
+        .iter()
+        .map(|route| route.tool)
+        .collect();
+
+    let unrouted: Vec<&str> = actual.difference(&routed).copied().collect();
+    let phantom: Vec<&str> = routed.difference(&actual).copied().collect();
+    assert!(
+        unrouted.is_empty(),
+        "这些工具没登记在 TOOL_ROUTES 里，附着模式路由不到：{unrouted:?}"
+    );
+    assert!(
+        phantom.is_empty(),
+        "TOOL_ROUTES 登记了不存在的工具：{phantom:?}"
+    );
+}
+
+/// 反向守卫：路径表里标了「GUI 有对应命令」的，那条命令必须真的在命令目录里。
+/// 这一条由 core 自己的测试保证，这里再从 mcp 视角确认一遍调用得到。
+#[test]
+fn routed_commands_point_at_real_catalog_entries() {
+    for route in aevum_core::mcp_routes::TOOL_ROUTES {
+        let Some(command) = route.command else {
+            continue;
+        };
+        assert!(
+            aevum_core::mcp_routes::COMMANDS.contains(&command),
+            "{} 指向的 {command} 不在命令目录里",
+            route.tool
+        );
+    }
+}
