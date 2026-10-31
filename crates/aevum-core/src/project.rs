@@ -522,15 +522,41 @@ pub fn project_path(root: &Path) -> PathBuf {
 }
 
 pub fn load(path: &Path) -> Result<ProjectFile, ProjectError> {
-    let text = std::fs::read_to_string(path)?;
-    let project: ProjectFile = serde_json::from_str(&text)?;
+    // 主文件读不了/坏了回落 .bak：save 换新文件前会把旧文件原子地改名成
+    // bak，bak 里是上一次确认可用的版本。bak 不存在或也坏才交出原始错误。
+    let primary = match std::fs::read_to_string(path) {
+        Ok(text) => parse_project(&text),
+        Err(e) => Err(ProjectError::from(e)),
+    };
+    match primary {
+        Ok(p) => Ok(p),
+        Err(primary_err) => {
+            let bak = path.with_extension("json.bak");
+            if bak.is_file()
+                && let Ok(text) = std::fs::read_to_string(&bak)
+                && let Ok(p) = parse_project(&text)
+            {
+                return Ok(p);
+            }
+            Err(primary_err)
+        }
+    }
+}
+
+fn parse_project(text: &str) -> Result<ProjectFile, ProjectError> {
+    let project: ProjectFile = serde_json::from_str(text)?;
     if project.version > VERSION {
         return Err(ProjectError::Version(project.version));
     }
     Ok(project)
 }
 
-/// 先写同目录临时文件再替换，避免崩溃时留下半个工程。
+/// 先写临时文件并落盘，再把旧文件原子挪成 .bak、新文件原子换上来。
+///
+/// 之前的做法是 tmp → `remove_file` → `rename`：remove 与 rename 之间
+/// 崩一下，整个工程就没了（审查确认）。现在与 `queue::save` 同一套
+/// 样板：rename 是原子的，旧文件先改名成 bak、任何一步失败旧文件都
+/// 还在，换失败就滚回去；成功后 bak 删掉。
 pub fn save(path: &Path, project: &ProjectFile) -> Result<(), ProjectError> {
     if let Some(dir) = path.parent() {
         // 目标被同名文件占住时，`create_dir_all` 抛的是系统级错误码，用户读不懂。
@@ -542,11 +568,108 @@ pub fn save(path: &Path, project: &ProjectFile) -> Result<(), ProjectError> {
     }
     let text = serde_json::to_string_pretty(project)?;
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, text)?;
-    if path.exists() {
-        // Windows 的 rename 不能覆盖已存在的目标。
-        std::fs::remove_file(path)?;
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(text.as_bytes())?;
+        // 换名前先把临时文件刷到盘上：不 sync 的话，掉电后 rename 可能已
+        // 完成而内容还没落盘，"新"文件就是半截的。
+        f.sync_all()?;
     }
-    std::fs::rename(&tmp, path)?;
+    // Windows 的 rename 不能覆盖已存在的目标，旧文件得先挪走 —— 挪成 bak
+    // 而不是 remove：中间崩了旧文件也还在。
+    let bak = path.with_extension("json.bak");
+    if path.exists() {
+        std::fs::rename(path, &bak)?;
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        // 换不上去就把旧的还回去，别让工程人间蒸发。
+        if bak.exists() {
+            let _ = std::fs::rename(&bak, path);
+        }
+        return Err(e.into());
+    }
+    let _ = std::fs::remove_file(&bak);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "aevum-project-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn save_roundtrips_and_leaves_no_debris() {
+        let dir = temp_dir("save");
+        let path = dir.join("project.json");
+        let mut project = ProjectFile::default();
+        project.params.exposure = 0.4;
+        save(&path, &project).expect("第一次保存");
+        let mut project2 = project.clone();
+        project2.params.exposure = -1.5;
+        save(&path, &project2).expect("覆盖保存");
+        // 覆盖保存后磁盘上是新值，bak 也清掉了，不留 .tmp 残骸。
+        let back = load(&path).expect("读回");
+        assert_eq!(back.params.exposure, -1.5);
+        assert!(
+            !path.with_extension("json.bak").exists(),
+            "bak 应当在成功后清掉"
+        );
+        assert!(
+            !path.with_extension("json.tmp").exists(),
+            "tmp 应当被换成名"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_falls_back_to_the_bak_when_the_main_file_is_broken() {
+        // 回归：主文件损坏（半截写入/磁盘坏块）时，只要 bak 还在就不该
+        // 丢工程 —— bak 里是上一次确认可用的版本。
+        let dir = temp_dir("bak");
+        let path = dir.join("project.json");
+        let mut project = ProjectFile::default();
+        project.params.exposure = 2.25;
+        save(&path, &project).expect("保存一份好工程");
+        // 手动造出"主文件坏、bak 还是上一版"的状态（save 成功后 bak 已清，
+        // 所以 bak 也手工写）。
+        std::fs::write(&path, "{\"version\":1,\"params\":").unwrap();
+        std::fs::write(
+            path.with_extension("json.bak"),
+            serde_json::to_string_pretty(&project).unwrap(),
+        )
+        .unwrap();
+        let back = load(&path).expect("主文件坏了应当回落 bak");
+        assert_eq!(back.params.exposure, 2.25, "回落到的应当是上一版");
+        // bak 也没有，才交出原始错误。
+        std::fs::remove_file(path.with_extension("json.bak")).unwrap();
+        let err = load(&path).expect_err("主文件坏且无 bak 应当报错");
+        assert!(
+            matches!(err, ProjectError::Json(_)),
+            "报的应当是解析错误：{err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_of_a_missing_file_reports_io_error_not_silent_default() {
+        let dir = temp_dir("missing");
+        let path = dir.join("nope.json");
+        let err = load(&path).expect_err("文件不存在应当报错");
+        assert!(matches!(err, ProjectError::Io(_)), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
