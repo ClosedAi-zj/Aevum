@@ -14,7 +14,7 @@ use rayon::prelude::*;
 /// 一帧的取景变换参数。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Framing {
-    /// 拉直角度（度）。正角 = 画面逆时针转，跟 `lapse/align.py` 的 `rotation_deg` 同向。
+    /// 拉直角度（度）。正角 = 画面逆时针转，跟 `acceptance/reference/align.py` 的 `rotation_deg` 同向。
     pub angle_deg: f64,
     /// 对齐位移（源像素）：`dst(x, y) = src(x - ox, y - oy)`。
     pub off: [f64; 2],

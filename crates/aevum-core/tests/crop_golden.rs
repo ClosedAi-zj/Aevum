@@ -1,6 +1,6 @@
-//! 选区几何与 Python `lapse/crop.py` 的基准比对。
+//! 选区几何与 Python `acceptance/reference/crop.py` 的基准比对。
 //!
-//! 基准由 `oracle/freeze_crop.py` 生成（462 条随机用例，覆盖八个把手、
+//! 基准由 `acceptance/oracle/freeze_crop.py` 生成（462 条随机用例，覆盖八个把手、
 //! 七种比例、六种画幅）。改几何先跑这个，别凭手感调。
 
 use aevum_core::align::CropRect;
@@ -11,8 +11,8 @@ use aevum_core::crop::{
 use serde_json::Value;
 
 fn golden() -> Value {
-    let path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../oracle/golden/crop.json");
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../acceptance/oracle/golden/crop.json");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("读不到基准 {}: {e}", path.display()));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("基准 crop.json 不是合法 JSON: {e}"))

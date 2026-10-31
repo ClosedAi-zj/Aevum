@@ -13,12 +13,12 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 
 from PySide6 import QtWidgets         # noqa: E402
 
-from lapse.gui import theme           # noqa: E402
-from lapse.gui import widgets         # noqa: E402
+from reference.gui import theme           # noqa: E402
+from reference.gui import widgets         # noqa: E402
 
 FAILS = []
 

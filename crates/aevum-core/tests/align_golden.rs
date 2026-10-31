@@ -21,7 +21,7 @@ fn template_matches_python_golden() {
         eprintln!("没有素材 {}，跳过金标比对", frames_dir.display());
         return;
     }
-    let golden_path = root.join("../../oracle/golden/align.json");
+    let golden_path = root.join("../../acceptance/oracle/golden/align.json");
     let golden: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&golden_path).expect("读不到金标"))
             .expect("金标不是合法 JSON");

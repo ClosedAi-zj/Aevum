@@ -1,6 +1,6 @@
 //! 序列体检：从逐帧测光里挑出坏帧 / 黑帧 / 虚焦 / 亮度离群 / 重复 / 缺口。
 //!
-//! 判定口径与 `oracle` 那一侧的 Python 实现（`lapse/qa.py`）逐条对齐，
+//! 判定口径与 `oracle` 那一侧的 Python 实现（`acceptance/reference/qa.py`）逐条对齐，
 //! 本模块不读图、不起线程：输入是 `metrics::FrameMetrics` 的逐帧表，
 //! 输出是一张可展示的清单，界面只负责画它。
 //!

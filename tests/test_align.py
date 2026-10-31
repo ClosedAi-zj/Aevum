@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""lapse/align.py 回归测试：位移估计精度 + "真实抖动不被中值平滑抹掉"。
+"""acceptance/reference/align.py 回归测试：位移估计精度 + "真实抖动不被中值平滑抹掉"。
 
 后一条是 lr3 那次翻车的根因：相机被碰了一下产生的单帧大位移，和误匹配在数值
 上都是离群点，只有匹配置信度能分开它们。这个测试就是守住这条。
@@ -14,10 +14,10 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp", "align")
 
-from lapse import align  # noqa: E402
+from reference import align  # noqa: E402
 
 FAIL = []
 TOTAL = [0]

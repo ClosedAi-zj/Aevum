@@ -12,15 +12,15 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp")
 os.makedirs(TMP, exist_ok=True)
 
 import numpy as np                       # noqa: E402
 from PySide6 import QtCore, QtWidgets     # noqa: E402
 
-from lapse import ff as ffmod            # noqa: E402
-from lapse.gui import playback           # noqa: E402
+from reference import ff as ffmod            # noqa: E402
+from reference.gui import playback           # noqa: E402
 
 W, H, N, FPS = 320, 180, 24, 24
 CLIP = os.path.join(TMP, "_play.mp4")
@@ -206,7 +206,7 @@ def test_no_console():
     """
     import ast
     bad = []
-    for dirpath, dirs, files in os.walk(os.path.join(ROOT, "lapse")):
+    for dirpath, dirs, files in os.walk(os.path.join(ROOT, "acceptance", "reference")):
         dirs[:] = [d for d in dirs if d != "__pycache__"]
         for fn in files:
             if not fn.endswith(".py"):
@@ -223,7 +223,7 @@ def test_no_console():
                     continue
                 if not any(k.arg == "creationflags" for k in node.keywords):
                     bad.append(f"{os.path.relpath(p, ROOT)}:{node.lineno}")
-    check("lapse/ 里每个子进程都关掉了控制台", not bad, "、".join(bad))
+    check("acceptance/reference/ 里每个子进程都关掉了控制台", not bad, "、".join(bad))
 
 
 def main():

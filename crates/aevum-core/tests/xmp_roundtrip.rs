@@ -46,6 +46,7 @@ fn golden_sample() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
+        .join("acceptance")
         .join("oracle")
         .join("golden")
         .join("xmp_sample.xmp")

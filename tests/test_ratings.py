@@ -15,16 +15,16 @@ import numpy as np                      # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 sys.path.insert(0, HERE)
 TMP = os.path.join(HERE, "_tmp", "ratings")
 
 from PySide6 import QtCore, QtGui, QtWidgets    # noqa: E402
 
-from lapse import qa as qa_mod                   # noqa: E402
-from lapse.gui import prefs, theme, workbench    # noqa: E402
-from lapse.gui.grader import developer           # noqa: E402
-from lapse.gui.grader import ratings as R        # noqa: E402
+from reference import qa as qa_mod                   # noqa: E402
+from reference.gui import prefs, theme, workbench    # noqa: E402
+from reference.gui.grader import developer           # noqa: E402
+from reference.gui.grader import ratings as R        # noqa: E402
 from test_qa import normal, write_set            # noqa: E402
 
 FAILS = []

@@ -14,11 +14,11 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp", "qa")
 
-from lapse import luma as luma_mod      # noqa: E402
-from lapse import qa                    # noqa: E402
+from reference import luma as luma_mod      # noqa: E402
+from reference import qa                    # noqa: E402
 
 FAILS = []
 TOTAL = [0]

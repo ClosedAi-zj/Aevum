@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """配乐：命令层单测 + 真混流端到端（延迟/混音/循环都解码回波形去量）。
 
-长度算式与命令都在 lapse/audio.py，先钉死纯函数；再走真界面：
+长度算式与命令都在 acceptance/reference/audio.py，先钉死纯函数；再走真界面：
 装视频 -> 装配乐 -> 出片 -> 用 ffmpeg 把成片的音频解成 wav，数静音、做 FFT。
 "文件里有一条音频流"证明不了延迟真的生效，只有波形上的静音长度能证明。
 用法： PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe tests/test_audio.py
@@ -15,7 +15,7 @@ import wave
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp")
 SHOTS = os.path.join(ROOT, "shots")
 os.makedirs(TMP, exist_ok=True)
@@ -23,10 +23,10 @@ os.makedirs(TMP, exist_ok=True)
 import numpy as np                            # noqa: E402
 from PySide6 import QtCore, QtWidgets         # noqa: E402
 
-from lapse import audio as au                 # noqa: E402
-from lapse.ff import (find_ffmpeg, probe_audio, probe_video,   # noqa: E402
+from reference import audio as au                 # noqa: E402
+from reference.ff import (find_ffmpeg, probe_audio, probe_video,   # noqa: E402
                       run as ff_run)
-from lapse.gui import audiomix, theme, workbench               # noqa: E402
+from reference.gui import audiomix, theme, workbench               # noqa: E402
 
 FF = find_ffmpeg()
 SRC = os.path.join(TMP, "_mix_src.mp4")       # 4s 画面 + 440Hz 原声

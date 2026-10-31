@@ -1,6 +1,6 @@
 //! 空间类显影运算：镜头校正、降噪、锐化、清晰度/纹理、颗粒、蒙版内细节。
 //!
-//! 语义以 Python `lapse/grade.py` 为准：`_lens` / `_distort_map` / `_defringe`、
+//! 语义以 Python `acceptance/reference/grade.py` 为准：`_lens` / `_distort_map` / `_defringe`、
 //! `_denoise`、`_sharpen`、`_guided` / `_local_contrast`、`_noise`、`_mask_spatial`。
 //! 这些都需要邻域访问，草图路径（`Opts::sketch`）与 `for_lut` 路径会跳过它们，
 //! 所以这里的实现必须与"跳过"逻辑一致，否则预览与导出不是一条链。

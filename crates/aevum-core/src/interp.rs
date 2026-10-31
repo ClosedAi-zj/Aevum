@@ -1,6 +1,6 @@
 //! 关键帧之间的参数插值。
 //!
-//! 口径与 Python `lapse/sequence.interpolate` 对齐：数值线性插值、HSL 数组
+//! 口径与 Python `acceptance/reference/sequence.interpolate` 对齐：数值线性插值、HSL 数组
 //! 逐元素插值、曲线按 x 对齐后在 y 上插值；蒙版按稳定 id 配对后逐项插值。
 
 use std::collections::{BTreeMap, BTreeSet};

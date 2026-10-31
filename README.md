@@ -28,7 +28,7 @@
 - **成片**：静帧与视频导出、渲染队列、精确输出尺寸、水印、变速与运动模糊（ffmpeg 管线直推，不留临时帧）
 - **AI Agent 控制面**：内置 MCP stdio server（直连 34 个 `aevum_*` 工具），也可通过本地回环 HTTP
   把 MCP 调用代理给已打开的 GUI（附着模式，暴露 GUI 的全部 72 条命令，界面实时更新）
-- **数值金标**：Python oracle（`lapse/grade.py`）与 Rust 逐式同构，
+- **数值金标**：Python 参考实现（`acceptance/reference/grade.py`）与 Rust 逐式同构，
   47 个显影金标 case + cube/grade 等多套金标钉住像素级一致
 
 ### 仓库结构
@@ -38,16 +38,16 @@ crates/aevum-core/   算法核心：sequence / metrics / deflicker / grade / pre
 crates/aevum-ui/     egui 0.37 界面：state / shell（14 个子模块）/ theme / widgets / controls
 crates/aevum-mcp/    Agent 控制面：MCP 工具、stdio JSON-RPC 与 GUI 回环代理
 apps/aevum-studio/   入口（--open / --demo / --shot / --module / --selftest / --mcp）
-oracle/golden/       Python 冻结的数值金标
-lapse/               Python oracle（numpy 逐式镜像 Rust 影调管线）
+acceptance/          验收仪器：check.sh（提交门槛）· reference/（Python 参考实现）· oracle/（冻结金标）
 tools/               审计与开发辅助脚本
-scripts/             check.sh（提交门槛）· package.sh（绿色包）· shots.sh（界面截图）
-.github/workflows/   ci.yml —— CI 上跑同一个 check.sh
+scripts/             package.sh（绿色包）· shots.sh（界面截图）· migrate-to-aevum.sh（旧工程迁移）
+.github/workflows/   ci.yml —— CI 上跑同一个 acceptance/check.sh
 ```
 
-> `lapse/` 是与 Rust 实现逐式同构的 Python 参考实现，名字属历史遗留，**不随产品改名**。
-> 它是金标的生成器而不是产品代码：改 Rust 数值路径时它要跟着逐式改（见「测试」），
-> 但它的包名永远不会出现在用户机器上。
+> `acceptance/` 是**验收仪器**，不是产品代码：`reference/` 是与 Rust 实现逐式同构的
+> Python 参考实现，`oracle/golden/` 是它冻结出来的数值金标，`check.sh` 是提交门槛。
+> 产品是纯 Rust，exe 里不含任何 Python——这个目录既不参与 `cargo build`，也不随包分发。
+> 改算法时它跟着逐式改（见「测试」），详见 `acceptance/README.md`。
 
 （设计文档与评审记录在本地 `docs/`，不进版本库；各版本说明见 GitHub Releases。）
 
@@ -87,12 +87,14 @@ target/release/aevum.exe --demo
 ### 测试
 
 ```bash
+bash acceptance/check.sh        # 提交门槛：版本一致性 / fmt / clippy / 全量测试 / 界面自检
 cargo test --workspace          # 全量测试（含 47 个显影金标 case）
 cargo clippy --workspace        # lint 门禁
 ```
 
-金标机制：改 Rust 数值路径时，同步修改 `lapse/grade.py`（逐式镜像），再运行
-`python oracle/freeze_golden.py --develop-only` 重冻结；连续两遍冻结必须逐字节一致。
+金标机制：改 Rust 数值路径时，同步修改 `acceptance/reference/grade.py`（逐式镜像），再运行
+`./.venv/Scripts/python.exe acceptance/oracle/freeze_golden.py --develop-only` 重冻结；
+连续两遍冻结必须逐字节一致。改完算法客观判定只看 `bash acceptance/check.sh` 是否全绿。
 
 ### 版本方案
 
@@ -134,7 +136,7 @@ folder onto the window and it switches to the right module.
   retime with motion blur (frames are piped straight into ffmpeg's stdin — no temporary frame files)
 - **AI Agent control plane**: a built-in MCP stdio server (34 `aevum_*` tools), plus a
   loopback HTTP proxy that forwards headless MCP calls to a running GUI with live UI updates
-- **Numeric goldens**: a Python oracle (`lapse/grade.py`) mirrors the Rust pipeline
+- **Numeric goldens**: the Python reference (`acceptance/reference/grade.py`) mirrors the Rust pipeline
   formula-by-formula; 47 develop golden cases plus cube/grade suites pin bit-level agreement
 
 ### Repository layout
@@ -144,17 +146,17 @@ crates/aevum-core/   Algorithms: sequence / metrics / deflicker / grade / previe
 crates/aevum-ui/     egui 0.37 UI: state / shell (14 submodules) / theme / widgets / controls
 crates/aevum-mcp/    Agent control plane: MCP tools, stdio JSON-RPC, GUI loopback proxy
 apps/aevum-studio/   Entry point (--open / --demo / --shot / --module / --selftest / --mcp)
-oracle/golden/       Python-frozen numeric goldens
-lapse/               Python oracle (numpy mirror of the Rust grade pipeline)
+acceptance/          Acceptance kit: check.sh (commit gate) · reference/ (Python reference) · oracle/ (frozen goldens)
 tools/               Audit & dev helper scripts
-scripts/             check.sh (commit gate) · package.sh (portable build) · shots.sh (UI screenshots)
-.github/workflows/   ci.yml — runs the same check.sh on CI
+scripts/             package.sh (portable build) · shots.sh (UI screenshots) · migrate-to-aevum.sh (legacy migration)
+.github/workflows/   ci.yml — runs the same acceptance/check.sh on CI
 ```
 
-> `lapse/` is the Python reference implementation that mirrors the Rust pipeline
-> formula-by-formula. Its name is a historical leftover and deliberately does **not**
-> follow the product rename: it is the golden-data generator, not product code, and it
-> never ships to users.
+> `acceptance/` is the **acceptance kit**, not product code: `reference/` is the Python
+> implementation that mirrors the Rust pipeline formula-by-formula, `oracle/golden/` is
+> the numeric goldens it freezes, and `check.sh` is the commit gate. The product is pure
+> Rust and the exe ships no Python — this directory is not part of `cargo build` and is
+> never packaged. See `acceptance/README.md`.
 
 (Design docs and review records live in the local `docs/` directory and are not part of
 the repository; per-version notes are published via GitHub Releases.)
@@ -201,12 +203,14 @@ To convert a whole library at once use `scripts/migrate-to-aevum.sh <dir>`
 ### Testing
 
 ```bash
+bash acceptance/check.sh        # commit gate: version check / fmt / clippy / tests / selftest
 cargo test --workspace          # full suite, incl. 47 develop golden cases
 cargo clippy --workspace        # lint gate
 ```
 
-Golden workflow: when touching a Rust numeric path, mirror the change in `lapse/grade.py`
-formula-by-formula, then re-freeze with `python oracle/freeze_golden.py --develop-only`;
+Golden workflow: when touching a Rust numeric path, mirror the change in
+`acceptance/reference/grade.py` formula-by-formula, then re-freeze with
+`./.venv/Scripts/python.exe acceptance/oracle/freeze_golden.py --develop-only`;
 two consecutive freezes must be byte-identical.
 
 ### Versioning

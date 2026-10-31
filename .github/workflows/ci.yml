@@ -1,6 +1,6 @@
 name: check
 
-# 与 scripts/check.sh 同一道门槛：格式 → clippy（警告即失败）→ 全量测试 → 布局自检。
+# 与 acceptance/check.sh 同一道门槛：格式 → clippy（警告即失败）→ 全量测试 → 布局自检。
 # 本机跑是 --offline（依赖已缓存），CI 上没有缓存，所以用 CARGO_FLAGS="" 让它联网解析。
 # 依赖里带 ffmpeg 的那几个用例会在找不到可执行文件时自己跳过，CI 不装 ffmpeg 也算全绿。
 
@@ -36,4 +36,4 @@ jobs:
 
       - name: gate
         shell: bash
-        run: bash scripts/check.sh
+        run: bash acceptance/check.sh

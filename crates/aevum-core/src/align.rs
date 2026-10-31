@@ -1,6 +1,6 @@
 //! 序列对齐：估计每帧相对参考帧的位移 → 平滑 → 计算统一裁切。
 //!
-//! 约定与 Python `lapse/align.py` 一致：`offset` 是 warpAffine 要加的偏移，
+//! 约定与 Python `acceptance/reference/align.py` 一致：`offset` 是 warpAffine 要加的偏移，
 //! 即 `dst(x, y) = src(x - off_x, y - off_y)`。模板估计器是 lr3 成片用的那套：
 //! 底部模板 + CLAHE 灰度 + 归一化互相关 + 抛物线亚像素。
 //!

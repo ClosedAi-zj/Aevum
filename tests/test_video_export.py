@@ -7,16 +7,16 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp")
 os.makedirs(TMP, exist_ok=True)
 from PySide6 import QtCore, QtWidgets
 import cv2
 
-from lapse import grade as gc                   # noqa: E402
-from lapse.ff import find_ffmpeg, probe_video   # noqa: E402
-from lapse.gui import prefs, theme, workbench   # noqa: E402
-from lapse.gui.grader import developer, exporter as gradex   # noqa: E402
+from reference import grade as gc                   # noqa: E402
+from reference.ff import find_ffmpeg, probe_video   # noqa: E402
+from reference.gui import prefs, theme, workbench   # noqa: E402
+from reference.gui.grader import developer, exporter as gradex   # noqa: E402
 
 SRC = os.path.join(ROOT, "aligned_lr3")
 SRC_IMG = os.path.join(SRC, "aligned_0600.jpg")

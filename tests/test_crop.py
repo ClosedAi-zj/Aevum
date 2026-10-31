@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """裁剪：选区几何单测 + 三种模式的端到端出片校验。
 
-选区几何是纯函数（lapse/crop.py），先单独钉死；再走一遍真界面：
+选区几何是纯函数（acceptance/reference/crop.py），先单独钉死；再走一遍真界面：
 装载视频 -> 自动居中选区 -> 比特流无损出片（码流没重编码，画面逐像素不变）
 -> 重编码出片（分辨率真的变小）-> 取消不留半成品。
 用法： PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe tests/test_crop.py
@@ -14,7 +14,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp")
 SHOTS = os.path.join(ROOT, "shots")
 os.makedirs(TMP, exist_ok=True)
@@ -23,9 +23,9 @@ import cv2                                    # noqa: E402
 import numpy as np                            # noqa: E402
 from PySide6 import QtCore, QtWidgets         # noqa: E402
 
-from lapse import crop as cp                  # noqa: E402
-from lapse.ff import find_ffmpeg, probe_video, run as ff_run   # noqa: E402
-from lapse.gui import cropper, theme, workbench                # noqa: E402
+from reference import crop as cp                  # noqa: E402
+from reference.ff import find_ffmpeg, probe_video, run as ff_run   # noqa: E402
+from reference.gui import cropper, theme, workbench                # noqa: E402
 
 FF = find_ffmpeg()
 SRC = os.path.join(TMP, "_crop_src.mp4")

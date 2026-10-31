@@ -1,6 +1,6 @@
 //! 显影主链与 Python 实现的逐像素比对。
 //!
-//! 基准由 `oracle/freeze_golden.py --develop-only` 生成：三张 48×64 的小图
+//! 基准由 `acceptance/oracle/freeze_golden.py --develop-only` 生成：三张 48×64 的小图
 //! （色相渐变 / 硬边结构 / 带噪点）过一遍 `grade.apply`，存 36 个 case 的
 //! 完整输出（小端 float32 的 hex）。
 //!
@@ -17,7 +17,7 @@ use serde_json::Value;
 const TOL: f32 = 2.0 / 255.0;
 
 fn golden() -> Value {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../oracle/golden");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../acceptance/oracle/golden");
     let text = std::fs::read_to_string(dir.join("develop.json"))
         .unwrap_or_else(|e| panic!("读不到 develop.json（先跑 freeze_golden.py）: {e}"));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("develop.json 不合法: {e}"))

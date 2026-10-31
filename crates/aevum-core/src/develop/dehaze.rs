@@ -1,7 +1,7 @@
 //! 暗通道先验去雾（He DCP 2010/2011 公开数学 + E1 结构事实）。
 //!
 //! 设计文档：`docs/算法里程碑设计-2026-10-30.md` §2。语义以 Python
-//! `lapse/grade.py::_dehaze_dcp` 为准，逐式对应；金标 case（48×64）只覆盖
+//! `acceptance/reference/grade.py::_dehaze_dcp` 为准，逐式对应；金标 case（48×64）只覆盖
 //! `guided` 的全分辨率分支，下采样分支由本模块单测
 //! `dehaze_downsample_matches_python` 显式覆盖（Python 对照级验证，非逐像素冻结）。
 //!
@@ -342,13 +342,13 @@ mod tests {
         let src = hazy_scene(w, h, [0.75, 0.78, 0.82]);
         let mut a = src.clone();
         dehaze_dcp(&mut a, w, h, 0.6, 0.2);
-        // Python 参考（oracle/dehaze_downsample_ref.py，与本测试 hazy_scene
-        // 同款确定性图 + lapse.grade._dehaze_dcp）。噪声源是 LCG（与
+        // Python 参考（acceptance/oracle/dehaze_downsample_ref.py，与本测试 hazy_scene
+        // 同款确定性图 + reference.grade._dehaze_dcp）。噪声源是 LCG（与
         // spatial.rs 测试同一个混合同余）：
         //   s = s·6364136223846793005 + 1442695040888963407（u64 回绕，
         //   种子 0xC0FFEE1234567890），每像素抽一次 r = (s>>33)/2^31。
         //   场景/透射/大气光与 hazy_scene 逐式相同。
-        // 期望统计量（oracle/dehaze_downsample_ref.py，f64 累计）：
+        // 期望统计量（acceptance/oracle/dehaze_downsample_ref.py，f64 累计）：
         //   mean = [0.6817661, 0.6422953, 0.5528787]
         //   std  = [0.1958477, 0.0611306, 0.1444934]
         let want_mean = [0.6817661f32, 0.6422953, 0.5528787];

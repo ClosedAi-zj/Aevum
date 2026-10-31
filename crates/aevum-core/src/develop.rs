@@ -1,8 +1,8 @@
 //! 显影主链：从镜头校正到晕影的完整像素流水线。
 //!
 //! 这里是 GUI 预览、静帧导出与视频导出唯一的真相来源，顺序与
-//! Python oracle 的 `lapse/grade.py::_core` / `apply` 严格一致，逐张图由
-//! `tests/develop_golden.rs` 与 `oracle/golden/develop.json` 比对。
+//! Python oracle 的 `acceptance/reference/grade.py::_core` / `apply` 严格一致，逐张图由
+//! `tests/develop_golden.rs` 与 `acceptance/oracle/golden/develop.json` 比对。
 //!
 //! 顺序（照抄 Python，不要凭直觉调整）：
 //! 镜头校正 →（外部 .cube 外观）→ 降噪 → 白平衡/曝光 → 对比度 → 去朦胧

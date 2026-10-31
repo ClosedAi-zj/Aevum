@@ -9,10 +9,10 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "acceptance"))
 
-from lapse import grade as gc       # noqa: E402
-from lapse import sequence as seq   # noqa: E402
+from reference import grade as gc       # noqa: E402
+from reference import sequence as seq   # noqa: E402
 
 FAILS = []
 

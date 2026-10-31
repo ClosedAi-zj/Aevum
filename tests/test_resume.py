@@ -18,13 +18,13 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp", "resume")
 SHOTS = os.path.join(ROOT, "shots")
 
 from PySide6 import QtCore, QtWidgets       # noqa: E402
 
-from lapse.gui.grader import developer, renderq   # noqa: E402
+from reference.gui.grader import developer, renderq   # noqa: E402
 
 FAILS = []
 TOTAL = [0]

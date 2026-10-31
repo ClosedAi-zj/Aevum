@@ -14,11 +14,11 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp", "deflicker")
 os.makedirs(TMP, exist_ok=True)
 
-from lapse import deflicker as flicker    # noqa: E402
+from reference import deflicker as flicker    # noqa: E402
 
 FAILS = []
 
@@ -213,7 +213,7 @@ def test_apply_chan():
 
     只验到「算得出偏移」不够，得看补完以后的像素。
     """
-    from lapse import grade
+    from reference import grade
 
     d = os.path.join(TMP, "chan")
     shutil.rmtree(d, ignore_errors=True)

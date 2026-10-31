@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """运镜（Ken Burns）：取景框插值单测 + 图片/视频端到端出片。
 
-几何与重画都在 lapse/crop.py，界面这边要钉的是"参数真的进到成片里"：
+几何与重画都在 acceptance/reference/crop.py，界面这边要钉的是"参数真的进到成片里"：
 帧数、成片尺寸、推近确实裁掉了边、视频音轨跟着过来、取消不留中间帧目录。
 用法： PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe tests/test_ken_burns.py
 """
@@ -12,7 +12,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp_kb")
 SHOTS = os.path.join(ROOT, "shots")
 os.makedirs(TMP, exist_ok=True)
@@ -21,11 +21,11 @@ import cv2                                     # noqa: E402
 import numpy as np                             # noqa: E402
 from PySide6 import QtCore, QtWidgets          # noqa: E402
 
-from lapse import crop as cp                   # noqa: E402
-from lapse import video as vmod                # noqa: E402
-from lapse.ff import (find_ffmpeg, probe_audio, probe_video,   # noqa: E402
+from reference import crop as cp                   # noqa: E402
+from reference import video as vmod                # noqa: E402
+from reference.ff import (find_ffmpeg, probe_audio, probe_video,   # noqa: E402
                       run as ff_run)
-from lapse.gui import cropper, theme, workbench                # noqa: E402
+from reference.gui import cropper, theme, workbench                # noqa: E402
 
 FF = find_ffmpeg()
 STILL = os.path.join(TMP, "_kb_still.png")

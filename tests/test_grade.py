@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """调色核心数值回归：查表化的三段（HSL / 曲线 / 晕影）必须与逐像素旧算法一致。
 
-lapse/grade.py 为了拖动流畅把这三段换成了查表与缓存，等价性只能靠对照实现来锁，
+acceptance/reference/grade.py 为了拖动流畅把这三段换成了查表与缓存，等价性只能靠对照实现来锁，
 所以这里逐字保留旧写法作为参照。容差按 8bit 台阶（1/255）给：新版与旧版各自都会
 量化到 256 级，落在台阶边界上的像素允许差一档。
 用法： PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe tests/test_grade.py
@@ -15,9 +15,9 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 
-from lapse import grade as gc            # noqa: E402
+from reference import grade as gc            # noqa: E402
 
 LSB = 1.0 / 255.0
 FAILS = []

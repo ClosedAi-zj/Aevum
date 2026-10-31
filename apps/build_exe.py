@@ -13,6 +13,8 @@ import sys
 from PyInstaller.__main__ import run
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Python 参考实现搬进了验收目录，包的父目录不再是仓库根。
+REFERENCE_ROOT = os.path.join(ROOT, "acceptance")
 NAME = "延时工作台"
 
 ARGS = [
@@ -23,7 +25,7 @@ ARGS = [
     "--distpath", os.path.join(ROOT, "dist"),
     "--workpath", os.path.join(ROOT, "build", "work"),
     "--specpath", os.path.join(ROOT, "build"),
-    "--paths", ROOT,                  # lapse 是仓库里的包，分析器默认找不到
+    "--paths", REFERENCE_ROOT,        # reference 是 acceptance/ 下的包，分析器默认找不到
     # 标题栏与任务栏用的是窗口图标，得把 png 一起打进去（目标目录保持 assets/ 相对路径）
     "--add-data", os.path.join(ROOT, "assets", "app.png") + os.pathsep + "assets",
     # 随包开源字体：Inter + Noto Sans SC，缺了会退回系统雅黑

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 打 Windows 绿色包：先过 scripts/check.sh 的门槛，再 release exe + 随包 ffmpeg，
+# 打 Windows 绿色包：先过 acceptance/check.sh 的门槛，再 release exe + 随包 ffmpeg，
 # 然后自检、真跑一次导出，最后打出 zip 与 SHA256SUMS 并解压回验。
 #
 # 用法（Git Bash）：
@@ -32,7 +32,7 @@ if [ "${SKIP_CHECK:-}" = "1" ]; then
     echo "==> 跳过门槛（SKIP_CHECK=1）"
 else
     echo "==> 门槛：格式 / clippy / 全量测试 / 布局自检"
-    bash "$ROOT/scripts/check.sh"
+    bash "$ROOT/acceptance/check.sh"
 fi
 
 echo "==> 编译 release"

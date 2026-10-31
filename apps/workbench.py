@@ -12,19 +12,19 @@ import sys
 
 if not getattr(sys, "frozen", False):
     # 源码运行时把仓库根指进来；打包后模块已经在 exe 里了
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "acceptance"))
 
 from PySide6 import QtGui, QtWidgets  # noqa: E402
 
-from lapse import ff  # noqa: E402
-from lapse.gui import theme  # noqa: E402
-from lapse.gui.aligner import Aligner  # noqa: E402
-from lapse.gui.assemble import Assemble  # noqa: E402
-from lapse.gui.audiomix import AudioMix  # noqa: E402
-from lapse.gui.cropper import Cropper  # noqa: E402
-from lapse.gui.grader import developer  # noqa: E402
-from lapse.gui.retime import Retime  # noqa: E402
-from lapse.gui.workbench import Workbench  # noqa: E402
+from reference import ff  # noqa: E402
+from reference.gui import theme  # noqa: E402
+from reference.gui.aligner import Aligner  # noqa: E402
+from reference.gui.assemble import Assemble  # noqa: E402
+from reference.gui.audiomix import AudioMix  # noqa: E402
+from reference.gui.cropper import Cropper  # noqa: E402
+from reference.gui.grader import developer  # noqa: E402
+from reference.gui.retime import Retime  # noqa: E402
+from reference.gui.workbench import Workbench  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

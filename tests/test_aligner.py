@@ -12,7 +12,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp")
 os.makedirs(TMP, exist_ok=True)
 
@@ -20,9 +20,9 @@ import cv2                                # noqa: E402
 import numpy as np                        # noqa: E402
 from PySide6 import QtCore, QtWidgets     # noqa: E402
 
-from lapse import align                   # noqa: E402
-from lapse.gui import assemble, theme, workbench     # noqa: E402
-from lapse.gui.aligner import Aligner     # noqa: E402
+from reference import align                   # noqa: E402
+from reference.gui import assemble, theme, workbench     # noqa: E402
+from reference.gui.aligner import Aligner     # noqa: E402
 
 # 入口真正注册的那份模块表：对齐必须和另外三个工具在同一个程序里
 from apps.workbench import MODULES        # noqa: E402

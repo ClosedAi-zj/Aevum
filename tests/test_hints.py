@@ -11,12 +11,12 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 
 from PySide6 import QtWidgets           # noqa: E402
 
-from lapse.gui import hints, theme, widgets, workbench   # noqa: E402
-from lapse.gui import settingsdialog    # noqa: E402
+from reference.gui import hints, theme, widgets, workbench   # noqa: E402
+from reference.gui import settingsdialog    # noqa: E402
 
 # 用入口真正注册的那份模块表：测试跑的就是用户双击出来的那个工作台
 from apps.workbench import MODULES      # noqa: E402
@@ -36,7 +36,7 @@ def check(name, ok, detail=""):
 
 def _gui_src():
     out = []
-    for base, _dirs, files in os.walk(os.path.join(ROOT, "lapse", "gui")):
+    for base, _dirs, files in os.walk(os.path.join(ROOT, "acceptance", "reference", "gui")):
         for f in files:
             if f.endswith(".py"):
                 with open(os.path.join(base, f), encoding="utf-8") as fh:

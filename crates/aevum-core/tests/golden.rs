@@ -1,6 +1,6 @@
 //! 与 Python 实现冻结的基准比对。
 //!
-//! 基准由 `oracle/freeze_golden.py` 生成（见该脚本头部）。这里只读 JSON，
+//! 基准由 `acceptance/oracle/freeze_golden.py` 生成（见该脚本头部）。这里只读 JSON，
 //! 不需要素材序列，因此克隆仓库后就能跑。
 
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ use aevum_core::grade;
 use serde_json::Value;
 
 fn golden(name: &str) -> Value {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../oracle/golden");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../acceptance/oracle/golden");
     let text = std::fs::read_to_string(dir.join(name))
         .unwrap_or_else(|e| panic!("读不到基准 {name}: {e}"));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("基准 {name} 不是合法 JSON: {e}"))

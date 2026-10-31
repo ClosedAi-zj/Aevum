@@ -1,6 +1,6 @@
 //! 局部蒙版：几何权重场与局部参数合成。
 //!
-//! 口径与 Python `lapse/grade.py` 的 `_comp_field` / `group_field` /
+//! 口径与 Python `acceptance/reference/grade.py` 的 `_comp_field` / `group_field` /
 //! `_mask_field` 一致：几何用归一化坐标存盘，算场时换成像素坐标，
 //! 所以同一组参数在任意预览分辨率下圈住的是画面上的同一块地方。
 //!

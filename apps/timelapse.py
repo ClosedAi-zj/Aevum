@@ -5,17 +5,17 @@
   python apps/timelapse.py -i aligned_lr4 --fps 24 --aspect none -o clip.mp4
   python apps/timelapse.py -i "F:/照片/lr/lr4" --long-side 4096 --aspect 1.90:1
 
-序列识别与命令拼装都在 lapse/video.py；带界面请用 apps/timelapse_gui.py。
+序列识别与命令拼装都在 acceptance/reference/video.py；带界面请用 apps/timelapse_gui.py。
 """
 import argparse
 import os
 import subprocess
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "acceptance"))
 
-from lapse import imio, video  # noqa: E402
-from lapse.ff import find_ffmpeg  # noqa: E402
+from reference import imio, video  # noqa: E402
+from reference.ff import find_ffmpeg  # noqa: E402
 
 
 def main():

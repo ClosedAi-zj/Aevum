@@ -5,7 +5,7 @@
   python apps/align.py -i raw目录 -o 预览 --sample 12 --verify     # 先抽帧预检
   python apps/align.py -i 调色后目录 -o 输出 --load-shifts shifts.json
 
-算法都在 lapse/align.py，本文件只管参数、打印与两步流程。
+算法都在 acceptance/reference/align.py，本文件只管参数、打印与两步流程。
 """
 import argparse
 import json
@@ -15,9 +15,9 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "acceptance"))
 
-from lapse import align, imio  # noqa: E402
+from reference import align, imio  # noqa: E402
 
 
 def parse_args():

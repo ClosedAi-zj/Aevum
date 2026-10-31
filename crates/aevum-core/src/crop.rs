@@ -1,6 +1,6 @@
 //! 裁剪选区的几何：把手命中、拖框、挪框、缩放、微调。
 //!
-//! 口径抄 `lapse/crop.py` 的选区一节——纯函数、不含界面。坐标一律是原图像素，
+//! 口径抄 `acceptance/reference/crop.py` 的选区一节——纯函数、不含界面。坐标一律是原图像素，
 //! 界面负责把屏幕位置换算过来。左上角和宽高全取偶：4:2:0 色度抽样要求裁切边界
 //! 成对，导出视频时奇数会被 ffmpeg 静默挪走一像素。
 
@@ -427,7 +427,7 @@ pub fn intersect(a: CropRect, b: CropRect) -> Option<CropRect> {
 // ------------------------------------------------------------------ 运镜（Ken Burns）
 // 一张静止画面（或机位锁死的素材）靠取景框随时间走动产生镜头感。框用归一化浮点
 // 表示，最后交采样器重画，所以推近的过程是连续的，不会被抹成整像素台阶。
-// 口径抄 `lapse/crop.py` 的运镜一节。
+// 口径抄 `acceptance/reference/crop.py` 的运镜一节。
 
 /// 缓动：改的就是「时间 → 进度」那条坡，四档与 Python 的 `KB_EASES` 一一对应。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

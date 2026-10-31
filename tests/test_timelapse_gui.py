@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""延时视频 GUI（lapse.gui.timelapse）端到端测试：序列识别 / 参数 -> 命令 /
+"""延时视频 GUI（reference.gui.timelapse）端到端测试：序列识别 / 参数 -> 命令 /
 单版与两版成片 / 缺口拒绝 / 取消清理。
 运行：PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe tests/test_timelapse_gui.py
 """
@@ -14,9 +14,9 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
-from lapse.ff import find_ffmpeg, probe_video     # noqa: E402
-from lapse.gui import timelapse as tg             # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
+from reference.ff import find_ffmpeg, probe_video     # noqa: E402
+from reference.gui import timelapse as tg             # noqa: E402
 
 FF = find_ffmpeg()
 FAIL = []

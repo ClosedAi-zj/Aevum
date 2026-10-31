@@ -10,15 +10,15 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp", "imio")
 os.makedirs(TMP, exist_ok=True)
 
 import cv2                                # noqa: E402
 import numpy as np                        # noqa: E402
 
-from lapse import imio                    # noqa: E402
-from lapse.gui.grader import exporter     # noqa: E402
+from reference import imio                    # noqa: E402
+from reference.gui.grader import exporter     # noqa: E402
 
 FAILS = []
 
@@ -121,7 +121,7 @@ def test_16bit_roundtrip():
 
 def test_batch_export():
     from PySide6 import QtCore
-    from lapse.gui.grader import developer
+    from reference.gui.grader import developer
 
     QtCore.QCoreApplication.instance() or QtCore.QCoreApplication([])
     src = []

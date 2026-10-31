@@ -1,6 +1,6 @@
 //! .cube 导出与 Python oracle 的比对。
 //!
-//! 基准由 `oracle/freeze_golden.py --cube-only` 生成：17³ 格点过一遍
+//! 基准由 `acceptance/oracle/freeze_golden.py --cube-only` 生成：17³ 格点过一遍
 //! `grade.apply(..., for_lut=True)`，存下输出（小端 float32 的 hex）以及
 //! 其中一个 case 用 `grade.write_cube` 的格式写出的完整文本。
 //!
@@ -18,7 +18,7 @@ use serde_json::Value;
 const TOL: f32 = 2.0 / 255.0;
 
 fn golden() -> Value {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../oracle/golden");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../acceptance/oracle/golden");
     let text = std::fs::read_to_string(dir.join("cube.json"))
         .unwrap_or_else(|e| panic!("读不到 cube.json（先跑 freeze_golden.py --cube-only）: {e}"));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("cube.json 不合法: {e}"))

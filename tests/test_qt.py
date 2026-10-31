@@ -11,7 +11,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp")
 os.makedirs(TMP, exist_ok=True)
 
@@ -20,10 +20,10 @@ import cv2                              # noqa: E402
 from PIL import Image                   # noqa: E402
 from PySide6 import QtCore, QtGui, QtWidgets   # noqa: E402
 
-from lapse import grade as gc           # noqa: E402
-from lapse import holy as holy_core, imio  # noqa: E402
-from lapse.gui import edits, prefs, theme, widgets, workbench  # noqa: E402
-from lapse.gui.grader import (developer, exporter, filmstrip, params,  # noqa: E402
+from reference import grade as gc           # noqa: E402
+from reference import holy as holy_core, imio  # noqa: E402
+from reference.gui import edits, prefs, theme, widgets, workbench  # noqa: E402
+from reference.gui.grader import (developer, exporter, filmstrip, params,  # noqa: E402
                               pipeline)
 
 SRC = os.path.join(ROOT, "aligned_lr3")

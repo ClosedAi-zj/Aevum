@@ -1,7 +1,7 @@
 //! 查表类显影运算：色彩分级、HSL、单色混合、色阶/参数曲线/曲线合成表。
 //!
 //! 全部是逐点或按亮度索引的查表运算，没有邻域访问，因此可以在草图与
-//! `for_lut` 路径上照跑不误。语义严格照抄 Python `lapse/grade.py`：
+//! `for_lut` 路径上照跑不误。语义严格照抄 Python `acceptance/reference/grade.py`：
 //! `_grade_table` / `_color_grade`、`_hsl_tables` / `_core` 的 HSL 段、
 //! `_mono_table` / `_mono`、`_levels_lut` / `_par_lut` / `_curve_lut`。
 //!

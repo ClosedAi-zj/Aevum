@@ -15,12 +15,12 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 
 from PySide6 import QtGui, QtWidgets      # noqa: E402
 
-from lapse import motion                      # noqa: E402
-from lapse.gui import theme, widgets, workbench    # noqa: E402
+from reference import motion                      # noqa: E402
+from reference.gui import theme, widgets, workbench    # noqa: E402
 
 # 用入口真正注册的那份模块表：测试跑的就是用户双击出来的那个工作台
 from apps.workbench import MODULES      # noqa: E402

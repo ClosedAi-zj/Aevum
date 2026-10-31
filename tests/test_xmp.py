@@ -15,10 +15,10 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 
-from lapse import grade as gc            # noqa: E402
-from lapse import xmp                    # noqa: E402
+from reference import grade as gc            # noqa: E402
+from reference import xmp                    # noqa: E402
 
 TMP = os.path.join(HERE, "_tmp", "xmp")
 os.makedirs(TMP, exist_ok=True)

@@ -1,6 +1,6 @@
 //! 配乐混流：长度算式与 ffmpeg 音频滤镜链。
 //!
-//! 口径对齐 Python `lapse/audio.py`：延迟用 `adelay` 补真静音采样，
+//! 口径对齐 Python `acceptance/reference/audio.py`：延迟用 `adelay` 补真静音采样，
 //! 循环用 `-stream_loop`，淡入淡出与音量走滤镜；序列本身没有原声，
 //! 所以配乐是替换式的，不做双路混合。
 

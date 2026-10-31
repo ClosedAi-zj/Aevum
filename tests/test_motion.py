@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """重定时回归：映射/取样/变调的数学，加视频与图片序列两条端到端出片。
 
-算法全在 `lapse/motion.py`（界面只管取值和渲染），所以先把数学钉死：
+算法全在 `acceptance/reference/motion.py`（界面只管取值和渲染），所以先把数学钉死：
 匀速 1× 必须落在整数帧号上、倍速与帧率怎么算帧数、邻帧混合的权重、
 运动模糊的窗口随速度变宽、atempo 串链乘回来必须等于倍速。
 界面这边钉"参数真的进到成片里"：成片帧数/时长/尺寸/音轨、曲线变速时声音
@@ -15,7 +15,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "acceptance"))
 TMP = os.path.join(HERE, "_tmp_motion")
 SHOTS = os.path.join(ROOT, "shots")
 os.makedirs(TMP, exist_ok=True)
@@ -24,11 +24,11 @@ import cv2                                      # noqa: E402
 import numpy as np                              # noqa: E402
 from PySide6 import QtCore, QtWidgets           # noqa: E402
 
-from lapse import motion as mo                  # noqa: E402
-from lapse import video as vmod                 # noqa: E402
-from lapse.ff import (find_ffmpeg, probe_audio, probe_video,   # noqa: E402
+from reference import motion as mo                  # noqa: E402
+from reference import video as vmod                 # noqa: E402
+from reference.ff import (find_ffmpeg, probe_audio, probe_video,   # noqa: E402
                       run as ff_run)
-from lapse.gui import retime as rtmod, theme, workbench        # noqa: E402
+from reference.gui import retime as rtmod, theme, workbench        # noqa: E402
 
 FF = find_ffmpeg()
 MOVIE = os.path.join(TMP, "_rt_src.mp4")

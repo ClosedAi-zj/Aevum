@@ -1,7 +1,7 @@
 //! 序列去闪烁：逐帧测光 → 稳健平滑 → 曝光偏移（EV）。
 //!
-//! 口径照搬 Python 实现（`lapse/deflicker.py`）：中值压单帧跳变，高斯平滑避免
-//! 校正后出现台阶，偏移单位等于调色台的曝光 EV。`oracle/golden/deflicker.json`
+//! 口径照搬 Python 实现（`acceptance/reference/deflicker.py`）：中值压单帧跳变，高斯平滑避免
+//! 校正后出现台阶，偏移单位等于调色台的曝光 EV。`acceptance/oracle/golden/deflicker.json`
 //! 是同一算法的冻结输出，单测按 1e-4 比对。
 
 use std::path::{Path, PathBuf};

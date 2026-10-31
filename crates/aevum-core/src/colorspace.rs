@@ -16,7 +16,7 @@
 //! `header_offsets_are_where_the_spec_puts_them` 逐个钉住，改之前先看那条测试。
 //!
 //! 字节的最终裁判不在这里：设 `AEVUM_ICC_DUMP=<目录>` 跑一遍单元测试落盘，再用
-//! `python oracle/check_icc.py` 让 littleCMS 读回来核。曲线形状的两次改版（不用
+//! `python acceptance/oracle/check_icc.py` 让 littleCMS 读回来核。曲线形状的两次改版（不用
 //! `para` 1 型、不用 `curv` 表）都是那一步实测出来的，别只看单元测试就改回去。
 
 use serde::{Deserialize, Serialize};
@@ -844,7 +844,7 @@ mod tests {
     #[test]
     fn dump_profiles_for_littlecms() {
         // 自己写的配置自己说对了不算数。设了 AEVUM_ICC_DUMP 才落盘，交给
-        // oracle/check_icc.py 用 littleCMS（Pillow 内置）读回来核字段。
+        // acceptance/oracle/check_icc.py 用 littleCMS（Pillow 内置）读回来核字段。
         let Some(dir) = crate::env::var_os("ICC_DUMP") else {
             return;
         };
