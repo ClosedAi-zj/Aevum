@@ -28,7 +28,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,10 @@ pub const MAX_FRAME: usize = 8 * 1024 * 1024;
 pub const TILE: u32 = 512;
 /// 默认超时。超过就当插件卡死，杀掉进程、把错误交回去。
 pub const TIMEOUT: Duration = Duration::from_secs(20);
+/// 握手超时。插件要加载自己的依赖（大滤镜可能拖进上百 MB 的 DLL），
+/// 起步比单块宽，但必须有限 —— 否则一个启动即挂死的插件会让
+/// [`Host::start`] 永远阻塞在等 Ready 上（审查发现的挂死路径）。
+pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 一条协议消息。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -102,8 +106,11 @@ pub struct Host {
     stdin: ChildStdin,
     out: BufReader<ChildStdout>,
     id: String,
-    /// 标记"主线程已经不需要 watchdog 再杀进程了"。
-    done: Arc<AtomicBool>,
+    /// 看门票据：每次布防 +1，旧看门线程醒来发现自己的票据过期就自行退出。
+    /// 用计数而不是布尔，是因为「解除→重新布防」可能落在旧线程睡眠的间隙
+    /// 里 —— 布尔分不清"这是谁的看门"，会出现旧线程替新任务守到点、把
+    /// 刚布防的新超时误杀的竞态。
+    watch: Arc<AtomicU64>,
 }
 
 impl Host {
@@ -112,6 +119,16 @@ impl Host {
     /// `entry` 是可执行文件绝对路径；工作目录设成清单所在目录，
     /// 插件按相对路径找自己的资源才不会失败。
     pub fn start(entry: &Path, id: &str, params: &BTreeMap<String, f64>) -> Result<Self, String> {
+        Self::start_with(entry, id, params, HANDSHAKE_TIMEOUT)
+    }
+
+    /// 同 [`Host::start`]，握手超时可调 —— 测试用它把 30 秒压成几百毫秒。
+    fn start_with(
+        entry: &Path,
+        id: &str,
+        params: &BTreeMap<String, f64>,
+        handshake_timeout: Duration,
+    ) -> Result<Self, String> {
         if !entry.is_file() {
             return Err(format!("插件入口不存在：{}", entry.display()));
         }
@@ -131,20 +148,39 @@ impl Host {
             stdin,
             out: BufReader::with_capacity(64 * 1024, stdout),
             id: id.to_owned(),
-            done: Arc::new(AtomicBool::new(false)),
+            watch: Arc::new(AtomicU64::new(0)),
         };
         host.write(&Msg::Hello {
             protocol: PROTOCOL,
             id: id.to_owned(),
             params: params.clone(),
         })?;
-        match host.read_msg()? {
-            Msg::Ready { protocol } if protocol >= PROTOCOL => Ok(host),
-            Msg::Ready { protocol } => Err(format!(
+        // 握手也是一次没有读超时的阻塞读，必须立刻布防。之前 watchdog
+        // 只在 run_tiles 前 arm：插件启动即挂死的话，Host::start 会永远
+        // 卡在等 Ready 上，任务栏永远"运行中"，常规路径没有任何兜底。
+        host.arm_watchdog(handshake_timeout);
+        let handshaked = match host.read_msg() {
+            Ok(Msg::Ready { protocol }) if protocol >= PROTOCOL => Ok(()),
+            Ok(Msg::Ready { protocol }) => Err(format!(
                 "插件协议太旧（它说 {protocol}，宿主需要 {PROTOCOL}）：{id}"
             )),
-            Msg::Error { msg } => Err(format!("插件拒绝启动：{msg}")),
-            other => Err(format!("握手时收到意料之外的消息：{other:?}")),
+            Ok(Msg::Error { msg }) => Err(format!("插件拒绝启动：{msg}")),
+            Ok(other) => Err(format!("握手时收到意料之外的消息：{other:?}")),
+            Err(e) => Err(e),
+        };
+        match handshaked {
+            Ok(()) => {
+                // 握手成功先解除看门：从这里到 apply 之间没有阻塞读，
+                // 留着看门反而会把"加载慢但正常"的插件误杀。
+                // apply_progress 会用 TIMEOUT 重新布防。
+                host.disarm();
+                Ok(host)
+            }
+            Err(e) => {
+                // 失败也要收尸：进程还挂着就杀干净，别留一个僵尸占着管道。
+                host.abort();
+                Err(e)
+            }
         }
     }
 
@@ -186,7 +222,11 @@ impl Host {
         let started = Instant::now();
         self.arm_watchdog(TIMEOUT);
         match self.run_tiles(w, h, rgb, &mut progress) {
-            Ok(applied) => Ok(applied),
+            Ok(applied) => {
+                // 正常收工先解除看门，再算账返回。
+                self.disarm();
+                Ok(applied)
+            }
             Err(e) => {
                 if e != ERR_CANCELLED {
                     // 用户取消已经自己 abort 过了，别杀两次。
@@ -273,7 +313,6 @@ impl Host {
         // 这之后再"取消"已经没有东西可取消了。
         let _ = progress(total, total);
         self.write(&Msg::End)?;
-        self.done.store(true, Ordering::Relaxed);
         Ok(Applied {
             pixels: out,
             width: w,
@@ -296,14 +335,14 @@ impl Host {
     /// 用户取消后的干净收尾：杀进程、等它退。进程一死，管道两端自然断开 ——
     /// 之后任何读写都会失败，宿主不会再被误用。
     fn abort(&mut self) {
-        self.done.store(true, Ordering::Relaxed);
+        self.disarm();
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 
     /// 收工。先好好说一声，再等它自己退；不按时退就杀。
     pub fn shutdown(mut self) {
-        self.done.store(true, Ordering::Relaxed);
+        self.disarm();
         let _ = self.write(&Msg::End);
         let _ = self.stdin.flush();
         drop(self.stdin);
@@ -325,25 +364,37 @@ impl Host {
     /// 进程一死，阻塞中的 `read` 立刻返回 EOF，主线程就能报错返回。
     /// 之前这根线程到点只会 eprintln 一声就完事（主线程还卡在 read 上，
     /// 根本看不见），超时保护等于没有 —— 现在直接按 pid 补刀。
+    ///
+    /// 看门以"票据"认主：布防时把 [`Self::watch`] 加一，线程只认自己
+    /// 布防那一刻的票号。解除（[`Self::disarm`]）或新一轮布防都会把票号
+    /// 顶掉，旧线程醒来发现过期就退出 —— 用计数而不是布尔，是因为
+    /// "解除→重新布防"可能落在旧线程睡眠的间隙里，布尔分不清是谁的看门。
     fn arm_watchdog(&self, timeout: Duration) {
-        let done = Arc::clone(&self.done);
-        done.store(false, Ordering::Relaxed);
+        let watch = Arc::clone(&self.watch);
+        let ticket = watch.fetch_add(1, Ordering::Relaxed) + 1;
         let pid = self.child.id();
         std::thread::spawn(move || {
             let deadline = Instant::now() + timeout;
             while Instant::now() < deadline {
-                if done.load(Ordering::Relaxed) {
+                if watch.load(Ordering::Relaxed) != ticket {
                     return;
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            if !done.load(Ordering::Relaxed) {
+            if watch.load(Ordering::Relaxed) == ticket {
                 // 子进程句柄归主线程所有，但按 pid 强杀是跨线程安全的：
                 // 进程一死，主线程阻塞中的 read 立刻 EOF 报错返回。
                 eprintln!("[aevum] 插件进程 {pid} 超时 {timeout:?}，强制中断");
                 Self::kill_pid(pid);
             }
         });
+    }
+
+    /// 解除当前所有看门：把票据往前推，睡眠中的看门线程醒来发现自己
+    /// 过期就退出。`fetch_add` 而不是 `compare_exchange` —— "解除"的
+    /// 语义就是顶掉现存布防，不必知道自己布防时的票号是多少。
+    fn disarm(&self) {
+        self.watch.fetch_add(1, Ordering::Relaxed);
     }
 
     fn write(&mut self, msg: &Msg) -> Result<(), String> {
@@ -525,22 +576,38 @@ impl PluginSide {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // 测试自己的"用户取消"旗，与宿主的看门票据（AtomicU64）无关。
+    use std::sync::atomic::AtomicBool;
 
     /// 演示插件：把每个通道反相，按 `strength` 混回原图。
     ///
     /// 编成一个 example，测试直接起它 —— 这样测的是"真的跨进程跑"，
     /// 而不是在同进程里模拟一份协议。
-    fn demo_plugin() -> Option<std::path::PathBuf> {
-        // target/debug/deps/xxx.exe → target/debug/examples/invert.exe
+    fn example_plugin(name: &str) -> Option<std::path::PathBuf> {
+        // target/debug/deps/xxx.exe → target/debug/examples/<name>.exe
         let exe = std::env::current_exe().ok()?;
         let dir = exe.parent()?.parent()?.join("examples");
-        let name = if cfg!(windows) {
-            "invert.exe"
+        let file = if cfg!(windows) {
+            format!("{name}.exe")
         } else {
-            "invert"
+            name.to_owned()
         };
-        let path = dir.join(name);
+        let path = dir.join(file);
         path.is_file().then_some(path)
+    }
+
+    fn demo_plugin() -> Option<std::path::PathBuf> {
+        example_plugin("invert")
+    }
+
+    /// 收到 hello 后装死不回的样本（examples/sleepy.rs）。
+    fn sleepy_plugin() -> Option<std::path::PathBuf> {
+        example_plugin("sleepy")
+    }
+
+    /// 回一句 error 然后赖着不退的样本（examples/grumpy.rs）。
+    fn grumpy_plugin() -> Option<std::path::PathBuf> {
+        example_plugin("grumpy")
     }
 
     #[test]
@@ -665,6 +732,48 @@ mod tests {
         }
         assert!(calls.len() >= 3, "每块收发之间都该报一次：{calls:?}");
         host.shutdown();
+    }
+
+    #[test]
+    fn a_hung_plugin_cannot_block_the_handshake_forever() {
+        // 回归：握手曾经没有看门（watchdog 只在 run_tiles 前布防），
+        // 启动即挂死的插件会让 Host::start 永远阻塞，任务永远"运行中"。
+        let Some(entry) = sleepy_plugin() else {
+            eprintln!("跳过：没有构建 examples/sleepy，先跑 `cargo build --examples`");
+            return;
+        };
+        let started = Instant::now();
+        // Host 没有 Debug，用模式匹配取错误而不是 expect_err。
+        let Err(err) = Host::start_with(
+            &entry,
+            "aevum.test-sleepy",
+            &BTreeMap::new(),
+            Duration::from_millis(500),
+        ) else {
+            panic!("挂死插件应当在握手超时后报错");
+        };
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_secs(10),
+            "应当几百毫秒就报错返回，而不是挂死：{took:?}"
+        );
+        // 看门杀掉进程后，阻塞中的 read 立刻 EOF —— sleepy 自己睡 600 秒
+        // 不会退，能读到 EOF 只可能是被看门补刀的。
+        assert!(err.contains("没等到回复"), "{err}");
+    }
+
+    #[test]
+    fn a_plugin_that_rejects_the_handshake_gets_killed_cleanly() {
+        // 回归：握手失败路径曾经直接返回 Err 不收尸，grumpy 回完 error
+        // 赖着不退，就会留一个僵尸进程占着管道。现在失败必须走 abort。
+        let Some(entry) = grumpy_plugin() else {
+            eprintln!("跳过：没有构建 examples/grumpy，先跑 `cargo build --examples`");
+            return;
+        };
+        let Err(err) = Host::start(&entry, "aevum.test-grumpy", &BTreeMap::new()) else {
+            panic!("拒绝握手的插件应当报错");
+        };
+        assert!(err.contains("插件拒绝启动"), "{err}");
     }
 
     #[test]
