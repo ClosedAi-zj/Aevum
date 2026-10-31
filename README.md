@@ -13,9 +13,9 @@
 全部在同一个窗口里完成。上一步的产物自动流进下一步；把文件或文件夹拖进窗口，
 会直接切到该去的模块。
 
-> **当前版本**：`0.5.0-beta.2`（beta 阶段）——核心功能已可用并带数值金标回归，
-> 界面与算法仍在快速迭代；正式版 `1.0.0` 随后发布，并从 1.0 起执行下面「版本方案」里的
-> 四类兼容承诺。
+> **当前版本**：`1.0.0`（正式版）——核心功能可用并带数值金标回归，从本版起执行下面
+> 「版本方案」里的四类兼容承诺（工程格式 / 预设与参数 / 命令行 / MCP 工具集）。
+> 逐版改动与已知限制见 `docs/发布说明-v1.0.0.md` 与 `CHANGELOG.md`。
 >
 > `0.5.0` 起产品由「光时 / Lumen Studio」更名为「恒晷 / Aevum Studio」。
 > 旧工程的 `.lumen/` 护带目录、旧环境变量 `LUMEN_*`、旧 MCP 工具名 `lumen_*`
@@ -105,7 +105,9 @@ cargo clippy --workspace        # lint 门禁
 
 ### 版本方案
 
-版本号以 `Cargo.toml` 为唯一真源，当前为 `0.5.0-beta.2`：beta 阶段每轮功能/重构打 tag。
+版本号以 `Cargo.toml` 为唯一真源，当前为 `1.0.0`。`1.0.0` 是第一个正式版，此后每次修复或
+功能推进打一个 tag；`0.x` 阶段（`0.5.0-beta.2` 及更早）每轮功能/重构打 tag，与本版之间
+没有迁移步骤。
 
 **`1.0.0` 起进入 1.x 兼容承诺期**——beta 阶段的「不承诺跨版本兼容」到此为止。四类对外契约
 按下面的口径维护，任何一条要改都留到下一个主版本：
@@ -141,9 +143,10 @@ window: **align → composite → crop (with camera motion) → color grade → 
 (speed ramps & motion blur)**. Each step feeds the next automatically; drop a file or
 folder onto the window and it switches to the right module.
 
-> **Current version**: `0.5.0-beta.2` (beta): core features work and are pinned by
-> numeric golden tests, while UI and algorithms are still evolving fast. The stable `1.0.0`
-> release follows, and the four compatibility promises under "Versioning" take effect from 1.0.
+> **Current version**: `1.0.0` (stable): core features work and are pinned by numeric golden
+> tests, and the four compatibility promises under "Versioning" (project format / presets and
+> parameters / command line / MCP tools) take effect from this release. Per-version changes and
+> known limitations live in `docs/发布说明-v1.0.0.md` and `CHANGELOG.md`.
 >
 > As of `0.5.0` the product was renamed from "Lumen Studio" to "Aevum Studio".
 > Old projects (`.lumen/`), old `LUMEN_*` environment variables and old `lumen_*` MCP
@@ -247,7 +250,8 @@ two consecutive freezes must be byte-identical.
 ### Versioning
 
 `Cargo.toml` is the single source of truth for the version; the current release is
-`0.5.0-beta.2` (beta), tagged per milestone.
+`1.0.0`. That is the first stable release; from here every fix or feature bump gets a tag,
+and there is nothing to migrate from the `0.x` tags.
 
 **Compatibility promises start with `1.0.0`** and hold for the whole 1.x series — the
 beta-stage "no cross-version promises" ends there. Four contracts, each maintained under the
