@@ -1,0 +1,15 @@
+# 整个仓库只认这一个编译器版本。
+#
+# 为什么要有这个文件：没有它的时候，`cargo fmt --check` 的结果取决于本机装的是
+# 哪个 stable —— rustfmt 的规则随版本变，干净仓库上能凭空红出上百处。1.0.0 之后
+# 「格式化失败」必须是代码问题，不能是环境问题。
+#
+# 为什么不写 profile：默认 profile 已经覆盖门槛要用的东西（rustc/cargo/std/
+# rustfmt/clippy），写 minimal 只是省下载量，却会让「装了但和声明不符」变成一个
+# 需要解释的状态。这里只声明真正被门槛用到的组件。
+#
+# 升级方式：改下面的 channel，跑一遍 `bash acceptance/check.sh`，通过后**单独提交**
+# 这一个文件（不要和功能改动混在一起 —— 混起来就看不出是谁让格式变了）。
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
