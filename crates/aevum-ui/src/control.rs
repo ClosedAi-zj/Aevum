@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -92,9 +93,16 @@ impl ControlFile {
 // ---------------------------------------------------------------- 命令执行器
 
 /// UI 线程侧收到的执行请求。`reply` 是一次性回复通道。
+///
+/// `queued_at` 是投递时刻：客户端那头最多等 [`UI_TIMEOUT`] 就报超时，
+/// 界面线程醒来后如果发现一条命令已经排队超过这个上限，说明客户端多半
+/// 已经超时走人、甚至可能重试了一遍 —— 这种迟到事件必须拒绝执行，
+/// 否则 `export.video` / `queue.run` 这类批量写命令会被跑两遍
+/// （审查确认的重复执行路径）。
 pub struct ControlEvent {
     pub id: String,
     pub args: Value,
+    pub queued_at: Instant,
     pub reply: Sender<Result<Value, String>>,
 }
 

@@ -2278,15 +2278,37 @@ impl AppState {
         }
 
         // 回环控制：先把在线程里排队的请求在本帧里执行完，再让服务跟随当前序列。
+        self.drain_control_events(ctx);
+        self.sync_control(ctx);
+    }
+
+    /// 收尾控制通道：把在线程里排队的请求在本帧里执行掉。
+    ///
+    /// 迟到的命令不执行：客户端最多等 [`control::UI_TIMEOUT`] 就报超时，
+    /// 一条排队超过这个上限才轮到的事件，说明客户端多半已经超时走人、
+    /// 甚至可能重试了一遍。照常执行的话 export.video / queue.run /
+    /// hdr.merge 这类批量写命令会被跑两遍（审查确认的重复执行路径）。
+    /// 回复照发（对端通常已断开，发送失败无妨），至少语义是完整的。
+    /// 独立成方法是为了让"迟到不执行"这条规则能脱离整帧 UI 直接测试。
+    fn drain_control_events(&mut self, ctx: &Context) {
         loop {
             let event = match self.control_rx.try_recv() {
                 Ok(event) => event,
                 Err(_) => break,
             };
+            let waited = event.queued_at.elapsed();
+            if waited > control::UI_TIMEOUT {
+                let _ = event.reply.send(Err(format!(
+                    "命令 {} 排队 {:.0} 秒才轮到执行，超过 {:.0} 秒等待上限：为避免与客户端超时重试撞车，已放弃执行",
+                    event.id,
+                    waited.as_secs_f64(),
+                    control::UI_TIMEOUT.as_secs_f64()
+                )));
+                continue;
+            }
             let result = self.run_ui_command(ctx, &event.id, &event.args);
             let _ = event.reply.send(result);
         }
-        self.sync_control(ctx);
     }
 
     /// 保证控制服务与「当前有没有序列」一致：没序列就不写 control.json，
@@ -2326,6 +2348,7 @@ impl AppState {
                     .send(ControlEvent {
                         id: id.to_owned(),
                         args: args.clone(),
+                        queued_at: Instant::now(),
                         reply,
                     })
                     .map_err(|_| "界面线程已关闭，控制通道不可用".to_owned())?;
@@ -10578,6 +10601,52 @@ mod preview_tests {
 #[cfg(test)]
 mod command_tests {
     use super::*;
+
+    #[test]
+    fn a_stale_control_event_is_refused_rather_than_executed() {
+        // 回归：executor 的 recv_timeout 超时后，事件曾留在 control_rx 里
+        // 等下一帧照常执行 —— agent 超时重试会让批量写命令跑两遍。
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        // 一条"投递了很久才轮到"的命令：客户端那边早已超时。
+        let (reply, reply_rx) = channel();
+        state
+            .control_tx
+            .send(ControlEvent {
+                id: "grade.set".to_owned(),
+                args: json!({"exposure": 9.9}),
+                queued_at: Instant::now() - control::UI_TIMEOUT - Duration::from_secs(1),
+                reply,
+            })
+            .expect("发一条迟到的命令");
+        state.drain_control_events(&ctx);
+        let err = reply_rx
+            .recv()
+            .expect("迟到的命令也必须有回复，语义才完整")
+            .expect_err("迟到的命令应当被拒绝而不是执行");
+        assert!(err.contains("放弃执行"), "{err}");
+        // 拒绝 = 不执行，不是"执行了再告诉客户端晚了"：参数必须原封不动。
+        assert_eq!(state.params.exposure, 0.0, "迟到的命令不该改参数");
+
+        // 时效内的命令照常执行，没被误伤。
+        let (reply, reply_rx) = channel();
+        state
+            .control_tx
+            .send(ControlEvent {
+                id: "grade.set".to_owned(),
+                args: json!({"exposure": 0.5}),
+                queued_at: Instant::now(),
+                reply,
+            })
+            .expect("发一条新鲜的命令");
+        state.drain_control_events(&ctx);
+        let out = reply_rx
+            .recv()
+            .expect("新鲜的命令应当有回复")
+            .expect("应当执行");
+        assert_eq!(out["params"]["exposure"], json!(0.5));
+        assert_eq!(state.params.exposure, 0.5);
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
