@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 打 Windows 绿色包：先过 scripts/check.sh 的门槛，再 release exe + 随包 ffmpeg，
-# 然后自检并真跑一次导出。
+# 然后自检、真跑一次导出，最后打出 zip 与 SHA256SUMS 并解压回验。
 #
 # 用法（Git Bash）：
 #   scripts/package.sh                  # ffmpeg 探测：AEVUM_FFMPEG_SRC → 包内
@@ -11,6 +11,8 @@
 # 产物：dist/aevum/{aevum.exe, tools/ffmpeg.exe, tools/README-ffmpeg.txt,
 #                      README.md, THIRD-PARTY-NOTICES.txt,
 #                      licenses/, third-party-src/}
+#       dist/Aevum-Studio-v<版本>-windows-x64.zip   # 顶层目录 + LICENSE + CHANGELOG.md
+#       dist/SHA256SUMS                             # zip 的 sha256，sha256sum -c 可验
 #
 # licenses/ 与 third-party-src/ 不是可选的装饰：
 #   - LGPL-2.1 / OFL / UFL / MIT 都要求"随分发附带许可文本"，少了就是分发不合规；
@@ -113,10 +115,15 @@ cat > "$DIST/tools/README-ffmpeg.txt" <<EOF
 EOF
 
 echo "==> 自检（无显示器）"
-"$DIST/aevum.exe" --selftest
+# 输出留着给后面的 zip 解压回验比对形状数：解压产物必须和构建树一模一样。
+selftest_build="$("$DIST/aevum.exe" --selftest)"
+echo "$selftest_build"
 
 echo "==> 真实导出（只用随包 ffmpeg，清空 PATH 里的 ffmpeg 影响）"
-work="$(mktemp -d)"
+# 显式指到 /tmp：Git Bash 的 mktemp 在某些环境（TMP 指到 Windows 临时目录）会
+# 返回带盘符的路径，下游的 rm/工具链对盘符路径行为不一；/tmp 在 Git Bash 里
+# 恒存在且始终是 POSIX 形式。本脚本只承诺在 Git Bash 里跑。
+work="$(TMPDIR=/tmp mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 work_win="$(cygpath -m "$work")"
 
@@ -146,5 +153,53 @@ fi
 [ -s "$work/pack-check.mp4" ] || { echo "没有生成成片" >&2; exit 1; }
 
 size="$(du -sh "$DIST" | cut -f1)"
+
+# ---- zip + SHA256SUMS（1.0.0 验收清单 B4）----
+# zip 不再人工压：顶层目录、LICENSE、CHANGELOG.md、校验和都由本脚本保证。
+# 版本号从唯一真源 Cargo.toml 读，不引第三方工具。
+echo "==> 打 zip（顶层目录 Aevum-Studio-v<版本>/）"
+ver="$(awk -F'"' '/^version /{print $2; exit}' Cargo.toml)"
+zip_name="Aevum-Studio-v${ver}-windows-x64.zip"
+zip_out="$ROOT/dist/$zip_name"
+
+stage="$work/zipstage/Aevum-Studio-v$ver"
+mkdir -p "$stage"
+cp -a "$DIST/." "$stage/"
+# 项目自身的 LICENSE 与变更记录随包分发——之前人工压的 zip 一直缺这两个。
+cp -f "$ROOT/LICENSE" "$ROOT/CHANGELOG.md" "$stage/"
+
+# 压缩用 Windows 内置 bsdtar（System32\tar.exe，libarchive），不用 PowerShell
+# 的 Compress-Archive：PS 5.1 会把 zip 内路径分隔符写成反斜杠，跨平台解压工具
+# 会把整条路径当成一个文件名；bsdtar 写正斜杠。Git Bash 自带的 GNU tar 不认
+# zip 格式，所以这里必须显式走 System32 的那份。bsdtar 对非 ASCII 文件名会
+# 按本地代码页写、可能乱码——包内容树全部是 ASCII 文件名，不受影响；
+# 若日后要往包里放非 ASCII 文件名，先实测再改方案。
+( cd "$work/zipstage" && /c/Windows/System32/tar.exe -a -c -f "$(cygpath -m "$zip_out")" "Aevum-Studio-v$ver" )
+
+# 校验和只含 zip 一行：SHA256SUMS 自身没法校验自己（自指）。
+zip_sha="$(sha256sum "$zip_out" | awk '{print $1}')"
+printf '%s  %s\n' "$zip_sha" "$zip_name" > "$ROOT/dist/SHA256SUMS"
+
+echo "==> 解压回验（zip 里跑 --selftest，形状数必须与构建树一致）"
+# 这里用 rm -rf 是安全的：删的是本脚本自己 mktemp -d 出来的临时目录
+# （$work 与 $zipcheck），里面的每一样东西都是本次运行创建的，
+# 不含任何用户数据；trap 保证脚本无论成败退出前都清干净。
+zipcheck="$(TMPDIR=/tmp mktemp -d)"
+trap 'rm -rf "$work" "$zipcheck"' EXIT
+unzip -q "$zip_out" -d "$zipcheck"
+selftest_zip="$("$zipcheck/Aevum-Studio-v$ver/aevum.exe" --selftest)"
+if [ "$selftest_zip" != "$selftest_build" ]; then
+    echo "解压产物的自检结果与构建树不一致：" >&2
+    echo "  构建树：$selftest_build" >&2
+    echo "  解压后：$selftest_zip" >&2
+    exit 1
+fi
+
+zip_bytes="$(wc -c < "$zip_out" | tr -d '[:space:]')"
 echo "==> 完成：$DIST（$size）"
 ls -la "$DIST" "$DIST/tools"
+echo "==> zip：$zip_out"
+echo "    大小：$zip_bytes 字节"
+echo "    sha256：$zip_sha"
+echo "    校验和：$ROOT/dist/SHA256SUMS（sha256sum -c dist/SHA256SUMS 可验）"
+echo "    解压自检：与构建树一致 ✓"
