@@ -26,6 +26,10 @@ pub use state::AppState;
 
 /// 无显示器自检：跑两遍布局，确认加载态与空状态都真的画出了东西。
 pub fn selftest() -> Result<String, String> {
+    // 无头入口也解析一次配置路径：首启迁移与 override 诊断都挂在这条链上
+    // （config_dir 的文档承诺 selftest 覆盖迁移），顺带让 AEVUM_* 指向
+    // 坏路径时在 stderr 上看得见——自检本来就是干这个的。
+    let _ = crate::settings::path();
     let ctx = egui::Context::default();
     theme::apply(&ctx, 1.0);
 

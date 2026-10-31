@@ -35,7 +35,12 @@ pub fn path() -> PathBuf {
     if let Some(p) = aevum_core::env::var_os("SETTINGS")
         && !p.is_empty()
     {
-        return PathBuf::from(p);
+        let p = PathBuf::from(p);
+        // override 是产品承诺：设了就必须用它，绝不偷偷回退 `%APPDATA%`。
+        // 这里只把「用不了」喊出来（带缓存，每进程只探一次、只告一次），
+        // 路径照原样返回——静默失败才是当初的 bug。
+        aevum_core::env::check_override_cached("SETTINGS", &p, aevum_core::env::Target::File);
+        return p;
     }
     aevum_core::config_dir::dir().join(FILE)
 }
@@ -68,16 +73,29 @@ pub fn load() -> Settings {
     s
 }
 
-/// 写设置。失败只吞掉：写不进配置目录不该打断正在调色的用户。
+/// 写设置。失败不打断用户（调色中的崩溃比丢一次设置贵得多），但必须出声：
+/// 便携盘路径失效时用户以为设置存上了，实际每次都在丢——静默吞掉只会让
+/// 「为什么每次打开主题都变回去」变成无头案。
 pub fn save(s: &Settings) {
     let p = path();
     if let Some(dir) = p.parent()
-        && std::fs::create_dir_all(dir).is_err()
+        && let Err(e) = std::fs::create_dir_all(dir)
     {
+        aevum_core::env::note(format!(
+            "设置保存失败：目录 {} 建不出来（{e}）；本次修改只在内存里，退出即丢。\
+             把该环境变量去掉可回到默认配置目录，或改指一个可写的位置。",
+            dir.display()
+        ));
         return;
     }
-    if let Ok(text) = serde_json::to_string_pretty(s) {
-        let _ = std::fs::write(p, text);
+    if let Ok(text) = serde_json::to_string_pretty(s)
+        && let Err(e) = std::fs::write(&p, text)
+    {
+        aevum_core::env::note(format!(
+            "设置保存失败：写不进 {}（{e}）；本次修改只在内存里，退出即丢。\
+             把该环境变量去掉可回到默认配置目录，或改指一个可写的位置。",
+            p.display()
+        ));
     }
 }
 

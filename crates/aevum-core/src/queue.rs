@@ -209,7 +209,10 @@ pub fn default_path() -> PathBuf {
     if let Some(path) = crate::env::var_os("RENDER_QUEUE")
         && !path.is_empty()
     {
-        return PathBuf::from(path);
+        let path = PathBuf::from(path);
+        // 不回退是产品承诺；只把 override 用不了这件事喊出来（带缓存）。
+        crate::env::check_override_cached("RENDER_QUEUE", &path, crate::env::Target::File);
+        return path;
     }
     crate::config_dir::dir().join(QUEUE_FILE)
 }
