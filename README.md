@@ -50,7 +50,9 @@ scripts/             package.sh（绿色包）· shots.sh（界面截图）· mi
 > 产品是纯 Rust，exe 里不含任何 Python——这个目录既不参与 `cargo build`，也不随包分发。
 > 改算法时它跟着逐式改（见「测试」），详见 `acceptance/README.md`。
 
-（设计文档与评审记录在本地 `docs/`，不进版本库；各版本说明见 GitHub Releases。）
+（设计文档与评审记录写在本地 `docs/`，**不随仓库分发**；入库的只有对外承诺的几份——
+各版本发布说明与 `docs/1.0.0-验收清单.md`，其余是 `.gitignore` 掉的过程文档。
+逐版说明与下载见 GitHub Releases。）
 
 ### 构建与运行
 
@@ -185,8 +187,10 @@ scripts/             package.sh (portable build) · shots.sh (UI screenshots) ·
 > gate. The product is pure Rust and the exe ships no Python — this directory is not part of
 > `cargo build` and is never packaged. See `acceptance/README.md`.
 
-(Design docs and review records live in the local `docs/` directory and are not part of
-the repository; per-version notes are published via GitHub Releases.)
+(Design docs and review records are written to the local `docs/` and are **not shipped with
+the repository**; the only tracked files there are the public commitments — the per-version
+release notes and `docs/1.0.0-验收清单.md`. Everything else is ignored by `.gitignore`.
+Per-version notes and downloads are on GitHub Releases.)
 
 ### Build & run
 

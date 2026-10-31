@@ -4,6 +4,7 @@ description = "恒晷 · Aevum Studio 桌面程序"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 # 包名跟目录一致，产物叫 aevum.exe。
 [[bin]]
