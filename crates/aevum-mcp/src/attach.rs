@@ -474,10 +474,18 @@ fn tool_list(target: &ControlTarget, warned: &mut bool) -> Vec<Value> {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
+            // GUI 比命令行新时，命令目录里会多出本机不认识的新 ID。这类命令
+            // **列出来也调不通**（本地解析不到 → 报「未知工具」），agent 只会拿着
+            // 一条看着合法的工具名反复试错。直接不列，并提示一次，让人去对齐版本。
+            let mut unlisted: Vec<&str> = Vec::new();
             let tools: Vec<Value> = commands
                 .iter()
                 .filter_map(|command| {
                     let id = command.get("id").and_then(Value::as_str)?;
+                    if !aevum_core::mcp_routes::COMMANDS.contains(&id) {
+                        unlisted.push(id);
+                        return None;
+                    }
                     let summary = command
                         .get("summary")
                         .and_then(Value::as_str)
@@ -497,6 +505,21 @@ fn tool_list(target: &ControlTarget, warned: &mut bool) -> Vec<Value> {
                     }))
                 })
                 .collect();
+            if !unlisted.is_empty() && !*warned {
+                *warned = true;
+                // 带版本号：两边都报得出自己是什么版本时，人一眼就知道差了哪一版。
+                let gui = if target.version.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", target.version)
+                };
+                eprintln!(
+                    "aevum-mcp: GUI{gui} 报了 {} 条本机命令行不认识的新命令，已从 tools/list 里跳过：{}；\
+                     两边版本可能不一致，建议一起升级",
+                    unlisted.len(),
+                    unlisted.join("、")
+                );
+            }
             if !tools.is_empty() {
                 return tools;
             }
@@ -1148,9 +1171,9 @@ mod tests {
 /// 出发另立视角：走真实的 stdio 会话、起一个假控制端口，检查「`tools/list` 里出现的
 /// 名字都能调用、调用都落到该落的命令」，并穷举名字被改动后不会误命中。
 ///
-/// `qa_newer_gui_extra_command_is_listed_but_unknown_locally` 记录的是**已知限制**：
-/// GUI 比命令行新时，多出来的命令会出现在列表里但本地解析不到——这条不是回归，
-/// 是把现状钉住，等版本比对那一轮再改。
+/// `qa_newer_gui_extra_command_is_skipped_not_listed` 覆盖跨版本：GUI 比命令行新时，
+/// 多出来的命令**不进** `tools/list`（列出来也调不通，只会让 agent 反复试错），
+/// 同时在 stderr 提示一句让人去对齐版本。
 #[cfg(test)]
 mod qa_acceptance {
     use super::*;
@@ -1775,30 +1798,37 @@ mod qa_acceptance {
         );
     }
 
-    /// 跨版本推演之二：**新 GUI（72+）+ 旧 MCP**。这是真正会「列出来调不动」的方向：
-    /// `tools/list` 从 GUI 取，本地表却认不出新命令。
+    /// 跨版本推演之二：**新 GUI（72+）+ 旧命令行**。
+    ///
+    /// `tools/list` 从 GUI 取、路由表在本地，这个组合本来会制造出「列出来、永远调不通」
+    /// 的工具。现在改成不列：agent 拿到一条看着合法的工具名只会反复试错，而人从启动时
+    /// 那句「GUI 报了 N 条本机不认识的命令」就能看出两边版本没对齐。
     #[test]
-    fn qa_newer_gui_extra_command_is_listed_but_unknown_locally() {
+    fn qa_newer_gui_extra_command_is_skipped_not_listed() {
         let mut newer = full_catalog();
         newer.push(("library.tags".to_owned(), "新命令".to_owned()));
-        // 只有一次连接：那条新命令在本地就解析不出来，压根到不了 GUI。
+        // 只有一次连接：那条新命令不进列表，也就没人会去调它。
         let gui = spawn_fake_gui(newer, 1);
-        let responses = stdio_session(&[list(0), call(1, "aevum_library_tags")], gui.port);
+        let responses = stdio_session(&[list(0)], gui.port);
         let _ = gui.seen.join().expect("假 GUI 线程");
 
         let tools = responses[0]["result"]["tools"]
             .as_array()
             .expect("tools 数组");
-        assert_eq!(tools.len(), 73);
+        assert_eq!(tools.len(), 72, "本机不认识的新命令不该出现在列表里");
         assert!(
-            tools
+            !tools
                 .iter()
                 .any(|tool| tool["name"] == json!("aevum_library_tags")),
-            "新 GUI 的命令会出现在 tools/list 里"
+            "新命令被列出来了 —— 它调不通，列出来只会让 agent 反复试错"
         );
-
-        let response = &responses[1];
-        assert_eq!(response["error"]["code"], json!(-32602));
-        assert!(error_text(response).contains("未知工具"), "{response}");
+        // 原有 72 条一条不能少：过滤只该去掉「不认识」，不该误伤
+        for id in aevum_core::mcp_routes::COMMANDS {
+            let name = mcp_name(id);
+            assert!(
+                tools.iter().any(|tool| tool["name"] == json!(name)),
+                "过滤误伤了 {name}"
+            );
+        }
     }
 }
