@@ -52,7 +52,9 @@ fn golden_sample() -> PathBuf {
         .join("xmp_sample.xmp")
 }
 
-/// 一组接近 Python `tests/test_xmp.py::rich_params` 的非默认值。
+/// 一组把每个字段都拨离默认值的参数，用来验 XMP 往返不丢键。
+/// 数值取自 0.5 之前那套 Python 原型的同名用例（原型已随 1.0.0 的仓库清理移除，
+/// 这组数字作为口径保留在此 —— 换数字等于换验收对象）。
 fn rich_params() -> GradeParams {
     let mut p = GradeParams::default();
     p.exposure = 0.85;

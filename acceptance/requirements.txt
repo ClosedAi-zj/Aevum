@@ -1,0 +1,20 @@
+# 验收仪器（acceptance/）的 Python 依赖。
+#
+# 为什么这个文件在 acceptance/ 而不是仓库根：产品是纯 Rust，`cargo build` 与打出来的
+# exe 一行 Python 都不需要。只有「冻结金标 / 重算参考值」这一件事需要 Python，所以
+# 依赖清单跟着验收目录走——根目录放一个 requirements.txt 会让人以为产品要装 Python。
+#
+# 装（仓库根执行，用项目内的 .venv 或任意 venv）：
+#     python -m venv .venv
+#     .venv/Scripts/python.exe -m pip install -r acceptance/requirements.txt
+#
+# 下面是本机实际跑通冻结与比对的确切版本，改版本前先确认金标仍逐字节可复现：
+#     python acceptance/oracle/freeze_golden.py ...   # 连跑两遍，输出必须逐字节相同
+numpy==2.5.4
+opencv-python-headless==5.0.0.93
+
+# 不在这里的依赖，以及为什么：
+# - PySide6：`reference/gui/` 是 Qt 界面的镜像（读代码时对着看用），金标链路不 import
+#   它。实测：`import reference.grade` 之后 sys.modules 里没有任何 PySide6 或
+#   reference.gui 模块。要跑那部分代码才需要自己装，装与不装都不影响验收。
+# - pillow / rawpy / imageio-ffmpeg：0.5 之前那套 Python 原型用的，已随原型一起删除。

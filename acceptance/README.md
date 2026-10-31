@@ -56,7 +56,14 @@ Python 在这里只有一个身份：**裁判**。一个算法要算得对，光
 
 ## 常用命令
 
-需要仓库根的虚拟环境（依赖只有 numpy + opencv，已装好的话不用重建）：
+需要 Python 依赖才能冻结/重算金标（只有 numpy + opencv，已装好的话不用重建）。依赖清单
+在 `acceptance/requirements.txt`，**仓库根没有 requirements.txt** —— 产品是纯 Rust，
+根目录放一个依赖清单会让人以为构建要装 Python：
+
+```bash
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -r acceptance/requirements.txt
+```
 
 ```bash
 # 提交门槛（本机默认 --offline；CI 上 CARGO_FLAGS= 允许联网）
