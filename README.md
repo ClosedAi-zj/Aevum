@@ -98,7 +98,10 @@ cargo clippy --workspace        # lint 门禁
 
 - 开发期使用 **beta 版本号**（当前 `0.5.0-beta.1`），每轮功能/重构推进打 tag
 - 完整开发完成后发布正式版（1.0）；beta 期不承诺输出格式与参数持久化的跨版本兼容
-- 许可：MIT（见 LICENSE 文件）
+- 许可：MIT（见 `LICENSE` 文件）。随二进制分发的第三方组件的许可与义务见
+  `THIRD-PARTY-NOTICES.txt` 与 `licenses/`：其中 rawler 为 **LGPL-2.1** 且静态链接进
+  `aevum.exe`，需要完全不含 copyleft 的构建时用 `cargo build --release --no-default-features`
+  （RAW 走内置后端，行为与 v0.3.0 一致）
 
 ---
 
@@ -211,4 +214,8 @@ two consecutive freezes must be byte-identical.
 - Pre-1.0 releases use **beta versioning** (currently `0.5.0-beta.1`), tagged per milestone
 - The stable 1.0 release follows once development is complete; during beta, cross-version
   compatibility of output formats and persisted parameters is not guaranteed
-- License: MIT (see the LICENSE file)
+- License: MIT (see the `LICENSE` file). Third-party components shipped with the binary are
+  covered by `THIRD-PARTY-NOTICES.txt` and `licenses/`: `rawler` is **LGPL-2.1** and is
+  statically linked into `aevum.exe`; for a binary with no copyleft code at all, build with
+  `cargo build --release --no-default-features` (RAW falls back to the built-in backend,
+  behaviour identical to v0.3.0)

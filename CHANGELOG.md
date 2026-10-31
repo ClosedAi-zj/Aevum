@@ -79,6 +79,32 @@
    示例插件改名为 `aevum.example-invert`；若你两个都装过，菜单里会出现两个，删掉旧的即可
    （不会自动改写用户的 `plugin.toml`）。
 
+### 第三方组件与许可
+
+本项目代码以 **MIT** 发布（`LICENSE`）。随二进制分发的第三方组件另有许可，
+完整说明见 `THIRD-PARTY-NOTICES.txt` 与 `licenses/`：
+
+| 组件 | 许可 | 关系 |
+|---|---|---|
+| `tools/ffmpeg.exe`（FFmpeg 7.1） | GPLv3 | 独立子进程，不链接 |
+| **rawler 0.7.2**（RAW 解码后端） | **LGPL-2.1** | **静态链接进 `aevum.exe`** |
+| Inter / Noto Sans SC / Noto Emoji | OFL-1.1 | 编译进 exe |
+| Ubuntu Light / Hack / egui-icons / emoji-icon-font | UFL-1.0 / MIT | 编译进 exe |
+| Lucide 图标 | ISC | 编译进 exe |
+| 其余 316 个 Rust crate | MIT / Apache-2.0 / BSD / Zlib 类 | 静态链接 |
+
+> **本节是 2026-10-31 补写的更正。** 此前 `THIRD-PARTY-NOTICES.txt` 与
+> `docs/依赖许可说明.md` 都把 rawler 写成「MIT OR Apache-2.0」，据此得出
+> 「二进制分发零附加义务」。**这是错的**：rawler 是 LGPL-2.1 单一许可，
+> 且被静态链接进主程序。本版按 LGPL-2.1 §6 补齐了三件事——许可全文
+> （`licenses/LGPL-2.1-rawler.txt`）、对应源码（`third-party-src/rawler-0.7.2.crate`）、
+> 以及可修改并重新链接的具体做法。同时补上了 egui 默认字体（Ubuntu Light、Hack、
+> Noto Emoji、egui-icons、emoji-icon-font）此前完全没声明的漏洞。
+>
+> 如果你所在的组织不允许链接任何 copyleft 代码，用
+> `cargo build --release --no-default-features` 构建：RAW 解码改走内置后端
+> （行为与 v0.3.0 一致），二进制不再含 LGPL/GPL 代码，代价是 CR3-CRX 等少数格式解不动。
+
 ### 已知问题
 
 - **`scripts/package.sh` 的默认 ffmpeg 路径已失效**（`../pythonProject4/.venv/...`，多数机器上

@@ -2,7 +2,18 @@
 
 本项目（恒晷 · Aevum Studio）自身代码以 MIT 许可发布，全文见仓库根目录 LICENSE。
 
-绿色包（Release 里可下载的 zip）额外内含一份第三方程序，其许可与本项目不同，单独说明如下。
+本文档说明**随二进制一同分发**的第三方组件。绿色包（Release 可下载的 zip）里还有一份
+独立的第三方程序 FFmpeg（见第 1 节）。各许可的原文放在仓库 `licenses/` 目录，
+随包放在 zip 的 `licenses/` 下。
+
+先给结论，避免你要读到底：
+
+  · FFmpeg 7.1（随包 exe）—— GPLv3，独立子进程不链接，无需额外操作
+  · rawler 0.7.2 —— **LGPL-2.1，静态链接且默认启用**，见第 2 节（已履行，含源码）
+  · Inter / Noto Sans SC —— OFL-1.1，编译进 exe，无需额外操作
+  · Ubuntu Light 等 5 款 —— UFL / MIT / OFL，编译进 exe，无需额外操作
+  · Lucide 图标 —— ISC，编译进 exe，无需额外操作
+  · 其余 316 个 Rust crate —— MIT / Apache / BSD 类，宽松许可，无需附源码
 
 
 ────────────────────────────────────────────────────────
@@ -51,25 +62,170 @@
 
 替代方案：若你所在环境不便使用 GPL 构建，可自行替换 tools/ffmpeg.exe 为任意兼容版本，
       或用环境变量 AEVUM_FFMPEG 指向系统里已装的 ffmpeg，程序行为不变。
+      只用 aevum.exe（不导出视频）的话，可以整个删掉 tools/ 目录。
 
 
 ────────────────────────────────────────────────────────
-2. 字体（编译进 aevum.exe，随二进制一同分发）
+2. rawler 0.7.2 —— LGPL-2.1（**静态链接进 aevum.exe**）
 ────────────────────────────────────────────────────────
 
-- Noto Sans SC（思源黑体简体中文）：SIL Open Font License 1.1
-  https://github.com/notofonts/noto-cjk
-- Inter：SIL Open Font License 1.1
-  https://github.com/rsms/inter
+这一节是本文档最需要你注意的部分：它是本项目唯一以 copyleft 许可分发的组件，
+而且它被**编译进了 aevum.exe 本体**，不像 FFmpeg 那样是独立进程。
 
-OFL 允许随软件自由分发与嵌入，要求保留版权与许可声明；字体文件未作修改。
-字体源文件在仓库 assets/fonts/ 下，许可全文随其上游发布。
+用途：相机 RAW 传感器直解后端，补齐 CR3-CRX、CR2、NEF、ARW 以及 12/14 位行内打包
+      等格式。本项目自带的解码路径覆盖不了这些时由它接手；解不动时会自动降级回
+      内置后端并在界面提示原因。不参与界面绘制、不参与视频编码。
+
+版本：0.7.2
+      作者：Daniel Vogelbacher、Pedro Côrte-Real
+      上游：https://github.com/dnglab/dnglab
+
+许可：**GNU Lesser General Public License, version 2.1**（单一许可，非双许可）
+      许可全文：随包 licenses/LGPL-2.1-rawler.txt（仓库同路径）
+
+是否被修改：**没有**。本项目使用的是 crates.io 发布的原始源码，未打任何补丁。
+      Cargo.lock 记录的官方校验和：
+      sha256:04f4cc35c23969a4a834e0b117c7da41ace812eb9053b5effc3fc5c77d114677
+
+与本项目的关系：作为 `aevum-core` 的可选依赖（feature 名 `raw-rawler`，**默认开启**）
+      静态链接进最终二进制。因此 aevum.exe 属于 LGPL-2.1 第 6 条所说的
+      "使用该库的作品（a work that uses the Library）"。
+
+### 我们如何履行 LGPL-2.1 的义务
+
+| 义务（§6） | 履行方式 |
+|---|---|
+| 显著声明使用了该库、且该库受 LGPL 保护 | 即本节 |
+| 附 LGPL-2.1 许可全文 | `licenses/LGPL-2.1-rawler.txt`，随包放在 zip 的 `licenses/` 下 |
+| 提供该库的完整对应源码 | 随包 `third-party-src/rawler-0.7.2.crate`（标准 Cargo 源码包，解压即得全部源码）；若你的副本没有这个文件，可从 <https://crates.io/api/v1/crates/rawler/0.7.2/download> 获取并用上面的 sha256 校验，或从上游 dnglab 仓库获取 |
+| 让接收者能修改该库并重新链接 | 见下"如何构建一个含你自己修改的版本" |
+| 以目标文件形式重新链接（如需） | 如你需要 object 文件而非"自行重建"的方式，请向发布者索取，发布者会提供对应构件与其构建配置 |
+
+### 如何构建一个含你自己修改的版本
+
+本项目用标准 Cargo 构建，替换这个库不需要改动任何项目代码：
+
+1. 取源码：解压随包的 `third-party-src/rawler-0.7.2.crate`（就是 tar.gz），得到 `rawler-0.7.2/`；
+2. 改它：任意修改，或换成一个完全不同的实现；
+3. 指过去，二选一：
+   - 在 `Cargo.toml` 里加 `[patch.crates-io]` 段：
+     ```toml
+     [patch.crates-io]
+     rawler = { path = "../rawler-0.7.2" }
+     ```
+   - 或 `cargo vendor` 后修改 `vendor/rawler/`，并让 `.cargo/config.toml` 指向 vendor 目录；
+4. `cargo build --release`，产物就是含你修改版 rawler 的 `aevum.exe`。
+
+源码依赖全部来自 crates.io 公开包，无需任何私有仓库或凭据。
+
+### 完全不使用这个库的构建方式
+
+如果你所在的组织不允许链接任何 LGPL 代码，本项目保留了一条干净路径：
+
+    cargo build --release --no-default-features
+
+`raw-rawler` 是唯一被它影响的 feature，关掉后 RAW 解码全部走内置后端
+（行为与 v0.3.0 一致），**不再含任何 copyleft 代码**。代价是 CR3-CRX、
+12/14 位行内打包等少数格式解不动——遇到这类文件会明确报"格式不支持"，
+不会静默出错。这条路径长期有效，不是临时开关。
 
 
 ────────────────────────────────────────────────────────
-3. Rust 依赖
+3. 字体（编译进 aevum.exe，随二进制一同分发）
 ────────────────────────────────────────────────────────
 
-本项目的 Rust 依赖全部来自 crates.io，均为宽松许可（MIT / Apache-2.0 / BSD 类），
-完整清单与版本见 Cargo.lock。如需逐包许可审查，可用 `cargo license` 或
-`cargo deny check licenses` 生成。
+### 3.1 本项目自选的字体（源文件在仓库 assets/fonts/）
+
+- **Noto Sans SC**（思源黑体简体中文）：SIL Open Font License 1.1
+  许可全文：`assets/fonts/OFL-NotoSansSC.txt`（随包在 licenses/ 下）
+  上游：https://github.com/notofonts/noto-cjk
+- **Inter**：SIL Open Font License 1.1
+  许可全文：`assets/fonts/OFL-Inter.txt`（随包在 licenses/ 下）
+  上游：https://github.com/rsms/inter
+
+OFL 允许随软件自由分发与嵌入，要求保留版权与许可声明；两份字体文件均未作修改。
+
+### 3.2 界面框架 egui 自带的默认字体（容易漏，但确实在二进制里）
+
+`eframe` 的 `default_fonts` 特性会把这些字体一并编进 aevum.exe：界面里回退显示的
+西文、等宽与 emoji 字形就来自它们（例如关于框里的 © 与符号图标）。
+
+| 字体 | 许可 | 许可全文 |
+|---|---|---|
+| Ubuntu Light | Ubuntu Font Licence 1.0 | `licenses/UFL-1.0-Ubuntu-Light.txt` |
+| Noto Emoji | SIL OFL 1.1 | `licenses/OFL-1.1-NotoEmoji.txt` |
+| Hack | MIT（另含 DejaVu 公有领域、Bitstream Vera） | `licenses/Hack-Regular.txt` |
+| egui-icons | MIT（emoji-icon-font 的 5 个字形子集） | `licenses/egui-icons.txt` |
+| emoji-icon-font | MIT | `licenses/emoji-icon-font-MIT.txt` |
+
+来源：`epaint_default_fonts` 0.37（egui 项目，MIT OR Apache-2.0）。
+字体文件均未修改，仅按原样嵌入。UFL 与 OFL 都要求随分发保留声明，故本节的许可文本
+随包提供。
+
+### 3.3 运行时加载的系统字体
+
+程序会读取系统中文字体作为兜底。**不打包、不再分发**系统字体，
+只在用户自己的机器上使用，不构成本项目的分发行为。
+
+
+────────────────────────────────────────────────────────
+4. 图标：Lucide（ISC）
+────────────────────────────────────────────────────────
+
+`assets/icons/` 下的 SVG（勾选、上下箭头等）来自 Lucide Icons。
+
+许可：**ISC License**，Copyright (c) 2026 Lucide Icons and Contributors
+      许可全文：`assets/icons/LICENSE-Lucide.txt`（随包在 licenses/ 下）
+      上游：https://lucide.dev
+
+ISC 允许商用、修改、再分发，唯一要求是保留上面的版权与许可声明。
+
+
+────────────────────────────────────────────────────────
+5. 其余 Rust 依赖（crates.io，316 个）
+────────────────────────────────────────────────────────
+
+除第 2 节的 rawler 外，本项目的全部 Rust 依赖均为**宽松许可**，二进制分发
+不产生附源码义务，只需保留版权与许可声明。按 `cargo metadata` 逐包读取的实际分布：
+
+    来自 crates.io 的包                        317
+      ├─ rawler（LGPL-2.1，见第 2 节）            1
+      └─ 其余（全部宽松）                       316
+           ├─ 许可里含 MIT（多为双许可，任选其一）299
+           └─ 不含 MIT，但仍是宽松许可            17
+                Apache-2.0                        7
+                Zlib                              4
+                BSD-3-Clause                      2
+                BSD-3-Clause OR Apache-2.0        2
+                ISC                               1
+                Apache-2.0 OR GPL-2.0-only        1  ← self_cell，本项目按 Apache-2.0
+    另有 4 个本地包是本项目自己的 crate（aevum-core / aevum-ui / aevum-mcp / aevum-studio）
+
+两个包的许可需要"选一个"，本项目已明确按宽松的那一侧履行：
+- `self_cell` —— Apache-2.0 OR GPL-2.0-only → **Apache-2.0**
+- `r-efi` —— MIT OR Apache-2.0 OR LGPL-2.1-or-later → **MIT**
+
+
+完整清单与版本锁定见 `Cargo.lock`。你可以在自己机器上复核：
+
+    cargo metadata --format-version 1 | \
+      python -c "import sys,json;d=json.load(sys.stdin);\
+print('\n'.join(sorted(f\"{p['name']} {p['version']}: {p.get('license')}\" \
+for p in d['packages'] if p.get('source'))))"
+
+或用 `cargo deny check licenses`、`cargo about` 生成聚合清单。
+
+
+────────────────────────────────────────────────────────
+6. 本文档本身的复核方式
+────────────────────────────────────────────────────────
+
+上面每个"事实"都可以被证伪，请照下面两条自己验一遍，不要只信文字：
+
+    # ① 二进制里到底有没有 rawler（有输出 = 静态链接进去了）
+    strings -a aevum.exe | grep -c "rawler-0.7.2"
+
+    # ② 二进制里到底有没有那些默认字体
+    strings -a aevum.exe | grep -E "Ubuntu-Light|egui-icons"
+
+若你发现本文档与实际不符，请提 issue——许可声明写错比不写更糟。
