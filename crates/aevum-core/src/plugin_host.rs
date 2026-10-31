@@ -37,6 +37,10 @@ use serde::{Deserialize, Serialize};
 pub const PROTOCOL: u32 = 1;
 /// 单帧上限：512×512×3 ≈ 786 KB，留一倍余量挡住"len 被写成了 40 亿"。
 pub const MAX_FRAME: usize = 8 * 1024 * 1024;
+/// 协议帧（一行 JSON）的长度上限。像素帧有 [`MAX_FRAME`] 顶着，JSON 帧
+/// 没有 —— 坏插件可以一口气吐一条不带换行的 GB 级"行"，把宿主吃成 OOM
+/// （审查确认）。正常帧最长的是出错说明，几 KB 封顶，4 MB 已是千倍余量。
+pub const MAX_LINE: usize = 4 * 1024 * 1024;
 /// 一个 tile 的边长。512 是内部预览的常用块大小，也是缓存对齐的整数倍。
 pub const TILE: u32 = 512;
 /// 默认超时。超过就当插件卡死，杀掉进程、把错误交回去。
@@ -424,14 +428,9 @@ impl Host {
     }
 
     fn read_msg(&mut self) -> Result<Msg, String> {
-        let mut line = String::new();
-        let n = self
-            .out
-            .read_line(&mut line)
-            .map_err(|e| format!("读协议帧失败：{e}"))?;
-        if n == 0 {
+        let Some(line) = read_line_limited(&mut self.out, MAX_LINE)? else {
             return Err("插件进程提前退出（没等到回复）".to_owned());
-        }
+        };
         serde_json::from_str(line.trim()).map_err(|e| format!("插件发出的帧不是合法 JSON：{e}"))
     }
 
@@ -465,6 +464,54 @@ struct TileHead {
     h: u32,
 }
 
+/// 读一行协议帧，长度超过 `limit` 立刻报错断开。
+///
+/// `BufRead::read_line` 会一直吃到换行为止，中间没有任何上限 —— 对面的
+/// 进程（不管是坏插件还是被攻破的宿主）只要不停吐字节就能把这一侧吃成
+/// OOM。`None` = 对端干净关闭且没给任何字节（EOF），调用方按"提前退出"
+/// 组织自己的错误话术；超限/IO 错误直接 Err。
+fn read_line_limited(reader: &mut impl BufRead, limit: usize) -> Result<Option<String>, String> {
+    let mut buf: Vec<u8> = Vec::with_capacity(1024);
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(slice) => slice,
+            Err(e) => return Err(format!("读协议帧失败：{e}")),
+        };
+        if available.is_empty() {
+            // EOF：有半行也算一行（对端没写完就退了，内容交上去让它自己
+            // 报"不是合法 JSON"），一字节没有才是真正的"什么都没等到"。
+            return if buf.is_empty() {
+                Ok(None)
+            } else {
+                String::from_utf8(buf)
+                    .map(Some)
+                    .map_err(|e| format!("协议帧不是 UTF-8：{e}"))
+            };
+        }
+        match available.iter().position(|&b| b == b'\n') {
+            Some(pos) => {
+                if buf.len() + pos > limit {
+                    return Err(format!("协议帧超过 {limit} 字节上限，疑似坏进程在刷屏"));
+                }
+                buf.extend_from_slice(&available[..pos]);
+                reader.consume(pos + 1);
+                return String::from_utf8(buf)
+                    .map(Some)
+                    .map_err(|e| format!("协议帧不是 UTF-8：{e}"));
+            }
+            None => {
+                if buf.len() + available.len() > limit {
+                    // 不用等读完这一行：已经注定超限，立刻断省内存。
+                    return Err(format!("协议帧超过 {limit} 字节上限，疑似坏进程在刷屏"));
+                }
+                buf.extend_from_slice(available);
+                let len = available.len();
+                reader.consume(len);
+            }
+        }
+    }
+}
+
 // ------------------------------------------------------------ 插件侧（供示例用）
 
 /// 插件端的一条连接。示例插件直接用它写 main。
@@ -490,10 +537,9 @@ impl PluginSide {
             params: BTreeMap::new(),
             id: String::new(),
         };
-        let mut line = String::new();
-        if side.out.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+        let Some(line) = read_line_limited(&mut side.out, MAX_LINE)? else {
             return Err("宿主没发 hello 就关了管道".to_owned());
-        }
+        };
         match serde_json::from_str::<Msg>(line.trim()).map_err(|e| e.to_string())? {
             Msg::Hello {
                 protocol,
@@ -525,10 +571,9 @@ impl PluginSide {
 
     /// 收一块像素 `(seq, x, y, w, h, 像素)`。返回 `None` 表示宿主说了 `end` 或 `cancel`。
     pub fn recv_tile(&mut self) -> TileResult {
-        let mut line = String::new();
-        if self.out.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+        let Some(line) = read_line_limited(&mut self.out, MAX_LINE)? else {
             return Ok(None);
-        }
+        };
         match serde_json::from_str::<Msg>(line.trim()).map_err(|e| e.to_string())? {
             Msg::Tile {
                 seq,
@@ -774,6 +819,41 @@ mod tests {
             panic!("拒绝握手的插件应当报错");
         };
         assert!(err.contains("插件拒绝启动"), "{err}");
+    }
+
+    #[test]
+    fn oversized_lines_are_cut_off_instead_of_buffered_forever() {
+        use std::io::Cursor;
+        // 正常行照常读回。
+        let mut r = Cursor::new(b"{\"t\":\"ready\"}\nrest".to_vec());
+        let line = read_line_limited(&mut r, MAX_LINE).unwrap().unwrap();
+        assert_eq!(line, "{\"t\":\"ready\"}");
+        // 没换行、总量超限：不等读完，立刻报错 —— 这是 OOM 防线。
+        let huge = vec![b'x'; MAX_LINE + 1];
+        let mut r = Cursor::new(huge);
+        let err = read_line_limited(&mut r, MAX_LINE).expect_err("超限行应当报错");
+        assert!(err.contains("上限"), "{err}");
+        // 半行 EOF：内容交上去让调用方报"不是合法 JSON"。
+        let mut r = Cursor::new(b"{\"t\":\"ready\"}".to_vec());
+        let line = read_line_limited(&mut r, MAX_LINE).unwrap().unwrap();
+        assert_eq!(line, "{\"t\":\"ready\"}");
+        // 干净 EOF：None，调用方报"提前退出"。
+        let mut r = Cursor::new(Vec::new());
+        assert!(read_line_limited(&mut r, MAX_LINE).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_firehose_plugin_is_cut_off_at_the_handshake() {
+        // 回归：握手读曾用无上限的 read_line —— 坏插件狂吐不带换行的
+        // 字节就能把宿主吃成 OOM。现在限长防线在握手就生效。
+        let Some(entry) = example_plugin("firehose") else {
+            eprintln!("跳过：没有构建 examples/firehose，先跑 `cargo build --examples`");
+            return;
+        };
+        let Err(err) = Host::start(&entry, "aevum.test-firehose", &BTreeMap::new()) else {
+            panic!("刷屏插件应当在握手上限处被断开");
+        };
+        assert!(err.contains("上限"), "{err}");
     }
 
     #[test]
