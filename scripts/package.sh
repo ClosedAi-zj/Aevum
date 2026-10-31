@@ -74,7 +74,13 @@ fi
 echo "==> 组装 $DIST"
 mkdir -p "$DIST/tools"
 cp -f "$ROOT/target/release/aevum.exe" "$DIST/"
-cp -f "$ff_src" "$DIST/tools/ffmpeg.exe"
+# 探测链第二级命中的可能正是目标本身（上次打包留在 dist/aevum/tools/ 的 ffmpeg）。
+# 这种情况不能再拷一次：coreutils 的 cp 对同一文件会直接报
+# "are the same file" 并以非零退出，整个打包中止。首次打包时目标不存在，-ef 为假，
+# 照常复制。这个坑只有"第二次及以后"的打包才会踩到，所以第一次跑通不算验过。
+if [ ! "$ff_src" -ef "$DIST/tools/ffmpeg.exe" ]; then
+    cp -f "$ff_src" "$DIST/tools/ffmpeg.exe"
+fi
 cp -f "$ROOT/README.md" "$DIST/"
 # 随包 ffmpeg 是 GPLv3 构建，分发时必须带许可与源码获取方式（见该文件的说明）。
 cp -f "$ROOT/THIRD-PARTY-NOTICES.txt" "$DIST/"
