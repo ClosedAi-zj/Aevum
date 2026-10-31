@@ -18,10 +18,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # windows-latest 镜像自带 stable 工具链；这里只打印版本，不额外装。
-      # 版本下限由 Cargo.toml 的 rust-version = "1.88" 声明（界面用了 let-chain）。
+      # 工具链：镜像自带的 stable 会漂，而 rustfmt 规则一漂，`cargo fmt --check`
+      # 就会在没人改代码的情况下红一片（本项目就吃过这个亏：干净仓库上 197 处）。
+      # 这里把版本显式钉在 CI 里，与本机保持一致；升级时改这两行并单独提交。
+      # 注意：仓库根**没有** rust-toolchain.toml —— 试过，本机到 rustup 的下载
+      # 不稳定，装到一半的 toolchain 会让 `cargo` 每次都卡在修复上，整个仓库
+      # 构建不了。等下载稳定了再补那个文件，届时这里可以换成 `rustup show`。
       - name: toolchain
+        shell: bash
         run: |
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          rustup override set 1.98.0
           rustc --version
           cargo --version
           cargo clippy --version
