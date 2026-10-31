@@ -14,7 +14,8 @@ numpy==2.5.4
 opencv-python-headless==5.0.0.93
 
 # 不在这里的依赖，以及为什么：
-# - PySide6：`reference/gui/` 是 Qt 界面的镜像（读代码时对着看用），金标链路不 import
-#   它。实测：`import reference.grade` 之后 sys.modules 里没有任何 PySide6 或
-#   reference.gui 模块。要跑那部分代码才需要自己装，装与不装都不影响验收。
+# - PySide6：`reference/gui/`（Qt 界面镜像，34 个文件）曾在仓库里，但金标链路从不 import
+#   它——实测 `import reference.grade` 之后 sys.modules 里没有任何 PySide6 模块；且验收
+#   用的 venv 里从来没装过 PySide6（即那部分代码无法被验证）。已随 0.5 之前的 Qt 原型
+#   一并移除，全部内容留在 git 历史里。
 # - pillow / rawpy / imageio-ffmpeg：0.5 之前那套 Python 原型用的，已随原型一起删除。
