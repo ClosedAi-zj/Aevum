@@ -3,7 +3,8 @@
 # 然后自检并真跑一次导出。
 #
 # 用法（Git Bash）：
-#   scripts/package.sh                  # 默认从 Python venv 的 imageio-ffmpeg 取 ffmpeg
+#   scripts/package.sh                  # ffmpeg 探测：AEVUM_FFMPEG_SRC → 包内
+#                                       # tools/ffmpeg.exe（上次打包留下的）→ PATH
 #   AEVUM_FFMPEG_SRC=D:/tools/ffmpeg.exe scripts/package.sh
 #   SKIP_CHECK=1 scripts/package.sh     # 只跳过门槛，其余步骤照跑
 #
@@ -36,24 +37,23 @@ echo "==> 编译 release"
 "${CARGO[@]}" build -p aevum-studio --release --offline
 
 ff_src="${AEVUM_FFMPEG_SRC:-}"
-if [ -z "$ff_src" ]; then
-    default_ff="$ROOT/../pythonProject4/.venv/Lib/site-packages/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe"
-    if [ -f "$default_ff" ]; then
-        ff_src="$default_ff"
-    fi
+# 第二优先级：上次打包留在 dist/aevum/tools/ 里的 ffmpeg。首次打包时该文件
+# 不存在，-f 判断自然跳过，不会报错。曾经这里的第二优先级是某个 Python venv
+# 的 imageio-ffmpeg 死路径（仓库改名前就失效了），已删——包内复用不依赖任何
+# 机器上的第三方目录，探测链才是可复现的。
+if [ -z "$ff_src" ] && [ -f "$DIST/tools/ffmpeg.exe" ]; then
+    ff_src="$DIST/tools/ffmpeg.exe"
 fi
 if [ -z "$ff_src" ]; then
     ff_src="$(command -v ffmpeg || true)"
 fi
 if [ -z "$ff_src" ] || [ ! -f "$ff_src" ]; then
     # 别只报「没找到」——下一个人不知道下一步该干什么。
-    # 注意：上面那条 $ROOT/../pythonProject4/.venv/... 的默认路径在多数机器上
-    # 是不存在的（改名之前就失效了），所以走到这里很正常，不是环境坏了。
     cat >&2 <<EOF
 找不到 ffmpeg，打包中止。
 
-  默认探测顺序：AEVUM_FFMPEG_SRC → $ROOT/../pythonProject4/.venv/.../ffmpeg-win-x86_64-v7.1.exe → PATH
-  三条都没命中。（默认的 venv 路径在多数机器上本来就不存在，这不是环境故障。）
+  默认探测顺序：AEVUM_FFMPEG_SRC → dist/aevum/tools/ffmpeg.exe（上次打包留下的） → PATH
+  三条都没命中。（首次打包没有第二条，属正常，不算环境故障。）
 
 下一步，显式指一个 ffmpeg 可执行文件：
 
