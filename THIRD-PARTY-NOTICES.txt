@@ -1,0 +1,75 @@
+第三方组件与许可
+
+本项目（恒晷 · Aevum Studio）自身代码以 MIT 许可发布，全文见仓库根目录 LICENSE。
+
+绿色包（Release 里可下载的 zip）额外内含一份第三方程序，其许可与本项目不同，单独说明如下。
+
+
+────────────────────────────────────────────────────────
+1. FFmpeg（随包二进制 tools/ffmpeg.exe）
+────────────────────────────────────────────────────────
+
+用途：导出成片（H.264 视频编码）与探测音频流。以**独立子进程**方式调用，
+      不通过链接、不嵌入、不改动其代码，与本项目代码之间是"聚合"关系而非派生关系。
+
+版本：ffmpeg version 7.1-essentials_build-www.gyan.dev
+      Copyright (c) 2000-2024 the FFmpeg developers
+      built with gcc 14.2.0 (Rev1, Built by MSYS2 project)
+
+许可：**GPLv3**（该构建启用了 --enable-gpl --enable-version3，为静态链接构建）
+      许可证全文：https://www.gnu.org/licenses/gpl-3.0.txt
+      构建方（gyan.dev）的许可说明：https://www.gyan.dev/ffmpeg/builds/
+
+源码：GPLv3 要求分发二进制时提供对应的完整源码。本包所附二进制的源码获取方式：
+
+      - 该二进制由 gyan.dev 的 ffmpeg-7.1-essentials_build 构建，
+        其上每个构建页均提供对应源码压缩包：
+        https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256
+        https://www.gyan.dev/ffmpeg/builds/packages/
+
+      - 上游 FFmpeg 7.1 官方源码：
+        https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz
+        https://ffmpeg.org/download.html
+
+      - 如需本包这一份二进制的源码，可向发布者索取，会按 GPLv3 提供
+        （含构建配置，即下方 configuration 行）。
+
+      configuration:
+        --enable-gpl --enable-version3 --enable-static --disable-w32threads
+        --disable-autodetect --enable-fontconfig --enable-iconv --enable-gnutls
+        --enable-libxml2 --enable-gmp --enable-bzlib --enable-lzma --enable-zlib
+        --enable-libsrt --enable-libssh --enable-libzmq --enable-avisynth --enable-sdl2
+        --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxvid --enable-libaom
+        --enable-libopenjpeg --enable-libvpx --enable-mediafoundation --enable-libass
+        --enable-libfreetype --enable-libfribidi --enable-libharfbuzz --enable-libvidstab
+        --enable-libvmaf --enable-libzimg --enable-amf --enable-cuda-llvm --enable-cuvid
+        --enable-dxva2 --enable-d3d11va --enable-d3d12va --enable-ffnvcodec --enable-libvpl
+        --enable-nvdec --enable-nvenc --enable-vaapi --enable-libgme --enable-libopenmpt
+        --enable-libopencore-amrwb --enable-libmp3lame --enable-libtheora
+        --enable-libvo-amrwbenc --enable-libgsm --enable-libopencore-amrnb --enable-libopus
+        --enable-libspeex --enable-libvorbis --enable-librubberband
+
+替代方案：若你所在环境不便使用 GPL 构建，可自行替换 tools/ffmpeg.exe 为任意兼容版本，
+      或用环境变量 AEVUM_FFMPEG 指向系统里已装的 ffmpeg，程序行为不变。
+
+
+────────────────────────────────────────────────────────
+2. 字体（编译进 aevum.exe，随二进制一同分发）
+────────────────────────────────────────────────────────
+
+- Noto Sans SC（思源黑体简体中文）：SIL Open Font License 1.1
+  https://github.com/notofonts/noto-cjk
+- Inter：SIL Open Font License 1.1
+  https://github.com/rsms/inter
+
+OFL 允许随软件自由分发与嵌入，要求保留版权与许可声明；字体文件未作修改。
+字体源文件在仓库 assets/fonts/ 下，许可全文随其上游发布。
+
+
+────────────────────────────────────────────────────────
+3. Rust 依赖
+────────────────────────────────────────────────────────
+
+本项目的 Rust 依赖全部来自 crates.io，均为宽松许可（MIT / Apache-2.0 / BSD 类），
+完整清单与版本见 Cargo.lock。如需逐包许可审查，可用 `cargo license` 或
+`cargo deny check licenses` 生成。

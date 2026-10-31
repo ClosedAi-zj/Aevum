@@ -7,7 +7,8 @@
 #   AEVUM_FFMPEG_SRC=D:/tools/ffmpeg.exe scripts/package.sh
 #   SKIP_CHECK=1 scripts/package.sh     # 只跳过门槛，其余步骤照跑
 #
-# 产物：dist/aevum/{aevum.exe, tools/ffmpeg.exe, README.md}
+# 产物：dist/aevum/{aevum.exe, tools/ffmpeg.exe, tools/README-ffmpeg.txt,
+#                      README.md, THIRD-PARTY-NOTICES.txt}
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -67,6 +68,8 @@ mkdir -p "$DIST/tools"
 cp -f "$ROOT/target/release/aevum.exe" "$DIST/"
 cp -f "$ff_src" "$DIST/tools/ffmpeg.exe"
 cp -f "$ROOT/README.md" "$DIST/"
+# 随包 ffmpeg 是 GPLv3 构建，分发时必须带许可与源码获取方式（见该文件的说明）。
+cp -f "$ROOT/THIRD-PARTY-NOTICES.txt" "$DIST/"
 
 ff_version="$("$DIST/tools/ffmpeg.exe" -hide_banner -version | head -n 1)"
 cat > "$DIST/tools/README-ffmpeg.txt" <<EOF
