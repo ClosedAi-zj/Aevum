@@ -16,6 +16,13 @@ import cv2
 
 LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 
+# 多尺度降噪的 eps 常数，与 Rust `develop/spatial.rs::NR_MS_EPS_C` / `NR_MS_EPS_MIN`
+# 同值：eps = C·σ̂²/rm，下限 NR_MS_EPS_MIN 只兜除零。C 为什么是 0.8、1/rm 为什么
+# 成立、三画幅扫参表，全部写在 Rust 那两个常量的文档注释里（单一出处，别在这里
+# 再抄一份表，抄了就会漂）。
+NR_MS_EPS_C = np.float32(0.8)
+NR_MS_EPS_MIN = np.float32(1e-6)
+
 HSL_NAMES = ("红", "橙", "黄", "绿", "浅绿", "蓝", "紫", "洋红")
 HSL_CENTERS = np.array([0.0, 30.0, 60.0, 120.0, 180.0, 240.0, 285.0, 330.0],
                        dtype=np.float32)
@@ -1163,14 +1170,15 @@ def _denoise(x, luma_amt, color_amt, luma_detail=0.0, luma_contrast=0.0,
                 sig = 0.002 + (sv / 100.0) ** 1.6 * 0.030
             else:
                 sig = sig_a
-            # eps 的 σ 平方律（引导滤波 eps 是方差量纲）；max 门控（设计 §6）：
-            # σ 只升 eps 不降。σ_ref = 0.006，TODO(fit)。
-            sr = np.float32(sig) / np.float32(0.006)
-            eps = float(np.float32(0.0001 + 0.006 * k) * np.float32(max(1.0, float(sr * sr))))
-            # 粗尺度 r_c = 2·r_现有（min/130，触发 _guided 自动下采样），中尺度
-            # 即现有 r=min/260；两层 eps 同式 TODO(fit)。
+            # eps = C·σ̂²/rm（方差量纲）：eps 就是噪声方差，1/rm 补偿「半径越大、
+            # 同一个 a=cov/(var+eps) 铺开的邻域越大」带来的额外平滑。与 Rust
+            # spatial.rs::denoise_apply 同式同构——整数半径的取法与顺序一样，
+            # 乘除也按 f32 逐步舍入（(C·σ̂)·σ̂ / rm），两边 eps 逐位相同。
             rc = max(2, int(min(H, W) / 130))
             rm = max(2, int(min(H, W) / 260))
+            s32 = np.float32(sig)
+            eps = float(max((NR_MS_EPS_C * s32 * s32) / np.float32(rm),
+                            NR_MS_EPS_MIN))
             b_coarse = _guided(lum, lum, rc, eps)
             b_mid = _guided(b_coarse, b_coarse, rm, eps)
             # 粗层只回写低频差异，量被 s 门控并入中尺度结果
