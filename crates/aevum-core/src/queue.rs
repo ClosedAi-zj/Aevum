@@ -1,8 +1,9 @@
 //! 渲染队列：一次排若干段序列，逐段渲成调色后的成片。
 //!
-//! 队列里只存渲染意图（源目录、成片路径、规格）。每一段的调色、关键帧、
-//! 去闪烁与对齐位移都在开跑前从**它自己的** `.aevum/project.json` 现读，
-//! 排完队再回头改某一段，不用重新排队。
+//! 队列里存渲染意图（源目录、成片路径、规格）加**加入那一刻的工程快照**。
+//! 渲染一段时优先用它的快照 —— "排队后再改调色不必重排"承诺的就是这个；
+//! 老队列项和外部构造的项没有快照，回落到从它自己的 `.aevum/project.json`
+//! 现读（自动保存可能已把加入之后的调色写进去，读到什么算什么）。
 //!
 //! 中间帧落在成片旁边的 `<片名>_帧/`；`keep_frames` 为假时编码成功后清掉。
 //! `resume` 为真的那一段只补没写出来的中间帧，跑崩了重排队不必从头再渲一遍。
@@ -93,6 +94,12 @@ pub struct QueueItem {
     pub color_space: String,
     /// 指定用该序列工程文件里某套调色副本渲染；留空 = 工程里的主调色。
     pub copy: String,
+    /// 加入队列那一刻的工程快照（完整 [`ProjectFile`]）。渲染优先用它，
+    /// 没有才回落磁盘上的 project.json —— 老队列项没有这一段，行为与
+    /// 以前一致。之前渲染一律读磁盘：自动保存可能已经把加入之后的调色
+    /// 写进去，"排队后再改调色不必重排"就落空了（审查确认）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<ProjectFile>,
     pub status: QueueStatus,
     pub note: String,
 }
@@ -112,6 +119,7 @@ impl Default for QueueItem {
             resume: false,
             color_space: String::new(),
             copy: String::new(),
+            project: None,
             status: QueueStatus::Pending,
             note: String::new(),
         }
@@ -302,11 +310,18 @@ pub fn render_item(
         return Err(QueueError::Invalid("成片路径指向了源序列里的帧".to_owned()));
     }
 
-    let project_path = project::project_path(&root);
-    let project = if project_path.is_file() {
-        project::load(&project_path)?
-    } else {
-        ProjectFile::default()
+    // 优先用加入时快照：排队后用户继续调色、自动保存更新了磁盘工程，
+    // 都不影响这一段该渲成什么。没有快照（老队列文件）才现读磁盘。
+    let project = match &item.project {
+        Some(snapshot) => snapshot.clone(),
+        None => {
+            let project_path = project::project_path(&root);
+            if project_path.is_file() {
+                project::load(&project_path)?
+            } else {
+                ProjectFile::default()
+            }
+        }
     };
 
     let n = paths.len();
@@ -582,6 +597,36 @@ mod tests {
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].status, QueueStatus::Failed);
         assert_eq!(back[0].note, "坏帧");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn project_snapshot_roundtrips_and_old_files_stay_compatible() {
+        // 新字段必须能带着快照落盘再读回来，一个字节都不能丢。
+        let dir = temp_dir("snap");
+        let path = dir.join(QUEUE_FILE);
+        let mut project = ProjectFile::default();
+        project.params.exposure = 1.25;
+        project.preset = "自定义".to_owned();
+        let item = QueueItem {
+            project: Some(project),
+            ..QueueItem::new(&dir, dir.join("a.mp4"))
+        };
+        save(&path, std::slice::from_ref(&item)).unwrap();
+        let back = &load(&path)[0];
+        let snap = back.project.as_ref().expect("快照应当跟着队列文件走");
+        assert_eq!(snap.params.exposure, 1.25);
+        assert_eq!(snap.preset, "自定义");
+
+        // 老队列文件没有 project 字段：照常读回，快照为 None（渲染回落磁盘）。
+        std::fs::write(
+            &path,
+            r#"{"items":[{"root":"C:/x","out":"C:/y.mp4","status":"待渲"}]}"#,
+        )
+        .unwrap();
+        let old = load(&path);
+        assert_eq!(old.len(), 1);
+        assert!(old[0].project.is_none(), "老队列项不该凭空长出快照");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

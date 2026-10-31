@@ -7971,6 +7971,11 @@ impl AppState {
             preset: self.render_preset.clone(),
             keep_frames: self.render_keep_frames,
             resume: self.render_resume,
+            // 加入那一刻的工程快照：排队后再改调色不影响这一段
+            // （界面承诺"每段读取加入时的工程参数"）。之前渲染时读磁盘，
+            // 自动保存可能已把加入之后的调色写进去，渲出来的成片会缺
+            // 最后几次调色（审查确认）。
+            project: Some(self.project_snapshot()),
             ..QueueItem::new(&root, out)
         };
         let index = queue::add(&mut self.queue, item)?;
@@ -8191,6 +8196,13 @@ impl AppState {
             }
             None => String::new(),
         };
+        // 快照"此刻"的工程：指定的序列就是当前序列时用内存参数（控制通道
+        // 这头可能刚改完参数还没到自动保存的 5 秒）；指定的别的序列只能读
+        // 它磁盘上的工程，读不到就不带快照，渲染照旧回落磁盘。
+        let project = match &current {
+            Some(cur) if path_eq(&root, cur) => Some(self.project_snapshot()),
+            _ => project::load(&project::project_path(&root)).ok(),
+        };
         let item = QueueItem {
             root: root.display().to_string(),
             out: out.display().to_string(),
@@ -8203,6 +8215,7 @@ impl AppState {
             keep_frames,
             resume,
             copy,
+            project,
             ..QueueItem::default()
         };
         let index = queue::add(&mut self.queue, item)?;
@@ -10646,6 +10659,42 @@ mod command_tests {
             .expect("应当执行");
         assert_eq!(out["params"]["exposure"], json!(0.5));
         assert_eq!(state.params.exposure, 0.5);
+    }
+
+    #[test]
+    fn queue_add_snapshots_the_project_at_enqueue_time() {
+        // 回归：渲染曾一律读磁盘上的 project.json —— 自动保存可能已把
+        // 排队之后的调色写进去，"每段读取加入时的工程参数"就落空了。
+        // 现在加入那一刻把工程快照进队列项。
+        let dir = temp_dir("queuesnap");
+        let img = image::RgbImage::from_pixel(64, 48, image::Rgb([34, 34, 34]));
+        img.save(dir.join("dark.png")).expect("写帧");
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.display().to_string()}),
+            )
+            .expect("打开序列");
+        state
+            .run_ui_command(&ctx, "grade.set", &json!({"exposure": 0.7}))
+            .expect("调色");
+        state.add_current_to_queue().expect("加入队列");
+        let snap = state.queue[0]
+            .project
+            .as_ref()
+            .expect("加入队列应当带上工程快照");
+        assert_eq!(snap.params.exposure, 0.7, "快照必须是加入那一刻的参数");
+
+        // 排队后再改调色：快照原地不动，渲染读到的还是加入时的参数。
+        state
+            .run_ui_command(&ctx, "grade.set", &json!({"exposure": -2.0}))
+            .expect("排队后继续调色");
+        let snap = state.queue[0].project.as_ref().unwrap();
+        assert_eq!(snap.params.exposure, 0.7, "快照不该被排队后的调色带跑");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn temp_dir(tag: &str) -> PathBuf {
