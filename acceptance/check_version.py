@@ -9,15 +9,20 @@
   1. Cargo.toml 的 version 是唯一真源；
   2. Cargo.lock 四个成员（aevum-core/mcp/ui/studio）与真源一致（cargo 会自动
      回写，漂移说明有人手改了 lock 或忘了 cargo check）；
-  3. README.md 四处版本语境恰好各 1 处且与真源一致：
-     - 「beta 阶段（`x`）」/「currently in **beta** (`x`)」两处写的是
-       `X.Y.Z-beta.x` 占位形式，只校验主版本号部分（X.Y.Z）与真源一致；
-       兼容 1.0.0（无 beta 后缀）——届时若写成 `1.0.0` 也算过；
-     - 「当前 `x`」/「currently `x`」两处必须是完整的当前版本号；
+  3. README.md 四处版本语境恰好各 1 处且与真源一致——中英各两处，且两处落在
+     不同位置（页首状态行 + 版本方案节），所以「改了一处忘了另一处」也会红：
+     - 中文页首「**当前版本**：`x`」、英文页首「**Current version**: `x`」；
+       这两处允许写 `X.Y.Z-beta.x` 占位形式，此时只校验主版本号部分（X.Y.Z）
+       与真源一致——beta 序号推进不必改 README；
+     - 中文版本方案节「当前为 `x`」、英文版本方案节「the current release is `x`」；
+       这两处必须是完整的当前版本号，占位形式不认。
+     1.0.0（无 beta 后缀）天然兼容：页首直写 `1.0.0` 时四处都按完整版本号比对。
   4. CHANGELOG.md 第一个 `## vX.Y.Z — 日期` 标题与真源一致。
 
-1.0.0 发版后 README 语境若按 B6 改写（去掉「beta 期不承诺」），本文件的
-四处模式需要跟着改——改动点都集中在下方 README_PATTERNS。
+四处语境的措辞会随对外承诺演进（B6 那轮把「beta 期不承诺」换成了 1.x 的四类兼容
+承诺，页首那两处 `beta 阶段（…）` 也就跟着改成了 `**当前版本**：…`）。改措辞时**只
+改下面 README_PATTERNS 里的正则**，不改「四处、每处恰好 1 次」这个口径——语境可以
+换说法，数量与位置不能少，否则漂移又没人拦。
 """
 
 from __future__ import annotations
@@ -36,13 +41,15 @@ VER_BETA_X = r"\d+\.\d+\.\d+-beta\.x"
 
 LOCK_MEMBERS = ("aevum-core", "aevum-mcp", "aevum-ui", "aevum-studio")
 
-# README 的四处版本语境。每个模式必须在全文恰好命中 1 次。
-# 命中值：若与真源完全相等 → 过；若是 X.Y.Z-beta.x 占位 → 比对主版本号。
+# README 的四处版本语境：中英各两处，每处在全文必须恰好命中 1 次。
+# 前两条是页首状态行，后两条在「版本方案」/「Versioning」节——同一版号要在一个
+# 文档的两端都写对，只改一处就会被抓出来。
+# 命中值：与真源完全相等 → 过；页首那两处若是 X.Y.Z-beta.x 占位 → 比对主版本号。
 README_PATTERNS = [
-    ("README「beta 阶段（`…`）」", re.compile(r"beta 阶段\*\*（`([^`]+)`）")),
-    ("README「（当前 `…`）」", re.compile(r"（当前 `(" + VER + r")`）")),
-    ("README「currently in **beta** (`…`)」", re.compile(r"currently in \*\*beta\*\* \(`([^`]+)`\)")),
-    ("README「(currently `…`)」", re.compile(r"\(currently `(" + VER + r")`\)")),
+    ("README 页首「**当前版本**：`…`」", re.compile(r"\*\*当前版本\*\*：`([^`]+)`")),
+    ("README 版本方案「当前为 `…`」", re.compile(r"当前为 `(" + VER + r")`")),
+    ("README 页首「**Current version**: `…`」", re.compile(r"\*\*Current version\*\*: `([^`]+)`")),
+    ("README Versioning「the current release is `…`」", re.compile(r"the current release is\s+`(" + VER + r")`")),
 ]
 
 CHANGELOG_FIRST = re.compile(r"^## v(" + VER + r")", re.MULTILINE)

@@ -13,8 +13,9 @@
 全部在同一个窗口里完成。上一步的产物自动流进下一步；把文件或文件夹拖进窗口，
 会直接切到该去的模块。
 
-> 当前处于 **beta 阶段**（`0.5.0-beta.x`）：核心功能已可用并带数值金标回归，
-> 界面与算法仍在快速迭代，正式版（1.0）在完整开发完成后发布。
+> **当前版本**：`0.5.0-beta.2`（beta 阶段）——核心功能已可用并带数值金标回归，
+> 界面与算法仍在快速迭代；正式版 `1.0.0` 随后发布，并从 1.0 起执行下面「版本方案」里的
+> 四类兼容承诺。
 >
 > `0.5.0` 起产品由「光时 / Lumen Studio」更名为「恒晷 / Aevum Studio」。
 > 旧工程的 `.lumen/` 护带目录、旧环境变量 `LUMEN_*`、旧 MCP 工具名 `lumen_*`
@@ -38,14 +39,14 @@ crates/aevum-core/   算法核心：sequence / metrics / deflicker / grade / pre
 crates/aevum-ui/     egui 0.37 界面：state / shell（14 个子模块）/ theme / widgets / controls
 crates/aevum-mcp/    Agent 控制面：MCP 工具、stdio JSON-RPC 与 GUI 回环代理
 apps/aevum-studio/   入口（--open / --demo / --shot / --module / --selftest / --mcp）
-acceptance/          验收仪器：check.sh（提交门槛）· reference/（Python 参考实现）· oracle/（冻结金标）
+acceptance/          验收仪器：check.sh（提交门槛）· 子目录 reference/（Python 参考实现）与 oracle/（冻结金标）
 tools/               审计与开发辅助脚本
 scripts/             package.sh（绿色包）· shots.sh（界面截图）· migrate-to-aevum.sh（旧工程迁移）
 .github/workflows/   ci.yml —— CI 上跑同一个 acceptance/check.sh
 ```
 
-> `acceptance/` 是**验收仪器**，不是产品代码：`reference/` 是与 Rust 实现逐式同构的
-> Python 参考实现，`oracle/golden/` 是它冻结出来的数值金标，`check.sh` 是提交门槛。
+> `acceptance/` 是**验收仪器**，不是产品代码：`acceptance/reference/` 是与 Rust 实现逐式同构的
+> Python 参考实现，`acceptance/oracle/golden/` 是它冻结出来的数值金标，`check.sh` 是提交门槛。
 > 产品是纯 Rust，exe 里不含任何 Python——这个目录既不参与 `cargo build`，也不随包分发。
 > 改算法时它跟着逐式改（见「测试」），详见 `acceptance/README.md`。
 
@@ -84,6 +85,12 @@ target/release/aevum.exe --demo
 
 一次搬完整个素材盘可以用 `scripts/migrate-to-aevum.sh <目录>`（缺省只预览，加 `--apply` 才动手）。
 
+### 从 0.5 beta 升级
+
+覆盖安装即可：解压新包、替换旧包目录，没有任何迁移步骤。工程目录（`<序列>/.aevum/`）与
+配置目录（`%APPDATA%/aevum-studio`）都不动，旧工程直接打开，参数、评级、标记、关键帧、
+运镜照旧。1.0 之后能承诺什么见下面「版本方案」的四类兼容承诺。
+
 ### 测试
 
 ```bash
@@ -98,12 +105,29 @@ cargo clippy --workspace        # lint 门禁
 
 ### 版本方案
 
-- 开发期使用 **beta 版本号**（当前 `0.5.0-beta.2`），每轮功能/重构推进打 tag
-- 完整开发完成后发布正式版（1.0）；beta 期不承诺输出格式与参数持久化的跨版本兼容
-- 许可：MIT（见 `LICENSE` 文件）。随二进制分发的第三方组件的许可与义务见
-  `THIRD-PARTY-NOTICES.txt` 与 `licenses/`：其中 rawler 为 **LGPL-2.1** 且静态链接进
-  `aevum.exe`，需要完全不含 copyleft 的构建时用 `cargo build --release --no-default-features`
-  （RAW 走内置后端，行为与 v0.3.0 一致）
+版本号以 `Cargo.toml` 为唯一真源，当前为 `0.5.0-beta.2`：beta 阶段每轮功能/重构打 tag。
+
+**`1.0.0` 起进入 1.x 兼容承诺期**——beta 阶段的「不承诺跨版本兼容」到此为止。四类对外契约
+按下面的口径维护，任何一条要改都留到下一个主版本：
+
+1. **工程文件格式**（`<序列>/.aevum/project.json`）：1.x 内**只增字段**，新增字段一律带
+   `serde(default)`，不删字段、不改已有字段的语义。三个方向同时成立——旧工程能被新版本打开
+   （缺的字段取默认值）；新版本写出的工程被旧版本打开时**只丢掉它不认识的新字段**，不报错、
+   不拒绝打开；同一份工程在任意两个 1.x 版本之间来回打开不会丢已有参数。
+2. **预设 / 参数持久化**：口径与工程格式完全相同。预设与工程共用同一份参数结构
+   （`GradeParams`：工程里是 JSON 字段，XMP 预设里是 `crs:` 键），工程内的关键帧、调色副本
+   与应用设置 `settings.json` 一并适用——1.x 内只增字段/只增键，缺省即默认值，不删不改语义；
+   新版本写的预设或设置，在旧版本里只丢新增的那部分。
+3. **命令行参数**：已有参数及其语义在 1.x 内不变；新增参数只追加，不改已有参数的行为；
+   弃用先保留——首次使用时在 stderr 打一行提示（带上替代写法）——到**下一个主版本**才移除。
+4. **MCP 工具集**：工具名在 1.x 内不做破坏性变更；新增工具只追加，已有工具的名字、入参与
+   返回结构不改。`tools/list` 的旧名回退策略照旧：旧名 `lumen_*` 作为静默别名继续可调，
+   列表只列 `aevum_*`（见上面「从旧版本升级」）。
+
+**许可**：MIT（见 `LICENSE` 文件）。随二进制分发的第三方组件的许可与义务见
+`THIRD-PARTY-NOTICES.txt` 与 `licenses/`：其中 rawler 为 **LGPL-2.1** 且静态链接进
+`aevum.exe`，需要完全不含 copyleft 的构建时用 `cargo build --release --no-default-features`
+（RAW 走内置后端，行为与 v0.3.0 一致）
 
 ---
 
@@ -117,9 +141,9 @@ window: **align → composite → crop (with camera motion) → color grade → 
 (speed ramps & motion blur)**. Each step feeds the next automatically; drop a file or
 folder onto the window and it switches to the right module.
 
-> The project is currently in **beta** (`0.5.0-beta.x`): core features work and are
-> pinned by numeric golden tests, while UI and algorithms are still evolving fast.
-> The stable release (1.0) ships after development is complete.
+> **Current version**: `0.5.0-beta.2` (beta): core features work and are pinned by
+> numeric golden tests, while UI and algorithms are still evolving fast. The stable `1.0.0`
+> release follows, and the four compatibility promises under "Versioning" take effect from 1.0.
 >
 > As of `0.5.0` the product was renamed from "Lumen Studio" to "Aevum Studio".
 > Old projects (`.lumen/`), old `LUMEN_*` environment variables and old `lumen_*` MCP
@@ -146,17 +170,17 @@ crates/aevum-core/   Algorithms: sequence / metrics / deflicker / grade / previe
 crates/aevum-ui/     egui 0.37 UI: state / shell (14 submodules) / theme / widgets / controls
 crates/aevum-mcp/    Agent control plane: MCP tools, stdio JSON-RPC, GUI loopback proxy
 apps/aevum-studio/   Entry point (--open / --demo / --shot / --module / --selftest / --mcp)
-acceptance/          Acceptance kit: check.sh (commit gate) · reference/ (Python reference) · oracle/ (frozen goldens)
+acceptance/          Acceptance kit: check.sh (commit gate) · subdirs reference/ (Python reference) and oracle/ (frozen goldens)
 tools/               Audit & dev helper scripts
 scripts/             package.sh (portable build) · shots.sh (UI screenshots) · migrate-to-aevum.sh (legacy migration)
 .github/workflows/   ci.yml — runs the same acceptance/check.sh on CI
 ```
 
-> `acceptance/` is the **acceptance kit**, not product code: `reference/` is the Python
-> implementation that mirrors the Rust pipeline formula-by-formula, `oracle/golden/` is
-> the numeric goldens it freezes, and `check.sh` is the commit gate. The product is pure
-> Rust and the exe ships no Python — this directory is not part of `cargo build` and is
-> never packaged. See `acceptance/README.md`.
+> `acceptance/` is the **acceptance kit**, not product code: `acceptance/reference/` is the
+> Python implementation that mirrors the Rust pipeline formula-by-formula,
+> `acceptance/oracle/golden/` is the numeric goldens it freezes, and `check.sh` is the commit
+> gate. The product is pure Rust and the exe ships no Python — this directory is not part of
+> `cargo build` and is never packaged. See `acceptance/README.md`.
 
 (Design docs and review records live in the local `docs/` directory and are not part of
 the repository; per-version notes are published via GitHub Releases.)
@@ -200,6 +224,13 @@ The rename does not touch your data or configuration; old state is migrated when
 To convert a whole library at once use `scripts/migrate-to-aevum.sh <dir>`
 (dry-run by default; pass `--apply` to actually move).
 
+### Upgrading from 0.5 beta
+
+Install over the top: unzip the new build over the old folder — there is nothing to migrate.
+Projects (`<sequence>/.aevum/`) and configuration (`%APPDATA%/aevum-studio`) stay where they
+are, existing projects open as before, and parameters, ratings, flags, keyframes and camera
+moves are untouched. What 1.0 does and does not promise is spelled out under "Versioning" below.
+
 ### Testing
 
 ```bash
@@ -215,11 +246,35 @@ two consecutive freezes must be byte-identical.
 
 ### Versioning
 
-- Pre-1.0 releases use **beta versioning** (currently `0.5.0-beta.2`), tagged per milestone
-- The stable 1.0 release follows once development is complete; during beta, cross-version
-  compatibility of output formats and persisted parameters is not guaranteed
-- License: MIT (see the `LICENSE` file). Third-party components shipped with the binary are
-  covered by `THIRD-PARTY-NOTICES.txt` and `licenses/`: `rawler` is **LGPL-2.1** and is
-  statically linked into `aevum.exe`; for a binary with no copyleft code at all, build with
-  `cargo build --release --no-default-features` (RAW falls back to the built-in backend,
-  behaviour identical to v0.3.0)
+`Cargo.toml` is the single source of truth for the version; the current release is
+`0.5.0-beta.2` (beta), tagged per milestone.
+
+**Compatibility promises start with `1.0.0`** and hold for the whole 1.x series — the
+beta-stage "no cross-version promises" ends there. Four contracts, each maintained under the
+terms below; changing any of them waits for the next major version:
+
+1. **Project file format** (`<sequence>/.aevum/project.json`): within 1.x we only *add* fields,
+   always with `serde(default)`; no field is removed and no existing field changes meaning. All
+   three directions hold — old projects open in new builds (missing fields take defaults); a
+   project written by a new build opens in an old build with only the unknown new fields
+   dropped, with no error and no refusal to open; and opening the same project in any two 1.x
+   builds never loses existing parameters.
+2. **Presets and persisted parameters**: exactly the same terms as the project format. Presets
+   and projects share one parameter struct (`GradeParams` — JSON fields in the project, `crs:`
+   keys in an XMP preset), and keyframes, grade copies and `settings.json` are covered too.
+   Within 1.x we only add fields/keys, absent means default, nothing is removed or redefined;
+   a preset or settings file written by a new build loses only the added parts in an old build.
+3. **Command-line arguments**: existing flags and their meaning do not change within 1.x; new
+   flags are additive only and never alter the behaviour of existing ones; a deprecated flag
+   keeps working, prints a one-line notice to stderr on first use (naming the replacement), and
+   is removed in the **next major version**.
+4. **MCP tool set**: no breaking change to tool names within 1.x; new tools are appended, and
+   the name, input schema and result shape of existing tools stay as they are. The legacy-name
+   fallback for `tools/list` is unchanged: old `lumen_*` names still work as silent aliases
+   while the list advertises only `aevum_*` (see "Upgrading from 0.4 and earlier").
+
+**License**: MIT (see the `LICENSE` file). Third-party components shipped with the binary are
+covered by `THIRD-PARTY-NOTICES.txt` and `licenses/`: `rawler` is **LGPL-2.1** and is
+statically linked into `aevum.exe`; for a binary with no copyleft code at all, build with
+`cargo build --release --no-default-features` (RAW falls back to the built-in backend,
+behaviour identical to v0.3.0)
