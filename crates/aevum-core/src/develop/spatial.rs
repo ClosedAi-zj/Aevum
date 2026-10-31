@@ -761,61 +761,143 @@ pub fn sharpen(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams) {
 /// 当前导出管线上限是 sRGB f32 [0,1]，本轮只有 SDR 落地；HDR（PQ）留给
 /// atlas §36 里程碑。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum OutputEncoding {
+pub enum OutputEncoding {
     Sdr,
     /// HDR（PQ）输出：decode_pq → USM → encode_pq，当前不可达占位。
     #[allow(dead_code)]
     HdrPq,
 }
 
+/// 一次输出锐化的三个用户可见参数（用途档 × 强度档合成后的结果）。
+///
+/// 打包成结构体是为了让函数签名留在可读范围内；数值本身没有语义变化。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UsmSettings {
+    pub amount: f32,
+    pub radius: f32,
+    pub threshold: f32,
+}
+
+impl UsmSettings {
+    pub fn new(amount: f32, radius: f32, threshold: f32) -> Self {
+        Self {
+            amount,
+            radius,
+            threshold,
+        }
+    }
+}
+
 /// 输出锐化专用 USM：高通 = 原图 − 高斯模糊，线性软阈值（E2 threshold 口径，
 /// 非 masking），Δ 限幅压振铃，按亮度比值回写（色度不漂）。
 ///
-/// 输出尺寸感知（LR 按输出分辨率隐式调整；公开口径无精确式，自定 + TODO(fit)）：
-/// `size_gain = clamp(max(w,h)/1600, 1, 3).sqrt()`，半径乘 gain、阈值乘 √gain。
+/// 输出尺寸感知：LR 按输出分辨率隐式放大半径（4K 导出比 1080p 需要更大的
+/// 半径才等效），但公开资料没有给出确切式，也没有可对齐的参照图，所以这里
+/// 是**自定**的：`size_gain = clamp(max(w,h)/1600, 1, 3).sqrt()`。
+/// 它保留在 [`UsmTuning`] 里可调，等将来有多分辨率参照再拟合。
 /// 只在 `apply_output_finish`（缩放后、水印前）调用，预览不经过这里。
-pub(crate) fn output_sharpen_usm(
+pub fn output_sharpen_usm(
     rgb: &mut [f32],
     w: usize,
     h: usize,
-    amount: f32,
-    radius: f32,
-    threshold: f32,
+    s: UsmSettings,
     enc: OutputEncoding,
 ) {
+    output_sharpen_usm_tuned(rgb, w, h, s, enc, UsmTuning::default())
+}
+
+/// 同 [`output_sharpen_usm`]，但接受一组显式的拟合参数。
+///
+/// 生产路径不该用它——默认值才是拟合出来的结论。它存在的意义是让
+/// `tests/fit_sharpen.rs` 能在同一份实现上扫参，而不是复制一份算法来试数
+/// （那样试出来的值跟真正跑的值不是一回事）。
+pub fn output_sharpen_usm_tuned(
+    rgb: &mut [f32],
+    w: usize,
+    h: usize,
+    s: UsmSettings,
+    enc: OutputEncoding,
+    tuning: UsmTuning,
+) {
     match enc {
-        OutputEncoding::Sdr => output_sharpen_usm_sdr(rgb, w, h, amount, radius, threshold),
+        OutputEncoding::Sdr => output_sharpen_usm_sdr(rgb, w, h, s, tuning),
         OutputEncoding::HdrPq => {
             todo!("HDR（PQ）输出编码接入后实现：decode_pq → USM → encode_pq（atlas §36）")
         }
     }
 }
 
-/// 输出尺寸感知增益（LR 按输出分辨率隐式调整；公开口径无精确式，自定 + TODO(fit)）：
-/// `size_gain = clamp(max(w,h)/1600, 1, 3).sqrt()` —— 半径乘 gain、阈值乘 √gain。
-fn usm_size_gain(w: usize, h: usize) -> f32 {
-    ((w.max(h) as f32 / 1600.0).clamp(1.0, 3.0)).sqrt()
+/// 输出尺寸感知增益：`size_gain = clamp(max(w,h)/1600, 1, 3).sqrt()`，
+/// 半径乘 gain、阈值乘 √gain。见 [`output_sharpen_usm`] 的说明——自定值，
+/// 无参照可拟合。
+pub fn usm_size_gain(w: usize, h: usize) -> f32 {
+    usm_size_gain_with(w, h, UsmTuning::default())
+}
+
+/// 输出锐化里那几个「只能拟合、无法取证」的常量，集中放在一处。
+///
+/// 之所以做成结构体而不是散在函数体里的字面量：这些值要按
+/// `atlas §46.2` 的验收口径（MTF50 提升 1.2–1.6×、halo < 3%）扫参确定，
+/// 扫参时需要在同一份代码上试不同取值；定下来以后仍然只有一个默认值，
+/// 生产路径行为不变。
+///
+/// `delta_cap` 已按上述口径拟合（见 `tests/fit_sharpen.rs`，扫参表可复现）；
+/// `size_scale` / `size_cap` 仍是无参照的自定值——**不要**把它们标成已拟合。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UsmTuning {
+    /// 高通 Δ 的**绝对上限**（作用在乘 `amount` 之前，单位是亮度）。
+    ///
+    /// 两个坑都踩过，记在这里免得再踩：
+    ///
+    /// - 早期写 `delta_limit = 0.12·amount`：bound 随力度伸缩（真咬住的话输出会
+    ///   正比于 amount²），而 0.12 比典型高通幅度（阶跃边约 0.042）还大近 3 倍，
+    ///   于是它**一次都没咬住**。实测 amount 1.0→2.0 的 halo 是 8.35%→17.66%，
+    ///   就是纯线性放大——限幅等于不存在。
+    /// - 改成本值上限但放在乘 amount **之后**，则不同力度在同一硬边上被压到同一个
+    ///   绝对量，强度滑杆失效（`export_stills` 的强度分层测试当场红）。
+    pub delta_cap: f32,
+    /// 尺寸补偿的参考长边（px）：`size_gain = (max/size_scale).clamp(1,..)^0.5`。
+    pub size_scale: f32,
+    /// 尺寸补偿上限（增益封顶）。
+    pub size_cap: f32,
+}
+
+impl Default for UsmTuning {
+    fn default() -> Self {
+        Self {
+            delta_cap: 0.0105,
+            size_scale: 1600.0,
+            size_cap: 3.0,
+        }
+    }
+}
+
+/// 带调参的尺寸增益，供扫参用。
+pub fn usm_size_gain_with(w: usize, h: usize, t: UsmTuning) -> f32 {
+    ((w.max(h) as f32 / t.size_scale).clamp(1.0, t.size_cap)).sqrt()
 }
 
 /// SDR 单路：sRGB 编码 f32 [0,1] 上的 USM。
-fn output_sharpen_usm_sdr(
-    rgb: &mut [f32],
-    w: usize,
-    h: usize,
-    amount: f32,
-    radius: f32,
-    threshold: f32,
-) {
+fn output_sharpen_usm_sdr(rgb: &mut [f32], w: usize, h: usize, s: UsmSettings, tuning: UsmTuning) {
+    let UsmSettings {
+        amount,
+        radius,
+        threshold,
+    } = s;
     if w == 0 || h == 0 || amount <= 0.0 {
         return;
     }
-    let size_gain = usm_size_gain(w, h);
+    let size_gain = usm_size_gain_with(w, h, tuning);
     let radius_eff = (radius * size_gain).max(0.3);
     let threshold_eff = threshold * size_gain.sqrt();
     let lum = lum_field(rgb);
     let blur = gaussian_blur(&lum, w, h, radius_eff);
-    // delta_limit = 0.12·amount：对齐 Sharpen3 kDeltaLimit 思想压振铃，TODO(fit)。
-    let delta_limit = 0.12 * amount;
+    // 限幅作用在**高通信号本身**（乘 amount 之前），于是：
+    // 1) 它真的会咬住——高通幅度一旦超过 `delta_cap` 就不再放大；
+    // 2) 输出仍随 amount 线性变化，强度档不会在高对比边上失效。
+    // 若把限幅放到乘 amount 之后（或让 bound 随 amount 伸缩），前者会变成
+    // 「成正比于 amount 的闸门」，后者会让滑杆在硬边上失灵，两者都试过、都错。
+    let cap = tuning.delta_cap;
     let hs: Vec<f32> = lum
         .par_iter()
         .zip(blur.par_iter())
@@ -823,7 +905,7 @@ fn output_sharpen_usm_sdr(
             let hp = y - b;
             let mag = (hp.abs() - threshold_eff).max(0.0);
             let v = if hp >= 0.0 { mag } else { -mag };
-            v.clamp(-delta_limit, delta_limit)
+            v.clamp(-cap, cap)
         })
         .collect();
     rgb.par_chunks_exact_mut(3).enumerate().for_each(|(i, p)| {
@@ -1507,7 +1589,13 @@ mod tests {
         // 1) 平坦图：高通恒 0 → 任何 amount/threshold 下逐位不动。
         let flat = vec![0.5f32; w * h * 3];
         let mut a = flat.clone();
-        output_sharpen_usm(&mut a, w, h, 0.9, 0.8, 0.004, OutputEncoding::Sdr);
+        output_sharpen_usm(
+            &mut a,
+            w,
+            h,
+            UsmSettings::new(0.9, 0.8, 0.004),
+            OutputEncoding::Sdr,
+        );
         for (i, (x, y)) in a.iter().zip(flat.iter()).enumerate() {
             assert_eq!(x.to_bits(), y.to_bits(), "平坦图第 {i} 位被 USM 改动");
         }
@@ -1523,7 +1611,13 @@ mod tests {
             }
         }
         let mut b = small.clone();
-        output_sharpen_usm(&mut b, w, h, 0.8, 0.8, 0.05, OutputEncoding::Sdr);
+        output_sharpen_usm(
+            &mut b,
+            w,
+            h,
+            UsmSettings::new(0.8, 0.8, 0.05),
+            OutputEncoding::Sdr,
+        );
         for (i, (x, y)) in b.iter().zip(small.iter()).enumerate() {
             assert_eq!(
                 x.to_bits(),
@@ -1543,7 +1637,13 @@ mod tests {
             }
         }
         let mut c = step.clone();
-        output_sharpen_usm(&mut c, w, h, 1.4, 1.0, 0.0, OutputEncoding::Sdr);
+        output_sharpen_usm(
+            &mut c,
+            w,
+            h,
+            UsmSettings::new(1.4, 1.0, 0.0),
+            OutputEncoding::Sdr,
+        );
         // 阶跃两侧的过冲/下冲存在（锐化真的发生了）。
         let overshoot = (c[(h / 2) * w * 3 + (w / 2) * 3] - 0.7).abs();
         assert!(overshoot > 1e-4, "阶跃边缘没有过冲，USM 没起作用");

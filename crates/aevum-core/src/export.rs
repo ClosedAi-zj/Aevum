@@ -1070,9 +1070,7 @@ fn apply_output_finish(rgb: &mut [f32], w: usize, h: usize, options: &RenderOpti
             rgb,
             w,
             h,
-            amount,
-            radius,
-            threshold,
+            spatial::UsmSettings::new(amount, radius, threshold),
             spatial::OutputEncoding::Sdr,
         );
     }
