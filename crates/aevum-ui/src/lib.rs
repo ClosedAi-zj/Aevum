@@ -11,6 +11,8 @@ pub mod control;
 pub mod controls;
 pub mod demo;
 pub mod history;
+pub mod i18n;
+mod i18n_en;
 pub mod icons;
 pub mod layout;
 pub mod platform;
@@ -30,6 +32,10 @@ pub fn selftest() -> Result<String, String> {
     // （config_dir 的文档承诺 selftest 覆盖迁移），顺带让 AEVUM_* 指向
     // 坏路径时在 stderr 上看得见——自检本来就是干这个的。
     let _ = crate::settings::path();
+    // 自检**固定中文**，不读用户的 settings.json：形状计数是回归基线，
+    // 同一个提交在「用户设了英文」的机器上数出另一组数字，门槛就成了看心情。
+    // 语言切换本身由 `--selftest` 之外的道路覆盖（见 i18n 的单元测试）。
+    crate::i18n::set(crate::i18n::Lang::Zh);
     let ctx = egui::Context::default();
     theme::apply(&ctx, 1.0);
 

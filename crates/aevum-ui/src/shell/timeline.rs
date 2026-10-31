@@ -30,9 +30,9 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         Pos2::new(hd.left() + 10.0, hd.center().y),
         Align2::LEFT_CENTER,
         if n > 0 {
-            format!("胶片条 · {n} 帧 · 已评级 {}", state.rated_count())
+            crate::i18n::tr_fmt("胶片条 · {} 帧 · 已评级 {}", &[&n, &state.rated_count()])
         } else {
-            "胶片条 · 无序列".to_owned()
+            crate::i18n::tr("胶片条 · 无序列").to_owned()
         },
         font(SIZE_SMALL),
         dim(),
@@ -53,7 +53,7 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         p.text(
             r.center(),
             Align2::CENTER_CENTER,
-            label,
+            crate::i18n::tr(label),
             font(SIZE_SMALL),
             if on { text() } else { dim() },
         );
@@ -502,16 +502,16 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                                     ui.close();
                                 }
                             }
-                            if ui.button("清除星级").clicked() {
+                            if ui.button(crate::i18n::t!("清除星级")).clicked() {
                                 state.set_rating(i, 0);
                                 ui.close();
                             }
                             ui.separator();
-                            if ui.button("标记为选用").clicked() {
+                            if ui.button(crate::i18n::t!("标记为选用")).clicked() {
                                 state.set_flag(i, 1);
                                 ui.close();
                             }
-                            if ui.button("标记为排除").clicked() {
+                            if ui.button(crate::i18n::t!("标记为排除")).clicked() {
                                 state.set_flag(i, -1);
                                 ui.close();
                             }
@@ -524,7 +524,7 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                                     ui.close();
                                 }
                             }
-                            if ui.button("清除色标").clicked() {
+                            if ui.button(crate::i18n::t!("清除色标")).clicked() {
                                 state.set_label(i, 0);
                                 ui.close();
                             }
@@ -604,7 +604,10 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         Pos2::new(text_x + 4.0, cy),
         Align2::LEFT_CENTER,
         if n > 0 {
-            format!("{:04} / {:04}", state.selected + 1, n)
+            crate::i18n::tr_fmt(
+                "{} / {}",
+                &[&format!("{:04}", state.selected + 1), &format!("{:04}", n)],
+            )
         } else {
             "— / —".to_owned()
         },
@@ -615,7 +618,7 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     p.text(
         Pos2::new(text_x + 94.0, cy),
         Align2::LEFT_CENTER,
-        format!("去闪 {off:+.2} EV"),
+        crate::i18n::tr_fmt("去闪 {} EV", &[&format!("{off:+.2}")]),
         mono(SIZE_SMALL),
         if off.abs() > 0.02 { accent() } else { dim() },
     );
@@ -707,7 +710,7 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     p.text(
         Pos2::new(rect.right() - 62.0, cy),
         Align2::RIGHT_CENTER,
-        format!("已评级 {}", state.rated_count()),
+        crate::i18n::tr_fmt("已评级 {}", &[&state.rated_count()]),
         font(SIZE_SMALL),
         dim(),
     );

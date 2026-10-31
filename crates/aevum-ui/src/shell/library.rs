@@ -44,16 +44,18 @@ pub(super) fn library_tab(state: &mut AppState, ui: &mut Ui) {
 
 /// 起始页：集合区 + 根目录清单。
 fn roots_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
-    ui.label(egui::RichText::new("集合").strong());
+    ui.label(egui::RichText::new(crate::i18n::t!("集合")).strong());
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut state.lib_col_name)
-                .hint_text("集合名")
+                .hint_text(crate::i18n::t!("集合名"))
                 .desired_width(108.0),
         );
         if ui
-            .button("＋ 创建")
-            .on_hover_text("把挑出来的照片收进一个跨目录集合；成员只记路径，照片留在原处")
+            .button(crate::i18n::t!("＋ 创建"))
+            .on_hover_text(crate::i18n::t!(
+                "把挑出来的照片收进一个跨目录集合；成员只记路径，照片留在原处"
+            ))
             .clicked()
         {
             let name = state.lib_col_name.clone();
@@ -76,7 +78,7 @@ fn roots_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                         .truncate()
                         .sense(Sense::click()),
                 )
-                .on_hover_text("点开看集合成员");
+                .on_hover_text(crate::i18n::t!("点开看集合成员"));
             ui.label(egui::RichText::new(format!("{count} 张")).weak());
             if open.clicked() {
                 state.lib_col = Some(i);
@@ -85,7 +87,7 @@ fn roots_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             }
             if ui
                 .button("删除")
-                .on_hover_text("删集合本身，不动照片与各目录工程")
+                .on_hover_text(crate::i18n::t!("删集合本身，不动照片与各目录工程"))
                 .clicked()
             {
                 state.lib_collection_delete(i);
@@ -99,10 +101,12 @@ fn roots_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("目录").strong());
+        ui.label(egui::RichText::new(crate::i18n::t!("目录")).strong());
         if ui
-            .button("＋ 添加")
-            .on_hover_text("把一个素材目录加进图库（清单存到漫游配置目录，跨会话常驻）")
+            .button(crate::i18n::t!("＋ 添加"))
+            .on_hover_text(crate::i18n::t!(
+                "把一个素材目录加进图库（清单存到漫游配置目录，跨会话常驻）"
+            ))
             .clicked()
             && let Some(dir) = rfd::FileDialog::new().pick_folder()
         {
@@ -149,14 +153,14 @@ fn roots_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     }
                     if ui
                         .button("打开")
-                        .on_hover_text("把这个目录开成序列")
+                        .on_hover_text(crate::i18n::t!("把这个目录开成序列"))
                         .clicked()
                     {
                         state.open(ctx, dir.clone());
                     }
                     if ui
                         .button("移除")
-                        .on_hover_text("从图库清单移除（不动磁盘上的文件）")
+                        .on_hover_text(crate::i18n::t!("从图库清单移除（不动磁盘上的文件）"))
                         .clicked()
                     {
                         state.lib_remove(i);
@@ -184,7 +188,7 @@ fn lib_filter_bar(
 ) {
     let p = ui.painter().clone();
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("筛选").weak());
+        ui.label(egui::RichText::new(crate::i18n::t!("筛选")).weak());
         for s in 1..=5u8 {
             let on = state.lib_filter.stars >= s;
             let resp = ui
@@ -208,7 +212,7 @@ fn lib_filter_bar(
         let picked = state.lib_filter.picked;
         if ui
             .selectable_label(picked, "选用")
-            .on_hover_text("只看旗标为「选用」的")
+            .on_hover_text(crate::i18n::t!("只看旗标为「选用」的"))
             .clicked()
         {
             state.lib_filter.picked = !picked;
@@ -235,7 +239,7 @@ fn lib_filter_bar(
     // 词表可能很长：单独一行，别把星级与色标挤出面板。
     if !keywords.is_empty() {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("词").weak());
+            ui.label(egui::RichText::new(crate::i18n::t!("词")).weak());
             let active = state.lib_filter.keyword.clone();
             let label = if active.is_empty() {
                 "全部".to_owned()
@@ -243,7 +247,7 @@ fn lib_filter_bar(
                 active.clone()
             };
             ui.menu_button(egui::RichText::new(label).size(11.0), |ui| {
-                if ui.button("全部").clicked() {
+                if ui.button(crate::i18n::t!("全部")).clicked() {
                     state.lib_filter.keyword.clear();
                     ui.close();
                 }
@@ -306,7 +310,7 @@ fn lib_meta_panel(state: &mut AppState, ui: &mut Ui, index: usize) {
 fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) {
     let dir = state.lib_roots.get(index).cloned().unwrap_or_default();
     ui.horizontal(|ui| {
-        if ui.button("← 目录").clicked() {
+        if ui.button(crate::i18n::t!("← 目录")).clicked() {
             state.lib_sel = None;
             state.lib_sel_file = None;
         }
@@ -321,14 +325,14 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
             )
             .truncate(),
         );
-        if ui.button("重扫").clicked() {
+        if ui.button(crate::i18n::t!("重扫")).clicked() {
             state.lib_scan(index);
         }
         let open = state.lib_meta_open;
         if ui
             // ▲▼ 在嵌入字体的字形表里，▴▾ 不在（会出豆腐块）。
             .button(if open { "信息 ▲" } else { "信息 ▼" })
-            .on_hover_text("这个目录的说明与版权信息")
+            .on_hover_text(crate::i18n::t!("这个目录的说明与版权信息"))
             .clicked()
         {
             state.lib_meta_open = !open;
@@ -414,7 +418,9 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
             if state.lib_checked.len() >= 2
                 && ui
                     .small_button("并成一叠")
-                    .on_hover_text("把勾选的照片折叠成一叠；右键「堆叠」可拆散")
+                    .on_hover_text(crate::i18n::t!(
+                        "把勾选的照片折叠成一叠；右键「堆叠」可拆散"
+                    ))
                     .clicked()
             {
                 match state.lib_stack_targets() {
@@ -431,7 +437,7 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
         ui.horizontal(|ui| {
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut state.lib_keyword)
-                    .hint_text("关键词，逗号分隔")
+                    .hint_text(crate::i18n::t!("关键词，逗号分隔"))
                     .desired_width(120.0),
             );
             let entered = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
@@ -533,9 +539,9 @@ fn lib_row_menu(
         f.name.clone()
     };
     ui.label(egui::RichText::new(title).size(SIZE_SMALL).color(dim()));
-    ui.menu_button("加入集合", |ui| {
+    ui.menu_button(crate::i18n::t!("加入集合"), |ui| {
         if state.lib_cols.is_empty() {
-            ui.label(egui::RichText::new("还没有集合，先在面板顶部建一个").weak());
+            ui.label(egui::RichText::new(crate::i18n::t!("还没有集合，先在面板顶部建一个")).weak());
         }
         for i in 0..state.lib_cols.len() {
             let name = state.lib_cols[i].name.clone();
@@ -550,7 +556,7 @@ fn lib_row_menu(
             }
         }
     });
-    ui.menu_button("关键词", |ui| {
+    ui.menu_button(crate::i18n::t!("关键词"), |ui| {
         if !f.keywords.is_empty() {
             for word in &f.keywords {
                 if ui.button(format!("－ {word}")).clicked() {
@@ -567,7 +573,7 @@ fn lib_row_menu(
             .collect();
         if addable.is_empty() {
             ui.label(
-                egui::RichText::new("没有可快速添加的词；用面板里的输入框")
+                egui::RichText::new(crate::i18n::t!("没有可快速添加的词；用面板里的输入框"))
                     .size(10.0)
                     .weak(),
             );
@@ -593,7 +599,7 @@ fn lib_row_menu(
             ui.close();
         }
     }
-    if ui.button("清除星级").clicked() {
+    if ui.button(crate::i18n::t!("清除星级")).clicked() {
         lib_apply_frames(
             state,
             root,
@@ -639,7 +645,7 @@ fn lib_row_menu(
         }
     }
     ui.separator();
-    ui.menu_button("堆叠", |ui| {
+    ui.menu_button(crate::i18n::t!("堆叠"), |ui| {
         if frames.len() >= 2 {
             if ui
                 .button(format!("把这 {} 张并成一叠", frames.len()))
@@ -651,7 +657,7 @@ fn lib_row_menu(
             }
         } else {
             ui.label(
-                egui::RichText::new("勾住两张以上才能并叠")
+                egui::RichText::new(crate::i18n::t!("勾住两张以上才能并叠"))
                     .size(10.0)
                     .weak(),
             );
@@ -664,7 +670,7 @@ fn lib_row_menu(
             ui.close();
         }
         ui.separator();
-        if ui.button("按文件名自动分叠").clicked() {
+        if ui.button(crate::i18n::t!("按文件名自动分叠")).clicked() {
             let r = state.lib_stack_auto(root);
             lib_stack_act(state, r, "自动分叠");
             ui.close();
@@ -681,11 +687,11 @@ fn lib_row_menu(
             })
             .unwrap_or(0);
         if count > 0 {
-            if ui.button("全部展开").clicked() {
+            if ui.button(crate::i18n::t!("全部展开")).clicked() {
                 state.lib_stack_open.extend((0..count).map(|s| (root, s)));
                 ui.close();
             }
-            if ui.button("全部收起").clicked() {
+            if ui.button(crate::i18n::t!("全部收起")).clicked() {
                 state.lib_stack_open.retain(|&(r, _)| r != root);
                 ui.close();
             }
@@ -712,7 +718,7 @@ fn collection_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         return;
     };
     ui.horizontal(|ui| {
-        if ui.button("← 集合").clicked() {
+        if ui.button(crate::i18n::t!("← 集合")).clicked() {
             state.lib_col = None;
         }
         ui.add(egui::Label::new(egui::RichText::new(&collection.name).strong()).truncate());
@@ -758,11 +764,11 @@ fn collection_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 resp.context_menu(|ui| {
                     menu_style(ui);
                     ui.label(egui::RichText::new(&f2.name).size(SIZE_SMALL).color(dim()));
-                    if ui.button("从集合移除").clicked() {
+                    if ui.button(crate::i18n::t!("从集合移除")).clicked() {
                         state.lib_collection_drop(col, &f2.path);
                         ui.close();
                     }
-                    if ui.button("打开所在目录").clicked() {
+                    if ui.button(crate::i18n::t!("打开所在目录")).clicked() {
                         if let Some(dir) = f2.path.parent() {
                             state.open(ctx, dir.to_path_buf());
                         }
@@ -973,7 +979,9 @@ fn library_row(
                         _ => dim(),
                     },
                 );
-                if fresp.on_hover_text("旗标：选用 / 未标记").clicked()
+                if fresp
+                    .on_hover_text(crate::i18n::t!("旗标：选用 / 未标记"))
+                    .clicked()
                     && let Some(root) = root
                 {
                     let flag = if f.flag == 1 { 0 } else { 1 };
@@ -993,7 +1001,9 @@ fn library_row(
                 } else {
                     p.circle_stroke(lr.center(), 4.5, Stroke::new(1.0, dim()));
                 }
-                if lresp.on_hover_text("色标：红→黄→绿→蓝→无").clicked()
+                if lresp
+                    .on_hover_text(crate::i18n::t!("色标：红→黄→绿→蓝→无"))
+                    .clicked()
                     && let Some(root) = root
                 {
                     lib_apply(
@@ -1017,7 +1027,7 @@ fn library_row(
                         egui::Label::new(egui::RichText::new(text).size(10.0).color(accent()))
                             .truncate(),
                     )
-                    .on_hover_text("右键「关键词」加词或去词；筛选条按词收窄");
+                    .on_hover_text(crate::i18n::t!("右键「关键词」加词或去词；筛选条按词收窄"));
                 }
             });
         });

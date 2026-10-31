@@ -279,7 +279,7 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
             // 忙碌时退成普通按钮：实心蓝是「现在就点」的语气，跑着的时候不该用它。
             if busy {
                 ui.label(
-                    RichText::new("正在逐帧查文件…")
+                    RichText::new(crate::i18n::t!("正在逐帧查文件…"))
                         .size(SIZE_SMALL)
                         .color(muted()),
                 );
@@ -382,7 +382,11 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         });
         ui.add_space(2.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("参考帧").size(SIZE_SMALL).color(muted()));
+            ui.label(
+                RichText::new(crate::i18n::t!("参考帧"))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
+            );
             let mut r = state.align_ref.min(n.saturating_sub(1)) + 1;
             let resp = in_field(ui, field(), field_hover(), |ui| {
                 ui.add_enabled(
@@ -402,7 +406,7 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         if ui
             .checkbox(
                 &mut state.align_preview,
-                RichText::new("画布显示对齐后").size(SIZE_SMALL),
+                RichText::new(crate::i18n::t!("画布显示对齐后")).size(SIZE_SMALL),
             )
             .changed()
         {
@@ -426,9 +430,9 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
                 !busy && n > 1,
                 egui::Button::new(
                     RichText::new(if busy {
-                        "正在对齐…"
+                        crate::i18n::t!("正在对齐…")
                     } else {
-                        "开始对齐"
+                        crate::i18n::t!("开始对齐")
                     })
                     .size(SIZE_SMALL),
                 ),
@@ -545,7 +549,7 @@ fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
         if ui
             .checkbox(
                 &mut state.def_multi,
-                RichText::new("多遍窗口（长序列）").size(SIZE_SMALL),
+                RichText::new(crate::i18n::t!("多遍窗口（长序列）")).size(SIZE_SMALL),
             )
             .changed()
         {
@@ -554,7 +558,7 @@ fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
         if ui
             .checkbox(
                 &mut state.def_channels,
-                RichText::new("分通道（RGB 色闪）").size(SIZE_SMALL),
+                RichText::new(crate::i18n::t!("分通道（RGB 色闪）")).size(SIZE_SMALL),
             )
             .on_hover_text(
                 "按 R/G/B 三通道分别测光与校正，治的是彩色闪烁；代价是可能带来轻微色偏漂移",
@@ -608,7 +612,11 @@ fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
             let moved = state.corr.iter().filter(|v| v.abs() > 0.05).count();
             kv(ui, "受影响帧", format!("{moved}"), muted());
         } else {
-            ui.label(RichText::new("等待测光…").size(SIZE_SMALL).color(dim()));
+            ui.label(
+                RichText::new(crate::i18n::t!("等待测光…"))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
+            );
         }
     }
     if group_header(ui, state, "def-exposure", "曝光", false) {
@@ -651,7 +659,7 @@ fn copies_group(state: &mut AppState, ui: &mut Ui) {
                         .size(SIZE_SMALL)
                         .color(if is_active { accent() } else { text() }),
                 ))
-                .on_hover_text("把这套调色与关键帧取回当前")
+                .on_hover_text(crate::i18n::t!("把这套调色与关键帧取回当前"))
                 .clicked()
             {
                 apply = Some(name.clone());
@@ -663,13 +671,13 @@ fn copies_group(state: &mut AppState, ui: &mut Ui) {
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if bar_button(ui, "删")
-                    .on_hover_text("删掉这套副本，不动当前调色")
+                    .on_hover_text(crate::i18n::t!("删掉这套副本，不动当前调色"))
                     .clicked()
                 {
                     delete = Some(name.clone());
                 }
                 if bar_button(ui, "覆盖")
-                    .on_hover_text("把当前调色与关键帧写进这套副本")
+                    .on_hover_text(crate::i18n::t!("把当前调色与关键帧写进这套副本"))
                     .clicked()
                 {
                     overwrite = Some(name.clone());
@@ -680,11 +688,13 @@ fn copies_group(state: &mut AppState, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut state.copy_name)
-                .hint_text("副本名")
+                .hint_text(crate::i18n::t!("副本名"))
                 .desired_width(108.0),
         );
         if bar_button(ui, "存当前")
-            .on_hover_text("把当前调色与关键帧存成一套新副本；同名要先点那行的「覆盖」")
+            .on_hover_text(crate::i18n::t!(
+                "把当前调色与关键帧存成一套新副本；同名要先点那行的「覆盖」"
+            ))
             .clicked()
         {
             let name = state.copy_name.clone();
@@ -708,14 +718,22 @@ fn hdr_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let mut go = false;
     let busy = state.merge_kind == Some(MergeKind::Hdr);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("当前帧前后各").size(SIZE_SMALL).color(dim()));
+        ui.label(
+            RichText::new(crate::i18n::t!("当前帧前后各"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
         ui.add_enabled(
             !busy,
             egui::DragValue::new(&mut state.hdr_around)
                 .range(1..=4)
                 .speed(0.2),
         );
-        ui.label(RichText::new("帧").size(SIZE_SMALL).color(dim()));
+        ui.label(
+            RichText::new(crate::i18n::t!("帧"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
         go = ui
             .add_enabled(
                 !busy,
@@ -725,7 +743,9 @@ fn hdr_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .min_size(Vec2::new(0.0, BAR_H))
                 .corner_radius(radius_control()),
             )
-            .on_hover_text("把这一段包围曝光融成一张静帧，写进输出目录")
+            .on_hover_text(crate::i18n::t!(
+                "把这一段包围曝光融成一张静帧，写进输出目录"
+            ))
             .clicked();
     });
     if go {
@@ -753,14 +773,22 @@ fn pano_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let mut go = false;
     let busy = state.merge_kind == Some(MergeKind::Pano);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("当前帧后再拼").size(SIZE_SMALL).color(dim()));
+        ui.label(
+            RichText::new(crate::i18n::t!("当前帧后再拼"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
         ui.add_enabled(
             !busy,
             egui::DragValue::new(&mut state.pano_around)
                 .range(1..=11)
                 .speed(0.2),
         );
-        ui.label(RichText::new("张").size(SIZE_SMALL).color(dim()));
+        ui.label(
+            RichText::new(crate::i18n::t!("张"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
         go = ui
             .add_enabled(
                 !busy,
@@ -770,7 +798,9 @@ fn pano_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .min_size(Vec2::new(0.0, BAR_H))
                 .corner_radius(radius_control()),
             )
-            .on_hover_text("把当前帧与其后相邻几张接成一张全景，写进输出目录")
+            .on_hover_text(crate::i18n::t!(
+                "把当前帧与其后相邻几张接成一张全景，写进输出目录"
+            ))
             .clicked();
     });
     if go {
@@ -834,10 +864,12 @@ fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
         reset = bar_chip(ui, "全部复位", false).clicked();
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             export_xmp = bar_chip(ui, "导出 XMP", false)
-                .on_hover_text("把当前调色参数写成 .xmp 预设")
+                .on_hover_text(crate::i18n::t!("把当前调色参数写成 .xmp 预设"))
                 .clicked();
             import_xmp = bar_chip(ui, "导入 XMP", false)
-                .on_hover_text("读入 Lightroom / Camera Raw 预设，替换当前调色参数")
+                .on_hover_text(crate::i18n::t!(
+                    "读入 Lightroom / Camera Raw 预设，替换当前调色参数"
+                ))
                 .clicked();
         });
     });
@@ -919,13 +951,15 @@ fn adjust_look(state: &mut AppState, ui: &mut Ui) -> bool {
     let mut drop = false;
     ui.horizontal(|ui| {
         import = bar_button(ui, "导入外观")
-            .on_hover_text("读一张 .cube，先套在调色链之前")
+            .on_hover_text(crate::i18n::t!("读一张 .cube，先套在调色链之前"))
             .clicked();
         export = bar_button(ui, "导出外观")
-            .on_hover_text("把当前全部调色（含已挂外观）烘成一张 .cube")
+            .on_hover_text(crate::i18n::t!(
+                "把当前全部调色（含已挂外观）烘成一张 .cube"
+            ))
             .clicked();
         drop = bar_button(ui, "卸下")
-            .on_hover_text("取消外挂外观；滑杆数值不动")
+            .on_hover_text(crate::i18n::t!("取消外挂外观；滑杆数值不动"))
             .clicked();
     });
     let path = state.params.look_cube.clone();
@@ -1037,7 +1071,7 @@ fn adjust_curve(state: &mut AppState, ui: &mut Ui) -> bool {
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.label(
-                RichText::new("点空白加点 · 双击删点")
+                RichText::new(crate::i18n::t!("点空白加点 · 双击删点"))
                     .size(SIZE_SMALL)
                     .color(dim()),
             );
@@ -1257,7 +1291,7 @@ fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
                 state.error = Some(format!("匹配相机配置失败：{e}"));
             }
         }
-        if ui.button("选文件").clicked()
+        if ui.button(crate::i18n::t!("选文件")).clicked()
             && let Some(path) = rfd::FileDialog::new()
                 .add_filter("相机配置", &["dcp"])
                 .pick_file()
@@ -1267,7 +1301,7 @@ fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
                 state.error = Some(format!("套用相机配置失败：{e}"));
             }
         }
-        if dcp_active && ui.button("清除").clicked() {
+        if dcp_active && ui.button(crate::i18n::t!("清除")).clicked() {
             let args = serde_json::json!({"kind":"dcp","clear":true});
             if let Err(e) = state.run_ui_command(ctx, "profile.set", &args) {
                 state.error = Some(format!("清除相机配置失败：{e}"));
@@ -1295,7 +1329,7 @@ fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
                 state.error = Some(format!("匹配镜头配置失败：{e}"));
             }
         }
-        if ui.button("选文件").clicked()
+        if ui.button(crate::i18n::t!("选文件")).clicked()
             && let Some(path) = rfd::FileDialog::new()
                 .add_filter("镜头配置", &["lcp"])
                 .pick_file()
@@ -1305,7 +1339,7 @@ fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
                 state.error = Some(format!("套用镜头配置失败：{e}"));
             }
         }
-        if state.params.lcp_profile.is_some() && ui.button("清除").clicked() {
+        if state.params.lcp_profile.is_some() && ui.button(crate::i18n::t!("清除")).clicked() {
             let args = serde_json::json!({"kind":"lcp","clear":true});
             if let Err(e) = state.run_ui_command(ctx, "profile.set", &args) {
                 state.error = Some(format!("清除镜头配置失败：{e}"));
@@ -1345,7 +1379,7 @@ fn adjust_lens(state: &mut AppState, ui: &mut Ui) -> bool {
         }
         if ui
             .button("重配")
-            .on_hover_text("按当前 EXIF 重新跑一遍匹配")
+            .on_hover_text(crate::i18n::t!("按当前 EXIF 重新跑一遍匹配"))
             .clicked()
         {
             state.match_lens_profile();
@@ -1419,9 +1453,18 @@ fn adjust_frame(state: &mut AppState, ui: &mut Ui) {
         }
     }
     if group_header(ui, state, "frame-guides", "辅助线", false) {
-        ui.checkbox(&mut state.grid, RichText::new("三分线").size(SIZE_SMALL));
-        ui.checkbox(&mut state.cross, RichText::new("中心十字").size(SIZE_SMALL));
-        ui.checkbox(&mut state.split, RichText::new("前后分割").size(SIZE_SMALL));
+        ui.checkbox(
+            &mut state.grid,
+            RichText::new(crate::i18n::t!("三分线")).size(SIZE_SMALL),
+        );
+        ui.checkbox(
+            &mut state.cross,
+            RichText::new(crate::i18n::t!("中心十字")).size(SIZE_SMALL),
+        );
+        ui.checkbox(
+            &mut state.split,
+            RichText::new(crate::i18n::t!("前后分割")).size(SIZE_SMALL),
+        );
     }
 }
 
@@ -1513,9 +1556,9 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             ui.add_space(2.0);
             ui.checkbox(
                 &mut state.render_keep_exif,
-                RichText::new("保留 EXIF 与版权").size(SIZE_SMALL),
+                RichText::new(crate::i18n::t!("保留 EXIF 与版权")).size(SIZE_SMALL),
             )
-            .on_hover_text("源 JPEG 的 EXIF 块原样搬进输出（机身、曝光、版权都在里面）；RAW 与 TIFF 源搬不动，容器不支持就不写");
+            .on_hover_text(crate::i18n::t!("源 JPEG 的 EXIF 块原样搬进输出（机身、曝光、版权都在里面）；RAW 与 TIFF 源搬不动，容器不支持就不写"));
         }
         // 旁车只服务静帧：视频模式的中间帧是过程产物，不给它们发 .xmp，所以这一格
         // 跟着模式走，跟上面「容器分模式」一个口径。
@@ -1523,15 +1566,15 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             ui.add_space(2.0);
             ui.checkbox(
                 &mut state.render_xmp_sidecar,
-                RichText::new("写 XMP 旁车").size(SIZE_SMALL),
+                RichText::new(crate::i18n::t!("写 XMP 旁车")).size(SIZE_SMALL),
             )
-            .on_hover_text("每张静帧旁边写一个同名 .xmp：说明与版权四项（dc:）加这一张的调色参数（crs:），Lightroom / Camera Raw 直接认");
+            .on_hover_text(crate::i18n::t!("每张静帧旁边写一个同名 .xmp：说明与版权四项（dc:）加这一张的调色参数（crs:），Lightroom / Camera Raw 直接认"));
         }
         // 续跑两种模式都要：静帧补的是交付帧，成片补的是中间帧（开了它就不走管道直连）。
         ui.add_space(2.0);
         ui.checkbox(
             &mut state.render_resume,
-            RichText::new("断点续跑（跳过已导出的帧）").size(SIZE_SMALL),
+            RichText::new(crate::i18n::t!("断点续跑（跳过已导出的帧）")).size(SIZE_SMALL),
         )
         .on_hover_text(
             "输出目录里已经写完的帧原样留着，这一趟只补没写出来的那些。\n\
@@ -1541,7 +1584,11 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         ui.add_space(4.0);
         // 输出锐化是成片级设置：在缩放到最终尺寸之后补的那一刀，预览不看它。
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("输出锐化").size(SIZE_SMALL).color(muted()));
+            ui.label(
+                RichText::new(crate::i18n::t!("输出锐化"))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
+            );
             for &s in &OutputSharpen::ALL {
                 if bar_chip(ui, s.cn(), state.render_sharpen_for == s)
                     .on_hover_text(s.hint())
@@ -1554,7 +1601,11 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         if state.render_sharpen_for != OutputSharpen::Off {
             ui.add_space(2.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("强度").size(SIZE_SMALL).color(dim()));
+                ui.label(
+                    RichText::new(crate::i18n::t!("强度"))
+                        .size(SIZE_SMALL)
+                        .color(dim()),
+                );
                 for &s in &SharpenStrength::ALL {
                     if bar_chip(ui, s.cn(), state.render_sharpen_strength == s).clicked() {
                         state.render_sharpen_strength = s;
@@ -1566,15 +1617,18 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             ui.add_space(2.0);
             ui.checkbox(
                 &mut state.render_keep_frames,
-                RichText::new("保留中间帧").size(SIZE_SMALL),
+                RichText::new(crate::i18n::t!("保留中间帧")).size(SIZE_SMALL),
             );
             ui.add_space(2.0);
             let dir = state.render_out_dir.display().to_string();
             ui.add(
                 egui::Label::new(
-                    RichText::new(format!("中间帧 · {}", theme::ellipsis(&dir, 30)))
-                        .size(SIZE_SMALL)
-                        .color(dim()),
+                    RichText::new(crate::i18n::tr_fmt(
+                        "中间帧 · {}",
+                        &[&theme::ellipsis(&dir, 30)],
+                    ))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
                 )
                 .wrap(),
             );
@@ -1596,8 +1650,13 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "render-watermark", "水印", true) {
         let mut enabled = state.render_watermark.enabled;
         if ui
-            .checkbox(&mut enabled, RichText::new("在成片上盖章").size(SIZE_SMALL))
-            .on_hover_text("和输出锐化同一条规矩：只在导出尾部生效，预览与缩略图都不叠这一层")
+            .checkbox(
+                &mut enabled,
+                RichText::new(crate::i18n::t!("在成片上盖章")).size(SIZE_SMALL),
+            )
+            .on_hover_text(crate::i18n::t!(
+                "和输出锐化同一条规矩：只在导出尾部生效，预览与缩略图都不叠这一层"
+            ))
             .changed()
         {
             state.render_watermark.enabled = enabled;
@@ -1610,7 +1669,11 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             ui.add_space(4.0);
             // 内容二选一：切过去另一侧的输入原样留着，来回切不丢正文。
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("内容").size(SIZE_SMALL).color(muted()));
+                ui.label(
+                    RichText::new(crate::i18n::t!("内容"))
+                        .size(SIZE_SMALL)
+                        .color(muted()),
+                );
                 for &kind in &WatermarkKind::ALL {
                     if bar_chip(ui, kind.cn(), state.render_watermark.kind == kind).clicked() {
                         state.render_watermark.kind = kind;
@@ -1658,7 +1721,11 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             ui.add_space(4.0);
             // 九宫格按屏幕坐标读：y 向下，所以「上中」真的是上面那格。
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("位置").size(SIZE_SMALL).color(muted()));
+                ui.label(
+                    RichText::new(crate::i18n::t!("位置"))
+                        .size(SIZE_SMALL)
+                        .color(muted()),
+                );
                 for &spot in &Spot::ALL {
                     if bar_chip(ui, spot.cn(), state.render_watermark.spot == spot).clicked() {
                         state.render_watermark.spot = spot;
@@ -1710,7 +1777,11 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             }
             if state.render_watermark.kind == WatermarkKind::Text {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("颜色").size(SIZE_SMALL).color(muted()));
+                    ui.label(
+                        RichText::new(crate::i18n::t!("颜色"))
+                            .size(SIZE_SMALL)
+                            .color(muted()),
+                    );
                     for (name, rgb) in [
                         ("白", [255u8, 255, 255]),
                         ("浅灰", [200, 200, 200]),
@@ -1735,7 +1806,7 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         p.text(
             Pos2::new(rect.left(), rect.center().y),
             Align2::LEFT_CENTER,
-            "帧率",
+            crate::i18n::t!("帧率"),
             font(SIZE_SMALL),
             muted(),
         );
@@ -1757,14 +1828,19 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             Ok((_, seconds)) => seconds as f32,
             Err(_) => state.frame_count() as f32 / state.output_fps.max(1.0),
         };
-        kv(ui, "片长", format!("{dur:.1} 秒"), muted());
+        kv(
+            ui,
+            "片长",
+            crate::i18n::tr_fmt("{} 秒", &[&format!("{dur:.1}")]),
+            muted(),
+        );
     }
     if group_header(ui, state, "render-retime", "变速 · 运动模糊", true) {
         let mut enabled = state.retime.enabled;
         if ui
             .checkbox(
                 &mut enabled,
-                RichText::new("重映射时间（变速 + 运动模糊）").size(SIZE_SMALL),
+                RichText::new(crate::i18n::t!("重映射时间（变速 + 运动模糊）")).size(SIZE_SMALL),
             )
             .changed()
         {
@@ -1871,7 +1947,10 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "render-motion", "运镜 · Ken Burns", true) {
         let mut enabled = state.motion.enabled;
         if ui
-            .checkbox(&mut enabled, RichText::new("启用运镜").size(SIZE_SMALL))
+            .checkbox(
+                &mut enabled,
+                RichText::new(crate::i18n::t!("启用运镜")).size(SIZE_SMALL),
+            )
             .changed()
         {
             state.set_motion_enabled(enabled);
@@ -1929,9 +2008,11 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         if zf.max(zt) > 2.0 {
             ui.add(
                 egui::Label::new(
-                    RichText::new("推近已经过 2×：再推就是拿少数像素撑大画面，会糊。")
-                        .size(SIZE_SMALL)
-                        .color(warn()),
+                    RichText::new(crate::i18n::t!(
+                        "推近已经过 2×：再推就是拿少数像素撑大画面，会糊。"
+                    ))
+                    .size(SIZE_SMALL)
+                    .color(warn()),
                 )
                 .wrap(),
             );
@@ -1949,7 +2030,11 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("质量 CRF").size(SIZE_SMALL).color(muted()));
+            ui.label(
+                RichText::new(crate::i18n::t!("质量 CRF"))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
+            );
             let crf = in_field(ui, field(), field_hover(), |ui| {
                 ui.add(
                     egui::DragValue::new(&mut state.render_crf)
@@ -1957,7 +2042,7 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                         .speed(0.2),
                 )
             });
-            crf.on_hover_text("数值越小越清晰");
+            crf.on_hover_text(crate::i18n::t!("数值越小越清晰"));
         });
         ui.add_space(2.0);
         ui.horizontal_wrapped(|ui| {
@@ -2080,11 +2165,15 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         let count = state.queue.len();
         ui.horizontal_wrapped(|ui| {
             let resp = ui.add_enabled(!busy, {
-                egui::Button::new(RichText::new("加入当前序列").size(SIZE_SMALL).color(text()))
-                    .fill(elev())
-                    .stroke(Stroke::NONE)
-                    .corner_radius(radius_control())
-                    .min_size(Vec2::new(0.0, 22.0))
+                egui::Button::new(
+                    RichText::new(crate::i18n::t!("加入当前序列"))
+                        .size(SIZE_SMALL)
+                        .color(text()),
+                )
+                .fill(elev())
+                .stroke(Stroke::NONE)
+                .corner_radius(radius_control())
+                .min_size(Vec2::new(0.0, 22.0))
             });
             if resp.clicked()
                 && let Err(e) = state.add_current_to_queue()
@@ -2110,7 +2199,7 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         kv(
             ui,
             "队列",
-            format!("{count} 段 · {}", queue_counts(state)),
+            crate::i18n::tr_fmt("{} 段 · {}", &[&count, &queue_counts(state)]),
             if count > 0 { text() } else { dim() },
         );
         if count == 0 {
@@ -2329,9 +2418,9 @@ fn queue_counts(state: &AppState) -> String {
         .filter(|i| i.status == QueueStatus::Failed)
         .count();
     if done == 0 && failed == 0 {
-        "待渲".to_owned()
+        crate::i18n::t!("待渲").to_owned()
     } else {
-        format!("完成 {done} · 失败 {failed}")
+        crate::i18n::tr_fmt("完成 {} · 失败 {}", &[&done, &failed])
     }
 }
 
@@ -2340,7 +2429,7 @@ fn adjust_audio(state: &mut AppState, ui: &mut Ui) {
         let w = ui.available_width();
         if ui
             .add(
-                egui::Button::new(RichText::new("选择音频…").size(SIZE_SMALL))
+                egui::Button::new(RichText::new(crate::i18n::t!("选择音频…")).size(SIZE_SMALL))
                     .min_size(Vec2::new(w, 24.0)),
             )
             .clicked()
@@ -2435,14 +2524,16 @@ fn adjust_audio(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "audio-mix", "长度与编码", true) {
         ui.checkbox(
             &mut state.render_audio_opts.looped,
-            RichText::new("循环铺满画面").size(SIZE_SMALL),
+            RichText::new(crate::i18n::t!("循环铺满画面")).size(SIZE_SMALL),
         )
-        .on_hover_text("配乐比画面短时反复播放；循环会限长到画面末尾，不会无限铺下去");
+        .on_hover_text(crate::i18n::t!(
+            "配乐比画面短时反复播放；循环会限长到画面末尾，不会无限铺下去"
+        ));
         ui.checkbox(
             &mut state.render_audio_opts.trim,
-            RichText::new("截到画面结束").size(SIZE_SMALL),
+            RichText::new(crate::i18n::t!("截到画面结束")).size(SIZE_SMALL),
         )
-        .on_hover_text("配乐比画面长时在画面末尾截断");
+        .on_hover_text(crate::i18n::t!("配乐比画面长时在画面末尾截断"));
         ui.add_space(4.0);
         egui::ComboBox::from_id_salt("audio-codec")
             .selected_text(

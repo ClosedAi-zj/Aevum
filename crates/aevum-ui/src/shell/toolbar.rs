@@ -27,6 +27,8 @@ use egui::{
 /// 普通工具栏按钮：底色交给 theme 的 widget 层级（ELEV → 悬停 ELEV_HOVER），
 /// 所以这里不写死 fill，才有悬停反馈。
 pub(super) fn bar_button(ui: &mut Ui, label: &str) -> Response {
+    // 翻译下沉到辅助函数：调用点照常写中文，切到英文时这里统一翻。
+    let label = crate::i18n::tr(label);
     ui.add(
         egui::Button::new(RichText::new(label).size(SIZE_CHROME))
             .min_size(Vec2::new(0.0, BAR_H))
@@ -36,6 +38,7 @@ pub(super) fn bar_button(ui: &mut Ui, label: &str) -> Response {
 
 /// 主按钮：强调色实心 + 深字，悬停提亮、按下压暗，圆角走 token。
 pub(super) fn bar_primary(ui: &mut Ui, label: &str) -> Response {
+    let label = crate::i18n::tr(label);
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font(SIZE_CHROME), on_accent());
@@ -62,6 +65,7 @@ pub(super) fn bar_primary(ui: &mut Ui, label: &str) -> Response {
 }
 
 pub(super) fn bar_chip(ui: &mut Ui, label: &str, active: bool) -> Response {
+    let label = crate::i18n::tr(label);
     let w = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font(SIZE_SMALL), text())
@@ -86,6 +90,8 @@ fn bar_value<R>(ui: &mut Ui, run: impl FnOnce(&mut Ui) -> R) -> R {
 /// 徽标是"发生了什么"的旁注，10px dim；warn 不为空时追加一枚 danger 色的
 /// 计数（缺帧这类既该看见又不该抢戏的信号）。
 fn ctx_seg(ui: &mut Ui, name: &str, note: &str, warn: Option<String>) {
+    let name = crate::i18n::tr(name);
+    let note = crate::i18n::tr(note);
     ui.label(
         RichText::new(name)
             .size(SIZE_CHROME_LABEL)
@@ -211,7 +217,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         w.active.weak_bg_fill = selected();
         ui.spacing_mut().button_padding = Vec2::new(6.0, 3.0);
         ui.menu_button(
-            RichText::new(format!("{}  ▼", state.tool.cn()))
+            RichText::new(format!("{}  ▼", crate::i18n::tr(state.tool.cn())))
                 .size(SIZE_CHROME_LABEL)
                 .color(text()),
             |ui| {
@@ -219,9 +225,9 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 for t in Tool::ALL {
                     let on = state.tool == t;
                     let label = if on {
-                        format!("✓ {}", t.cn())
+                        format!("✓ {}", crate::i18n::tr(t.cn()))
                     } else {
-                        format!("   {}", t.cn())
+                        format!("   {}", crate::i18n::tr(t.cn()))
                     };
                     let hotkey = match t {
                         Tool::Hand => "H",
@@ -254,9 +260,9 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 let n = state.frame_count();
                 let valid = state.metrics.iter().filter(|m| m.is_some()).count();
                 let count_label = if n == 1 {
-                    "单张照片".to_owned()
+                    crate::i18n::t!("单张照片").to_owned()
                 } else {
-                    format!("{n} 帧 · 可读 {valid}")
+                    crate::i18n::tr_fmt("{} 帧 · 可读 {}", &[&n, &valid])
                 };
                 ctx_seg(
                     ui,
@@ -265,13 +271,13 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     if state.issues.is_empty() {
                         None
                     } else {
-                        Some(format!("缺帧 {}", state.issues.len()))
+                        Some(crate::i18n::tr_fmt("缺帧 {}", &[&state.issues.len()]))
                     },
                 );
             }
             Module::Deflicker => {
                 ui.label(
-                    RichText::new("平滑窗口")
+                    RichText::new(crate::i18n::t!("平滑窗口"))
                         .size(SIZE_CHROME_LABEL)
                         .color(muted()),
                 );
@@ -284,7 +290,11 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     )
                     .changed()
                 });
-                ui.label(RichText::new("强度").size(SIZE_CHROME_LABEL).color(muted()));
+                ui.label(
+                    RichText::new(crate::i18n::t!("强度"))
+                        .size(SIZE_CHROME_LABEL)
+                        .color(muted()),
+                );
                 changed |= bar_value(ui, |ui| {
                     ui.add(
                         egui::DragValue::new(&mut state.def_strength)
@@ -298,7 +308,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 if ui
                     .checkbox(
                         &mut state.def_multi,
-                        RichText::new("多遍").size(SIZE_CHROME_LABEL),
+                        RichText::new(crate::i18n::t!("多遍")).size(SIZE_CHROME_LABEL),
                     )
                     .changed()
                 {
@@ -307,16 +317,18 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 if ui
                     .checkbox(
                         &mut state.def_channels,
-                        RichText::new("分通道").size(SIZE_CHROME_LABEL),
+                        RichText::new(crate::i18n::t!("分通道")).size(SIZE_CHROME_LABEL),
                     )
-                    .on_hover_text("按 R/G/B 分别校正，治彩色闪烁；不勾只补亮度")
+                    .on_hover_text(crate::i18n::t!(
+                        "按 R/G/B 分别校正，治彩色闪烁；不勾只补亮度"
+                    ))
                     .changed()
                 {
                     state.recompute_deflicker();
                 }
                 if state.is_single() {
                     ui.label(
-                        RichText::new("单张照片没有闪烁可去")
+                        RichText::new(crate::i18n::t!("单张照片没有闪烁可去"))
                             .size(SIZE_CHROME_LABEL)
                             .color(dim()),
                     );
@@ -333,12 +345,20 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 let current = state.preset.clone();
                 let mut chosen: Option<&'static str> = None;
                 egui::ComboBox::from_id_salt("preset-opt")
-                    .selected_text(RichText::new(current).size(SIZE_CHROME_LABEL).color(text()))
+                    // 预设名可能是「自定义」（不再是内置名），一样要过翻译。
+                    .selected_text(
+                        RichText::new(crate::i18n::tr(&current))
+                            .size(SIZE_CHROME_LABEL)
+                            .color(text()),
+                    )
                     .width(118.0)
                     .show_ui(ui, |ui| {
                         for name in grade::PRESET_NAMES {
                             if ui
-                                .add(egui::Button::selectable(*name == state.preset, *name))
+                                .add(egui::Button::selectable(
+                                    *name == state.preset,
+                                    crate::i18n::tr(name),
+                                ))
                                 .clicked()
                             {
                                 chosen = Some(name);
@@ -366,7 +386,12 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 // 徽标数的是偏离默认值的参数组数 —— 蒙版数已经画在画布顶栏，
                 // 这里只回答"调色动了多大片"。
                 let changed = state.changed_groups();
-                ctx_seg(ui, "显影", &format!("{changed} 项调整"), None);
+                ctx_seg(
+                    ui,
+                    "显影",
+                    &crate::i18n::tr_fmt("{} 项调整", &[&changed]),
+                    None,
+                );
             }
             Module::Frame => {
                 for a in Aspect::ALL {
@@ -377,15 +402,15 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 group_gap(ui);
                 ui.checkbox(
                     &mut state.grid,
-                    RichText::new("网格").size(SIZE_CHROME_LABEL),
+                    RichText::new(crate::i18n::t!("网格")).size(SIZE_CHROME_LABEL),
                 );
                 ui.checkbox(
                     &mut state.cross,
-                    RichText::new("十字").size(SIZE_CHROME_LABEL),
+                    RichText::new(crate::i18n::t!("十字")).size(SIZE_CHROME_LABEL),
                 );
                 ui.checkbox(
                     &mut state.split,
-                    RichText::new("对比").size(SIZE_CHROME_LABEL),
+                    RichText::new(crate::i18n::t!("对比")).size(SIZE_CHROME_LABEL),
                 );
             }
             Module::Render => {
@@ -400,7 +425,11 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     }
                 }
                 group_gap(ui);
-                ui.label(RichText::new("帧率").size(SIZE_CHROME_LABEL).color(muted()));
+                ui.label(
+                    RichText::new(crate::i18n::t!("帧率"))
+                        .size(SIZE_CHROME_LABEL)
+                        .color(muted()),
+                );
                 bar_value(ui, |ui| {
                     ui.add(
                         egui::DragValue::new(&mut state.output_fps)
@@ -456,7 +485,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     }
                     None => {
                         ui.label(
-                            RichText::new("未选择配乐")
+                            RichText::new(crate::i18n::t!("未选择配乐"))
                                 .size(SIZE_CHROME_LABEL)
                                 .color(dim()),
                         );
@@ -503,24 +532,33 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                         ui.close();
                     }
                     ui.separator();
-                    ui.checkbox(&mut state.grid, RichText::new("网格").size(SIZE_BODY));
-                    ui.checkbox(&mut state.split, RichText::new("前后对比").size(SIZE_BODY));
+                    ui.checkbox(
+                        &mut state.grid,
+                        RichText::new(crate::i18n::t!("网格")).size(SIZE_BODY),
+                    );
+                    ui.checkbox(
+                        &mut state.split,
+                        RichText::new(crate::i18n::t!("前后对比")).size(SIZE_BODY),
+                    );
                     ui.separator();
-                    ui.menu_button(RichText::new("界面字号").size(SIZE_BODY), |ui| {
-                        menu_style(ui);
-                        for (i, z) in FONT_ZOOMS.iter().enumerate() {
-                            let on = state.font_level == i;
-                            let label = if on {
-                                format!("✓ {}%", (z * 100.0).round())
-                            } else {
-                                format!("   {}%", (z * 100.0).round())
-                            };
-                            if menu_item(ui, &label, "") {
-                                state.font_level = i;
-                                ui.close();
+                    ui.menu_button(
+                        RichText::new(crate::i18n::t!("界面字号")).size(SIZE_BODY),
+                        |ui| {
+                            menu_style(ui);
+                            for (i, z) in FONT_ZOOMS.iter().enumerate() {
+                                let on = state.font_level == i;
+                                let label = if on {
+                                    format!("✓ {}%", (z * 100.0).round())
+                                } else {
+                                    format!("   {}%", (z * 100.0).round())
+                                };
+                                if menu_item(ui, &label, "") {
+                                    state.font_level = i;
+                                    ui.close();
+                                }
                             }
-                        }
-                    });
+                        },
+                    );
                 },
             );
         });
@@ -691,7 +729,9 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                     .color(accent()),
             );
             if ui
-                .add(egui::Button::new(RichText::new("✕ 取消").size(SIZE_SMALL)))
+                .add(egui::Button::new(
+                    RichText::new(crate::i18n::t!("✕ 取消")).size(SIZE_SMALL),
+                ))
                 .clicked()
             {
                 state.plugin_cancel();
@@ -748,10 +788,13 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
         let n = state.frame_count();
         if n > 0 {
             ui.label(
-                RichText::new(format!("帧 {:04} / {:04}", state.selected + 1, n))
-                    .size(SIZE_SMALL)
-                    .monospace()
-                    .color(dim()),
+                RichText::new(crate::i18n::tr_fmt(
+                    "帧 {} / {}",
+                    &[&format!("{:04}", state.selected + 1), &format!("{:04}", n)],
+                ))
+                .size(SIZE_SMALL)
+                .monospace()
+                .color(dim()),
             );
             let r = state.selected_rating();
             if r > 0 {
@@ -809,11 +852,15 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                     .color(text()),
             );
             ui.label(
-                RichText::new("sRGB · 16 bit 管线")
+                RichText::new(crate::i18n::t!("sRGB · 16 bit 管线"))
                     .size(SIZE_SMALL)
                     .color(dim()),
             );
-            ui.label(RichText::new("引擎就绪").size(SIZE_SMALL).color(dim()));
+            ui.label(
+                RichText::new(crate::i18n::t!("引擎就绪"))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
+            );
             // 一枚 6px 绿灯 = 引擎线程还活着；出错时变红。状态栏里唯一值得上颜色的东西。
             let (dot, _) = ui.allocate_exact_size(Vec2::splat(9.0), Sense::hover());
             ui.painter().circle_filled(

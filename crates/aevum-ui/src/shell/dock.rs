@@ -53,7 +53,7 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
         p.text(
             r.center(),
             Align2::CENTER_CENTER,
-            tab.cn(),
+            crate::i18n::tr(tab.cn()),
             font(SIZE_SMALL),
             if active {
                 on_selected()
@@ -85,7 +85,7 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
     if cr.clicked() {
         state.show_dock = false;
     }
-    cr.on_hover_text("隐藏面板");
+    cr.on_hover_text(crate::i18n::t!("隐藏面板"));
 
     let content = Rect::from_min_max(Pos2::new(full.left(), full.top() + TAB_H), full.max);
     ui.scope_builder(
@@ -338,13 +338,13 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
         (
             shadow_chip,
             state.clip_shadows,
-            format!("◧ 阴影 {}%", pct(low)),
+            crate::i18n::tr_fmt("◧ 阴影 {}%", &[&pct(low)]),
             Color32::from_rgb(56, 110, 255),
         ),
         (
             high_chip,
             state.clip_highlights,
-            format!("高光 {}% ◨", pct(high)),
+            crate::i18n::tr_fmt("高光 {}% ◨", &[&pct(high)]),
             Color32::from_rgb(255, 46, 46),
         ),
     ] {

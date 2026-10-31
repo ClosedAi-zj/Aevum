@@ -64,7 +64,11 @@ pub(super) fn plugin_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let bad = state.registry.errors().len();
 
     if rows.is_empty() && bad == 0 {
-        ui.label(RichText::new("还没有安装插件").size(SIZE_BODY).color(dim()));
+        ui.label(
+            RichText::new(crate::i18n::t!("还没有安装插件"))
+                .size(SIZE_BODY)
+                .color(dim()),
+        );
     }
     let mut open_market = false;
     let mut fire: Option<(String, String)> = None;
@@ -138,7 +142,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
     let mut toggle: Option<(String, bool)> = None;
     let mut rescan = false;
 
-    egui::Window::new("插件")
+    egui::Window::new(crate::i18n::t!("插件"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -213,7 +217,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                         );
                         if ui
                             .add(egui::Button::new(
-                                RichText::new("重新扫描").size(SIZE_SMALL),
+                                RichText::new(crate::i18n::t!("重新扫描")).size(SIZE_SMALL),
                             ))
                             .clicked()
                         {
@@ -231,12 +235,14 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                         ui.horizontal(|ui| {
                             ui.add(
                                 egui::TextEdit::singleline(&mut state.market_query)
-                                    .hint_text("搜索插件、厂商")
+                                    .hint_text(crate::i18n::t!("搜索插件、厂商"))
                                     .desired_width(240.0),
                             );
                             if !state.market_query.is_empty()
                                 && ui
-                                    .add(egui::Button::new(RichText::new("清除").size(SIZE_SMALL)))
+                                    .add(egui::Button::new(
+                                        RichText::new(crate::i18n::t!("清除")).size(SIZE_SMALL),
+                                    ))
                                     .clicked()
                             {
                                 state.market_query.clear();
@@ -272,7 +278,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                                 if hits.is_empty() {
                                     ui.add_space(12.0);
                                     ui.label(
-                                        RichText::new("没有匹配的插件")
+                                        RichText::new(crate::i18n::t!("没有匹配的插件"))
                                             .size(SIZE_BODY)
                                             .color(dim()),
                                     );
@@ -328,7 +334,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                                 if !state.registry.errors().is_empty() {
                                     ui.add_space(8.0);
                                     ui.label(
-                                        RichText::new("清单有问题")
+                                        RichText::new(crate::i18n::t!("清单有问题"))
                                             .size(SIZE_SMALL)
                                             .color(danger()),
                                     );
@@ -371,6 +377,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
 
 /// 小标题：10px 等宽、压暗一档，与面板里的分组标题同一套语气。
 fn look_section(ui: &mut Ui, title: &str) {
+    let title = crate::i18n::tr(title);
     ui.add_space(6.0);
     ui.label(RichText::new(title).size(SIZE_SMALL).color(muted()));
 }
@@ -386,13 +393,17 @@ fn look_row<T: PartialEq + Copy>(
     items: &[(T, &str)],
     mut set: impl FnMut(T),
 ) {
+    let label = crate::i18n::tr(label);
     ui.horizontal(|ui| {
         ui.add_sized(
             [52.0, 20.0],
             egui::Label::new(RichText::new(label).size(SIZE_LABEL).color(dim())),
         );
         for (value, text) in items {
-            if ui.selectable_label(current == *value, *text).clicked() {
+            if ui
+                .selectable_label(current == *value, crate::i18n::tr(text))
+                .clicked()
+            {
                 set(*value);
             }
         }
@@ -408,8 +419,9 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
         return;
     }
     let before = (state.appearance, state.layout);
+    let before_lang = state.lang;
     let mut open = state.look_open;
-    egui::Window::new("外观与布局")
+    egui::Window::new(crate::i18n::t!("外观与布局"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -428,6 +440,29 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
             // 还窄就会把左边的选项挤到窗口外面去。
             ui.set_min_width(316.0);
             ui.spacing_mut().item_spacing = Vec2::new(6.0, 5.0);
+
+            look_section(ui, "语言 / Language");
+            ui.horizontal_wrapped(|ui| {
+                for p in [
+                    crate::i18n::LangPref::System,
+                    crate::i18n::LangPref::Zh,
+                    crate::i18n::LangPref::En,
+                ] {
+                    // 「跟随系统」是唯一需要翻译的一项；中文与 English 用各自语言
+                    // 自己的写法，不翻 —— 只会英文的人要能认出那一项。
+                    let name = match p {
+                        crate::i18n::LangPref::System => crate::i18n::t!("跟随系统"),
+                        crate::i18n::LangPref::Zh => crate::i18n::Lang::Zh.label(),
+                        crate::i18n::LangPref::En => crate::i18n::Lang::En.label(),
+                    };
+                    if ui.selectable_label(state.lang == p, name).clicked() && state.lang != p {
+                        state.lang = p;
+                        // 立即生效：之后的绘制就走新语言。落盘交给帧末那条统一路径
+                        // （见函数末尾），这里不自己写文件。
+                        crate::i18n::set(p.resolve());
+                    }
+                }
+            });
 
             look_section(ui, "明暗");
             ui.horizontal_wrapped(|ui| {
@@ -501,7 +536,11 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
             ui.horizontal(|ui| {
                 ui.add_sized(
                     [52.0, 20.0],
-                    egui::Label::new(RichText::new("圆角").size(SIZE_LABEL).color(dim())),
+                    egui::Label::new(
+                        RichText::new(crate::i18n::t!("圆角"))
+                            .size(SIZE_LABEL)
+                            .color(dim()),
+                    ),
                 );
                 ui.add(
                     egui::Slider::new(&mut state.appearance.radius, 0.0..=16.0)
@@ -598,14 +637,24 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
             ui.add_space(8.0);
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("重置").size(SIZE_BODY)).clicked() {
+                if ui
+                    .button(RichText::new(crate::i18n::t!("重置")).size(SIZE_BODY))
+                    .clicked()
+                {
                     state.appearance = Appearance::default();
                     state.layout = crate::layout::Layout::default();
                 }
-                if ui.button(RichText::new("完成").size(SIZE_BODY)).clicked() {
+                if ui
+                    .button(RichText::new(crate::i18n::t!("完成")).size(SIZE_BODY))
+                    .clicked()
+                {
                     state.look_open = false;
                 }
-                ui.label(RichText::new("改动即时生效并记住").size(10.0).color(dim()));
+                ui.label(
+                    RichText::new(crate::i18n::t!("改动即时生效并记住"))
+                        .size(10.0)
+                        .color(dim()),
+                );
             });
         });
     state.look_open = open;
@@ -613,6 +662,10 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
     if (state.appearance, state.layout) != before {
         theme::set_appearance(state.appearance);
         theme::apply_style(ctx, FONT_ZOOMS[state.font_level.min(FONT_ZOOMS.len() - 1)]);
+        crate::settings::save(&state.settings());
+    } else if state.lang != before_lang {
+        // 只换了语言：色板与样式不用重算，但设置文件必须落盘 —— 否则下次启动
+        // 又回到旧语言，用户会以为切换没生效。仍然只有这一条写路径。
         crate::settings::save(&state.settings());
     }
 }
@@ -622,7 +675,7 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
         return;
     }
     let mut open = true;
-    egui::Window::new("快捷键与关于")
+    egui::Window::new(crate::i18n::t!("快捷键与关于"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -643,7 +696,7 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
                     .strong(),
             );
             ui.label(
-                RichText::new("Rust + egui · 核心数值以 Python 金标为准")
+                RichText::new(crate::i18n::t!("Rust + egui · 核心数值以 Python 金标为准"))
                     .size(SIZE_SMALL)
                     .color(dim()),
             );
@@ -685,7 +738,7 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
                 ui.label(theme::caps("GOLDEN 15/15 · 1e-4"));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui
-                        .button(RichText::new("知道了").size(SIZE_SMALL))
+                        .button(RichText::new(crate::i18n::t!("知道了")).size(SIZE_SMALL))
                         .clicked()
                     {
                         state.about_open = false;

@@ -36,7 +36,7 @@ pub(super) fn preset_panel(state: &mut AppState, ui: &mut Ui) {
     p.text(
         Pos2::new(head.left() + 12.0, head.center().y),
         Align2::LEFT_CENTER,
-        "预设",
+        crate::i18n::t!("预设"),
         font(SIZE_SMALL),
         dim(),
     );
@@ -55,7 +55,7 @@ pub(super) fn preset_panel(state: &mut AppState, ui: &mut Ui) {
         if resp.hovered() { text() } else { muted() },
     );
     let add = resp.clicked();
-    resp.on_hover_text("存快照：把当前整套参数钉一版");
+    resp.on_hover_text(crate::i18n::t!("存快照：把当前整套参数钉一版"));
     if add {
         state.save_snapshot();
     }
@@ -154,6 +154,7 @@ pub(super) fn preset_panel(state: &mut AppState, ui: &mut Ui) {
 
 /// 一节的小标题：▾ 名字 ……… 条数。32px 高、组名 12px 正文色，对齐界面稿 .sec-hd。
 fn side_head(ui: &mut Ui, label: &str, count: usize) {
+    let label = crate::i18n::tr(label);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::hover());
     let p = ui.painter();
     p.text(
@@ -184,6 +185,7 @@ fn side_head(ui: &mut Ui, label: &str, count: usize) {
 /// 选中态对齐界面稿 `.li.on`：横向渐变蓝底（左深右浅）+ 左缘 2px 强调色竖条，
 /// 行字与图标一起翻成选中底上的白。
 fn side_row(ui: &mut Ui, label: &str, glyph: Option<Glyph>, active: bool) -> Response {
+    let label = crate::i18n::tr(label);
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
     let p = ui.painter();
@@ -256,6 +258,7 @@ fn side_row(ui: &mut Ui, label: &str, glyph: Option<Glyph>, active: bool) -> Res
 
 /// 空节的一行说明：比正文小一档、比 dim 再灰一档，不抢条目位置。
 fn side_note(ui: &mut Ui, text: &str) {
+    let text = crate::i18n::tr(text);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
     ui.painter().text(
         Pos2::new(rect.left() + 32.0, rect.center().y),
@@ -359,6 +362,7 @@ pub(super) fn group_header(
     title: &str,
     resettable: bool,
 ) -> bool {
+    let title = crate::i18n::tr(title);
     // 分组之间留一口气：规则线紧贴上一组内容时，滚动起来像一整块密排表。
     ui.add_space(4.0);
     let (rect, resp) =
@@ -399,7 +403,7 @@ pub(super) fn group_header(
         text(),
     );
     // 说明入口贴着标题放：右端只留复位，两个圆图标挤在一起分不清谁是谁。
-    if let Some(help) = group_help(key) {
+    if let Some(help) = group_help(key).map(crate::i18n::tr) {
         let ir = Rect::from_center_size(
             Pos2::new(title_x + title_galley.size().x + 11.0, rect.center().y),
             Vec2::splat(14.0),
@@ -555,9 +559,13 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // ── 单行横排：标签 76 · 轨道弹性 · 读数 52 ───────────────────────────
     // 设计稿 `.row` 的口径。旧版把标签压在轨道上方，36px 的行高里排两行，
     // 一屏八行看下来标签和推子互相咬住，读起来像一张密排表格而不是调整面板。
+    // 翻译下沉在这里：SPECS 静态表的 label 是 const 数据，不能在表里调 tr；
+    // 所有滑块（显影/构图/成片）都汇到这一条路上，改一处全生效。
     const LABEL_W: f32 = 76.0;
     const VALUE_W: f32 = 52.0;
     const RESET_W: f32 = 14.0;
+    let label = crate::i18n::tr(label);
+    let tip = crate::i18n::tr(tip);
 
     let (rect, row_resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), row_h()), Sense::hover());
@@ -595,10 +603,19 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         }
         // 6 字截断：5 字中文在 76px 里刚好排满，再长就让位给轨道，
         // 宁可少两个字，也不让标签爬进推子的地盘。
+        // 截断长度按语言分档：中文 6 字约 78px 恰好贴住 LABEL_W，英文同宽只放得
+        // 下 ~11 个半角字符，仍按 6 截会把 "Highlights" 截成 "Highli…"。
         p.text(
             Pos2::new(rect.left() + 2.0, rect.center().y),
             Align2::LEFT_CENTER,
-            theme::ellipsis(label, 6),
+            theme::ellipsis(
+                label,
+                if crate::i18n::current() == crate::i18n::Lang::En {
+                    12
+                } else {
+                    6
+                },
+            ),
             font(SIZE_LABEL),
             if changed_now { text() } else { muted() },
         );
@@ -800,6 +817,11 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
 }
 
 pub(super) fn kv(ui: &mut Ui, key: &str, value: impl Into<String>, color: Color32) {
+    let key = crate::i18n::tr(key);
+    // 值也可能是文案（`kv(ui, "当前", "未挂外观")`），一样要过一遍翻译：
+    // 数字与专名查不到就原样返回，不会把读数翻坏。
+    let value = value.into();
+    let value = crate::i18n::tr(&value);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), kv_h()), Sense::hover());
     let p = ui.painter();
     p.text(
@@ -814,13 +836,14 @@ pub(super) fn kv(ui: &mut Ui, key: &str, value: impl Into<String>, color: Color3
     p.text(
         Pos2::new(rect.right() - 6.0, rect.center().y),
         Align2::RIGHT_CENTER,
-        value.into(),
+        value,
         mono(SIZE_LABEL),
         color,
     );
 }
 
 pub(super) fn note(ui: &mut Ui, text: &str) {
+    let text = crate::i18n::tr(text);
     ui.add_space(6.0);
     ui.add(
         egui::Label::new(RichText::new(text).size(SIZE_SMALL).color(dim()))
@@ -831,6 +854,7 @@ pub(super) fn note(ui: &mut Ui, text: &str) {
 
 /// 工具栏按钮的灰态版：能不能点取决于历史光标，不能点就按禁用画。
 pub(super) fn bar_button_on(ui: &mut Ui, label: &str, enabled: bool, shortcut: &str) -> Response {
+    let label = crate::i18n::tr(label);
     ui.add_enabled(
         enabled,
         egui::Button::new(RichText::new(label).size(SIZE_BODY)).shortcut_text(shortcut),

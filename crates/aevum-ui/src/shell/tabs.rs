@@ -56,7 +56,11 @@ pub(super) fn info_tab(state: &mut AppState, ui: &mut Ui) {
                 kv(ui, "中心", format!("{:.1}", m.center * 255.0), muted());
                 kv(ui, "锐度", format!("{:.0}", m.sharp), muted());
             } else if state.measuring {
-                ui.label(RichText::new("测光中…").size(SIZE_SMALL).color(accent()));
+                ui.label(
+                    RichText::new(crate::i18n::t!("测光中…"))
+                        .size(SIZE_SMALL)
+                        .color(accent()),
+                );
             }
             let off = state.offset_at(state.selected);
             kv(
@@ -77,7 +81,11 @@ pub(super) fn info_tab(state: &mut AppState, ui: &mut Ui) {
                 if rating > 0 { star() } else { dim() },
             );
         } else {
-            ui.label(RichText::new("尚未打开序列").size(SIZE_SMALL).color(dim()));
+            ui.label(
+                RichText::new(crate::i18n::t!("尚未打开序列"))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
+            );
         }
     }
     if group_header(ui, state, "info-capture", "拍摄参数", false) {
@@ -133,16 +141,22 @@ pub(super) fn info_tab(state: &mut AppState, ui: &mut Ui) {
             }
             _ => {
                 ui.label(
-                    RichText::new("这个文件没有可读的 EXIF（PNG、处理过的图，或机身只写了预览）")
-                        .size(SIZE_SMALL)
-                        .color(dim()),
+                    RichText::new(crate::i18n::t!(
+                        "这个文件没有可读的 EXIF（PNG、处理过的图，或机身只写了预览）"
+                    ))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
                 );
             }
         }
     }
     if group_header(ui, state, "info-meta", "说明与版权", false) {
         if state.seq.is_none() {
-            ui.label(RichText::new("尚未打开序列").size(SIZE_SMALL).color(dim()));
+            ui.label(
+                RichText::new(crate::i18n::t!("尚未打开序列"))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
+            );
         } else {
             meta_editor(ui, &mut state.meta);
         }
@@ -194,7 +208,11 @@ pub(super) fn info_tab(state: &mut AppState, ui: &mut Ui) {
                 .wrap(),
             );
         } else {
-            ui.label(RichText::new("等待测光…").size(SIZE_SMALL).color(dim()));
+            ui.label(
+                RichText::new(crate::i18n::t!("等待测光…"))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
+            );
         }
     }
     if group_header(ui, state, "info-engine", "引擎", false) {
@@ -264,6 +282,8 @@ pub(super) fn meta_editor(ui: &mut Ui, meta: &mut aevum_core::project::Metadata)
 
 /// 一格元数据：小标题在上、输入框占满宽度。`rows` 为 1 时用单行框，否则多行。
 fn meta_field(ui: &mut Ui, label: &str, hint: &str, value: &mut String, rows: usize) {
+    let label = crate::i18n::tr(label);
+    let hint = crate::i18n::tr(hint);
     ui.label(RichText::new(label).size(SIZE_LABEL).color(muted()));
     ui.add_space(2.0);
     let edit = if rows <= 1 {
@@ -419,9 +439,9 @@ pub(super) fn ai_tab(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "ai-console", "本机命令控制台", false) {
         ui.add(
             egui::Label::new(
-                RichText::new(
-                    "只控制本机正在运行的 Aevum Studio：不联网、不调用任何模型；模型接入放在后续里程碑。",
-                )
+                RichText::new(crate::i18n::t!(
+                    "只控制本机正在运行的 Aevum Studio：不联网、不调用任何模型；模型接入放在后续里程碑。"
+                ))
                 .size(SIZE_SMALL)
                 .color(dim()),
             )
@@ -430,7 +450,9 @@ pub(super) fn ai_tab(state: &mut AppState, ui: &mut Ui) {
         ui.add_space(6.0);
         let resp = ui.add(
             egui::TextEdit::singleline(&mut state.ai_input)
-                .hint_text("sequence.info　或　grade.set {\"exposure\":0.5}")
+                .hint_text(crate::i18n::t!(
+                    "sequence.info　或　grade.set {\"exposure\":0.5}"
+                ))
                 .desired_width(f32::INFINITY)
                 .font(mono(SIZE_SMALL)),
         );
@@ -462,7 +484,7 @@ pub(super) fn ai_tab(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "ai-log", "最近执行", false) {
         if state.ai_log.is_empty() {
             ui.label(
-                RichText::new("还没有执行过命令。")
+                RichText::new(crate::i18n::t!("还没有执行过命令。"))
                     .size(SIZE_SMALL)
                     .color(dim()),
             );
@@ -593,14 +615,21 @@ pub(super) fn ai_tab(state: &mut AppState, ui: &mut Ui) {
             p.text(
                 Pos2::new(rect.left() + 104.0, rect.center().y),
                 Align2::LEFT_CENTER,
-                theme::ellipsis(spec.summary, 20),
+                theme::ellipsis(crate::i18n::tr(spec.summary), 20),
                 font(SIZE_SMALL),
                 dim(),
             );
             if resp.clicked() {
                 state.ai_input = format!("{} ", spec.id);
             }
-            resp.on_hover_text(format!("{}\n参数：{}", spec.summary, spec.params));
+            // 截断要落在翻译之后：反过来会把中文按字数截断再翻译，对不上键。
+            resp.on_hover_text(crate::i18n::tr_fmt(
+                "{}\n参数：{}",
+                &[
+                    &crate::i18n::tr(spec.summary),
+                    &crate::i18n::tr(spec.params),
+                ],
+            ));
         }
         note(ui, "点击命令名可填进输入框；参数省略即 {}。");
     }

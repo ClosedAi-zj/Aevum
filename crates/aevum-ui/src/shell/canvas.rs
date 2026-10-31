@@ -73,7 +73,7 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui) {
         dim(),
     );
     // 右端：蒙版 n 个 · 撤销 Ctrl+Z（11px dim，说明文字不上交互）。
-    let undo_text = "撤销 Ctrl+Z";
+    let undo_text = crate::i18n::t!("撤销 Ctrl+Z");
     let undo_w = p
         .layout_no_wrap(undo_text.to_owned(), font(SIZE_SMALL), dim())
         .size()
@@ -88,7 +88,7 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui) {
     p.text(
         Pos2::new(tb.right() - 10.0 - undo_w - 12.0, tb.center().y),
         Align2::RIGHT_CENTER,
-        format!("蒙版 {} 个", state.params.masks.len()),
+        crate::i18n::tr_fmt("蒙版 {} 个", &[&state.params.masks.len()]),
         font(SIZE_SMALL),
         dim(),
     );
@@ -717,7 +717,7 @@ fn motion_overlay(
         cur.max - Vec2::splat(6.0),
         &format!(
             "{} {} × {} · {:.2}×",
-            which.cn(),
+            crate::i18n::tr(which.cn()),
             px.w,
             px.h,
             v.zoom(ow, oh, fw, fh)
@@ -727,7 +727,7 @@ fn motion_overlay(
     chip_label(
         p,
         other.min + Vec2::splat(6.0),
-        which.other().cn(),
+        crate::i18n::tr(which.other().cn()),
         Align2::LEFT_TOP,
     );
 

@@ -598,6 +598,9 @@ pub struct AppState {
     pub playing: bool,
     last_play: Instant,
     pub font_level: usize,
+    /// 界面语言偏好。**只存在 settings.json 里，不进工程文件** —— 工程是跨机器
+    /// 打开的东西，语言该跟随打开它的那台机器，不该被作者的语言钉住。
+    pub lang: crate::i18n::LangPref,
 
     pub texture: Option<TextureHandle>,
     pub texture_orig: Option<TextureHandle>,
@@ -1185,12 +1188,13 @@ impl AppState {
         self.plugin_job.is_some()
     }
 
-    /// 当前偏好的快照（外观 + 布局 + 字号），落盘与回填都用它。
+    /// 当前偏好的快照（外观 + 布局 + 字号 + 语言），落盘与回填都用它。
     pub fn settings(&self) -> crate::settings::Settings {
         crate::settings::Settings {
             appearance: self.appearance,
             layout: self.layout,
             font_level: self.font_level,
+            lang: self.lang,
         }
     }
 
@@ -1199,6 +1203,7 @@ impl AppState {
         self.appearance = s.appearance;
         self.layout = s.layout;
         self.font_level = s.font_level.min(3);
+        self.lang = s.lang;
     }
 
     pub fn new() -> Self {
@@ -1243,6 +1248,7 @@ impl AppState {
             playing: false,
             last_play: Instant::now(),
             font_level: 0,
+            lang: crate::i18n::LangPref::default(),
             texture: None,
             texture_orig: None,
             preview_size: [0, 0],

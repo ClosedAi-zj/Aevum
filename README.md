@@ -26,6 +26,10 @@
 - **数值金标**：Python 参考实现（`acceptance/reference/grade.py`）与 Rust 逐式同构，
   47 个显影金标 case + cube/grade 等多套金标钉住像素级一致
 
+- **界面双语**：中文 / English 运行时切换（外观面板里选，跟随系统为默认，偏好存
+  `settings.json` 不随工程走）。界面文案的完整性由 `tests/i18n_coverage.rs` 守门：
+  把整个界面用英文画一遍、扫渲染结果里的每一个字，上屏汉字即测试红
+
 ## 仓库结构
 
 ```

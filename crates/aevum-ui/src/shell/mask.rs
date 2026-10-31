@@ -535,23 +535,20 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
             .unwrap_or(100.0);
         let shapes = state.mask_geos_cached(i);
         let comps = shapes.len().max(1);
-        let label = format!(
-            "{}  {}  {:.0}%{}",
-            i + 1,
-            if shapes.first().is_some_and(|g| g.brush) {
-                "画笔"
-            } else if shapes.first().is_some_and(|g| g.radial) {
-                "径向"
-            } else {
-                "线性"
-            },
-            amount,
-            if comps > 1 {
-                format!("  · {comps} 形状")
-            } else {
-                String::new()
-            }
-        );
+        // 三段各自翻译再拼：形状名是枚举式的词，段数与百分比是数字。
+        // 整串当一个键翻不了——里面带着会变的数量与百分比。
+        let kind = if shapes.first().is_some_and(|g| g.brush) {
+            crate::i18n::t!("画笔")
+        } else if shapes.first().is_some_and(|g| g.radial) {
+            crate::i18n::t!("径向")
+        } else {
+            crate::i18n::t!("线性")
+        };
+        let mut label =
+            crate::i18n::tr_fmt("{}  {}  {}%", &[&(i + 1), &kind, &format!("{amount:.0}")]);
+        if comps > 1 {
+            label.push_str(&crate::i18n::tr_fmt("  · {} 形状", &[&comps]));
+        }
         let (rect, row) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 21.0), Sense::click());
         let p = ui.painter();
@@ -620,7 +617,11 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
     let comps = mask_comp_count(&state.params.masks[sel]);
     let mut comp_action = CompAction::None;
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new("形状").size(SIZE_SMALL).color(dim()));
+        ui.label(
+            RichText::new(crate::i18n::t!("形状"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
         for c in 0..comps {
             if bar_chip(ui, &format!("{}", c + 1), state.mask_comp == c).clicked() {
                 comp_action = CompAction::Select(c);
@@ -658,7 +659,11 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
     };
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new("布尔").size(SIZE_SMALL).color(dim()));
+        ui.label(
+            RichText::new(crate::i18n::t!("布尔"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
         for (index, label) in MASK_BLEND_LABELS.iter().enumerate() {
             let tip = match index {
                 0 => "并入已有选区",
@@ -685,7 +690,10 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let mut comp_invert = view.comp_invert;
         if ui
-            .checkbox(&mut comp_invert, RichText::new("形状反选").size(SIZE_SMALL))
+            .checkbox(
+                &mut comp_invert,
+                RichText::new(crate::i18n::t!("形状反选")).size(SIZE_SMALL),
+            )
             .changed()
         {
             view.comp_invert = comp_invert;
@@ -693,7 +701,10 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
         }
         let mut invert = view.invert;
         if ui
-            .checkbox(&mut invert, RichText::new("整组反选").size(SIZE_SMALL))
+            .checkbox(
+                &mut invert,
+                RichText::new(crate::i18n::t!("整组反选")).size(SIZE_SMALL),
+            )
             .changed()
         {
             view.invert = invert;
@@ -715,11 +726,20 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
         // 画笔没有渐变几何：羽化/中点/角度换成下一笔的圆章设定。
         ui.add_space(2.0);
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("下一笔").size(SIZE_SMALL).color(dim()));
+            ui.label(
+                RichText::new(crate::i18n::t!("下一笔"))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
+            );
             let mut erase = state.brush_erase;
             if ui
-                .checkbox(&mut erase, RichText::new("橡皮擦").size(SIZE_SMALL))
-                .on_hover_text("勾上后画的每一笔都从选区里挖掉；画完想补回来就再点一次取消勾选。")
+                .checkbox(
+                    &mut erase,
+                    RichText::new(crate::i18n::t!("橡皮擦")).size(SIZE_SMALL),
+                )
+                .on_hover_text(crate::i18n::t!(
+                    "勾上后画的每一笔都从选区里挖掉；画完想补回来就再点一次取消勾选。"
+                ))
                 .changed()
             {
                 state.brush_erase = erase;
@@ -810,7 +830,10 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
     ui.add_space(2.0);
     let mut range_on = view.range_on;
     if ui
-        .checkbox(&mut range_on, RichText::new("亮度范围").size(SIZE_SMALL))
+        .checkbox(
+            &mut range_on,
+            RichText::new(crate::i18n::t!("亮度范围")).size(SIZE_SMALL),
+        )
         .changed()
     {
         view.range_on = range_on;
@@ -855,7 +878,10 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
     ui.add_space(2.0);
     let mut hue_on = view.hue_on;
     if ui
-        .checkbox(&mut hue_on, RichText::new("颜色范围").size(SIZE_SMALL))
+        .checkbox(
+            &mut hue_on,
+            RichText::new(crate::i18n::t!("颜色范围")).size(SIZE_SMALL),
+        )
         .changed()
     {
         view.hue_on = hue_on;

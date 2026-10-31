@@ -100,7 +100,8 @@ pub fn band_chips(ui: &mut Ui, sel: &mut usize, used: &[f64]) -> bool {
         p.text(
             cell.center(),
             Align2::CENTER_CENTER,
-            BAND_NAMES[i],
+            // 色相带名是数据表里的词，翻译只能放在画的这一处。
+            crate::i18n::tr(BAND_NAMES[i]),
             font(SIZE_SMALL),
             if on {
                 Color32::from_rgb(0x14, 0x14, 0x16)
@@ -134,6 +135,8 @@ pub fn grade_wheel(
     lift: &mut f64,
     size: f32,
 ) -> bool {
+    // 翻译下沉：色轮标题（阴影 / 中间调 / 高光）由这里统一处理。
+    let label = crate::i18n::tr(label);
     let head = 14.0;
     let rail_h = 15.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(size, head + size + rail_h), Sense::hover());
@@ -345,6 +348,8 @@ pub fn curve_box(
     grab: &mut Option<usize>,
     cache: &mut Option<CurveLutCache>,
 ) -> bool {
+    // 同上：曲线框的坐标说明（输出 ↑ / 输入 →）也在这里翻。
+    let label = crate::i18n::tr(label);
     let head = 15.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(side, head + side), Sense::hover());
     let inner = Rect::from_min_size(Pos2::new(rect.left(), rect.top() + head), Vec2::splat(side));

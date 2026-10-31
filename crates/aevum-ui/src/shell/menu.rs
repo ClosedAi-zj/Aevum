@@ -317,21 +317,26 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             // 五项，和界面稿同口径：文件 / 编辑 / 视图 / 插件 / 帮助。
             // 原来的「显影」并进「视图 → 显影」，「模块」由标题栏的工作区胶囊接管 ——
             // 七个菜单名横排会把标题栏撑成一个命令面板，标题栏只需要"去哪找"。
-            ui.menu_button(RichText::new("文件").size(c.menu_font), |ui| {
-                file_menu(state, ui, ctx)
-            });
-            ui.menu_button(RichText::new("编辑").size(c.menu_font), |ui| {
-                edit_menu(state, ui, ctx)
-            });
-            ui.menu_button(RichText::new("视图").size(c.menu_font), |ui| {
-                view_menu(state, ui, ctx)
-            });
-            ui.menu_button(RichText::new("插件").size(c.menu_font), |ui| {
-                plugin_menu(state, ui, ctx)
-            });
-            ui.menu_button(RichText::new("帮助").size(c.menu_font), |ui| {
-                help_menu(state, ui)
-            });
+            ui.menu_button(
+                RichText::new(crate::i18n::t!("文件")).size(c.menu_font),
+                |ui| file_menu(state, ui, ctx),
+            );
+            ui.menu_button(
+                RichText::new(crate::i18n::t!("编辑")).size(c.menu_font),
+                |ui| edit_menu(state, ui, ctx),
+            );
+            ui.menu_button(
+                RichText::new(crate::i18n::t!("视图")).size(c.menu_font),
+                |ui| view_menu(state, ui, ctx),
+            );
+            ui.menu_button(
+                RichText::new(crate::i18n::t!("插件")).size(c.menu_font),
+                |ui| plugin_menu(state, ui, ctx),
+            );
+            ui.menu_button(
+                RichText::new(crate::i18n::t!("帮助")).size(c.menu_font),
+                |ui| help_menu(state, ui),
+            );
         },
     );
 
@@ -364,12 +369,12 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     p.text(
         export.center(),
         Align2::CENTER_CENTER,
-        "导出…",
+        crate::i18n::t!("导出…"),
         font(SIZE_CHROME_LABEL),
         on_accent(),
     );
     let do_export = er.clicked();
-    er.on_hover_text("导出当前序列 / 照片（Ctrl+E）");
+    er.on_hover_text(crate::i18n::t!("导出当前序列 / 照片（Ctrl+E）"));
     if do_export {
         state.export_current(ctx);
     }
@@ -416,15 +421,16 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             w.active.bg_stroke = Stroke::NONE;
             ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
             ui.menu_button(
-                RichText::new(format!("▦ {}  ▼", state.module.cn())).size(SIZE_CHROME_LABEL),
+                RichText::new(format!("▦ {}  ▼", crate::i18n::tr(state.module.cn())))
+                    .size(SIZE_CHROME_LABEL),
                 |ui| {
                     menu_style(ui);
                     for (i, m) in Module::ALL.iter().enumerate() {
                         let on = state.module == *m;
                         let label = if on {
-                            format!("✓ {}", m.cn())
+                            format!("✓ {}", crate::i18n::tr(m.cn()))
                         } else {
-                            format!("   {}", m.cn())
+                            format!("   {}", crate::i18n::tr(m.cn()))
                         };
                         if menu_item(ui, &label, &format!("Ctrl+Alt+{}", i + 1)) {
                             state.set_module(*m);
@@ -452,6 +458,7 @@ pub(super) fn menu_style(ui: &mut Ui) {
 }
 
 pub(super) fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
+    let label = crate::i18n::tr(label);
     ui.add(
         egui::Button::new(RichText::new(label).size(SIZE_BODY))
             .shortcut_text(RichText::new(shortcut).size(SIZE_SMALL).color(dim())),
@@ -478,7 +485,7 @@ fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     if ui
         .add_enabled(
             has_seq,
-            egui::Button::new("保存工程").shortcut_text("Ctrl+S"),
+            egui::Button::new(crate::i18n::t!("保存工程")).shortcut_text("Ctrl+S"),
         )
         .clicked()
     {
@@ -486,7 +493,7 @@ fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         ui.close();
     }
     if ui
-        .add_enabled(has_seq, egui::Button::new("重新载入工程"))
+        .add_enabled(has_seq, egui::Button::new(crate::i18n::t!("重新载入工程")))
         .clicked()
     {
         if let Some(root) = state.seq.as_ref().map(|s| s.root.clone()) {
@@ -507,7 +514,7 @@ fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     if ui
         .add_enabled(
             has_seq,
-            egui::Button::new("导出当前帧…").shortcut_text("Ctrl+E"),
+            egui::Button::new(crate::i18n::t!("导出当前帧…")).shortcut_text("Ctrl+E"),
         )
         .clicked()
     {
@@ -516,7 +523,7 @@ fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     ui.separator();
     if ui
-        .add_enabled(has_seq, egui::Button::new("关闭序列"))
+        .add_enabled(has_seq, egui::Button::new(crate::i18n::t!("关闭序列")))
         .clicked()
     {
         state.close();
@@ -534,7 +541,10 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let undo = state.history.can_undo();
     let redo = state.history.can_redo();
     if ui
-        .add_enabled(undo, egui::Button::new("撤销").shortcut_text("Ctrl+Z"))
+        .add_enabled(
+            undo,
+            egui::Button::new(crate::i18n::t!("撤销")).shortcut_text("Ctrl+Z"),
+        )
         .clicked()
     {
         run_history_command(state, ctx, "history.undo", &serde_json::json!({}));
@@ -543,7 +553,7 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     if ui
         .add_enabled(
             redo,
-            egui::Button::new("重做").shortcut_text("Ctrl+Shift+Z"),
+            egui::Button::new(crate::i18n::t!("重做")).shortcut_text("Ctrl+Shift+Z"),
         )
         .clicked()
     {
@@ -575,7 +585,7 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     if ui
         .add_enabled(
             has_seq,
-            egui::Button::new("导出当前帧…").shortcut_text("Ctrl+E"),
+            egui::Button::new(crate::i18n::t!("导出当前帧…")).shortcut_text("Ctrl+E"),
         )
         .clicked()
     {
@@ -586,24 +596,27 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
 
 fn develop_menu(state: &mut AppState, ui: &mut Ui) {
     menu_style(ui);
-    ui.menu_button(RichText::new("预设").size(SIZE_BODY), |ui| {
-        menu_style(ui);
-        for name in grade::PRESET_NAMES {
-            if ui.button(RichText::new(*name).size(SIZE_BODY)).clicked() {
-                state.apply_preset(name);
+    ui.menu_button(
+        RichText::new(crate::i18n::t!("预设")).size(SIZE_BODY),
+        |ui| {
+            menu_style(ui);
+            for name in grade::PRESET_NAMES {
+                if ui.button(RichText::new(*name).size(SIZE_BODY)).clicked() {
+                    state.apply_preset(name);
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if menu_item(ui, "导入 XMP 预设…", "") {
+                import_xmp_dialog(state);
                 ui.close();
             }
-        }
-        ui.separator();
-        if menu_item(ui, "导入 XMP 预设…", "") {
-            import_xmp_dialog(state);
-            ui.close();
-        }
-        if menu_item(ui, "导出 XMP 预设…", "") {
-            export_xmp_dialog(state);
-            ui.close();
-        }
-    });
+            if menu_item(ui, "导出 XMP 预设…", "") {
+                export_xmp_dialog(state);
+                ui.close();
+            }
+        },
+    );
     ui.separator();
     if menu_item(ui, "自动曝光", "") {
         state.auto_exposure();
@@ -628,9 +641,10 @@ fn view_menu(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
     }
     // 「显影」原来是标题栏上独立的一项，收进这里：调色命令是"对当前图做什么"，
     // 本来就属于视图菜单这一族，不该和文件/编辑并列。
-    ui.menu_button(RichText::new("显影调节").size(SIZE_BODY), |ui| {
-        develop_menu(state, ui)
-    });
+    ui.menu_button(
+        RichText::new(crate::i18n::t!("显影调节")).size(SIZE_BODY),
+        |ui| develop_menu(state, ui),
+    );
     ui.separator();
     if menu_item(ui, "适应窗口", "Ctrl+0") {
         fit_view(state);
@@ -649,30 +663,42 @@ fn view_menu(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
         ui.close();
     }
     ui.separator();
-    ui.checkbox(&mut state.rulers, RichText::new("标尺").size(SIZE_BODY));
-    ui.checkbox(&mut state.grid, RichText::new("网格").size(SIZE_BODY));
-    ui.checkbox(&mut state.cross, RichText::new("中心十字").size(SIZE_BODY));
-    ui.checkbox(&mut state.split, RichText::new("前后对比").size(SIZE_BODY));
+    ui.checkbox(
+        &mut state.rulers,
+        RichText::new(crate::i18n::t!("标尺")).size(SIZE_BODY),
+    );
+    ui.checkbox(
+        &mut state.grid,
+        RichText::new(crate::i18n::t!("网格")).size(SIZE_BODY),
+    );
+    ui.checkbox(
+        &mut state.cross,
+        RichText::new(crate::i18n::t!("中心十字")).size(SIZE_BODY),
+    );
+    ui.checkbox(
+        &mut state.split,
+        RichText::new(crate::i18n::t!("前后对比")).size(SIZE_BODY),
+    );
     ui.separator();
     ui.checkbox(
         &mut state.show_left,
-        RichText::new("左侧预设栏").size(SIZE_BODY),
+        RichText::new(crate::i18n::t!("左侧预设栏")).size(SIZE_BODY),
     );
     ui.checkbox(
         &mut state.show_dock,
-        RichText::new("右侧面板").size(SIZE_BODY),
+        RichText::new(crate::i18n::t!("右侧面板")).size(SIZE_BODY),
     );
     ui.checkbox(
         &mut state.show_strip,
-        RichText::new("右侧竖条").size(SIZE_BODY),
+        RichText::new(crate::i18n::t!("右侧竖条")).size(SIZE_BODY),
     );
     ui.checkbox(
         &mut state.show_film,
-        RichText::new("胶片条").size(SIZE_BODY),
+        RichText::new(crate::i18n::t!("胶片条")).size(SIZE_BODY),
     );
     ui.checkbox(
         &mut state.show_curves,
-        RichText::new("曲线").size(SIZE_BODY),
+        RichText::new(crate::i18n::t!("曲线")).size(SIZE_BODY),
     );
 }
 

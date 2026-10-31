@@ -90,9 +90,10 @@ pub(super) fn choose_audio(state: &mut AppState) {
 }
 
 pub(super) fn codec_label(codec: AudioCodec) -> &'static str {
+    // 只有 Auto 与 Copy 带中文，其余是编解码器名（语言中立）。
     match codec {
-        AudioCodec::Auto => "自动（兼容优先）",
-        AudioCodec::Copy => "不转码（直接复制）",
+        AudioCodec::Auto => crate::i18n::t!("自动（兼容优先）"),
+        AudioCodec::Copy => crate::i18n::t!("不转码（直接复制）"),
         AudioCodec::Aac128 => "AAC 128k",
         AudioCodec::Aac192 => "AAC 192k",
         AudioCodec::Aac256 => "AAC 256k",

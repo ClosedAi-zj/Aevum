@@ -31,6 +31,11 @@ folder onto the window and it switches to the right module.
 - **Numeric goldens**: the Python reference (`acceptance/reference/grade.py`) mirrors the Rust pipeline
   formula-by-formula; 47 develop golden cases plus cube/grade suites pin bit-level agreement
 
+- **Bilingual UI**: Chinese / English switchable at runtime (pick it in the look panel;
+  "follow system" is the default and the preference lives in `settings.json`, never in a
+  project). Coverage is guarded by `tests/i18n_coverage.rs`: the whole UI is painted in
+  English and every rendered glyph is scanned — one Chinese character on screen fails the test
+
 ## Repository layout
 
 ```

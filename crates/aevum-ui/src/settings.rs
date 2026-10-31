@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::LangPref;
 use crate::layout::Layout;
 use crate::theme::{Appearance, ThemeMode};
 
@@ -23,6 +24,8 @@ pub struct Settings {
     pub layout: Layout,
     /// 字号档位（0–3，对应 `FONT_ZOOMS`）。
     pub font_level: usize,
+    /// 界面语言：跟随系统 / 中文 / English。缺省「跟随系统」，老设置文件读进来也落在这一档。
+    pub lang: LangPref,
 }
 
 /// `%APPDATA%/aevum-studio/settings.json`；`AEVUM_SETTINGS`（旧名 `LUMEN_SETTINGS` 回退）
