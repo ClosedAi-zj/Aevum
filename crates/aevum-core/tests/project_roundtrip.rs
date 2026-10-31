@@ -371,6 +371,47 @@ fn f8_guard_path_that_is_a_regular_file_is_not_used() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// F9：`.aevum` 是文件、且**没有任何旧目录**——F8 只覆盖了「有旧目录可退」那一半。
+///
+/// 这条路径此前一路沉默到保存：`adopt_guard_dir` 把文件路径当目录返回，`save` 里
+/// `create_dir_all` 撞上去，Windows 报 `os error 183`。用户读到的是一串系统错误码，
+/// 没有人会从中猜到「你的帧文件夹里多了个叫 .aevum 的文件」。
+///
+/// 现在要求三件事：① 打开序列不 panic、不删不改那个文件；② 保存给出点名路径、
+/// 说明根因的可读错误；③ 错误文案里不再出现裸的系统错误码。
+#[test]
+fn f9_blocked_guard_file_without_legacy_dir_saves_with_a_readable_error() {
+    let dir = temp_dir("f9_blocked_only");
+    std::fs::write(dir.join(".aevum"), b"i am not a directory").unwrap();
+
+    // ① 没有旧目录可退，返回的就是那条路径；文件必须原样留着
+    let used = project::adopt_guard_dir(&dir);
+    assert_eq!(used, dir.join(".aevum"));
+    assert!(
+        dir.join(".aevum").is_file(),
+        "程序不该把占位的同名文件删掉或改成目录"
+    );
+
+    // ② 保存必须失败，且错误可读
+    let err = project::save(&project::project_path(&dir), &ProjectFile::default())
+        .expect_err("目标被文件占住，保存必须失败");
+    let text = err.to_string();
+    assert!(text.contains(".aevum"), "错误里要点名那条路径：{text}");
+    assert!(
+        text.contains("同名文件") && text.contains("不是目录"),
+        "要说明根因是「不是目录」：{text}"
+    );
+    // ③ 别把系统错误码甩给用户
+    assert!(!text.contains("os error"), "不该出现裸系统错误码：{text}");
+
+    // 那个文件从头到尾没被动过
+    assert_eq!(
+        std::fs::read(dir.join(".aevum")).unwrap(),
+        b"i am not a directory"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 根上那些 `.lapse_ratings.json` 是 Python 版的同名前缀**文件**，不是目录，别碰。
 #[test]
 fn legacy_files_with_same_prefix_are_untouched() {

@@ -276,6 +276,16 @@ pub enum ProjectError {
     Json(#[from] serde_json::Error),
     #[error("工程版本 {0} 比程序支持的 {VERSION} 新，请升级程序")]
     Version(u32),
+    /// 护带路径上蹲着一个同名**文件**（不是目录）。
+    ///
+    /// 不拦的话，`create_dir_all` 会抛出 `os error 183`（Windows「文件已存在」）或
+    /// `EEXIST`——用户看到的是一串系统错误码，完全猜不到根因是自己帧文件夹里
+    /// 多了个叫 `.aevum` 的文件。宁可提前判掉，给一句能照着做的说明。
+    #[error(
+        "{} 上有个同名文件、不是目录，工程存不进去；请把它移走或改名后重试（程序没有动它）",
+        .0.display()
+    )]
+    GuardBlockedByFile(std::path::PathBuf),
 }
 
 /// 序列根目录下的护带目录：工程文件、控制令牌、操作日志都在这儿。
@@ -395,6 +405,17 @@ pub fn adopt_guard_dir_with(
         };
     }
     // 两个旧目录都没有：返回新路径，首次写入时建。
+    //
+    // 但如果这条路径被同名**文件**占着，必须当场说清楚。否则这条链会一路沉默到
+    // 用户点保存的那一刻，然后只看到 `os error 183`——而那句话里不含任何关于
+    // 「你目录里有个叫 .aevum 的文件」的信息，用户只会以为程序坏了。
+    if blocked {
+        eprintln!(
+            "{}: {} 是个文件、不是目录，工程将无法保存；请把它移走或改名（程序没有动它）",
+            crate::brand::BIN,
+            fresh.display()
+        );
+    }
     fresh
 }
 
@@ -415,6 +436,11 @@ pub fn load(path: &Path) -> Result<ProjectFile, ProjectError> {
 /// 先写同目录临时文件再替换，避免崩溃时留下半个工程。
 pub fn save(path: &Path, project: &ProjectFile) -> Result<(), ProjectError> {
     if let Some(dir) = path.parent() {
+        // 目标被同名文件占住时，`create_dir_all` 抛的是系统级错误码，用户读不懂。
+        // 提前判掉：`.aevum` 是个文件 → 说清楚「有个同名文件」，而不是 os error 183。
+        if !dir.is_dir() && dir.exists() {
+            return Err(ProjectError::GuardBlockedByFile(dir.to_path_buf()));
+        }
         std::fs::create_dir_all(dir)?;
     }
     let text = serde_json::to_string_pretty(project)?;
