@@ -54,6 +54,9 @@ pub const PLAY_FPS: f32 = 24.0;
 const PLAY_THUMB_AHEAD: usize = 48;
 /// 色标序号对应的名字：0 是没打，1…4 跟 `shell::label_color` 同序。
 pub const LABEL_NAMES: [&str; 5] = ["无", "红", "黄", "绿", "蓝"];
+/// 状态栏常驻告警最多留几条。护带目录、override 这类问题一句话就说完，
+/// 留 8 条够覆盖「一个工程上同时坏了几处」，再多就把状态栏挤没了。
+const NOTICE_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Module {
@@ -554,6 +557,12 @@ pub struct AppState {
     pub collapsed: HashSet<&'static str>,
     pub status: String,
     pub error: Option<String>,
+    /// 状态栏的常驻告警：护带目录写不进去、override 路径失效之类。
+    ///
+    /// 与 `error` 语义不同——那是要用户当下处理的弹窗式错误，一出就盖住画面；
+    /// 这里是「一直挂在状态栏、点一下才消一条」的背景事实。来源是 core 的
+    /// `env::note` 队列，每帧开头 [`AppState::drain_notices`] 搬进来。
+    pub notices: Vec<String>,
     /// 打开序列时检测到的同目录 XMP 边车（第一帧）。只提示不自动套用；
     /// 状态栏给一枚「应用边车」，点了才进参数（见 `apply_sidecar_hint`）。
     pub sidecar_hint: Option<PathBuf>,
@@ -1211,6 +1220,7 @@ impl AppState {
             collapsed: HashSet::new(),
             status: "打开一个帧文件夹，或把文件夹拖进窗口".to_owned(),
             error: None,
+            notices: Vec::new(),
             sidecar_hint: None,
             measuring: false,
             params: GradeParams::default(),
@@ -1883,6 +1893,26 @@ impl AppState {
         self.last_play = Instant::now();
         if !self.playing {
             self.preview_dirty = true;
+        }
+    }
+
+    /// 把 core 压下的诊断提示搬进状态栏。
+    ///
+    /// 三条口径：
+    /// - **保序**：core 那边先说的先显示，同一件事的因果不会被倒过来读；
+    /// - **去重**：同一句话只留一条（用户点掉之后再来的同一句才重新出现）；
+    /// - **上限 8 条，旧的先走**：新的问题必须留得住，否则刚触发的那条会被老账顶掉。
+    ///
+    /// 每帧开头调一次就够：`env::drain_notes` 是取走并清空，重复调用不会丢东西。
+    pub fn drain_notices(&mut self) {
+        for msg in aevum_core::env::drain_notes() {
+            if self.notices.iter().any(|m| m == &msg) {
+                continue;
+            }
+            self.notices.push(msg);
+            if self.notices.len() > NOTICE_LIMIT {
+                self.notices.remove(0);
+            }
         }
     }
 
@@ -14359,5 +14389,81 @@ mod reset_cache_tests {
         assert_eq!(st.mask_drag, None);
         assert!(!st.mask_pick);
         assert!(st.mask_pick_img.is_none());
+    }
+}
+
+#[cfg(test)]
+mod notice_tests {
+    use super::*;
+
+    /// 提示队列是全进程共享的：两个用例并行跑会互相抢名额，串起来跑。
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    /// 每条用例一个唯一前缀，从共享队列里按前缀捞回自己的那几条。
+    fn unique(tag: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("aevum-ui-notice-{tag}-{}-{nanos}", std::process::id())
+    }
+
+    fn lock() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// `env::note` 压下的提示要按原顺序搬进 `state.notices`，同一句只留一条。
+    #[test]
+    fn drain_notices_moves_notes_in_order_and_dedupes() {
+        let _serial = lock();
+        let tag = unique("order");
+        let _ = aevum_core::env::drain_notes();
+
+        aevum_core::env::note(format!("{tag}-一"));
+        aevum_core::env::note(format!("{tag}-二"));
+        aevum_core::env::note(format!("{tag}-一"));
+
+        let mut state = AppState::new();
+        state.drain_notices();
+
+        let got: Vec<&String> = state.notices.iter().filter(|m| m.contains(&tag)).collect();
+        assert_eq!(got.len(), 2, "同一句只该留一条：{got:?}");
+        assert!(got[0].ends_with("一"), "顺序必须保住：{got:?}");
+        assert!(got[1].ends_with("二"), "顺序必须保住：{got:?}");
+    }
+
+    /// 上限 8 条，旧的挤掉：刚触发的问题必须留得住，否则用户看不到自己这件事。
+    #[test]
+    fn drain_notices_caps_at_eight_keeping_the_newest() {
+        let _serial = lock();
+        let tag = unique("cap");
+        let _ = aevum_core::env::drain_notes();
+
+        for i in 0..10 {
+            aevum_core::env::note(format!("{tag}-{i}"));
+        }
+
+        let mut state = AppState::new();
+        state.drain_notices();
+
+        let got: Vec<&String> = state.notices.iter().filter(|m| m.contains(&tag)).collect();
+        assert_eq!(got.len(), NOTICE_LIMIT, "上限是 8 条：{got:?}");
+        assert!(got[0].ends_with("-2"), "最旧的两条该被挤掉：{got:?}");
+        assert!(
+            got[NOTICE_LIMIT - 1].ends_with("-9"),
+            "最新的一条必须留着：{got:?}"
+        );
+    }
+
+    /// 无告警时什么也不加：`--selftest` 的形状计数靠这条（状态栏那格不许建形状）。
+    #[test]
+    fn drain_notices_adds_nothing_when_queue_is_empty() {
+        let _serial = lock();
+        let _ = aevum_core::env::drain_notes();
+        let mut state = AppState::new();
+        state.drain_notices();
+        assert!(state.notices.is_empty(), "没有告警时状态栏那格必须不存在");
     }
 }

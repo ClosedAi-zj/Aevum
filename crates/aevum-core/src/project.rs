@@ -3,8 +3,9 @@
 //! 位置固定为 `<序列根>/.aevum/project.json`；缺字段一律取默认值，
 //! 所以旧工程、只写了一半的工程都能打开。保存先写临时文件再替换。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -295,16 +296,34 @@ pub const GUARD_DIR: &str = crate::brand::GUARD_DIR;
 /// 更早的护带目录名，**从新到旧**。`.lumen` 是 2026-10 之前，`.lapse` 更早。
 pub const LEGACY_GUARD_DIRS: [&str; 2] = crate::brand::LEGACY_GUARD_DIRS;
 
-/// 只读探测：现在该用哪个护带目录。**不搬、不建、不报错。**
+/// 判定过的护带目录：进程内每个目录只探一次（探针是真建真删文件），
+/// 也只喊一次。`guard_dir` 挂在 UI 渲染路径上，每帧会被 `project_path()` 调好几次，
+/// 不缓存的话光探测就把渲染帧预算吃掉了。
+static GUARD_PROBED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+/// 只读探测：现在该用哪个护带目录。**不搬、不建、不返回错误。**
 ///
 /// 优先级：`.aevum` > `.lumen` > `.lapse` > 默认 `.aevum`（尚无护带时）。
 ///
 /// 所有路径构造函数都走这里，因此「搬不动」的场景下读写会自动落到旧目录，
 /// 不会出现「读旧的、写新的」把数据劈成两半。
 ///
+/// 解析完会顺手判一次可写性（结果按目录缓存）：盘只读、护带路径被同名文件占住时
+/// 压一条 `env::note`。这不是「报错」而是「让界面看得见」——本函数仍然正常返回路径，
+/// 读写照旧走它，只是用户不会再在点保存的那一刻才发现存不进去。
+///
 /// 注意**不在这里顺手搬**：本函数会在 UI 渲染路径与写日志时被调用，
 /// 搬目录是写操作，绝不能藏在「读路径」的语义里。搬只发生在 `adopt_guard_dir`。
 pub fn guard_dir(root: &Path) -> PathBuf {
+    let dir = resolved_guard_dir(root);
+    // 解析出目录之后再判「能不能写」：搬不动、盘只读、被同名文件占住——这三种
+    // 情况以前只有 stderr 一行，GUI 用户完全看不见，点保存才发现存不进去。
+    report_guard_once(&dir);
+    dir
+}
+
+/// 只解析、不探测：优先级与判定口径见 [`guard_dir`]。
+fn resolved_guard_dir(root: &Path) -> PathBuf {
     let fresh = root.join(GUARD_DIR);
     // 判「是不是目录」而不是「存不存在」：`.aevum` 万一是同名**文件**（用户手滑建了个
     // 文件、或者别的工具写出来的），把它当目录用会让后续 `create_dir_all` 失败、
@@ -320,6 +339,56 @@ pub fn guard_dir(root: &Path) -> PathBuf {
     }
     // 还没有护带：返回新名字的路径。首次写入时由调用方 `create_dir_all` 建出来。
     fresh
+}
+
+/// 「护带路径被同名文件占住」的统一文案。
+///
+/// `guard_dir` 与 `adopt_guard_dir_with` 都会撞上这一种，用同一句话是为了让
+/// `env::note` 的内容去重生效：用户只看到一条，而不是同一件事的两条转述。
+fn blocked_by_file_note(dir: &Path) -> String {
+    format!(
+        "护带目录 {} 被同名文件占住，改动将无法保存；请把那个文件移走或改名（程序没有动它）",
+        crate::env::absolute_for_show(dir)
+    )
+}
+
+/// 护带目录不可写时的说明；`None` 表示没发现问题。调用方保证 `dir` 已存在。
+fn guard_blocked_reason(dir: &Path) -> Option<String> {
+    let shown = crate::env::absolute_for_show(dir);
+    // 同名文件把护带路径占住：这是「不可写」里最容易被误读成程序坏了的一种，
+    // 原因必须单独点名，否则用户只会看到保存时的一句系统错误码。
+    if !dir.is_dir() {
+        return Some(blocked_by_file_note(dir));
+    }
+    if crate::env::dir_is_writable(dir) {
+        return None;
+    }
+    Some(format!(
+        "护带目录 {shown} 只读或权限不足（探针文件建不出来），改动将无法保存；\
+         请给它写权限，或把序列移到可写的盘上"
+    ))
+}
+
+/// 每个目录只探一次、只告一次。
+///
+/// 目录**不存在**时直接放行：首次写入会把它建出来，判成不可写会让每个新序列
+/// 一打开就误报一条。这种情况也不占缓存——它真被建出来之后还要再判一次。
+fn report_guard_once(dir: &Path) {
+    if !dir.exists() {
+        return;
+    }
+    let seen = GUARD_PROBED.get_or_init(|| Mutex::new(HashSet::new()));
+    {
+        // 中毒锁里通常还留着有用数据，取出来继续用，别在这里 panic。
+        let mut seen = seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // 先登记再探测：即使探测本身 panic（不该发生），也不会变成每帧重试。
+        if !seen.insert(dir.to_path_buf()) {
+            return;
+        }
+    }
+    if let Some(msg) = guard_blocked_reason(dir) {
+        crate::env::note(msg);
+    }
 }
 
 /// 打开序列时调一次：把**最近的那个**旧护带目录搬成 `.aevum`。
@@ -368,6 +437,14 @@ pub fn adopt_guard_dir_with(
                 fresh.display(),
                 p.display()
             );
+            // stderr 在 GUI 子系统下看不见：这条同样要进界面告警队列，否则用户
+            // 永远不知道自己的工程为什么还留在旧目录里。
+            crate::env::note(format!(
+                "护带目录 {} 被同名文件占住，搬不过去；工程继续存在 {}，\
+                 请把那个文件移走或改名（程序没有动它）",
+                crate::env::absolute_for_show(&fresh),
+                crate::env::absolute_for_show(&p)
+            ));
             return p;
         }
         return match rename(&p, &fresh) {
@@ -400,6 +477,24 @@ pub fn adopt_guard_dir_with(
                     p.display(),
                     p.display()
                 );
+                let (used, target) = (
+                    crate::env::absolute_for_show(&p),
+                    crate::env::absolute_for_show(&fresh),
+                );
+                // 搬不动本身不致命（旧目录还能写），但如果旧目录也写不进去，
+                // 那就是「改动将无法保存」这一级的事故，必须说到点子上。
+                let msg = if crate::env::dir_is_writable(&p) {
+                    format!(
+                        "护带目录 {used} 搬不动到 {target}（{e}），改动继续存在 {used}；\
+                         请检查 {target} 所在盘是否只读、或该路径是否被占用"
+                    )
+                } else {
+                    format!(
+                        "护带目录 {used} 搬不动到 {target}（{e}），且 {used} 本身不可写，\
+                         改动将无法保存；请给它写权限，或把序列移到可写的盘上"
+                    )
+                };
+                crate::env::note(msg);
                 p
             }
         };
@@ -415,6 +510,8 @@ pub fn adopt_guard_dir_with(
             crate::brand::BIN,
             fresh.display()
         );
+        // 与 `guard_dir` 共用同一句话：两边都会走到，靠内容去重只留一条。
+        crate::env::note(blocked_by_file_note(&fresh));
     }
     fresh
 }

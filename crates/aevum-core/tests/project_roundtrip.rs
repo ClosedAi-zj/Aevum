@@ -427,3 +427,112 @@ fn legacy_files_with_same_prefix_are_untouched() {
     assert!(!dir.join(".aevum").exists(), "不该凭空造出护带目录");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---------------------------------------------------------------- 护带目录告警（B2）
+// 「工程落在只读盘 / 护带目录搬不动」以前只有 stderr 一行，GUI 上完全看不见：
+// 打开照常、参数看着正常，点保存才失败。这几条钉的是「界面也看得见」这条通道
+// （`env::note` 队列），以及「每帧调用不能重复探测、重复告警」这条性能约束。
+
+/// 统计进程级提示队列里含某段子串的条数。
+///
+/// 队列是全进程共享的，别的用例并发写入也无所谓：临时目录名带 pid 与 tag，
+/// 天然唯一，按路径子串数出来的就是本用例自己那几条。
+fn notes_containing(sub: &str) -> usize {
+    aevum_core::env::notes_snapshot()
+        .iter()
+        .filter(|m| m.contains(sub))
+        .count()
+}
+
+/// 找到含某段子串的那条提示（取第一条）。
+fn find_note(sub: &str) -> Option<String> {
+    aevum_core::env::notes_snapshot()
+        .into_iter()
+        .find(|m| m.contains(sub))
+}
+
+/// 护带路径不可写 → 产生一条告警；四要素齐全；连续调用不再告第二次。
+///
+/// Windows 上造不出稳定的「只读目录」（当前用户对自己在临时目录里建的目录
+/// 始终有写权，目录只读位也不拦写入），所以用「护带路径被同名文件占住」
+/// 触发同一条「存在但写不进」的判定分支——探针文件同样建不出来。
+#[test]
+fn guard_dir_notes_when_guard_path_is_not_writable() {
+    let dir = temp_dir("note_guard_file");
+    std::fs::write(dir.join(".aevum"), b"not a directory").unwrap();
+    let needle = dir.display().to_string();
+
+    // 同名文件不能当护带目录：仍然返回那条路径（读路径与写路径口径一致）。
+    assert_eq!(project::guard_dir(&dir), dir.join(".aevum"));
+
+    let msg = find_note(&needle).expect("不可写的护带目录必须在界面通道上留下一条告警");
+    // ① 绝对路径：用户要能在资源管理器里找到这个地方
+    assert!(msg.contains(&needle), "告警里必须是可定位的绝对路径：{msg}");
+    // ② 原因
+    assert!(msg.contains("同名文件"), "要写明失败原因：{msg}");
+    // ③ 后果
+    assert!(msg.contains("改动将无法保存"), "要写明后果：{msg}");
+    // ④ 怎么办
+    assert!(
+        msg.contains("移走") || msg.contains("改名"),
+        "要给用户可以照做的一步：{msg}"
+    );
+    // 别把系统错误码甩给用户（保存失败时的 os error 183 是这条链的老病）。
+    assert!(!msg.contains("os error"), "不该出现裸系统错误码：{msg}");
+
+    let after_first = notes_containing(&needle);
+    // `project_path()` 每帧会被调多次：缓存必须让同一目录只探一次、只告一次。
+    project::guard_dir(&dir);
+    project::guard_dir(&dir);
+    assert_eq!(
+        notes_containing(&needle),
+        after_first,
+        "同一目录第二次、第三次调用只该命中缓存"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 可写的护带目录不许出声：误报比不报更快让人学会无视告警。
+#[test]
+fn guard_dir_is_silent_on_writable_dir() {
+    let dir = temp_dir("note_guard_ok");
+    std::fs::create_dir_all(dir.join(".aevum")).unwrap();
+    let needle = dir.display().to_string();
+
+    assert_eq!(project::guard_dir(&dir), dir.join(".aevum"));
+    assert_eq!(
+        notes_containing(&needle),
+        0,
+        "可写目录不该产生任何告警：{:#?}",
+        aevum_core::env::notes_snapshot()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 搬不动（只读卷 / 目标被占）→ 告警进界面通道，而不是只打 stderr。
+///
+/// 用 `adopt_guard_dir_with` 的注入缝造必然失败的 rename：真实文件系统上
+/// Windows 的只读属性拦不住 rename，写出来的用例是空转的（见 C5 的说明）。
+#[test]
+fn rename_failure_is_visible_in_the_notice_queue() {
+    let dir = temp_dir("note_rename");
+    std::fs::create_dir_all(dir.join(".lumen")).unwrap();
+    let needle = dir.display().to_string();
+
+    let used = project::adopt_guard_dir_with(&dir, |_, _| {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "qa stub：模拟只读卷 / 文件被占",
+        ))
+    });
+    assert_eq!(used, dir.join(".lumen"), "搬不动时仍用旧目录");
+
+    let msg = find_note(&needle).expect("搬不动必须在界面通道上留一条告警");
+    assert!(msg.contains("搬不动"), "要写明原因：{msg}");
+    assert!(msg.contains(&needle), "要含可定位的路径：{msg}");
+    assert!(
+        msg.contains("继续存在") || msg.contains("无法保存"),
+        "要说明后果：{msg}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -654,6 +654,29 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
         .or_else(|| state.queue_progress().map(|p| ("队列", p)));
     ui.horizontal_centered(|ui| {
         ui.add_space(8.0);
+        // 常驻告警：护带目录搬不动 / 只读 / 被同名文件占住这类「用户点保存之前
+        // 就该知道」的事实。空的时候一个形状都不建——`--selftest` 的形状计数
+        // 靠的就是这条路径在无告警时完全不留痕。
+        if !state.notices.is_empty() {
+            let first = state.notices[0].clone();
+            let rest = state.notices.len() - 1;
+            let mut text = format!("⚠ {}", theme::ellipsis(&first, 56));
+            if rest > 0 {
+                text.push_str(&format!("  +{rest}"));
+            }
+            let resp = ui
+                .add(
+                    egui::Label::new(RichText::new(text).size(SIZE_SMALL).color(warn()))
+                        .selectable(false)
+                        .sense(Sense::click()),
+                )
+                .on_hover_text(format!("{first}\n（点击消除这条提示）"));
+            // 点一下消一条：还有下一条就顶上来，全消完这一格（连同分隔点）一起消失。
+            if resp.clicked() {
+                state.notices.remove(0);
+            }
+            ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
+        }
         if plugin_run {
             let (done, total) = state.plugin_progress;
             let name = state

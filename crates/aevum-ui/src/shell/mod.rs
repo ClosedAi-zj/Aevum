@@ -66,6 +66,9 @@ const UV: Rect = Rect {
 };
 
 pub fn ui(state: &mut AppState, root: &mut Ui) {
+    // 每帧第一件事：把 core 压下的告警搬进状态栏。护带目录写不进去这类事
+    // 必须在用户点保存之前就看见——晚一帧，可能已经点下去了。
+    state.drain_notices();
     let ctx = root.ctx().clone();
     let full = root.max_rect();
     ctx.set_zoom_factor(FONT_ZOOMS[state.font_level.min(FONT_ZOOMS.len() - 1)]);

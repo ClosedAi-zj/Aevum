@@ -175,7 +175,7 @@ pub fn check_override(var: &'static str, path: &Path, target: Target) -> Option<
         }
         Target::Dir => {
             if path.is_dir() {
-                if dir_writable(path) {
+                if dir_is_writable(path) {
                     None
                 } else {
                     Some(format!(
@@ -200,7 +200,7 @@ fn usable_parent(parent: Option<&Path>) -> Result<(), String> {
         return Err("没有父目录".to_owned());
     };
     if parent.is_dir() {
-        return if dir_writable(parent) {
+        return if dir_is_writable(parent) {
             Ok(())
         } else {
             Err(format!(
@@ -214,7 +214,7 @@ fn usable_parent(parent: Option<&Path>) -> Result<(), String> {
     }
     // 父不存在：看它的父能不能建出东西（能 ⇒ 这一层建目录是可预期的）。
     match parent.parent() {
-        Some(grand) if grand.is_dir() && dir_writable(grand) => Ok(()),
+        Some(grand) if grand.is_dir() && dir_is_writable(grand) => Ok(()),
         _ => Err(format!(
             "父目录 {} 不存在且无法创建",
             absolute_for_show(parent)
@@ -224,7 +224,10 @@ fn usable_parent(parent: Option<&Path>) -> Result<(), String> {
 
 /// 在 `dir` 里建一个探针文件再立刻删掉。探针名带 pid 与纳秒避免撞车；
 /// `create_new` 保证不覆盖既有文件，就算删除失败也不至于踩坏用户数据。
-fn dir_writable(dir: &Path) -> bool {
+///
+/// `pub` 是给 `project::guard_dir` 用的：护带目录能不能写必须用同一把尺子量，
+/// 各抄一份探针迟早会有一份忘了删探针文件。
+pub fn dir_is_writable(dir: &Path) -> bool {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -242,7 +245,9 @@ fn dir_writable(dir: &Path) -> bool {
 }
 
 /// 展示用绝对路径（字符串）：消息里必须能让用户在资源管理器里找到这个地方。
-fn absolute_for_show(path: &Path) -> String {
+///
+/// `pub` 是给 `project::guard_dir` 用的：告警文案里的路径口径要和 override 一致。
+pub fn absolute_for_show(path: &Path) -> String {
     std::path::absolute(path)
         .unwrap_or_else(|_| path.to_path_buf())
         .display()
