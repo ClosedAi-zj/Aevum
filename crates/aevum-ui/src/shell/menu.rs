@@ -1,29 +1,26 @@
 //! 顶部菜单行与全局输入：菜单/菜单项/四个下拉、键盘与滚轮分发。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use egui::{Align, Align2, Color32, Context, Key, Layout, Pos2, Rect, RichText, Sense, Stroke, Ui, UiBuilder, Vec2};
-use aevum_core::grade::{self};
+use super::chrome::window_buttons;
+use super::dialogs::export_xmp_dialog;
+use super::dialogs::import_xmp_dialog;
+use super::dialogs::open_dialog;
+use super::dialogs::open_photos_dialog;
+use super::dialogs::rescan;
+use super::library::lib_apply_targets;
+use super::tabs::run_history_command;
+use super::windows::plugin_menu;
 use crate::history;
 use crate::icons::{self, Glyph};
 use crate::platform;
-use crate::state::{
-    AppState, DockTab, Module,
-    Tool,
-};
+use crate::state::{AppState, DockTab, Module, Tool};
 use crate::theme::{self, *};
-use super::dialogs::open_photos_dialog;
-use super::dialogs::open_dialog;
-use super::library::lib_apply_targets;
-use super::dialogs::rescan;
-use super::windows::plugin_menu;
-use super::chrome::window_buttons;
-use super::dialogs::import_xmp_dialog;
-use super::dialogs::export_xmp_dialog;
-use super::tabs::run_history_command;
+use aevum_core::grade::{self};
+use egui::{
+    Align, Align2, Color32, Context, Key, Layout, Pos2, Rect, RichText, Sense, Stroke, Ui,
+    UiBuilder, Vec2,
+};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 // ---------------------------------------------------------------- 输入
 
@@ -358,7 +355,11 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     p.rect_filled(
         export,
         radius_control(),
-        if er.hovered() { accent_hover() } else { accent() },
+        if er.hovered() {
+            accent_hover()
+        } else {
+            accent()
+        },
     );
     p.text(
         export.center(),
@@ -381,7 +382,9 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let menus_w: f32 = menu_labels
         .iter()
         .map(|t| {
-            p.layout_no_wrap((*t).to_owned(), font(c.menu_font), text()).size().x
+            p.layout_no_wrap((*t).to_owned(), font(c.menu_font), text())
+                .size()
+                .x
                 + c.menu_pad_x * 2.0
         })
         .sum::<f32>()
@@ -684,9 +687,9 @@ fn help_menu(state: &mut AppState, ui: &mut Ui) {
 #[cfg(test)]
 mod chrome_labels_tests {
     use super::*;
+    use crate::shell::ui;
     use aevum_core::export::OutputMode;
     use aevum_core::queue::QueueStatus;
-    use crate::shell::ui;
 
     fn input(events: Vec<egui::Event>) -> egui::RawInput {
         egui::RawInput {
@@ -729,7 +732,11 @@ mod chrome_labels_tests {
             assert!(!tool.hint().is_empty(), "工具 {} 缺悬停提示", tool.cn());
         }
         for tab in DockTab::ALL {
-            assert!(text.contains(tab.cn()), "dock 缺页签「{}」：\n{text}", tab.cn());
+            assert!(
+                text.contains(tab.cn()),
+                "dock 缺页签「{}」：\n{text}",
+                tab.cn()
+            );
         }
     }
 

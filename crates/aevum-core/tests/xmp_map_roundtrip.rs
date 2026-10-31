@@ -80,10 +80,18 @@ fn known_keys_map_through_the_table() {
     let path = write_xmp(&dir, "rich.xmp", RICH);
     let p = xmp::read(&path).expect("读样例");
 
-    assert!((p.exposure - 0.85).abs() < 1e-9, "exposure = {}", p.exposure);
+    assert!(
+        (p.exposure - 0.85).abs() < 1e-9,
+        "exposure = {}",
+        p.exposure
+    );
     assert!((p.contrast - 12.0).abs() < 1e-9);
     // 增量键优先于绝对开尔文：temperature 取 18 而不是 (6400−5500)/45。
-    assert!((p.temperature - 18.0).abs() < 1e-9, "temperature = {}", p.temperature);
+    assert!(
+        (p.temperature - 18.0).abs() < 1e-9,
+        "temperature = {}",
+        p.temperature
+    );
     assert!((p.tint + 6.0).abs() < 1e-9, "tint = {}", p.tint);
     // LR 正数提角、本项目正数压暗：−30 → +30。
     assert!((p.vignette - 30.0).abs() < 1e-9);
@@ -97,7 +105,10 @@ fn known_keys_map_through_the_table() {
     assert!((p.lens_fringe - 50.0).abs() < 1e-9);
     assert!((p.nr_luma - 25.0).abs() < 1e-9);
     assert!((p.sharp_amount - 40.0).abs() < 1e-9);
-    assert_eq!(p.curve_rgb, vec![[0.0, 0.0], [128.0, 140.0], [255.0, 255.0]]);
+    assert_eq!(
+        p.curve_rgb,
+        vec![[0.0, 0.0], [128.0, 140.0], [255.0, 255.0]]
+    );
 }
 
 #[test]
@@ -107,9 +118,20 @@ fn unknown_crs_keys_are_kept_and_roundtrip() {
     let p = xmp::read(&src).expect("读样例");
 
     // 未识别的 crs 键原样保留。
-    assert_eq!(p.xmp_extra.get("FuturePanelSlider").map(String::as_str), Some("23"));
-    assert_eq!(p.xmp_extra.get("LensProfileManualScale").map(String::as_str), Some("112"));
-    assert_eq!(p.xmp_extra.get("CropTop").map(String::as_str), Some("0.125"));
+    assert_eq!(
+        p.xmp_extra.get("FuturePanelSlider").map(String::as_str),
+        Some("23")
+    );
+    assert_eq!(
+        p.xmp_extra
+            .get("LensProfileManualScale")
+            .map(String::as_str),
+        Some("112")
+    );
+    assert_eq!(
+        p.xmp_extra.get("CropTop").map(String::as_str),
+        Some("0.125")
+    );
     // 跨命名空间不收；包元数据（Version/ProcessVersion）也不收。
     assert!(!p.xmp_extra.keys().any(|k| k == "Headline" || k == "title"));
     assert!(!p.xmp_extra.contains_key("Version"));
@@ -148,7 +170,10 @@ fn pv2010_fallback_only_when_2012_absent() {
 </x:xmpmeta>"#,
     );
     let p = xmp::read(&with_2012).expect("读");
-    assert!((p.exposure - 0.5).abs() < 1e-9, "PV2012 主键在场时兜底键不该生效");
+    assert!(
+        (p.exposure - 0.5).abs() < 1e-9,
+        "PV2012 主键在场时兜底键不该生效"
+    );
 
     let without_2012 = write_xmp(
         &dir,
@@ -223,7 +248,8 @@ fn self_written_file_reimport_loses_nothing() {
     p.grade_global_h = 300.0;
     p.grade_blending = 66.0;
     p.grain = 12.0;
-    p.xmp_extra.insert("StudioCustomKey".to_owned(), "42".to_owned());
+    p.xmp_extra
+        .insert("StudioCustomKey".to_owned(), "42".to_owned());
 
     let out = write_xmp(&dir, "self.xmp", "");
     xmp::write(&out, &p).expect("写");
@@ -239,5 +265,8 @@ fn self_written_file_reimport_loses_nothing() {
     assert!((p2.grade_global_h - 300.0).abs() < 1e-9);
     assert!((p2.grade_blending - 66.0).abs() < 1e-9);
     assert!((p2.grain - 12.0).abs() < 1e-9);
-    assert_eq!(p2.xmp_extra.get("StudioCustomKey").map(String::as_str), Some("42"));
+    assert_eq!(
+        p2.xmp_extra.get("StudioCustomKey").map(String::as_str),
+        Some("42")
+    );
 }

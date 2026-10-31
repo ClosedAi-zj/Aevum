@@ -20,10 +20,8 @@ fn temp_dir(tag: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("时钟正常")
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "aevum_qa_m2_{tag}_{}_{stamp}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("aevum_qa_m2_{tag}_{}_{stamp}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("建临时目录");
     dir
 }
@@ -213,7 +211,11 @@ fn qa_vignette_sign_flip_and_roundtrip() {
     let src = write_xmp(&dir, "in.xmp", EDGE);
     let p = xmp::read(&src).expect("读");
     // LR 的 -30（提亮四角）→ 本项目 +30（压暗）。
-    assert!((p.vignette - 30.0).abs() < 1e-9, "vignette = {}", p.vignette);
+    assert!(
+        (p.vignette - 30.0).abs() < 1e-9,
+        "vignette = {}",
+        p.vignette
+    );
     assert!((p.vig_midpoint - 55.0).abs() < 1e-9);
 
     let out = write_xmp(&dir, "out.xmp", "");
@@ -237,10 +239,24 @@ fn qa_unknown_crs_kept_cross_ns_not_and_full_roundtrip() {
     let p = xmp::read(&src).expect("读");
 
     // 未识别 crs 键收留（含带空格的字符串值）。
-    assert_eq!(p.xmp_extra.get("FuturePanelSlider").map(String::as_str), Some("23"));
-    assert_eq!(p.xmp_extra.get("LensProfileManualScale").map(String::as_str), Some("112"));
-    assert_eq!(p.xmp_extra.get("CropTop").map(String::as_str), Some("0.125"));
-    assert_eq!(p.xmp_extra.get("SomeLegacyKey").map(String::as_str), Some("hello world"));
+    assert_eq!(
+        p.xmp_extra.get("FuturePanelSlider").map(String::as_str),
+        Some("23")
+    );
+    assert_eq!(
+        p.xmp_extra
+            .get("LensProfileManualScale")
+            .map(String::as_str),
+        Some("112")
+    );
+    assert_eq!(
+        p.xmp_extra.get("CropTop").map(String::as_str),
+        Some("0.125")
+    );
+    assert_eq!(
+        p.xmp_extra.get("SomeLegacyKey").map(String::as_str),
+        Some("hello world")
+    );
     // 跨命名空间（exif: / xmp:）绝不收留；包元数据不收留。
     assert!(!p.xmp_extra.contains_key("ExposureTime"));
     assert!(!p.xmp_extra.contains_key("Rating"));
@@ -277,15 +293,21 @@ fn qa_xmp_extra_serde_roundtrip_key_by_key() {
     let mut p = GradeParams::default();
     p.exposure = 0.4;
     p.temperature = -12.0;
-    p.xmp_extra.insert("FuturePanelSlider".to_owned(), "23".to_owned());
+    p.xmp_extra
+        .insert("FuturePanelSlider".to_owned(), "23".to_owned());
     p.xmp_extra.insert("CropTop".to_owned(), "0.125".to_owned());
-    p.xmp_extra.insert("Note".to_owned(), "带 空格 & 符号".to_owned());
+    p.xmp_extra
+        .insert("Note".to_owned(), "带 空格 & 符号".to_owned());
 
     let json = serde_json::to_string(&p).expect("序列化");
     let back: GradeParams = serde_json::from_str(&json).expect("反序列化");
     assert_eq!(back, p, "serde 往返应逐字段一致");
     for (k, v) in &p.xmp_extra {
-        assert_eq!(back.xmp_extra.get(k).map(String::as_str), Some(v.as_str()), "键 {k}");
+        assert_eq!(
+            back.xmp_extra.get(k).map(String::as_str),
+            Some(v.as_str()),
+            "键 {k}"
+        );
     }
 }
 
@@ -305,7 +327,12 @@ fn qa_xmp_extra_missing_in_old_json_defaults_to_empty() {
 fn qa_spec_table_scales_match_v030_semantics() {
     // 与 f5c40a6^ 的 if-let 链逐条对照的关键刻度：
     // 暗角 -1、绝对开尔文 1/45 配 -5500/45、色调 1/1.5、去边 5（20 色阶=100%）。
-    let find = |key: &str| xmp_map::SPECS.iter().find(|s| s.key == key).expect("表内键");
+    let find = |key: &str| {
+        xmp_map::SPECS
+            .iter()
+            .find(|s| s.key == key)
+            .expect("表内键")
+    };
     let vig = find("PostCropVignetteAmount");
     assert_eq!(vig.scale, -1.0, "暗角方向相反");
     assert_eq!((vig.min, vig.max), (-100.0, 100.0));

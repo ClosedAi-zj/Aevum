@@ -205,13 +205,11 @@ pub(crate) fn dehaze_dcp_with_maps(
     }
 
     // 回写 sRGB 并钳到 [0,1]（主链契约）。
-    rgb.par_chunks_exact_mut(3)
-        .enumerate()
-        .for_each(|(i, px)| {
-            px[0] = lin_to_srgb(l_out[i * 3]).clamp(0.0, 1.0);
-            px[1] = lin_to_srgb(l_out[i * 3 + 1]).clamp(0.0, 1.0);
-            px[2] = lin_to_srgb(l_out[i * 3 + 2]).clamp(0.0, 1.0);
-        });
+    rgb.par_chunks_exact_mut(3).enumerate().for_each(|(i, px)| {
+        px[0] = lin_to_srgb(l_out[i * 3]).clamp(0.0, 1.0);
+        px[1] = lin_to_srgb(l_out[i * 3 + 1]).clamp(0.0, 1.0);
+        px[2] = lin_to_srgb(l_out[i * 3 + 2]).clamp(0.0, 1.0);
+    });
 
     if want_maps {
         Some(DehazeMaps {
@@ -291,10 +289,7 @@ mod tests {
         let mut a = src.clone();
         dehaze_dcp(&mut a, w, h, 1.0, 0.0);
         for (i, (x, y)) in a.iter().zip(src.iter()).enumerate() {
-            assert!(
-                (x - y).abs() < 1e-5,
-                "平坦图第 {i} 像素漂移 {x} vs {y}"
-            );
+            assert!((x - y).abs() < 1e-5, "平坦图第 {i} 像素漂移 {x} vs {y}");
         }
     }
 
@@ -327,9 +322,7 @@ mod tests {
         dehaze_dcp(&mut c_pos, w, h, 0.8, 0.5);
         let mut c_neg = src.clone();
         dehaze_dcp(&mut c_neg, w, h, 0.8, -0.5);
-        let mean = |img: &[f32]| -> f32 {
-            img.iter().step_by(3).sum::<f32>() / (w * h) as f32
-        };
+        let mean = |img: &[f32]| -> f32 { img.iter().step_by(3).sum::<f32>() / (w * h) as f32 };
         assert!(
             mean(&c_pos) < mean(&a) && mean(&c_neg) > mean(&a),
             "对比微调方向反了：{} / {} / {}",
@@ -364,7 +357,11 @@ mod tests {
             let vals: Vec<f64> = a.iter().skip(c).step_by(3).map(|v| *v as f64).collect();
             let n = vals.len() as f64;
             let mean = (vals.iter().sum::<f64>() / n) as f32;
-            let var = vals.iter().map(|v| (v - mean as f64) * (v - mean as f64)).sum::<f64>() / n;
+            let var = vals
+                .iter()
+                .map(|v| (v - mean as f64) * (v - mean as f64))
+                .sum::<f64>()
+                / n;
             let std = (var as f32).sqrt();
             assert!(
                 (mean - want_mean[c]).abs() < 2e-3,

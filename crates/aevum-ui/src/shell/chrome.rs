@@ -1,13 +1,10 @@
 //! 窗口镶边：拖拽缩放区、三枚窗口按钮（mac 红绿灯 / Win 几何）。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use egui::{Color32, Context, CursorIcon, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use crate::platform;
-use crate::theme::{*};
+use crate::theme::*;
+use egui::{Color32, Context, CursorIcon, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 const RESIZE_ZONE: f32 = 5.0;
 
@@ -148,16 +145,9 @@ fn mac_lights(ui: &mut Ui, ctx: &Context, full: Rect) {
         // 悬停才显字形：平时是纯色圆点，鼠标压上去才读得出这一枚是什么。
         if resp.hovered() && focused {
             let ink = Color32::from_black_alpha(150);
-            let g = p.layout_no_wrap(
-                glyphs[i].to_string(),
-                egui::FontId::proportional(10.0),
-                ink,
-            );
+            let g = p.layout_no_wrap(glyphs[i].to_string(), egui::FontId::proportional(10.0), ink);
             p.galley(
-                Pos2::new(
-                    center.x - g.size().x * 0.5,
-                    center.y - g.size().y * 0.5,
-                ),
+                Pos2::new(center.x - g.size().x * 0.5, center.y - g.size().y * 0.5),
                 g,
                 ink,
             );
@@ -269,10 +259,10 @@ fn win_buttons(ui: &mut Ui, ctx: &Context, full: Rect) {
 #[cfg(test)]
 mod chrome_tests {
     use super::*;
-    use egui::PointerButton;
-    use crate::state::AppState;
-    use crate::theme::self;
     use crate::shell::ui;
+    use crate::state::AppState;
+    use crate::theme;
+    use egui::PointerButton;
 
     /// 菜单行右侧第 `i` 枚窗口按钮的中心（0=最小化，1=缩放，2=关闭）。
     fn win_btn_center(i: usize) -> Pos2 {

@@ -68,9 +68,7 @@ fn to_rgb16(img: RawImage) -> Result<Rgb16Image, RawError> {
     let (w, h) = (img.width, img.height);
     if w == 0
         || h == 0
-        || u64::from(w as u32)
-            .saturating_mul(u64::from(h as u32))
-            > super::MAX_PIXELS
+        || u64::from(w as u32).saturating_mul(u64::from(h as u32)) > super::MAX_PIXELS
     {
         return Err(RawError::TooLarge {
             width: w as u32,
@@ -192,7 +190,9 @@ fn crop_samples(
     let row_bytes = src_w * cpp;
     let range = (white - black).max(1.0);
     let map = |v: f32| -> u16 {
-        (((v - black) / range) * 65535.0).clamp(0.0, 65535.0).round() as u16
+        (((v - black) / range) * 65535.0)
+            .clamp(0.0, 65535.0)
+            .round() as u16
     };
     let mut out = Vec::with_capacity(w * h * cpp);
     match &img.data {
@@ -201,7 +201,9 @@ fn crop_samples(
                 return Err(RawError::Truncated);
             }
             for y in oy..oy + h {
-                out.extend_from_slice(&data[y * row_bytes + ox * cpp..y * row_bytes + (ox + w) * cpp]);
+                out.extend_from_slice(
+                    &data[y * row_bytes + ox * cpp..y * row_bytes + (ox + w) * cpp],
+                );
             }
         }
         rawler::RawImageData::Float(data) => {

@@ -146,81 +146,626 @@ pub const SPECS: &[ControlSpec] = &[
     // ── 基本 ────────────────────────────────────────────────
     // 新增影调参数按归属挨着主参数放（LR 的口径：rolloff 属于曝光、
     // 软拐点属于黑白场、线性混合属于对比度），不单开分组。
-    spec!("dev.exposure", "曝光", Exposure, -5.0, 5.0, 0.0, 2, true, "basic"),
-    spec!("dev.hl-rolloff", "高光过渡", HlRolloff, 0.0, 100.0, 0.0, 0, false, "basic"),
-    spec!("dev.contrast", "对比度", Contrast, -100.0, 100.0, 0.0, 0, true, "basic"),
-    spec!("dev.contrast-linear", "线性对比", ContrastLinear, 0.0, 100.0, 0.0, 0, false, "basic"),
-    spec!("dev.highlights", "高光", Highlights, -100.0, 100.0, 0.0, 0, true, "basic"),
-    spec!("dev.shadows", "阴影", Shadows, -100.0, 100.0, 0.0, 0, true, "basic"),
-    spec!("dev.whites", "白色", Whites, -100.0, 100.0, 0.0, 0, true, "basic"),
-    spec!("dev.blacks", "黑色", Blacks, -100.0, 100.0, 0.0, 0, true, "basic"),
-    spec!("dev.black-soft", "黑场软化", BlackSoft, 0.0, 100.0, 0.0, 0, false, "basic"),
-    spec!("dev.white-soft", "白场软化", WhiteSoft, 0.0, 100.0, 0.0, 0, false, "basic"),
+    spec!(
+        "dev.exposure",
+        "曝光",
+        Exposure,
+        -5.0,
+        5.0,
+        0.0,
+        2,
+        true,
+        "basic"
+    ),
+    spec!(
+        "dev.hl-rolloff",
+        "高光过渡",
+        HlRolloff,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "basic"
+    ),
+    spec!(
+        "dev.contrast",
+        "对比度",
+        Contrast,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "basic"
+    ),
+    spec!(
+        "dev.contrast-linear",
+        "线性对比",
+        ContrastLinear,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "basic"
+    ),
+    spec!(
+        "dev.highlights",
+        "高光",
+        Highlights,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "basic"
+    ),
+    spec!(
+        "dev.shadows",
+        "阴影",
+        Shadows,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "basic"
+    ),
+    spec!(
+        "dev.whites",
+        "白色",
+        Whites,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "basic"
+    ),
+    spec!(
+        "dev.blacks",
+        "黑色",
+        Blacks,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "basic"
+    ),
+    spec!(
+        "dev.black-soft",
+        "黑场软化",
+        BlackSoft,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "basic"
+    ),
+    spec!(
+        "dev.white-soft",
+        "白场软化",
+        WhiteSoft,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "basic"
+    ),
     // ── 色彩 ────────────────────────────────────────────────
     // 色温走非线性轨道：中段密两端疏，锚点表在 core 的 temp_track。
     // 色调本轮不动（需求只点名色温；表机制可复用，加一张表即可）。
-    ControlSpec { grad: true, track: true, ..spec!("dev.temperature", "色温", Temperature, -100.0, 100.0, 0.0, 0, true, "color") },
-    ControlSpec { grad: true, ..spec!("dev.tint", "色调", Tint, -100.0, 100.0, 0.0, 0, true, "color") },
-    spec!("dev.vibrance", "自然饱和度", Vibrance, -100.0, 100.0, 0.0, 0, true, "color"),
-    spec!("dev.saturation", "饱和度", Saturation, -100.0, 100.0, 0.0, 0, true, "color"),
+    ControlSpec {
+        grad: true,
+        track: true,
+        ..spec!(
+            "dev.temperature",
+            "色温",
+            Temperature,
+            -100.0,
+            100.0,
+            0.0,
+            0,
+            true,
+            "color"
+        )
+    },
+    ControlSpec {
+        grad: true,
+        ..spec!(
+            "dev.tint", "色调", Tint, -100.0, 100.0, 0.0, 0, true, "color"
+        )
+    },
+    spec!(
+        "dev.vibrance",
+        "自然饱和度",
+        Vibrance,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "color"
+    ),
+    spec!(
+        "dev.saturation",
+        "饱和度",
+        Saturation,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "color"
+    ),
     // ── 效果 ────────────────────────────────────────────────
-    spec!("dev.dehaze", "去朦胧", Dehaze, -100.0, 100.0, 0.0, 0, true, "effects"),
+    spec!(
+        "dev.dehaze",
+        "去朦胧",
+        Dehaze,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "effects"
+    ),
     // 暗通道去雾两枚滑杆紧挨「去朦胧」之下（LR 口径在 Basic 面板单滑杆，
     // 本仓库分组沿现状，不为单参数迁组）。
-    spec!("dev.dehaze-dark", "暗通道去雾", DehazeDark, 0.0, 100.0, 0.0, 0, false, "effects"),
-    spec!("dev.dehaze-contrast", "去雾对比", DehazeContrast, -50.0, 50.0, 0.0, 0, true, "effects"),
-    spec!("dev.vignette", "暗角", Vignette, -100.0, 100.0, 0.0, 0, true, "effects"),
-    spec!("dev.vig-mid", "暗角中点", VigMidpoint, 0.0, 100.0, 50.0, 0, false, "effects"),
-    spec!("dev.vig-round", "圆度", VigRoundness, 0.0, 100.0, 0.0, 0, false, "effects"),
-    spec!("dev.vig-feather", "羽化", VigFeather, 1.0, 100.0, 50.0, 0, false, "effects"),
-    spec!("dev.vig-hl", "高光保护", VigHlContrast, -100.0, 100.0, 0.0, 0, true, "effects"),
+    spec!(
+        "dev.dehaze-dark",
+        "暗通道去雾",
+        DehazeDark,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "effects"
+    ),
+    spec!(
+        "dev.dehaze-contrast",
+        "去雾对比",
+        DehazeContrast,
+        -50.0,
+        50.0,
+        0.0,
+        0,
+        true,
+        "effects"
+    ),
+    spec!(
+        "dev.vignette",
+        "暗角",
+        Vignette,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "effects"
+    ),
+    spec!(
+        "dev.vig-mid",
+        "暗角中点",
+        VigMidpoint,
+        0.0,
+        100.0,
+        50.0,
+        0,
+        false,
+        "effects"
+    ),
+    spec!(
+        "dev.vig-round",
+        "圆度",
+        VigRoundness,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "effects"
+    ),
+    spec!(
+        "dev.vig-feather",
+        "羽化",
+        VigFeather,
+        1.0,
+        100.0,
+        50.0,
+        0,
+        false,
+        "effects"
+    ),
+    spec!(
+        "dev.vig-hl",
+        "高光保护",
+        VigHlContrast,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "effects"
+    ),
     // ── 细节 ────────────────────────────────────────────────
-    spec!("dev.texture", "纹理", Texture, -100.0, 100.0, 0.0, 0, true, "detail"),
-    spec!("dev.clarity", "清晰度", Clarity, -100.0, 100.0, 0.0, 0, true, "detail"),
-    spec!("dev.sharp-amount", "锐化", SharpAmount, 0.0, 150.0, 0.0, 0, false, "detail"),
-    ControlSpec { unit: "px", ..spec!("dev.sharp-radius", "锐化半径", SharpRadius, 0.5, 3.0, 1.0, 1, false, "detail") },
-    spec!("dev.sharp-detail", "锐化细节", SharpDetail, 0.0, 100.0, 25.0, 0, false, "detail"),
-    spec!("dev.sharp-mask", "锐化蒙版", SharpMasking, 0.0, 100.0, 0.0, 0, false, "detail"),
+    spec!(
+        "dev.texture",
+        "纹理",
+        Texture,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "detail"
+    ),
+    spec!(
+        "dev.clarity",
+        "清晰度",
+        Clarity,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "detail"
+    ),
+    spec!(
+        "dev.sharp-amount",
+        "锐化",
+        SharpAmount,
+        0.0,
+        150.0,
+        0.0,
+        0,
+        false,
+        "detail"
+    ),
+    ControlSpec {
+        unit: "px",
+        ..spec!(
+            "dev.sharp-radius",
+            "锐化半径",
+            SharpRadius,
+            0.5,
+            3.0,
+            1.0,
+            1,
+            false,
+            "detail"
+        )
+    },
+    spec!(
+        "dev.sharp-detail",
+        "锐化细节",
+        SharpDetail,
+        0.0,
+        100.0,
+        25.0,
+        0,
+        false,
+        "detail"
+    ),
+    spec!(
+        "dev.sharp-mask",
+        "锐化蒙版",
+        SharpMasking,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "detail"
+    ),
     // 锐化保护挨着蒙版放：两者都在回答"哪里不锐化"，保护的口径是噪声自适应恒开。
-    spec!("dev.sharp-protect", "锐化保护", SharpProtect, 0.0, 100.0, 0.0, 0, false, "detail"),
-    spec!("dev.nr-luma", "亮度降噪", NrLuma, 0.0, 100.0, 0.0, 0, false, "detail"),
-    spec!("dev.nr-color", "色彩降噪", NrColor, 0.0, 100.0, 0.0, 0, false, "detail"),
-    spec!("dev.nr-ai", "AI 降噪", NrAi, 0.0, 100.0, 0.0, 0, false, "detail"),
-    spec!("dev.nr-luma-detail", "降噪细节", NrLumaDetail, 0.0, 100.0, 0.0, 0, false, "detail"),
-    spec!("dev.nr-luma-contrast", "降噪对比", NrLumaContrast, 0.0, 100.0, 0.0, 0, false, "detail"),
-    spec!("dev.nr-color-smooth", "降噪平滑", NrColorSmooth, 0.0, 100.0, 50.0, 0, false, "detail"),
+    spec!(
+        "dev.sharp-protect",
+        "锐化保护",
+        SharpProtect,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "detail"
+    ),
+    spec!(
+        "dev.nr-luma",
+        "亮度降噪",
+        NrLuma,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "detail"
+    ),
+    spec!(
+        "dev.nr-color",
+        "色彩降噪",
+        NrColor,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "detail"
+    ),
+    spec!(
+        "dev.nr-ai",
+        "AI 降噪",
+        NrAi,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "detail"
+    ),
+    spec!(
+        "dev.nr-luma-detail",
+        "降噪细节",
+        NrLumaDetail,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "detail"
+    ),
+    spec!(
+        "dev.nr-luma-contrast",
+        "降噪对比",
+        NrLumaContrast,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "detail"
+    ),
+    spec!(
+        "dev.nr-color-smooth",
+        "降噪平滑",
+        NrColorSmooth,
+        0.0,
+        100.0,
+        50.0,
+        0,
+        false,
+        "detail"
+    ),
     // 多尺度与手动 σ 紧跟降噪平滑：都是亮度降噪的升级量（设计 2026-10-30 §1）。
-    spec!("dev.nr-multiscale", "多尺度降噪", NrMultiscale, 0.0, 100.0, 0.0, 0, false, "detail"),
+    spec!(
+        "dev.nr-multiscale",
+        "多尺度降噪",
+        NrMultiscale,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "detail"
+    ),
     ControlSpec {
         tip: "手动噪声 σ：0 = 自动估计（MAD）。滑杆低段（约 ≤28）因自动 σ 兜底门控暂不生效，待拟合标定。",
-        ..spec!("dev.nr-sigma-manual", "手动噪声σ", NrSigmaManual, 0.0, 100.0, 0.0, 0, false, "detail")
+        ..spec!(
+            "dev.nr-sigma-manual",
+            "手动噪声σ",
+            NrSigmaManual,
+            0.0,
+            100.0,
+            0.0,
+            0,
+            false,
+            "detail"
+        )
     },
     // ── 颗粒 ────────────────────────────────────────────────
-    spec!("dev.grain", "颗粒", Grain, 0.0, 100.0, 0.0, 0, false, "grain"),
+    spec!(
+        "dev.grain",
+        "颗粒",
+        Grain,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "grain"
+    ),
     // 亮度调制紧跟强度：正值暗部更重，负值反转（高光更重），双向。
-    spec!("dev.grain-lum", "颗粒亮度", GrainLum, -100.0, 100.0, 0.0, 0, true, "grain"),
-    ControlSpec { unit: "px", ..spec!("dev.grain-size", "颗粒大小", GrainSize, 1.0, 8.0, 1.0, 1, false, "grain") },
-    spec!("dev.grain-freq", "颗粒密度", GrainFreq, 0.2, 1.0, 1.0, 2, false, "grain"),
+    spec!(
+        "dev.grain-lum",
+        "颗粒亮度",
+        GrainLum,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "grain"
+    ),
+    ControlSpec {
+        unit: "px",
+        ..spec!(
+            "dev.grain-size",
+            "颗粒大小",
+            GrainSize,
+            1.0,
+            8.0,
+            1.0,
+            1,
+            false,
+            "grain"
+        )
+    },
+    spec!(
+        "dev.grain-freq",
+        "颗粒密度",
+        GrainFreq,
+        0.2,
+        1.0,
+        1.0,
+        2,
+        false,
+        "grain"
+    ),
     // ── 镜头校正 ────────────────────────────────────────────
-    spec!("dev.lens-distort", "畸变", LensDistort, -100.0, 100.0, 0.0, 0, true, "lens"),
-    spec!("dev.lens-vignette", "暗角补偿", LensVignette, -100.0, 100.0, 0.0, 0, true, "lens"),
-    spec!("dev.lens-fringe", "去紫边", LensFringe, 0.0, 100.0, 0.0, 0, false, "lens"),
+    spec!(
+        "dev.lens-distort",
+        "畸变",
+        LensDistort,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "lens"
+    ),
+    spec!(
+        "dev.lens-vignette",
+        "暗角补偿",
+        LensVignette,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "lens"
+    ),
+    spec!(
+        "dev.lens-fringe",
+        "去紫边",
+        LensFringe,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "lens"
+    ),
     // ── 色彩分级 ────────────────────────────────────────────
-    spec!("dev.grade-gl-h", "全局色相", GradeGlobalH, 0.0, 360.0, 0.0, 0, false, "grade"),
-    spec!("dev.grade-gl-s", "全局浓度", GradeGlobalS, 0.0, 100.0, 0.0, 0, false, "grade"),
-    spec!("dev.grade-gl-l", "全局亮度", GradeGlobalL, -100.0, 100.0, 0.0, 0, true, "grade"),
-    spec!("dev.grade-bal", "分区平衡", GradeBalance, -100.0, 100.0, 0.0, 0, true, "grade"),
-    spec!("dev.grade-blend", "分区过渡", GradeBlending, 0.0, 100.0, 0.0, 0, false, "grade"),
+    spec!(
+        "dev.grade-gl-h",
+        "全局色相",
+        GradeGlobalH,
+        0.0,
+        360.0,
+        0.0,
+        0,
+        false,
+        "grade"
+    ),
+    spec!(
+        "dev.grade-gl-s",
+        "全局浓度",
+        GradeGlobalS,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "grade"
+    ),
+    spec!(
+        "dev.grade-gl-l",
+        "全局亮度",
+        GradeGlobalL,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "grade"
+    ),
+    spec!(
+        "dev.grade-bal",
+        "分区平衡",
+        GradeBalance,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "grade"
+    ),
+    spec!(
+        "dev.grade-blend",
+        "分区过渡",
+        GradeBlending,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "grade"
+    ),
     // ── 参数曲线 ────────────────────────────────────────────
-    spec!("dev.par-sh", "阴影区", ParShadows, -100.0, 100.0, 0.0, 0, true, "parametric"),
-    spec!("dev.par-dark", "暗部区", ParDarks, -100.0, 100.0, 0.0, 0, true, "parametric"),
-    spec!("dev.par-light", "亮部区", ParLights, -100.0, 100.0, 0.0, 0, true, "parametric"),
-    spec!("dev.par-hi", "高光区", ParHighlights, -100.0, 100.0, 0.0, 0, true, "parametric"),
+    spec!(
+        "dev.par-sh",
+        "阴影区",
+        ParShadows,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "parametric"
+    ),
+    spec!(
+        "dev.par-dark",
+        "暗部区",
+        ParDarks,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "parametric"
+    ),
+    spec!(
+        "dev.par-light",
+        "亮部区",
+        ParLights,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "parametric"
+    ),
+    spec!(
+        "dev.par-hi",
+        "高光区",
+        ParHighlights,
+        -100.0,
+        100.0,
+        0.0,
+        0,
+        true,
+        "parametric"
+    ),
     // ── 黑白 ────────────────────────────────────────────────
     spec!("dev.mono", "单色", Mono, 0.0, 100.0, 0.0, 0, false, "mono"),
     // ── 曲线 ────────────────────────────────────────────────
     // 曲线组只有这一条推子（点曲线本体走 curve_box），挂组尾。
-    spec!("dev.curve-hdr-tail", "HDR 尾部", CurveHdrTail, 0.0, 100.0, 0.0, 0, false, "curve"),
+    spec!(
+        "dev.curve-hdr-tail",
+        "HDR 尾部",
+        CurveHdrTail,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "curve"
+    ),
 ];
 
 /// 取一个字段的可变槽位。`group_changed` / `reset_group` / 推子渲染共用。
@@ -378,7 +923,11 @@ mod tests {
         for s in SPECS {
             assert!(seen.insert(s.key), "重复的 spec key：{}", s.key);
             assert!(s.min < s.max, "spec {} 范围倒挂", s.key);
-            assert!(s.default >= s.min && s.default <= s.max, "spec {} 默认值出界", s.key);
+            assert!(
+                s.default >= s.min && s.default <= s.max,
+                "spec {} 默认值出界",
+                s.key
+            );
         }
     }
 
@@ -407,7 +956,12 @@ mod tests {
             crate::shell::reset_group(&mut st, g);
         }
         for s in SPECS {
-            assert_eq!(*param_slot(&mut st.params, s.field), s.default, "{} 未复位", s.key);
+            assert_eq!(
+                *param_slot(&mut st.params, s.field),
+                s.default,
+                "{} 未复位",
+                s.key
+            );
         }
     }
 }

@@ -48,7 +48,7 @@ pub mod unpack;
 #[cfg(feature = "raw-rawler")]
 mod rawler_backend;
 
-pub use backend::{RawDecode, RawBackend, BuiltinBackend};
+pub use backend::{BuiltinBackend, RawBackend, RawDecode};
 pub use cfa::DEMOSAIC_METHODS;
 
 /// 当前生效的去马赛克方法名（`"cell_average"` | `"directional"`）。

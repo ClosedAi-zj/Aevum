@@ -1,13 +1,10 @@
 //! 系统对话框：打开照片/序列、XMP 导入导出、.cube 导入导出、音轨选择。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use egui::Context;
-use aevum_core::audio::AudioCodec;
 use crate::state::AppState;
+use aevum_core::audio::AudioCodec;
+use egui::Context;
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 pub(super) fn open_dialog(state: &mut AppState, ctx: &Context) {
     if let Some(dir) = rfd::FileDialog::new().pick_folder() {
@@ -76,7 +73,6 @@ pub(super) fn export_xmp_dialog(state: &mut AppState) {
         state.error = Some(format!("导出 XMP 失败：{e}"));
     }
 }
-
 
 pub(super) fn choose_audio(state: &mut AppState) {
     let mut dialog = rfd::FileDialog::new().add_filter(

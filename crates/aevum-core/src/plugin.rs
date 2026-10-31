@@ -183,7 +183,9 @@ impl Manifest {
     pub fn validate(&self) -> Result<(), String> {
         let id = &self.plugin.id;
         if id.is_empty() || !id.contains('.') {
-            return Err(format!("插件 id 要是反向域名（如 `nik.color-efex`），现在是 `{id}`"));
+            return Err(format!(
+                "插件 id 要是反向域名（如 `nik.color-efex`），现在是 `{id}`"
+            ));
         }
         if !id
             .chars()
@@ -197,12 +199,7 @@ impl Manifest {
         if self.menu.path.trim_matches('/').is_empty() {
             return Err("菜单路径不能为空；至少写一段，如 `plug`".to_owned());
         }
-        if let Some(bad) = self
-            .menu
-            .path
-            .split('/')
-            .find(|s| s.trim().is_empty())
-        {
+        if let Some(bad) = self.menu.path.split('/').find(|s| s.trim().is_empty()) {
             let _ = bad;
             return Err(format!("菜单路径有空段：`{}`", self.menu.path));
         }
@@ -218,7 +215,11 @@ impl Manifest {
             }
             // partial_cmp 而不是 `!(a < b)`：NaN 时 partial_cmp 是 None、同样走报错，
             // 语义与旧写法一致，但读的人不用想浮点序的事。
-            if !p.min.partial_cmp(&p.max).is_some_and(|o| o == std::cmp::Ordering::Less) {
+            if !p
+                .min
+                .partial_cmp(&p.max)
+                .is_some_and(|o| o == std::cmp::Ordering::Less)
+            {
                 return Err(format!(
                     "参数 `{}` 的范围不成立：min {} ≥ max {}",
                     p.key, p.min, p.max
@@ -328,7 +329,11 @@ impl Registry {
                     // 目录里写的 source 只是建议，实际来源以调用方为准：
                     // 市场装进 `plugins/` 的插件不该自称 embedded。
                     m.plugin.source = source;
-                    if reg.plugins.iter().any(|p| p.manifest.plugin.id == m.plugin.id) {
+                    if reg
+                        .plugins
+                        .iter()
+                        .any(|p| p.manifest.plugin.id == m.plugin.id)
+                    {
                         reg.errors
                             .push((path, format!("插件 id 重复：`{}`", m.plugin.id)));
                         continue;
@@ -350,7 +355,11 @@ impl Registry {
     /// 它们和扫出来的插件走同一张表，唯一区别是没有 `plugin.toml` 文件读。
     pub fn with_builtin(mut self, builtin: Vec<Manifest>, root: &Path) -> Self {
         for m in builtin {
-            if self.plugins.iter().any(|p| p.manifest.plugin.id == m.plugin.id) {
+            if self
+                .plugins
+                .iter()
+                .any(|p| p.manifest.plugin.id == m.plugin.id)
+            {
                 // 市场装了同名插件：以文件为准（用户能自己更新版本），
                 // 内置那份只当默认值。
                 continue;
@@ -514,7 +523,11 @@ pub fn builtin() -> Vec<Manifest> {
 
     // Nik Collection 6：八支滤镜，同一个菜单组。
     let nik = [
-        ("color-efex", "Color Efex Pro", "滤镜与调色：55 组预设、控制点"),
+        (
+            "color-efex",
+            "Color Efex Pro",
+            "滤镜与调色：55 组预设、控制点",
+        ),
         ("silver-efex", "Silver Efex Pro", "黑白转换与胶片模拟"),
         ("analog-efex", "Analog Efex Pro", "模拟相机与胶片质感"),
         ("viveza", "Viveza", "局部亮度与色彩，控制点驱动"),
@@ -547,11 +560,26 @@ pub fn builtin() -> Vec<Manifest> {
     // 计算与合成：这类是本项目自己实现的，但同样进注册表 ——
     // 界面不必为"内置功能"和"插件"写两套菜单。
     let compute = [
-        ("aevum.hdr-merge", "HDR 合并", "plug/compute", "包围曝光合成 32 位线性"),
+        (
+            "aevum.hdr-merge",
+            "HDR 合并",
+            "plug/compute",
+            "包围曝光合成 32 位线性",
+        ),
         ("aevum.pano", "全景拼接", "plug/compute", "多帧拼接与投影"),
         ("aevum.focus-stack", "焦点堆叠", "plug/compute", "景深合成"),
-        ("aevum.denoise-ai", "AI 降噪", "plug/compute", "神经网络降噪"),
-        ("aevum.lens-correct", "镜头校正", "plug/compute", "按机型匹配畸变与暗角"),
+        (
+            "aevum.denoise-ai",
+            "AI 降噪",
+            "plug/compute",
+            "神经网络降噪",
+        ),
+        (
+            "aevum.lens-correct",
+            "镜头校正",
+            "plug/compute",
+            "按机型匹配畸变与暗角",
+        ),
     ];
     for (id, name, path, desc) in compute {
         out.push(Manifest {
@@ -683,16 +711,15 @@ unit = "%"
 
     #[test]
     fn menu_tree_sorts_groups_and_items() {
-        let reg = Registry::default()
-            .with_builtin(
-                vec![
-                    manifest("nik.zeta", Kind::Filter, "plug/nik"),
-                    manifest("nik.alpha", Kind::Filter, "plug/nik"),
-                    manifest("aevum.hdr", Kind::Filter, "plug/compute"),
-                    manifest("adobe.camera-raw", Kind::Decoder, "file/raw"),
-                ],
-                Path::new("/plugins"),
-            );
+        let reg = Registry::default().with_builtin(
+            vec![
+                manifest("nik.zeta", Kind::Filter, "plug/nik"),
+                manifest("nik.alpha", Kind::Filter, "plug/nik"),
+                manifest("aevum.hdr", Kind::Filter, "plug/compute"),
+                manifest("adobe.camera-raw", Kind::Decoder, "file/raw"),
+            ],
+            Path::new("/plugins"),
+        );
         let tree = reg.menu_tree();
         assert_eq!(tree.len(), 2);
         // BTreeMap 保证分组按名字排：compute 在 nik 前。

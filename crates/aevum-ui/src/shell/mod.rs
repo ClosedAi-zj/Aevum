@@ -3,53 +3,53 @@
 //!
 //! 只借布局与交互习惯，图标、配色与控件全部自绘。
 
+use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use egui::{
-    Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2,
-};
-
+use self::canvas::canvas_panel;
+use self::chrome::window_resize;
+use self::common::preset_panel;
+use self::dock::dock_panel;
+use self::menu::handle_input;
+use self::menu::menu_row;
+use self::timeline::timeline;
+use self::toolbar::options_bar;
+use self::toolbar::status_bar;
+use self::toolbar::tool_rail;
+use self::windows::about_window;
+use self::windows::look_window;
+use self::windows::market_window;
 use crate::icons::{self, Glyph};
 use crate::layout::StatusSlot;
 use crate::platform;
 use crate::state::AppState;
 use crate::theme::*;
-use self::menu::handle_input;
-use self::menu::menu_row;
-use self::toolbar::status_bar;
-use self::toolbar::options_bar;
-use self::dock::dock_panel;
-use self::toolbar::tool_rail;
-use self::common::preset_panel;
-use self::canvas::canvas_panel;
-use self::windows::about_window;
-use self::windows::look_window;
-use self::windows::market_window;
-use self::chrome::window_resize;
-use self::timeline::timeline;
-
 
 // ---- 模块划分（性能重构设计-2026-10-30 §7/§10）----
-mod library;
-mod tabs;
-mod windows;
+mod adjust;
 mod canvas;
 mod chrome;
+mod common;
 mod dialogs;
 mod dock;
+mod library;
+mod mask;
 mod menu;
+mod tabs;
 mod timeline;
 mod toolbar;
-mod adjust;
-mod common;
-mod mask;
+mod windows;
 
 // 对外（crate 内其他模块）仍走 crate::shell::X 路径，重新导出保持外部不变：
+//
+// `reset_group` 只有测试在用（`controls.rs` 的复位穷举），生产代码走的是
+// `common.rs` 里的相对路径 `super::adjust::reset_group`。不加 `cfg(test)`
+// 的话，普通构建下这条重导出没人引用，clippy 会当作 unused import 报警。
+#[cfg(test)]
 pub(crate) use adjust::reset_group;
 pub(crate) use mask::{
-    DeflCurveCache, HistMeshCache, MaskGeo, MaskGeoCache, mask_comp_object,
-    mask_geo_fingerprint, mask_geos, mask_handles, mask_radial_points, mask_stroke_lines,
+    DeflCurveCache, HistMeshCache, MaskGeo, MaskGeoCache, mask_comp_object, mask_geo_fingerprint,
+    mask_geos, mask_handles, mask_radial_points, mask_stroke_lines,
 };
-
 
 /// 画布标尺槽宽：留到能站稳 4 位刻度。
 const RULER: f32 = 24.0;

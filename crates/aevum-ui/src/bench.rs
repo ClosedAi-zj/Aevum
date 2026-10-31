@@ -30,7 +30,9 @@ fn input(hover_canvas: bool) -> RawInput {
         ..Default::default()
     };
     if hover_canvas {
-        input.events.push(Event::PointerMoved(Pos2::new(800.0, 400.0)));
+        input
+            .events
+            .push(Event::PointerMoved(Pos2::new(800.0, 400.0)));
     }
     input
 }
@@ -240,6 +242,9 @@ fn bench_micro() {
         sink += linear_state.mask_geos_cached(0).len();
     }
     let new_geo1 = t0.elapsed().as_secs_f64() * 1e6 / N as f64;
+    // 累加结果必须真的被"用到"：一来编译器不能把整段循环当死代码优化掉
+    // （那会让计时失去意义），二来 clippy 会指出最后一次赋值没人读。
+    std::hint::black_box(sink);
 
     // M2 曲线 LUT：RGB 通道默认点。
     let pts = vec![[0.0, 0.0], [128.0, 128.0], [255.0, 255.0]];
@@ -257,7 +262,16 @@ fn bench_micro() {
     let new_lut = t0.elapsed().as_secs_f64() * 1e6 / N as f64;
     assert!(sink2.is_finite());
 
-    println!("M1 mask_geos     old={old_geo:.2}µs  cached={new_geo:.2}µs  speedup={:.1}x", old_geo / new_geo);
-    println!("M1b linear-only  old={old_geo1:.2}µs  cached={new_geo1:.2}µs  speedup={:.1}x", old_geo1 / new_geo1);
-    println!("M2 pchip_lut     old={old_lut:.2}µs  fp-hit={new_lut:.2}µs  speedup={:.1}x", old_lut / new_lut);
+    println!(
+        "M1 mask_geos     old={old_geo:.2}µs  cached={new_geo:.2}µs  speedup={:.1}x",
+        old_geo / new_geo
+    );
+    println!(
+        "M1b linear-only  old={old_geo1:.2}µs  cached={new_geo1:.2}µs  speedup={:.1}x",
+        old_geo1 / new_geo1
+    );
+    println!(
+        "M2 pchip_lut     old={old_lut:.2}µs  fp-hit={new_lut:.2}µs  speedup={:.1}x",
+        old_lut / new_lut
+    );
 }

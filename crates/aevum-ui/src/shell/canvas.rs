@@ -1,37 +1,32 @@
 //! 画布区：图像绘制、裁剪/运动叠加、手柄、标尺与空态。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use egui::{
-    Align2, Color32, CursorIcon, PointerButton, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, Vec2,
-};
-use aevum_core::align::CropRect;
-use aevum_core::crop;
-use crate::icons::{self, Glyph};
-use crate::state::{
-    AppState, CropDrag, Module, MotionBox,
-    Tool,
-};
-use crate::theme::{self, *};
-use super::toolbar::doc_tab;
-use super::RULER;
-use super::mask::mask_pixel_size;
-use super::mask::mask_pick_color;
-use super::mask::mask_comp_is_brush;
-use super::mask::brush_begin;
-use super::mask::mask_hit_any;
-use super::mask::mask_drag_handle;
-use super::mask::brush_extend;
-use super::menu::fit_view;
-use super::mask::MaskGeo;
-use super::UV;
-use super::mask::draw_mask_overlay;
 use super::MICRO;
+use super::RULER;
+use super::UV;
 use super::dialogs::open_dialog;
 use super::dialogs::open_photos_dialog;
+use super::mask::MaskGeo;
+use super::mask::brush_begin;
+use super::mask::brush_extend;
+use super::mask::draw_mask_overlay;
+use super::mask::mask_comp_is_brush;
+use super::mask::mask_drag_handle;
+use super::mask::mask_hit_any;
+use super::mask::mask_pick_color;
+use super::mask::mask_pixel_size;
+use super::menu::fit_view;
+use super::toolbar::doc_tab;
+use crate::icons::{self, Glyph};
+use crate::state::{AppState, CropDrag, Module, MotionBox, Tool};
+use crate::theme::{self, *};
+use aevum_core::align::CropRect;
+use aevum_core::crop;
+use egui::{
+    Align2, Color32, CursorIcon, PointerButton, Pos2, Rect, Response, Sense, Shape, Stroke,
+    StrokeKind, Ui, Vec2,
+};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 // ---------------------------------------------------------------- 画布
 
@@ -98,10 +93,7 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui) {
         dim(),
     );
 
-    let body = Rect::from_min_max(
-        Pos2::new(full.left(), full.top() + CV_TOOLBAR_H),
-        full.max,
-    );
+    let body = Rect::from_min_max(Pos2::new(full.left(), full.top() + CV_TOOLBAR_H), full.max);
     p.rect_filled(body, 0, surround());
 
     let gutter = if state.rulers { RULER } else { 0.0 };
@@ -294,7 +286,12 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui) {
         0,
         Color32::from_black_alpha(70),
     );
-    p.rect_stroke(img, 0, Stroke::new(1.0, border_strong()), StrokeKind::Outside);
+    p.rect_stroke(
+        img,
+        0,
+        Stroke::new(1.0, border_strong()),
+        StrokeKind::Outside,
+    );
 
     match &tex {
         Some(t) => {
@@ -312,10 +309,8 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui) {
                     Stroke::new(1.0, Color32::from_white_alpha(200)),
                 );
                 // 拖动手柄：分割线中段一枚圆形抓手，纵向居中；双击回到居中。
-                let grip = Rect::from_center_size(
-                    Pos2::new(x, img.center().y),
-                    Vec2::new(18.0, 28.0),
-                );
+                let grip =
+                    Rect::from_center_size(Pos2::new(x, img.center().y), Vec2::new(18.0, 28.0));
                 let gresp = ui.interact(
                     grip,
                     ui.make_persistent_id("split-grip"),
@@ -324,8 +319,7 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui) {
                 if gresp.dragged()
                     && let Some(pt) = gresp.interact_pointer_pos()
                 {
-                    state.split_pos =
-                        ((pt.x - img.min.x) / img.width().max(1.0)).clamp(0.02, 0.98);
+                    state.split_pos = ((pt.x - img.min.x) / img.width().max(1.0)).clamp(0.02, 0.98);
                 }
                 if gresp.double_clicked() {
                     state.split_pos = 0.5;
@@ -341,7 +335,11 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui) {
                 } else {
                     Color32::from_rgba_unmultiplied(24, 24, 26, 235)
                 };
-                p.circle_filled(grip.center() + Vec2::new(0.0, 1.0), 11.0, Color32::from_black_alpha(90));
+                p.circle_filled(
+                    grip.center() + Vec2::new(0.0, 1.0),
+                    11.0,
+                    Color32::from_black_alpha(90),
+                );
                 p.circle_filled(grip.center(), 11.0, gcol);
                 p.circle_stroke(
                     grip.center(),

@@ -27,8 +27,8 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -368,9 +368,7 @@ impl Host {
         }
         #[cfg(not(windows))]
         {
-            let _ = Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .output();
+            let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
         }
     }
 
@@ -389,13 +387,7 @@ impl Host {
     /// 读一块像素：先一行 JSON，再按 `len` 读裸字节。
     fn read_tile(&mut self) -> Result<(TileHead, Vec<u8>), String> {
         match self.read_msg()? {
-            Msg::Tile {
-                w,
-                h,
-                len,
-                px,
-                ..
-            } => {
+            Msg::Tile { w, h, len, px, .. } => {
                 if px != "rgb8" {
                     return Err(format!("插件回了不认识的像素格式：{px}"));
                 }
@@ -448,12 +440,7 @@ impl PluginSide {
             id: String::new(),
         };
         let mut line = String::new();
-        if side
-            .out
-            .read_line(&mut line)
-            .map_err(|e| e.to_string())?
-            == 0
-        {
+        if side.out.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
             return Err("宿主没发 hello 就关了管道".to_owned());
         }
         match serde_json::from_str::<Msg>(line.trim()).map_err(|e| e.to_string())? {
@@ -470,9 +457,7 @@ impl PluginSide {
                 }
                 side.id = id;
                 side.params = params;
-                side.send(&Msg::Ready {
-                    protocol: PROTOCOL,
-                })?;
+                side.send(&Msg::Ready { protocol: PROTOCOL })?;
                 Ok(side)
             }
             other => Err(format!("期待 hello，收到 {other:?}")),
@@ -490,12 +475,7 @@ impl PluginSide {
     /// 收一块像素 `(seq, x, y, w, h, 像素)`。返回 `None` 表示宿主说了 `end` 或 `cancel`。
     pub fn recv_tile(&mut self) -> TileResult {
         let mut line = String::new();
-        if self
-            .out
-            .read_line(&mut line)
-            .map_err(|e| e.to_string())?
-            == 0
-        {
+        if self.out.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
             return Ok(None);
         }
         match serde_json::from_str::<Msg>(line.trim()).map_err(|e| e.to_string())? {
@@ -554,7 +534,11 @@ mod tests {
         // target/debug/deps/xxx.exe → target/debug/examples/invert.exe
         let exe = std::env::current_exe().ok()?;
         let dir = exe.parent()?.parent()?.join("examples");
-        let name = if cfg!(windows) { "invert.exe" } else { "invert" };
+        let name = if cfg!(windows) {
+            "invert.exe"
+        } else {
+            "invert"
+        };
         let path = dir.join(name);
         path.is_file().then_some(path)
     }
@@ -623,9 +607,7 @@ mod tests {
             return;
         };
         let mut host = Host::start(&entry, "aevum.example-invert", &BTreeMap::new()).unwrap();
-        let err = host
-            .apply(4, 4, &[0u8; 10])
-            .expect_err("应当报错");
+        let err = host.apply(4, 4, &[0u8; 10]).expect_err("应当报错");
         assert!(err.contains("像素数与尺寸不符"), "{err}");
         host.shutdown();
     }
@@ -640,7 +622,10 @@ mod tests {
         }
         .to_line()
         .unwrap();
-        assert_eq!(line, "{\"t\":\"hello\",\"protocol\":1,\"id\":\"nik.x\",\"params\":{}}\n");
+        assert_eq!(
+            line,
+            "{\"t\":\"hello\",\"protocol\":1,\"id\":\"nik.x\",\"params\":{}}\n"
+        );
         let back: Msg = serde_json::from_str(line.trim()).unwrap();
         assert!(matches!(back, Msg::Hello { protocol: 1, .. }));
     }

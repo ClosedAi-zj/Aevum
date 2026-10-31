@@ -1,26 +1,21 @@
 //! 图库：目录树/筛选/元数据/目录视图/堆叠与关键字应用。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use std::path::PathBuf;
-use egui::{
-    Align, Align2, Color32, Context, Key, Layout, Pos2, Rect,
-    RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
-};
-use crate::icons::{self, Glyph};
-use crate::state::{
-    AppState, LABEL_NAMES,
-};
-use crate::theme::{self, *};
-use super::common::note;
-use super::timeline::label_color;
-use super::tabs::meta_editor;
-use super::toolbar::bar_button;
-use super::menu::menu_style;
 use super::UV;
+use super::common::note;
+use super::menu::menu_style;
+use super::tabs::meta_editor;
+use super::timeline::label_color;
+use super::toolbar::bar_button;
+use crate::icons::{self, Glyph};
+use crate::state::{AppState, LABEL_NAMES};
+use crate::theme::{self, *};
+use egui::{
+    Align, Align2, Color32, Context, Key, Layout, Pos2, Rect, RichText, Sense, Stroke, StrokeKind,
+    Ui, UiBuilder, Vec2,
+};
+use std::path::PathBuf;
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 // ---------------------------------------------------------------- 图库
 

@@ -1003,7 +1003,8 @@ impl AppState {
         match &mut self.clip_mask {
             Some(tex) => tex.set(color, TextureOptions::LINEAR),
             None => {
-                self.clip_mask = Some(ctx.load_texture("preview.clip", color, TextureOptions::LINEAR))
+                self.clip_mask =
+                    Some(ctx.load_texture("preview.clip", color, TextureOptions::LINEAR))
             }
         }
         self.clip_mask_stamp = stamp;
@@ -1132,10 +1133,8 @@ impl AppState {
         self.plugin_progress = (0, 0);
         match result {
             Ok(out) => {
-                let image = ColorImage::from_rgb(
-                    [out.width as usize, out.height as usize],
-                    &out.pixels,
-                );
+                let image =
+                    ColorImage::from_rgb([out.width as usize, out.height as usize], &out.pixels);
                 self.plugin_result =
                     Some(ctx.load_texture("plugin.result", image, TextureOptions::LINEAR));
                 self.plugin_stamp = self.preview_stamp;
@@ -4350,7 +4349,12 @@ impl AppState {
 
     /// 抓一份合并任务的输入：帧路径、逐帧几何、成片路径与输出旋钮。
     /// 后台线程拿不到 `AppState`，所以该读的都在这里读完。
-    fn build_merge_job(&mut self, kind: MergeKind, indices: Vec<usize>, out_dir: &Path) -> Result<MergeJob, String> {
+    fn build_merge_job(
+        &mut self,
+        kind: MergeKind,
+        indices: Vec<usize>,
+        out_dir: &Path,
+    ) -> Result<MergeJob, String> {
         // 调用方大多先过 require_sequence，但 MCP 通道可能绕过：缺序列就
         // 报错返回，而不是在后台线程里 panic（panic 只会静默吞掉任务）。
         let seq = self
@@ -5881,8 +5885,18 @@ impl AppState {
     /// 逐参数细数是 dock 页签自己的职责。
     pub fn changed_groups(&self) -> usize {
         const KEYS: [&str; 12] = [
-            "basic", "color", "effects", "look", "levels", "parametric", "curve", "hsl", "mono",
-            "grade", "detail", "grain",
+            "basic",
+            "color",
+            "effects",
+            "look",
+            "levels",
+            "parametric",
+            "curve",
+            "hsl",
+            "mono",
+            "grade",
+            "detail",
+            "grain",
         ];
         KEYS.iter().filter(|k| self.group_changed(k)).count()
     }
@@ -6096,7 +6110,9 @@ impl AppState {
     /// （每帧多次指纹重哈希在多形状蒙版上可测，见 T03 复测记录。）
     pub(crate) fn mask_prep(&mut self, sel: usize, img: egui::Rect, w: f64, h: f64) -> usize {
         self.mask_geos_cached(sel);
-        let current = self.mask_comp.min(self.mask_geo_cache.geos.len().saturating_sub(1));
+        let current = self
+            .mask_comp
+            .min(self.mask_geo_cache.geos.len().saturating_sub(1));
         // 派生量重建键必须含「img rect + 像素尺寸 + 当前形状」三者：
         // 漏 comp 会让手柄停在旧形状上（切换形状不跟随），
         // 漏 (w,h) 会让换预览分辨率后按旧像素尺寸映射（径向/笔画错位）。
@@ -6138,7 +6154,14 @@ impl AppState {
     }
 
     /// 派生量重建：只在「指纹刚换或 img 变了」时跑；几何解析层不重算。
-    fn refresh_mask_derived(&mut self, sel: usize, current: usize, img: egui::Rect, w: f64, h: f64) {
+    fn refresh_mask_derived(
+        &mut self,
+        sel: usize,
+        current: usize,
+        img: egui::Rect,
+        w: f64,
+        h: f64,
+    ) {
         let geos: Vec<crate::shell::MaskGeo> = self.mask_geo_cache.geos.clone();
         let Some(raw) = self.params.masks.get(sel) else {
             return;
@@ -8440,7 +8463,8 @@ impl AppState {
         self.sidecar_hint = None;
         let Some(seq) = &self.seq else { return };
         for frame in seq.paths() {
-            let sidecar = xmp::sidecar_for(frame.as_path());            if sidecar.is_file() {
+            let sidecar = xmp::sidecar_for(frame.as_path());
+            if sidecar.is_file() {
                 self.sidecar_hint = Some(sidecar);
                 return;
             }
@@ -8461,11 +8485,7 @@ impl AppState {
             return;
         }
         let Some(seq) = &self.seq else { return };
-        if !seq
-            .paths()
-            .iter()
-            .any(aevum_core::raw::is_raw_name)
-        {
+        if !seq.paths().iter().any(aevum_core::raw::is_raw_name) {
             return;
         }
         self.params.sharp_amount = 40.0;
@@ -8477,7 +8497,9 @@ impl AppState {
     /// 状态栏「应用边车」的一键动作：把检测到的边车当预设导入（整体替换
     /// 全局参数，与 `xmp.import` 同口径），失败落 error、成功记历史。
     pub fn apply_sidecar_hint(&mut self) {
-        let Some(path) = self.sidecar_hint.take() else { return };
+        let Some(path) = self.sidecar_hint.take() else {
+            return;
+        };
         match self.import_xmp_preset(&path) {
             Ok(_) => {
                 self.status = format!(
@@ -13787,7 +13809,10 @@ mod command_tests {
         state.clip_cycle();
         assert!(!state.clip_highlights && state.clip_shadows, "第三拍：阴影");
         state.clip_cycle();
-        assert!(!state.clip_highlights && !state.clip_shadows, "第四拍：回关");
+        assert!(
+            !state.clip_highlights && !state.clip_shadows,
+            "第四拍：回关"
+        );
     }
 }
 
@@ -13898,11 +13923,7 @@ mod history_tests {
         state.crop_end();
         assert_eq!(state.user_crop, None, "纯点击不固化取景框");
         state.history_commit();
-        assert_eq!(
-            state.history.steps().len(),
-            base,
-            "点一下画布不产生历史步"
-        );
+        assert_eq!(state.history.steps().len(), base, "点一下画布不产生历史步");
 
         // 运镜同一条规矩：按下又松开，开关不动、历史不动。
         let enabled_before = state.motion.enabled;
@@ -14208,10 +14229,8 @@ mod raw_import_tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!(
-            "aevum-ui-raw-{tag}-{}-{nanos}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aevum-ui-raw-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("建临时目录");
         dir
     }
@@ -14286,9 +14305,7 @@ mod reset_cache_tests {
     #[test]
     fn reset_session_clears_all_caches() {
         let mut st = AppState::new();
-        st.params
-            .masks
-            .push(mask::new_mask(ShapeKind::Linear));
+        st.params.masks.push(mask::new_mask(ShapeKind::Linear));
         let _ = st.mask_geos_cached(0);
         st.curve_lut_cache = Some(crate::widgets::CurveLutCache {
             fp: 7,

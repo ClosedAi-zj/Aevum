@@ -121,7 +121,9 @@ mod tests {
     #[test]
     fn midpoint_is_symmetric() {
         let t = TempTrack::COLOR_TEMPERATURE;
-        for p in [0.0, -6.0, -12.0, -25.0, -45.0, -70.0, 6.0, 12.0, 25.0, 45.0, 70.0] {
+        for p in [
+            0.0, -6.0, -12.0, -25.0, -45.0, -70.0, 6.0, 12.0, 25.0, 45.0, 70.0,
+        ] {
             let v = t.pos_to_val(p);
             assert_eq!(t.pos_to_val(-p), -v, "{} 在 ±{p} 不对称", t.name);
             assert_eq!(t.val_to_pos(-v), -p, "{} 反查在 ∓{v} 不对称", t.name);

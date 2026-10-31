@@ -1235,7 +1235,9 @@ pub fn mask_spatial(
     if let Some(w_nr) = w_nr {
         let mut xs = rgb.to_vec();
         // 蒙版内面积小、收益低：单遍补算不接多尺度（设计 §1.3），保持旧调用。
-        denoise_apply(&mut xs, w, h, l_max, c_max, n_tune.0, n_tune.1, n_tune.2, 0.0, 0.0);
+        denoise_apply(
+            &mut xs, w, h, l_max, c_max, n_tune.0, n_tune.1, n_tune.2, 0.0, 0.0,
+        );
         blend(rgb, &xs, &w_nr);
     }
     if let Some(w_sharp) = w_sharp {
@@ -1361,7 +1363,9 @@ mod tests {
 
     /// 确定性伪随机 [0,1)（LR 混合同余，跨平台稳定）。
     fn lcg_next(state: &mut u64) -> f32 {
-        *state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         ((*state >> 33) as f32) / (1u64 << 31) as f32
     }
 
@@ -1410,7 +1414,9 @@ mod tests {
         // 旧路径参数（与金标 detail_spatial / nr_luma_only 的量级一致）。
         let args = (42.0f32, 8.0f32, 20.0f32, 25.0f32, 60.0f32);
         let mut a = img.clone();
-        denoise_apply(&mut a, w, h, args.0, args.1, args.2, args.3, args.4, 0.0, 0.0);
+        denoise_apply(
+            &mut a, w, h, args.0, args.1, args.2, args.3, args.4, 0.0, 0.0,
+        );
 
         // —— 复刻升级前的旧实现 ——
         let mut b = img.clone();
@@ -1453,13 +1459,15 @@ mod tests {
             let r = (min / 260).max(2);
             let eps = 0.0001 + 0.006 * k;
             let sm = guided(&lum, &lum, w, h, r, eps);
-            let mut res: Vec<f32> =
-                lum.iter().zip(sm.iter()).map(|(l, s)| (s - l) * k).collect();
+            let mut res: Vec<f32> = lum
+                .iter()
+                .zip(sm.iter())
+                .map(|(l, s)| (s - l) * k)
+                .collect();
             if d != 0.0 || args.3 != 0.0 {
                 let blur5 = box_mean(&lum, w, h, 2);
                 if d != 0.0 {
-                    let hf: Vec<f32> =
-                        lum.iter().zip(blur5.iter()).map(|(l, bb)| l - bb).collect();
+                    let hf: Vec<f32> = lum.iter().zip(blur5.iter()).map(|(l, bb)| l - bb).collect();
                     let sig = mad_sigma(&hf, w, h);
                     let raw: Vec<f32> = hf
                         .iter()
@@ -1499,15 +1507,7 @@ mod tests {
         // 1) 平坦图：高通恒 0 → 任何 amount/threshold 下逐位不动。
         let flat = vec![0.5f32; w * h * 3];
         let mut a = flat.clone();
-        output_sharpen_usm(
-            &mut a,
-            w,
-            h,
-            0.9,
-            0.8,
-            0.004,
-            OutputEncoding::Sdr,
-        );
+        output_sharpen_usm(&mut a, w, h, 0.9, 0.8, 0.004, OutputEncoding::Sdr);
         for (i, (x, y)) in a.iter().zip(flat.iter()).enumerate() {
             assert_eq!(x.to_bits(), y.to_bits(), "平坦图第 {i} 位被 USM 改动");
         }

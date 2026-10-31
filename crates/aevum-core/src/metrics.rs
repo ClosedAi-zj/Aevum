@@ -301,7 +301,10 @@ pub fn decode(path: impl AsRef<Path>) -> Result<DynamicImage, MetricsError> {
         // 方向用后端报的：CR3 的 Exif item 在 BMFF 容器里，`exif::read` 读不到，
         // rawler 能——竖拍躺平就是在这里漏的方向。
         let (mosaic, _path, orientation) = crate::raw::read_full(path)?;
-        return Ok(crate::exif::oriented(DynamicImage::ImageRgb16(mosaic), orientation));
+        return Ok(crate::exif::oriented(
+            DynamicImage::ImageRgb16(mosaic),
+            orientation,
+        ));
     }
     let reader = image::ImageReader::open(path)?.with_guessed_format()?;
     let img = reader.decode()?;

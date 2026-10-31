@@ -1,34 +1,28 @@
 //! 选项栏/文档页签/工具轨/状态栏（界面顶部与左右竖条）。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use egui::{
-    Align, Align2, Color32, Context, Layout, Pos2, Rect, Response,
-    RichText, Sense, Stroke, StrokeKind, Ui, Vec2,
-};
-use aevum_core::export::OutputMode;
-use aevum_core::grade::{self, GradeParams};
-use crate::icons::{self, Glyph};
-use crate::platform;
-use crate::state::{
-    AppState, Aspect, Module,
-    Tool,
-};
-use crate::theme::{self, *};
 use super::BAR_H;
-use super::common::in_field;
 use super::MICRO;
-use super::dialogs::open_dialog;
 use super::common::group_gap;
-use super::menu::menu_style;
-use super::menu::menu_item;
+use super::common::in_field;
 use super::common::opt_sep;
 use super::dialogs::choose_audio;
-use super::menu::fit_view;
+use super::dialogs::open_dialog;
 use super::menu::actual_size;
+use super::menu::fit_view;
+use super::menu::menu_item;
+use super::menu::menu_style;
+use crate::icons::{self, Glyph};
+use crate::platform;
+use crate::state::{AppState, Aspect, Module, Tool};
+use crate::theme::{self, *};
+use aevum_core::export::OutputMode;
+use aevum_core::grade::{self, GradeParams};
+use egui::{
+    Align, Align2, Color32, Context, Layout, Pos2, Rect, Response, RichText, Sense, Stroke,
+    StrokeKind, Ui, Vec2,
+};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 /// 普通工具栏按钮：底色交给 theme 的 widget 层级（ELEV → 悬停 ELEV_HOVER），
 /// 所以这里不写死 fill，才有悬停反馈。
@@ -100,13 +94,10 @@ fn ctx_seg(ui: &mut Ui, name: &str, note: &str, warn: Option<String>) {
     );
     ui.add_space(2.0);
     let badge = |ui: &mut Ui, text: String, ink: Color32| {
-        let galley = ui
-            .painter()
-            .layout_no_wrap(text, font(MICRO), ink);
+        let galley = ui.painter().layout_no_wrap(text, font(MICRO), ink);
         let size = galley.size() + Vec2::new(10.0, 4.0);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter()
-            .rect_filled(rect, 3.0, field());
+        ui.painter().rect_filled(rect, 3.0, field());
         ui.painter().galley(
             Pos2::new(rect.left() + 5.0, rect.center().y - galley.size().y * 0.5),
             galley,
@@ -124,7 +115,13 @@ fn ctx_seg(ui: &mut Ui, name: &str, note: &str, warn: Option<String>) {
 ///
 /// 上圆角、贴着顶栏底线 —— PS 的做法：文件名从标题栏搬回画布正上方，
 /// 标题栏才腾得出来只放菜单。
-pub(super) fn doc_tab(state: &mut AppState, p: &egui::Painter, ui: &mut Ui, ctx: &Context, rect: Rect) {
+pub(super) fn doc_tab(
+    state: &mut AppState,
+    p: &egui::Painter,
+    ui: &mut Ui,
+    ctx: &Context,
+    rect: Rect,
+) {
     let has_seq = state.seq.is_some();
     let resp = ui.interact(rect, ui.make_persistent_id("doc-tab"), Sense::click());
     let fill = theme::overlay_white(header(), if has_seq { 20 } else { 14 });
@@ -484,12 +481,9 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             w.active.bg_stroke = Stroke::NONE;
             ui.spacing_mut().button_padding = Vec2::new(9.0, 4.0);
             ui.menu_button(
-                RichText::new(format!(
-                    "{:.0}%  ▼",
-                    state.zoom * state.fit_scale * 100.0
-                ))
-                .size(SIZE_CHROME_LABEL)
-                .monospace(),
+                RichText::new(format!("{:.0}%  ▼", state.zoom * state.fit_scale * 100.0))
+                    .size(SIZE_CHROME_LABEL)
+                    .monospace(),
                 |ui| {
                     menu_style(ui);
                     if menu_item(ui, "适应窗口", "Ctrl+0") {
@@ -602,10 +596,8 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
     } else {
         "前后对比：关（\\ 开启）"
     };
-    let foot_rect = Rect::from_min_size(
-        Pos2::new(x, full.bottom() - 8.0 - size),
-        Vec2::splat(size),
-    );
+    let foot_rect =
+        Rect::from_min_size(Pos2::new(x, full.bottom() - 8.0 - size), Vec2::splat(size));
     let resp = ui.interact(
         foot_rect,
         ui.make_persistent_id("rail-foot"),
@@ -644,7 +636,13 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
 
 pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
     let full = ui.max_rect();
-    theme::rule(ui.painter(), full.left(), full.right(), full.top(), border());
+    theme::rule(
+        ui.painter(),
+        full.left(),
+        full.right(),
+        full.top(),
+        border(),
+    );
     // LapseOne 把「导出中 (1/19, 4%)」常驻在状态栏最左：长任务跑到哪一步，
     // 不该只有点开渲染面板才看得到。导出和队列共用这一格，谁在跑显示谁。
     // 插件在飞时这一格归插件：名字 + 进度 + 一枚取消，毕竟它是用户刚刚
@@ -670,9 +668,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                     .color(accent()),
             );
             if ui
-                .add(egui::Button::new(
-                    RichText::new("✕ 取消").size(SIZE_SMALL),
-                ))
+                .add(egui::Button::new(RichText::new("✕ 取消").size(SIZE_SMALL)))
                 .clicked()
             {
                 state.plugin_cancel();
@@ -720,7 +716,12 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
             .resolution
             .map(|(w, h)| format!("{w} × {h}"))
             .unwrap_or_else(|| "—".to_owned());
-        ui.label(RichText::new(res).size(SIZE_SMALL).monospace().color(muted()));
+        ui.label(
+            RichText::new(res)
+                .size(SIZE_SMALL)
+                .monospace()
+                .color(muted()),
+        );
         let n = state.frame_count();
         if n > 0 {
             ui.label(
@@ -742,7 +743,11 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
         ui.label(
             RichText::new(theme::ellipsis(&msg, 64))
                 .size(SIZE_SMALL)
-                .color(if state.error.is_some() { danger() } else { dim() }),
+                .color(if state.error.is_some() {
+                    danger()
+                } else {
+                    dim()
+                }),
         );
         // 边车提示：检测到同目录 .xmp 时给一枚一键应用。不做静默套用——
         // 改不改参数要让用户亲手按下这一下（策略：提示 + 一键应用）。
@@ -754,16 +759,16 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| sidecar.display().to_string());
-            let apply = ui.add(
-                egui::Button::new(
-                    RichText::new(format!("应用边车 {}", theme::ellipsis(&name, 28)))
-                        .size(SIZE_SMALL),
-                ),
-            );
+            let apply = ui.add(egui::Button::new(
+                RichText::new(format!("应用边车 {}", theme::ellipsis(&name, 28))).size(SIZE_SMALL),
+            ));
             if apply.clicked() {
                 state.apply_sidecar_hint();
             }
-            apply.on_hover_text(format!("检测到 Lightroom 边车，点击套用：{}", sidecar.display()));
+            apply.on_hover_text(format!(
+                "检测到 Lightroom 边车，点击套用：{}",
+                sidecar.display()
+            ));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             // 右段从右往左排：平台与字体 → 缩放 → 色彩管线 → 引擎状态（绿点在最左），
@@ -773,11 +778,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                 platform::Os::Mac => "macOS · SF Pro Text",
                 platform::Os::Win => "Windows 11 · Segoe UI Variable",
             };
-            ui.label(
-                RichText::new(platform_label)
-                    .size(SIZE_SMALL)
-                    .color(dim()),
-            );
+            ui.label(RichText::new(platform_label).size(SIZE_SMALL).color(dim()));
             ui.label(
                 RichText::new(format!("{:.0}%", state.zoom * state.fit_scale * 100.0))
                     .size(SIZE_SMALL)
@@ -795,7 +796,11 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
             ui.painter().circle_filled(
                 dot.center(),
                 3.0,
-                if state.error.is_some() { danger() } else { ok() },
+                if state.error.is_some() {
+                    danger()
+                } else {
+                    ok()
+                },
             );
         });
     });
@@ -805,9 +810,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
         let (done, total) = state.plugin_progress;
         (total > 0).then_some(done as f32 / total as f32)
     } else {
-        prog.and_then(|(_, (done, total, _))| {
-            (total > 0).then_some(done as f32 / total as f32)
-        })
+        prog.and_then(|(_, (done, total, _))| (total > 0).then_some(done as f32 / total as f32))
     };
     if let Some(f) = thin {
         let f = f.clamp(0.0, 1.0);

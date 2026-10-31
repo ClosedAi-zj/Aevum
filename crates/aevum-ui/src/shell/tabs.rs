@@ -1,27 +1,21 @@
 //! 信息/快捷键/AI/历史四个页签。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use egui::{
-    Align2, Color32, Context, Key, Pos2, Rect,
-    RichText, Sense, Stroke, StrokeKind, Ui, Vec2,
-};
+use super::common::bar_button_on;
+use super::common::group_header;
+use super::common::kv;
+use super::common::note;
+use super::toolbar::bar_button;
+use super::toolbar::bar_primary;
 use crate::control;
 use crate::history;
 use crate::icons::{self, Glyph};
-use crate::state::{
-    AiLogEntry, AppState,
-};
+use crate::state::{AiLogEntry, AppState};
 use crate::theme::{self, *};
-use super::common::group_header;
-use super::common::kv;
-use super::toolbar::bar_button;
-use super::common::note;
-use super::toolbar::bar_primary;
-use super::common::bar_button_on;
+use egui::{
+    Align2, Color32, Context, Key, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Ui, Vec2,
+};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 // ---------------------------------------------------------------- 信息页
 
@@ -129,7 +123,12 @@ pub(super) fn info_tab(state: &mut AppState, ui: &mut Ui) {
                     kv(ui, "拍摄时间", t.to_owned(), muted());
                 }
                 if e.orientation != 1 {
-                    kv(ui, "原始方向", format!("{} · 已转正", e.orientation), muted());
+                    kv(
+                        ui,
+                        "原始方向",
+                        format!("{} · 已转正", e.orientation),
+                        muted(),
+                    );
                 }
             }
             _ => {
@@ -186,7 +185,11 @@ pub(super) fn info_tab(state: &mut AppState, ui: &mut Ui) {
                         "序列亮度已平整"
                     })
                     .size(SIZE_SMALL)
-                    .color(if st.jitter_after > 0.02 { danger() } else { ok() }),
+                    .color(if st.jitter_after > 0.02 {
+                        danger()
+                    } else {
+                        ok()
+                    }),
                 )
                 .wrap(),
             );
@@ -606,7 +609,12 @@ pub(super) fn ai_tab(state: &mut AppState, ui: &mut Ui) {
 // ---------------------------------------------------------------- 历史页
 
 /// 撤销 / 重做 / 跳步的统一入口：错误落进状态栏，成功由命令自己写 status。
-pub(super) fn run_history_command(state: &mut AppState, ctx: &Context, id: &str, args: &serde_json::Value) {
+pub(super) fn run_history_command(
+    state: &mut AppState,
+    ctx: &Context,
+    id: &str,
+    args: &serde_json::Value,
+) {
     if let Err(e) = state.run_ui_command(ctx, id, args) {
         state.error = Some(e);
     }

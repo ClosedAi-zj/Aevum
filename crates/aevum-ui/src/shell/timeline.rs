@@ -1,20 +1,18 @@
 //! 底部两行：时间线、曲线、色标、胶片条与走带控制。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use std::sync::Arc;
-use egui::{
-    Align, Align2, Color32, Context, CursorIcon, Layout, Pos2, Rect,
-    RichText, ScrollArea, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
-};
+use super::MICRO;
+use super::UV;
+use super::mask::DeflCurveCache;
+use super::menu::menu_style;
 use crate::icons::{self, Glyph};
 use crate::state::AppState;
 use crate::theme::{self, *};
-use super::mask::DeflCurveCache;
-use super::MICRO;
-use super::UV;
-use super::menu::menu_style;
+use egui::{
+    Align, Align2, Color32, Context, CursorIcon, Layout, Pos2, Rect, RichText, ScrollArea, Sense,
+    Stroke, StrokeKind, Ui, UiBuilder, Vec2,
+};
+use std::sync::Arc;
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
 // ---------------------------------------------------------------- 时间线
@@ -101,7 +99,11 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             Pos2::new(full.left() + pad, y - 2.0),
             Pos2::new(full.right() - pad, y + 3.0),
         );
-        let gresp = ui.interact(grip, ui.make_persistent_id("film-h"), Sense::click_and_drag());
+        let gresp = ui.interact(
+            grip,
+            ui.make_persistent_id("film-h"),
+            Sense::click_and_drag(),
+        );
         if gresp.dragged()
             && let Some(pt) = gresp.interact_pointer_pos()
         {
@@ -217,9 +219,8 @@ fn curves(state: &mut AppState, ui: &mut Ui, rect: Rect) {
             let x_at = |i: usize| {
                 inner.left() + inner.width() * i as f32 / n.max(2).saturating_sub(1) as f32
             };
-            let y_at = |v: f64| {
-                inner.bottom() - inner.height() * ((v - lo) / (hi - lo).max(1e-6)) as f32
-            };
+            let y_at =
+                |v: f64| inner.bottom() - inner.height() * ((v - lo) / (hi - lo).max(1e-6)) as f32;
 
             let stride = (raw.len() / 800).max(1);
             let mut pts_raw = Vec::new();
@@ -255,7 +256,10 @@ fn curves(state: &mut AppState, ui: &mut Ui, rect: Rect) {
             pts_raw.to_vec(),
             Stroke::new(1.0, Color32::from_rgb(0x7A, 0x7A, 0x7A)),
         ));
-        p.add(egui::Shape::line(pts_fix.to_vec(), Stroke::new(1.2, accent())));
+        p.add(egui::Shape::line(
+            pts_fix.to_vec(),
+            Stroke::new(1.2, accent()),
+        ));
     }
 
     for i in state.keyframes.keys() {
@@ -407,10 +411,7 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                         let rating = state.rating_at(i);
                         for s in 0..5u8 {
                             let sr = Rect::from_min_size(
-                                Pos2::new(
-                                    cell.left() + 3.0 + s as f32 * 8.0,
-                                    cell.bottom() - 14.0,
-                                ),
+                                Pos2::new(cell.left() + 3.0 + s as f32 * 8.0, cell.bottom() - 14.0),
                                 Vec2::splat(7.0),
                             );
                             icons::paint(

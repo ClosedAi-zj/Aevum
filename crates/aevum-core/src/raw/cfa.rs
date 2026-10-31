@@ -288,20 +288,15 @@ fn demosaic_directional(mosaic: &[u16], w: usize, h: usize, cfa: Option<[u8; 4]>
                             (gu.unwrap() + gd.unwrap()) / 2.0
                                 + (2.0 * v - c2(0, -2) - c2(0, 2)) / 4.0
                         } else {
-                            let n = [gl, gr, gu, gd]
-                                .into_iter()
-                                .flatten()
-                                .collect::<Vec<_>>();
+                            let n = [gl, gr, gu, gd].into_iter().flatten().collect::<Vec<_>>();
                             n.iter().sum::<f32>() / n.len() as f32
                         }
                     }
                     (Some(_), None) => {
-                        (gl.unwrap() + gr.unwrap()) / 2.0
-                            + (2.0 * v - c2(-2, 0) - c2(2, 0)) / 4.0
+                        (gl.unwrap() + gr.unwrap()) / 2.0 + (2.0 * v - c2(-2, 0) - c2(2, 0)) / 4.0
                     }
                     (None, Some(_)) => {
-                        (gu.unwrap() + gd.unwrap()) / 2.0
-                            + (2.0 * v - c2(0, -2) - c2(0, 2)) / 4.0
+                        (gu.unwrap() + gd.unwrap()) / 2.0 + (2.0 * v - c2(0, -2) - c2(0, 2)) / 4.0
                     }
                     (None, None) => v,
                 }
@@ -321,8 +316,11 @@ fn demosaic_directional(mosaic: &[u16], w: usize, h: usize, cfa: Option<[u8; 4]>
                 let v = mosaic[i];
                 let g = g_plane[i];
                 let (r, gg, b) = match site_ch(x, y) {
-                    1 => (chroma_at(0, x, y, g, mosaic, w, h, &cfa, &g_plane), g,
-                          chroma_at(2, x, y, g, mosaic, w, h, &cfa, &g_plane)),
+                    1 => (
+                        chroma_at(0, x, y, g, mosaic, w, h, &cfa, &g_plane),
+                        g,
+                        chroma_at(2, x, y, g, mosaic, w, h, &cfa, &g_plane),
+                    ),
                     0 => (
                         v as f32,
                         g,
@@ -363,7 +361,16 @@ fn chroma_at(
     let offsets: &[(isize, isize)] = if site_is_g {
         &[(1, 0), (-1, 0), (0, 1), (0, -1)]
     } else {
-        &[(1, 1), (1, -1), (-1, 1), (-1, -1), (2, 0), (-2, 0), (0, 2), (0, -2)]
+        &[
+            (1, 1),
+            (1, -1),
+            (-1, 1),
+            (-1, -1),
+            (2, 0),
+            (-2, 0),
+            (0, 2),
+            (0, -2),
+        ]
     };
     let mut sum = 0.0f32;
     let mut cnt = 0usize;

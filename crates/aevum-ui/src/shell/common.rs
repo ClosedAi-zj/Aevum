@@ -1,21 +1,21 @@
 //! 面板公共件：预设栏、侧栏行、组头、滑杆、键值行（被 adjust/mask/dock 引用）。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use egui::{Align, Align2, Color32, Layout, Pos2, Rect, Response, RichText, Sense, Stroke, Ui, UiBuilder, Vec2};
-use aevum_core::grade::{self};
+use super::INSET_RIM;
+use super::MICRO;
+use super::adjust::reset_group;
 use crate::controls;
 use crate::history;
 use crate::icons::{self, Glyph};
 use crate::state::AppState;
 use crate::theme::{self, *};
 use crate::widgets;
-use super::MICRO;
-use super::adjust::reset_group;
-use super::INSET_RIM;
+use aevum_core::grade::{self};
+use egui::{
+    Align, Align2, Color32, Layout, Pos2, Rect, Response, RichText, Sense, Stroke, Ui, UiBuilder,
+    Vec2,
+};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 pub(super) fn preset_panel(state: &mut AppState, ui: &mut Ui) {
     let full = ui.max_rect();
@@ -199,7 +199,10 @@ fn side_row(ui: &mut Ui, label: &str, glyph: Option<Glyph>, active: bool) -> Res
             p.rect_filled(
                 Rect::from_min_max(
                     Pos2::new(rect.left() + slice_w * k as f32, rect.top()),
-                    Pos2::new((rect.left() + slice_w * (k as f32 + 1.0) + 0.6).min(rect.right()), rect.bottom()),
+                    Pos2::new(
+                        (rect.left() + slice_w * (k as f32 + 1.0) + 0.6).min(rect.right()),
+                        rect.bottom(),
+                    ),
                 ),
                 0.0,
                 widgets::mix(a, b, t),
@@ -413,7 +416,11 @@ pub(super) fn group_header(
             p,
             ir.shrink(4.0),
             Glyph::Info,
-            if iresp.hovered() { accent_hover() } else { dim() },
+            if iresp.hovered() {
+                accent_hover()
+            } else {
+                dim()
+            },
         );
         iresp.on_hover_text(help);
     }
@@ -466,7 +473,12 @@ pub(super) fn group_header(
 /// 数值输入域的材质口径：`DragValue` 内部其实是一颗按钮，默认拿到的是 ELEV；
 /// 这里换成 macOS 的文本域（比材质暗一档的 FIELD + 悬停亮一档），
 /// 或在外面已经画好 FIELD 框时直接透明，保证全界面只有一套输入材质。
-pub(super) fn in_field<R>(ui: &mut Ui, base: Color32, hover: Color32, run: impl FnOnce(&mut Ui) -> R) -> R {
+pub(super) fn in_field<R>(
+    ui: &mut Ui,
+    base: Color32,
+    hover: Color32,
+    run: impl FnOnce(&mut Ui) -> R,
+) -> R {
     let old = ui.style().visuals.widgets.clone();
     {
         let w = &mut ui.style_mut().visuals.widgets;
@@ -497,7 +509,9 @@ pub(super) fn slider<K: std::hash::Hash + std::fmt::Debug>(
     decimals: usize,
     signed: bool,
 ) -> bool {
-    slider_row(ui, key, label, v, min, max, default, decimals, signed, "", None, false, "")
+    slider_row(
+        ui, key, label, v, min, max, default, decimals, signed, "", None, false, "",
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -591,11 +605,8 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     }
 
     let old_text = ui.style().visuals.override_text_color;
-    ui.style_mut().visuals.override_text_color = Some(if changed_now {
-        accent_hover()
-    } else {
-        value()
-    });
+    ui.style_mut().visuals.override_text_color =
+        Some(if changed_now { accent_hover() } else { value() });
     let mut resp = in_field(ui, Color32::TRANSPARENT, Color32::TRANSPARENT, |ui| {
         ui.scope_builder(
             UiBuilder::new()
@@ -738,10 +749,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     if min < 0.0 && max > 0.0 {
         let cx = tx(rail_pos(0.0));
         p.line_segment(
-            [
-                Pos2::new(cx, track_y - 3.5),
-                Pos2::new(cx, track_y + 3.5),
-            ],
+            [Pos2::new(cx, track_y - 3.5), Pos2::new(cx, track_y + 3.5)],
             Stroke::new(1.0, divider()),
         );
     }
@@ -759,7 +767,11 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     p.circle_filled(knob, r, Color32::WHITE);
     p.circle_stroke(knob, r, Stroke::new(1.0, INSET_RIM));
     if t.dragged() {
-        p.circle_stroke(knob, r + 3.0, Stroke::new(1.5, accent().gamma_multiply(0.7)));
+        p.circle_stroke(
+            knob,
+            r + 3.0,
+            Stroke::new(1.5, accent().gamma_multiply(0.7)),
+        );
     } else if t.hovered() {
         p.circle_stroke(knob, r + 2.5, Stroke::new(1.0, border_strong()));
     }
@@ -828,8 +840,8 @@ pub(super) fn bar_button_on(ui: &mut Ui, label: &str, enabled: bool, shortcut: &
 #[cfg(test)]
 mod slider_reset_tests {
     use super::*;
-    use egui::PointerButton;
     use egui::Context;
+    use egui::PointerButton;
 
     fn input(events: Vec<egui::Event>) -> egui::RawInput {
         egui::RawInput {

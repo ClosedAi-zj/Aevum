@@ -1,21 +1,20 @@
 //! 右坞骨架：页签容器、直方图与平滑辅助。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use egui::{Align2, Color32, Pos2, Rect, ScrollArea, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
+use super::adjust::adjust_tab;
+use super::library::library_tab;
+use super::mask::HistMeshCache;
+use super::tabs::ai_tab;
+use super::tabs::history_tab;
+use super::tabs::info_tab;
+use super::tabs::keys_tab;
 use crate::icons::{self, Glyph};
 use crate::state::{AppState, DockTab};
 use crate::theme::{self, *};
-use super::adjust::adjust_tab;
-use super::tabs::info_tab;
-use super::tabs::keys_tab;
-use super::tabs::ai_tab;
-use super::tabs::history_tab;
-use super::library::library_tab;
-use super::mask::HistMeshCache;
+use egui::{
+    Align2, Color32, Pos2, Rect, ScrollArea, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
+};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 // ---------------------------------------------------------------- 右侧面板
 
@@ -146,7 +145,11 @@ fn smooth_twice(vals: &mut [f32], bins: usize) {
         let prev = vals.to_vec();
         for b in 0..bins {
             let l = if b == 0 { prev[0] } else { prev[b - 1] };
-            let r = if b + 1 == bins { prev[bins - 1] } else { prev[b + 1] };
+            let r = if b + 1 == bins {
+                prev[bins - 1]
+            } else {
+                prev[b + 1]
+            };
             vals[b] = (l + 2.0 * prev[b] + r) * 0.25;
         }
     }
@@ -184,11 +187,8 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
             // 顶点色从山脊的半透明衰减到底边的全透明 —— egui 没有纵向渐变填充，
             // 逐顶点插值就是渐变本身。三通道重合处 alpha 叠加自然泛白，和 LR 的读法一致。
             const CREST_A: u8 = 115; // 界面稿 stop-opacity .45 ≈ 115/255
-            let channel_rgb: [[u8; 3]; 3] = [
-                [0xFF, 0x5C, 0x5C],
-                [0x5C, 0xFF, 0x8C],
-                [0x5C, 0x8C, 0xFF],
-            ];
+            let channel_rgb: [[u8; 3]; 3] =
+                [[0xFF, 0x5C, 0x5C], [0x5C, 0xFF, 0x8C], [0x5C, 0x8C, 0xFF]];
             let mut shapes: Vec<Shape> = Vec::with_capacity(4);
             for ch in 0..3 {
                 let mut mesh = egui::Mesh::default();
@@ -214,10 +214,22 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
                     let y_top = rect.bottom() - rect.height() * v;
                     let [r, g, bl] = channel_rgb[ch];
                     let i = mesh.vertices.len() as u32;
-                    mesh.colored_vertex(Pos2::new(x0, y_top), Color32::from_rgba_unmultiplied(r, g, bl, CREST_A));
-                    mesh.colored_vertex(Pos2::new(x1, y_top), Color32::from_rgba_unmultiplied(r, g, bl, CREST_A));
-                    mesh.colored_vertex(Pos2::new(x0, rect.bottom()), Color32::from_rgba_unmultiplied(r, g, bl, 0));
-                    mesh.colored_vertex(Pos2::new(x1, rect.bottom()), Color32::from_rgba_unmultiplied(r, g, bl, 0));
+                    mesh.colored_vertex(
+                        Pos2::new(x0, y_top),
+                        Color32::from_rgba_unmultiplied(r, g, bl, CREST_A),
+                    );
+                    mesh.colored_vertex(
+                        Pos2::new(x1, y_top),
+                        Color32::from_rgba_unmultiplied(r, g, bl, CREST_A),
+                    );
+                    mesh.colored_vertex(
+                        Pos2::new(x0, rect.bottom()),
+                        Color32::from_rgba_unmultiplied(r, g, bl, 0),
+                    );
+                    mesh.colored_vertex(
+                        Pos2::new(x1, rect.bottom()),
+                        Color32::from_rgba_unmultiplied(r, g, bl, 0),
+                    );
                     mesh.add_triangle(i, i + 1, i + 3);
                     mesh.add_triangle(i, i + 3, i + 2);
                 }
@@ -304,7 +316,8 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
 
     // 剪切读数行：左「◧ 阴影 n%」右「高光 n% ◨」，两端对齐；两枚读数本身就是
     // 开关——点一下让画布盖对应的裁切罩（LR 直方图角标的做法），悬停提示 J 键。
-    let (clip_row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), kv_h()), Sense::hover());
+    let (clip_row, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), kv_h()), Sense::hover());
     let pct = |n: u64| {
         if total > 0 {
             format!("{:.1}", n as f32 * 100.0 / total as f32)
@@ -337,10 +350,7 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
     ] {
         let resp = ui.interact(
             chip,
-            ui.make_persistent_id((
-                "clip-chip",
-                chip == shadow_chip,
-            )),
+            ui.make_persistent_id(("clip-chip", chip == shadow_chip)),
             Sense::click(),
         );
         if on || resp.hovered() {
@@ -374,8 +384,16 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
             state.clip_mask_stamp = u64::MAX;
         }
     }
-    let shadow_tip = if state.clip_shadows { "阴影裁切罩：开" } else { "阴影裁切罩：关" };
-    let high_tip = if state.clip_highlights { "高光裁切罩：开" } else { "高光裁切罩：关" };
+    let shadow_tip = if state.clip_shadows {
+        "阴影裁切罩：开"
+    } else {
+        "阴影裁切罩：关"
+    };
+    let high_tip = if state.clip_highlights {
+        "高光裁切罩：开"
+    } else {
+        "高光裁切罩：关"
+    };
     ui.interact(shadow_chip, ui.scope_id().with("st"), Sense::hover())
         .on_hover_text(format!("{shadow_tip}（J 键循环开关）"));
     ui.interact(high_chip, ui.scope_id().with("ht"), Sense::hover())
@@ -387,11 +405,11 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
 #[cfg(test)]
 mod dock_paint_tests {
     use super::*;
-    use egui::Context;
-    use crate::state::Module;
-    use crate::shell::common::slider;
     use crate::shell::common::group_help;
+    use crate::shell::common::slider;
     use crate::shell::ui;
+    use crate::state::Module;
+    use egui::Context;
 
     fn input(w: f32, h: f32) -> egui::RawInput {
         egui::RawInput {
@@ -418,11 +436,8 @@ mod dock_paint_tests {
         // 新规格：山形是逐顶点渐变的三角带（Mesh），不再有逐 bin 的实心矩形柱。
         // 顶点色经 from_rgba_unmultiplied 落进顶点时已按 alpha 压平，
         // 所以期望值也用同一构造算出来，逐色完整比较。
-        let channel_rgb: [[u8; 3]; 3] = [
-            [0xFF, 0x5C, 0x5C],
-            [0x5C, 0xFF, 0x8C],
-            [0x5C, 0x8C, 0xFF],
-        ];
+        let channel_rgb: [[u8; 3]; 3] =
+            [[0xFF, 0x5C, 0x5C], [0x5C, 0xFF, 0x8C], [0x5C, 0x8C, 0xFF]];
         let crest: Vec<Color32> = channel_rgb
             .iter()
             .map(|rgb| Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 115))
@@ -431,7 +446,10 @@ mod dock_paint_tests {
             .iter()
             .map(|rgb| Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 0))
             .collect();
-        let (lum_top, lum_base) = (Color32::from_white_alpha(140), Color32::from_white_alpha(13));
+        let (lum_top, lum_base) = (
+            Color32::from_white_alpha(140),
+            Color32::from_white_alpha(13),
+        );
         let mut channel_meshes = [0usize; 3];
         let mut lum_mesh = 0usize;
         let mut solid_bars = 0usize;
@@ -461,8 +479,8 @@ mod dock_paint_tests {
                 }
                 egui::Shape::Rect(r) => {
                     // 旧实现是逐 bin 实心矩形柱：新实现不许再出现这类色块。
-                    let opaque_colored = r.fill.a() > 100
-                        && (r.fill[0] != r.fill[1] || r.fill[1] != r.fill[2]);
+                    let opaque_colored =
+                        r.fill.a() > 100 && (r.fill[0] != r.fill[1] || r.fill[1] != r.fill[2]);
                     if opaque_colored {
                         solid_bars += 1;
                     }
@@ -472,11 +490,7 @@ mod dock_paint_tests {
         }
         out.textures_delta.clear();
         for (ch, n) in channel_meshes.iter().enumerate() {
-            assert!(
-                *n >= 1,
-                "{} 通道的渐变山形没上屏",
-                ["红", "绿", "蓝"][ch]
-            );
+            assert!(*n >= 1, "{} 通道的渐变山形没上屏", ["红", "绿", "蓝"][ch]);
         }
         assert!(lum_mesh >= 1, "亮度山形没上屏，整体曝光读不出来");
         assert_eq!(solid_bars, 0, "直方图又退回了实心矩形柱");

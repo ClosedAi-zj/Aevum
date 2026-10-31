@@ -1,9 +1,28 @@
 //! 调整组全家：显影/颜色/细节/成片队列等右侧 dock 的调整面板。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use egui::{Align, Align2, Color32, Context, Layout, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Ui, Vec2};
+use super::BAR_H;
+use super::common::group_header;
+use super::common::in_field;
+use super::common::kv;
+use super::common::note;
+use super::common::slider;
+use super::common::spec_slider;
+use super::dialogs::choose_audio;
+use super::dialogs::codec_label;
+use super::dialogs::export_look_dialog;
+use super::dialogs::export_xmp_dialog;
+use super::dialogs::import_look_dialog;
+use super::dialogs::import_xmp_dialog;
+use super::mask::adjust_masks;
+use super::toolbar::bar_button;
+use super::toolbar::bar_chip;
+use super::toolbar::bar_primary;
+use crate::controls;
+use crate::history;
+use crate::state::{AppState, Aspect, MergeKind, Module, MotionBox, Tool};
+use crate::theme::{self, *};
+use crate::widgets;
 use aevum_core::align::Estimator;
 use aevum_core::audio::AudioCodec;
 use aevum_core::colorspace::ColorSpace;
@@ -14,33 +33,11 @@ use aevum_core::qa::{self, Finding};
 use aevum_core::queue::QueueStatus;
 use aevum_core::retime::{self, Retime, SpeedKey};
 use aevum_core::watermark::{Spot, WatermarkKind};
-use crate::controls;
-use crate::history;
-use crate::state::{
-    AppState, Aspect, MergeKind, Module, MotionBox,
-    Tool,
+use egui::{
+    Align, Align2, Color32, Context, Layout, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Ui,
+    Vec2,
 };
-use crate::theme::{self, *};
-use crate::widgets;
-use super::common::group_header;
-use super::common::kv;
-use super::common::slider;
-use super::toolbar::bar_button;
-use super::toolbar::bar_primary;
-use super::common::note;
-use super::toolbar::bar_chip;
-use super::common::in_field;
-use super::BAR_H;
-use super::dialogs::import_xmp_dialog;
-use super::dialogs::export_xmp_dialog;
-use super::common::spec_slider;
-use super::mask::adjust_masks;
-use super::dialogs::import_look_dialog;
-use super::dialogs::export_look_dialog;
-use super::dialogs::choose_audio;
-use super::dialogs::codec_label;
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 fn flat_speed(retime: &Retime) -> Option<f64> {
     let want = retime.keys.first().map(|k| k.speed).unwrap_or(1.0);
@@ -200,7 +197,12 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "seq", "序列", false) {
         let n = state.frame_count();
         let valid = state.metrics.iter().filter(|m| m.is_some()).count();
-        kv(ui, "帧数", format!("{n}"), if n > 0 { text() } else { dim() });
+        kv(
+            ui,
+            "帧数",
+            format!("{n}"),
+            if n > 0 { text() } else { dim() },
+        );
         kv(
             ui,
             "测光完成",
@@ -216,14 +218,23 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
             ui,
             "缺帧 / 异常",
             format!("{}", state.issues.len()),
-            if state.issues.is_empty() { ok() } else { danger() },
+            if state.issues.is_empty() {
+                ok()
+            } else {
+                danger()
+            },
         );
         if let Some(root) = state.seq.as_ref().map(|s| s.root.display().to_string()) {
             ui.add_space(4.0);
             ui.add(
-                egui::Label::new(RichText::new(root).size(SIZE_SMALL).monospace().color(dim()))
-                    .wrap()
-                    .selectable(false),
+                egui::Label::new(
+                    RichText::new(root)
+                        .size(SIZE_SMALL)
+                        .monospace()
+                        .color(dim()),
+                )
+                .wrap()
+                .selectable(false),
             );
         }
     }
@@ -382,7 +393,11 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
             if resp.changed() {
                 state.align_ref = r.saturating_sub(1).min(n.saturating_sub(1));
             }
-            ui.label(RichText::new(format!("/ {n}")).size(SIZE_SMALL).color(dim()));
+            ui.label(
+                RichText::new(format!("/ {n}"))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
+            );
         });
         if ui
             .checkbox(
@@ -455,7 +470,12 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
                 mx = mx.max(o[0].abs());
                 my = my.max(o[1].abs());
             }
-            kv(ui, "最大位移", format!("X {mx:.1} px · Y {my:.1} px"), text());
+            kv(
+                ui,
+                "最大位移",
+                format!("X {mx:.1} px · Y {my:.1} px"),
+                text(),
+            );
             let low = report.scores.iter().filter(|s| **s < 0.35).count();
             kv(
                 ui,
@@ -579,7 +599,12 @@ fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
             }
             kv(ui, "最大修正", format!("{:+.2} EV", st.max_ev), text());
             kv(ui, "平均修正", format!("{:.3} EV", st.mean_abs_ev), text());
-            kv(ui, "有效帧", format!("{} / {}", st.valid, st.frames), muted());
+            kv(
+                ui,
+                "有效帧",
+                format!("{} / {}", st.valid, st.frames),
+                muted(),
+            );
             let moved = state.corr.iter().filter(|v| v.abs() > 0.05).count();
             kv(ui, "受影响帧", format!("{moved}"), muted());
         } else {
@@ -963,7 +988,7 @@ fn adjust_parametric(state: &mut AppState, ui: &mut Ui) -> bool {
     }
     let d = GradeParams::default();
     let mut changed = false;
-        for s in controls::specs_of_group("parametric") {
+    for s in controls::specs_of_group("parametric") {
         changed |= spec_slider(ui, state, s);
     }
     for (i, label) in [(1, "阴影分界"), (2, "中间分界"), (3, "高光分界")] {
@@ -1109,7 +1134,7 @@ fn adjust_mono(state: &mut AppState, ui: &mut Ui) -> bool {
     if !group_header(ui, state, "mono", "黑白混合", true) {
         return false;
     }
-        let mut changed = false;
+    let mut changed = false;
     for s in controls::specs_of_group("mono") {
         changed |= spec_slider(ui, state, s);
     }
@@ -1171,7 +1196,7 @@ fn adjust_grade(state: &mut AppState, ui: &mut Ui) -> bool {
         );
     });
     ui.add_space(4.0);
-        for s in controls::specs_of_group("grade") {
+    for s in controls::specs_of_group("grade") {
         changed |= spec_slider(ui, state, s);
     }
     changed
@@ -1332,7 +1357,7 @@ fn adjust_lens(state: &mut AppState, ui: &mut Ui) -> bool {
         ui.label(egui::RichText::new(&state.lens_profile_note).weak());
     }
     ui.add_space(2.0);
-        for s in controls::specs_of_group("lens") {
+    for s in controls::specs_of_group("lens") {
         changed |= spec_slider(ui, state, s);
     }
     changed
@@ -1784,7 +1809,12 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                 let at = retime::speed_at(&state.retime.keys, 0.0);
                 let mid = retime::speed_at(&state.retime.keys, 0.5);
                 let end = retime::speed_at(&state.retime.keys, 1.0);
-                kv(ui, "曲线", format!("{}× → {}× → {}×", at, mid, end), muted());
+                kv(
+                    ui,
+                    "曲线",
+                    format!("{}× → {}× → {}×", at, mid, end),
+                    muted(),
+                );
             }
             // 拖点编辑：键表空着（刚勾上开关）时先摆两个 1× 端点，第一次拖就落进真实键表。
             // 比色调曲线那格矮一档：这组上下还有芯片、快门与读数，方框吃满会把它们挤出视野。
@@ -2338,7 +2368,8 @@ fn adjust_audio(state: &mut AppState, ui: &mut Ui) {
                     );
                 } else if let Some(err) = &state.audio_probe_err {
                     ui.add(
-                        egui::Label::new(RichText::new(err).size(SIZE_SMALL).color(danger())).wrap(),
+                        egui::Label::new(RichText::new(err).size(SIZE_SMALL).color(danger()))
+                            .wrap(),
                     );
                 }
                 if bar_button(ui, "移除音频").clicked() {

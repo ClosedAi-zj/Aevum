@@ -3,10 +3,10 @@
 //! 原则：指纹是纯函数——「参数变 → 指纹变」「参数没变 → 指纹不变」；
 //! 缓存取值走 AppState 真实路径（headless 状态，无磁盘线程）。
 
-use crate::shell::{mask_geo_fingerprint, MaskGeo};
+use crate::shell::{MaskGeo, mask_geo_fingerprint};
 use crate::state::AppState;
-use egui::Rect;
 use aevum_core::mask::{self, ShapeKind};
+use egui::Rect;
 use serde_json::json;
 
 fn linear_mask() -> serde_json::Value {
@@ -84,7 +84,10 @@ fn geo_cache_hits_and_invalidates() {
     // 首次取值建缓存。
     let fp0 = state.mask_geo_cache.fp;
     let _ = state.mask_geos_cached(0);
-    assert_ne!(state.mask_geo_cache.fp, fp0, "空缓存指纹为 0，建缓存后必非 0");
+    assert_ne!(
+        state.mask_geo_cache.fp, fp0,
+        "空缓存指纹为 0，建缓存后必非 0"
+    );
     let geos: Vec<MaskGeo> = state.mask_geos_cached(0).to_vec();
     assert_eq!(geos.len(), 1);
 
@@ -100,7 +103,10 @@ fn geo_cache_hits_and_invalidates() {
         v["components"][0]["x2"] = json!(0.60);
         mask_geo_fingerprint(&v)
     };
-    assert_eq!(state.mask_geo_cache.fp, expected_fp, "缓存键与新参数指纹一致");
+    assert_eq!(
+        state.mask_geo_cache.fp, expected_fp,
+        "缓存键与新参数指纹一致"
+    );
 }
 
 #[test]
@@ -188,7 +194,10 @@ fn mask_prep_rebuilds_handles_when_comp_switches() {
     assert_eq!(n, 2);
     let geo0 = state.mask_geo_get(0).expect("comp0 几何在缓存");
     let handles_comp0 = state.mask_handles_now().to_vec();
-    assert_eq!(handles_comp0, crate::shell::mask_handles(&geo0, img, 1000.0, 800.0));
+    assert_eq!(
+        handles_comp0,
+        crate::shell::mask_handles(&geo0, img, 1000.0, 800.0)
+    );
 
     // 面板"形状"条点击：mask_comp 0 → 1，img 不变再 prep。
     state.mask_comp = 1;
@@ -244,4 +253,3 @@ fn mask_prep_rebuilds_derived_when_pixel_size_changes() {
         "径向轮廓 = 按新像素尺寸映射的结果"
     );
 }
-

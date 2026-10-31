@@ -1,24 +1,18 @@
 //! 蒙版域：几何解析、画布 overlay 与手柄、画笔、面板与缓存（性能重构设计 §7）。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use std::sync::Arc;
-use egui::{Align, Align2, Color32, Layout, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, Vec2};
+use super::common::group_header;
+use super::common::note;
+use super::common::slider;
+use super::toolbar::bar_button;
+use super::toolbar::bar_chip;
 use crate::history;
 use crate::icons::{self, Glyph};
-use crate::state::{
-    AppState, Module,
-    Tool,
-};
-use crate::theme::{*};
-use super::common::group_header;
-use super::toolbar::bar_button;
-use super::common::note;
-use super::toolbar::bar_chip;
-use super::common::slider;
+use crate::state::{AppState, Module, Tool};
+use crate::theme::*;
+use egui::{Align, Align2, Color32, Layout, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, Vec2};
+use std::sync::Arc;
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 const MASK_SLIDERS: &[(&str, &str, f64, f64, usize)] = &[
     ("exposure", "曝光", -5.0, 5.0, 2),
@@ -562,7 +556,11 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 21.0), Sense::click());
         let p = ui.painter();
         if selected || row.hovered() {
-            p.rect_filled(rect, radius_control(), if selected { palette().selected } else { elev() });
+            p.rect_filled(
+                rect,
+                radius_control(),
+                if selected { palette().selected } else { elev() },
+            );
         }
         if selected {
             p.rect_filled(
@@ -1338,7 +1336,12 @@ fn brush_clear(state: &mut AppState, sel: usize, comp: usize) {
     history::note("mask.brush", "画笔 清空");
 }
 
-pub(super) fn draw_mask_overlay(p: &egui::Painter, state: &mut AppState, img: Rect, hover: Option<Pos2>) {
+pub(super) fn draw_mask_overlay(
+    p: &egui::Painter,
+    state: &mut AppState,
+    img: Rect,
+    hover: Option<Pos2>,
+) {
     if state.module != Module::Develop || state.tool == Tool::Crop {
         return;
     }
@@ -1537,11 +1540,11 @@ mod mask_geometry_tests {
 #[cfg(test)]
 mod mask_panel_tests {
     use super::*;
-    use aevum_core::mask::{self, ShapeKind};
-    use serde_json::json;
-    use egui::Context;
-    use crate::theme::self;
     use crate::shell::ui;
+    use crate::theme;
+    use aevum_core::mask::{self, ShapeKind};
+    use egui::Context;
+    use serde_json::json;
 
     fn group_two_shapes() -> serde_json::Value {
         let mut raw = mask::new_mask(ShapeKind::Radial);

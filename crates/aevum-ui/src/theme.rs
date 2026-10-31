@@ -318,7 +318,11 @@ impl Palette {
         let n = |lightness: f32| hsl(h, s, lightness);
         let dir = l.dir;
         // 深色向白叠加、浅色向黑叠加：所有「加亮」的派生都走这一条。
-        let ink = if dir > 0.0 { Color32::WHITE } else { Color32::BLACK };
+        let ink = if dir > 0.0 {
+            Color32::WHITE
+        } else {
+            Color32::BLACK
+        };
         let alpha = |dark: u8, light: u8| if dir > 0.0 { dark } else { light };
 
         let panel = n(l.panel);
@@ -392,7 +396,11 @@ pub fn hsl(h: f32, s: f32, l: f32) -> Color32 {
         let v = (l * 255.0).round() as u8;
         return Color32::from_rgb(v, v, v);
     }
-    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
     let p = 2.0 * l - q;
     let f = |t: f32| {
         let t = if t < 0.0 {
@@ -413,11 +421,7 @@ pub fn hsl(h: f32, s: f32, l: f32) -> Color32 {
         };
         (v * 255.0).round().clamp(0.0, 255.0) as u8
     };
-    Color32::from_rgb(
-        f(h + 1.0 / 3.0),
-        f(h),
-        f(h - 1.0 / 3.0),
-    )
+    Color32::from_rgb(f(h + 1.0 / 3.0), f(h), f(h - 1.0 / 3.0))
 }
 
 /// 线性混合两色（`t` = 0 取 a，1 取 b）。
@@ -688,7 +692,6 @@ pub const SIZE_CHROME: f32 = 14.0;
 /// 选项栏里的次要标签与状态文字：比小字大一号，跟得上加高后的行高。
 pub const SIZE_CHROME_LABEL: f32 = 12.0;
 
-
 // 字体字节只在水印那个 crate 里落一次（`aevum_core::fonts`）：Noto 一份 10 MB，
 // 两个 crate 各 include_bytes! 一次，产物就要多背 10 MB。
 const INTER: &[u8] = aevum_core::fonts::INTER;
@@ -780,7 +783,8 @@ pub fn apply_style(ctx: &Context, zoom: f32) {
     v.error_fg_color = danger();
     v.weak_text_alpha = 0.8;
     // 选中底跟着主色走：换主色时这一块也要变，不能钉死在系统蓝上。
-    v.selection.bg_fill = Color32::from_rgba_unmultiplied(accent()[0], accent()[1], accent()[2], 64);
+    v.selection.bg_fill =
+        Color32::from_rgba_unmultiplied(accent()[0], accent()[1], accent()[2], 64);
     v.selection.stroke = Stroke::new(1.0, accent());
     v.striped = false;
     v.slider_trailing_fill = true;
@@ -1034,7 +1038,11 @@ mod token_tests {
     fn secondary_labels_keep_wcag_aa_on_every_material() {
         for p in modes() {
             for s in surfaces(&p) {
-                assert!(contrast(p.muted, s) >= 4.5, "MUTED {:.2}", contrast(p.muted, s));
+                assert!(
+                    contrast(p.muted, s) >= 4.5,
+                    "MUTED {:.2}",
+                    contrast(p.muted, s)
+                );
                 assert!(contrast(p.dim, s) >= 4.5, "DIM {:.2}", contrast(p.dim, s));
             }
         }
@@ -1043,8 +1051,16 @@ mod token_tests {
     #[test]
     fn control_fills_hold_their_labels() {
         for p in modes() {
-            assert!(contrast(p.text, p.elev) >= 4.5, "TEXT/ELEV {:.2}", contrast(p.text, p.elev));
-            assert!(contrast(p.muted, p.elev) >= 4.5, "MUTED/ELEV {:.2}", contrast(p.muted, p.elev));
+            assert!(
+                contrast(p.text, p.elev) >= 4.5,
+                "TEXT/ELEV {:.2}",
+                contrast(p.text, p.elev)
+            );
+            assert!(
+                contrast(p.muted, p.elev) >= 4.5,
+                "MUTED/ELEV {:.2}",
+                contrast(p.muted, p.elev)
+            );
             // 选中底与按下底都是强调色的低透明叠底，字要用 on_selected（浅色下是深字）。
             assert!(contrast(p.on_selected, p.selected) >= 4.5);
             assert!(contrast(p.on_selected, p.accent_dim) >= 4.5);

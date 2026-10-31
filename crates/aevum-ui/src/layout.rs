@@ -139,9 +139,7 @@ impl Default for Layout {
 impl Layout {
     /// 当前配置对应哪个预设；改了一项就返回 `None`，面板上的预设按钮自动熄灭。
     pub fn preset(&self) -> Option<LayoutPreset> {
-        LayoutPreset::ALL
-            .into_iter()
-            .find(|p| p.layout() == *self)
+        LayoutPreset::ALL.into_iter().find(|p| p.layout() == *self)
     }
 
     pub fn with_preset(self, p: LayoutPreset) -> Self {
@@ -166,8 +164,10 @@ mod tests {
 
     #[test]
     fn changing_one_axis_drops_the_preset() {
-        let mut l = Layout::default();
-        l.rail = Side::Right;
+        let l = Layout {
+            rail: Side::Right,
+            ..Layout::default()
+        };
         assert_eq!(l.preset(), None);
     }
 

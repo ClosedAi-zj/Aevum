@@ -1,21 +1,15 @@
 //! 浮动窗口：菜单段/内置动作/插件菜单/市场/调色窗口/关于。
 
-
-
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use egui::{
-    Align, Align2, Context, Layout, Rect,
-    RichText, ScrollArea, Sense, Stroke, Ui, Vec2,
-};
+use super::library::group_title;
+use super::menu::menu_item;
+use super::menu::menu_style;
 use crate::layout::StatusSlot;
 use crate::platform;
 use crate::state::AppState;
 use crate::theme::{self, *};
-use super::menu::menu_style;
-use super::library::group_title;
-use super::menu::menu_item;
+use egui::{Align, Align2, Context, Layout, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
-
 
 /// 菜单里的小标题：比正文小一号、压暗，读作"下面这些属于这一类"。
 fn menu_section(ui: &mut Ui, title: &str) {
@@ -78,9 +72,8 @@ pub(super) fn plugin_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         menu_section(ui, title);
         for r in items {
             let resp = ui.add(
-                egui::Button::new(RichText::new(&r.label).size(SIZE_BODY)).shortcut_text(
-                    RichText::new(&r.tag).size(SIZE_SMALL).color(dim()),
-                ),
+                egui::Button::new(RichText::new(&r.label).size(SIZE_BODY))
+                    .shortcut_text(RichText::new(&r.tag).size(SIZE_SMALL).color(dim())),
             );
             let resp = if r.desc.is_empty() {
                 resp
@@ -113,7 +106,8 @@ pub(super) fn plugin_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         ui.close();
         match builtin_action(&id) {
             Some(cmd) => {
-                if let Err(e) = state.run_ui_command(ctx, cmd, &serde_json::json!({"confirm": true}))
+                if let Err(e) =
+                    state.run_ui_command(ctx, cmd, &serde_json::json!({"confirm": true}))
                 {
                     state.error = Some(format!("{label} 没能执行：{e}"));
                 }
@@ -164,7 +158,13 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
         .show(ctx, |ui| {
             // 标题栏下面压一条分隔线，把标题区和清单分开。
             let head = Rect::from_min_size(ui.min_rect().min, Vec2::new(ui.available_width(), 1.0));
-            theme::rule(ui.painter(), head.left(), head.right(), head.top(), divider());
+            theme::rule(
+                ui.painter(),
+                head.left(),
+                head.right(),
+                head.top(),
+                divider(),
+            );
             // 定住下限：`default_size` 只是建议，内容一少窗口就缩成一团，
             // 列表只剩三行可见 —— 那时候滚动条比窗口还长。窗口的 min_size
             // 已经兜底（620×380），不再用 set_min_size 硬顶内容高度——那会
@@ -177,45 +177,49 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                     Vec2::new(132.0, body_h),
                     Layout::top_down(Align::Min),
                     |ui| {
-                    let kinds: [(Option<Kind>, &str); 4] = [
-                        (None, "全部"),
-                        (Some(Kind::Filter), "修图滤镜"),
-                        (Some(Kind::Decoder), "解码器"),
-                        (Some(Kind::Export), "导出"),
-                    ];
-                    for (k, label) in kinds {
-                        let mut n = state
-                            .registry
-                            .all()
-                            .iter()
-                            .filter(|p| k.is_none_or(|k| p.manifest.plugin.kind == k))
-                            .count();
-                        // 「全部」前面那个数要算上清单坏掉的，否则用户会觉得少了东西。
-                        if k.is_none() {
-                            n += state.registry.errors().len();
+                        let kinds: [(Option<Kind>, &str); 4] = [
+                            (None, "全部"),
+                            (Some(Kind::Filter), "修图滤镜"),
+                            (Some(Kind::Decoder), "解码器"),
+                            (Some(Kind::Export), "导出"),
+                        ];
+                        for (k, label) in kinds {
+                            let mut n = state
+                                .registry
+                                .all()
+                                .iter()
+                                .filter(|p| k.is_none_or(|k| p.manifest.plugin.kind == k))
+                                .count();
+                            // 「全部」前面那个数要算上清单坏掉的，否则用户会觉得少了东西。
+                            if k.is_none() {
+                                n += state.registry.errors().len();
+                            }
+                            let text = format!("{label}  {n}");
+                            if ui
+                                .add(
+                                    egui::Button::new(RichText::new(text).size(SIZE_BODY))
+                                        .selected(state.market_filter == k),
+                                )
+                                .clicked()
+                            {
+                                state.market_filter = k;
+                            }
                         }
-                        let text = format!("{label}  {n}");
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new("来自 %APPDATA%\naevum-studio\\plugins")
+                                .size(10.0)
+                                .color(dim()),
+                        );
                         if ui
-                            .add(egui::Button::new(RichText::new(text).size(SIZE_BODY))
-                                .selected(state.market_filter == k))
+                            .add(egui::Button::new(
+                                RichText::new("重新扫描").size(SIZE_SMALL),
+                            ))
                             .clicked()
                         {
-                            state.market_filter = k;
+                            rescan = true;
                         }
-                    }
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new("来自 %APPDATA%\naevum-studio\\plugins")
-                            .size(10.0)
-                            .color(dim()),
-                    );
-                    if ui
-                        .add(egui::Button::new(RichText::new("重新扫描").size(SIZE_SMALL)))
-                        .clicked()
-                    {
-                        rescan = true;
-                    }
-                },
+                    },
                 );
                 ui.separator();
 
@@ -224,115 +228,124 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                     Vec2::new(ui.available_width(), body_h),
                     Layout::top_down(Align::Min),
                     |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut state.market_query)
-                                .hint_text("搜索插件、厂商")
-                                .desired_width(240.0),
-                        );
-                        if !state.market_query.is_empty()
-                            && ui
-                                .add(egui::Button::new(
-                                    RichText::new("清除").size(SIZE_SMALL),
-                                ))
-                                .clicked()
-                        {
-                            state.market_query.clear();
-                        }
-                    });
-                    ui.add_space(4.0);
-
-                    let q = state.market_query.to_lowercase();
-                    let hits: Vec<usize> = state
-                        .registry
-                        .all()
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, p)| {
-                            state.market_filter.is_none_or(|k| p.manifest.plugin.kind == k)
-                                && (q.is_empty()
-                                    || p.manifest.plugin.name.to_lowercase().contains(&q)
-                                    || p.manifest.plugin.vendor.to_lowercase().contains(&q)
-                                    || p.manifest.plugin.description.to_lowercase().contains(&q))
-                        })
-                        .map(|(i, _)| i)
-                        .collect();
-
-                    ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            if hits.is_empty() {
-                                ui.add_space(12.0);
-                                ui.label(
-                                    RichText::new("没有匹配的插件").size(SIZE_BODY).color(dim()),
-                                );
-                            }
-                            for i in hits {
-                                let p = &state.registry.all()[i];
-                                let meta = &p.manifest.plugin;
-                                let enabled = p.enabled;
-                                // 行：名字 + 版本 + 厂商，右侧开关。
-                                ui.horizontal(|ui| {
-                                    ui.set_min_height(26.0);
-                                    ui.label(
-                                        RichText::new(&meta.name).size(SIZE_BODY).color(text()),
-                                    );
-                                    ui.label(
-                                        RichText::new(&meta.version)
-                                            .size(SIZE_SMALL)
-                                            .color(dim()),
-                                    );
-                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        let mut on = enabled;
-                                        if ui.checkbox(&mut on, "").changed() {
-                                            toggle = Some((meta.id.clone(), on));
-                                        }
-                                        ui.label(
-                                            RichText::new(meta.source.cn())
-                                                .size(10.0)
-                                                .color(dim()),
-                                        );
-                                        ui.label(
-                                            RichText::new(meta.kind.cn())
-                                                .size(10.0)
-                                                .color(dim()),
-                                        );
-                                    });
-                                });
-                                if !meta.description.is_empty() {
-                                    ui.label(
-                                        RichText::new(&meta.description)
-                                            .size(SIZE_SMALL)
-                                            .color(dim()),
-                                    );
-                                }
-                                ui.add_space(3.0);
-                                ui.separator();
-                                ui.add_space(3.0);
-                            }
-
-                            // 坏清单单独列在最后：不藏，也不打断上面的列表。
-                            if !state.registry.errors().is_empty() {
-                                ui.add_space(8.0);
-                                ui.label(
-                                    RichText::new("清单有问题")
-                                        .size(SIZE_SMALL)
-                                        .color(danger()),
-                                );
-                                for (path, why) in state.registry.errors() {
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "{}：{why}",
-                                            path.parent()
-                                                .map(|d| d.display().to_string())
-                                                .unwrap_or_default()
-                                        ))
-                                        .size(10.0)
-                                        .color(dim()),
-                                    );
-                                }
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.market_query)
+                                    .hint_text("搜索插件、厂商")
+                                    .desired_width(240.0),
+                            );
+                            if !state.market_query.is_empty()
+                                && ui
+                                    .add(egui::Button::new(RichText::new("清除").size(SIZE_SMALL)))
+                                    .clicked()
+                            {
+                                state.market_query.clear();
                             }
                         });
+                        ui.add_space(4.0);
+
+                        let q = state.market_query.to_lowercase();
+                        let hits: Vec<usize> = state
+                            .registry
+                            .all()
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, p)| {
+                                state
+                                    .market_filter
+                                    .is_none_or(|k| p.manifest.plugin.kind == k)
+                                    && (q.is_empty()
+                                        || p.manifest.plugin.name.to_lowercase().contains(&q)
+                                        || p.manifest.plugin.vendor.to_lowercase().contains(&q)
+                                        || p.manifest
+                                            .plugin
+                                            .description
+                                            .to_lowercase()
+                                            .contains(&q))
+                            })
+                            .map(|(i, _)| i)
+                            .collect();
+
+                        ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                if hits.is_empty() {
+                                    ui.add_space(12.0);
+                                    ui.label(
+                                        RichText::new("没有匹配的插件")
+                                            .size(SIZE_BODY)
+                                            .color(dim()),
+                                    );
+                                }
+                                for i in hits {
+                                    let p = &state.registry.all()[i];
+                                    let meta = &p.manifest.plugin;
+                                    let enabled = p.enabled;
+                                    // 行：名字 + 版本 + 厂商，右侧开关。
+                                    ui.horizontal(|ui| {
+                                        ui.set_min_height(26.0);
+                                        ui.label(
+                                            RichText::new(&meta.name).size(SIZE_BODY).color(text()),
+                                        );
+                                        ui.label(
+                                            RichText::new(&meta.version)
+                                                .size(SIZE_SMALL)
+                                                .color(dim()),
+                                        );
+                                        ui.with_layout(
+                                            Layout::right_to_left(Align::Center),
+                                            |ui| {
+                                                let mut on = enabled;
+                                                if ui.checkbox(&mut on, "").changed() {
+                                                    toggle = Some((meta.id.clone(), on));
+                                                }
+                                                ui.label(
+                                                    RichText::new(meta.source.cn())
+                                                        .size(10.0)
+                                                        .color(dim()),
+                                                );
+                                                ui.label(
+                                                    RichText::new(meta.kind.cn())
+                                                        .size(10.0)
+                                                        .color(dim()),
+                                                );
+                                            },
+                                        );
+                                    });
+                                    if !meta.description.is_empty() {
+                                        ui.label(
+                                            RichText::new(&meta.description)
+                                                .size(SIZE_SMALL)
+                                                .color(dim()),
+                                        );
+                                    }
+                                    ui.add_space(3.0);
+                                    ui.separator();
+                                    ui.add_space(3.0);
+                                }
+
+                                // 坏清单单独列在最后：不藏，也不打断上面的列表。
+                                if !state.registry.errors().is_empty() {
+                                    ui.add_space(8.0);
+                                    ui.label(
+                                        RichText::new("清单有问题")
+                                            .size(SIZE_SMALL)
+                                            .color(danger()),
+                                    );
+                                    for (path, why) in state.registry.errors() {
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "{}：{why}",
+                                                path.parent()
+                                                    .map(|d| d.display().to_string())
+                                                    .unwrap_or_default()
+                                            ))
+                                            .size(10.0)
+                                            .color(dim()),
+                                        );
+                                    }
+                                }
+                            });
                     },
                 );
             });
@@ -592,11 +605,7 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                 if ui.button(RichText::new("完成").size(SIZE_BODY)).clicked() {
                     state.look_open = false;
                 }
-                ui.label(
-                    RichText::new("改动即时生效并记住")
-                        .size(10.0)
-                        .color(dim()),
-                );
+                ui.label(RichText::new("改动即时生效并记住").size(10.0).color(dim()));
             });
         });
     state.look_open = open;
