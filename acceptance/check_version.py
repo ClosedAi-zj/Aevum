@@ -41,22 +41,41 @@ VER_BETA_X = r"\d+\.\d+\.\d+-beta\.x"
 
 LOCK_MEMBERS = ("aevum-core", "aevum-mcp", "aevum-ui", "aevum-studio")
 
-# README 的四处版本语境：中英各两处，每处在全文必须恰好命中 1 次。
+# README 的四处版本语境：中英两册各两处，每处在所在文件里必须恰好命中 1 次。
 # 前两条是页首状态行，后两条在「版本方案」/「Versioning」节——同一版号要在一个
 # 文档的两端都写对，只改一处就会被抓出来。
+# 1.1.0 起中英分册（README.md 中文、README.en.md 英文，顶部互相链接）：分册之后
+# 「四处」的口径没变，只是前两处落在中文册、后两处落在英文册。文件与位置一起校验，
+# 这样「英文册忘了改」或「英文册被误删」都会红，而不是只查得到的那一份。
 # 命中值：与真源完全相等 → 过；页首那两处若是 X.Y.Z-beta.x 占位 → 比对主版本号。
 README_PATTERNS = [
-    ("README 页首「**当前版本**：`…`」", re.compile(r"\*\*当前版本\*\*：`([^`]+)`")),
-    ("README 版本方案「当前为 `…`」", re.compile(r"当前为 `(" + VER + r")`")),
-    ("README 页首「**Current version**: `…`」", re.compile(r"\*\*Current version\*\*: `([^`]+)`")),
-    ("README Versioning「the current release is `…`」", re.compile(r"the current release is\s+`(" + VER + r")`")),
+    ("README.md", "页首「**当前版本**：`…`」", re.compile(r"\*\*当前版本\*\*：`([^`]+)`")),
+    ("README.md", "版本方案「当前为 `…`」", re.compile(r"当前为 `(" + VER + r")`")),
+    (
+        "README.en.md",
+        "页首「**Current version**: `…`」",
+        re.compile(r"\*\*Current version\*\*: `([^`]+)`"),
+    ),
+    (
+        "README.en.md",
+        "Versioning「the current release is `…`」",
+        re.compile(r"the current release is\s+`(" + VER + r")`"),
+    ),
 ]
 
 CHANGELOG_FIRST = re.compile(r"^## v(" + VER + r")", re.MULTILINE)
 
+# 中英两册 CHANGELOG 的最新节都要对齐真源。少查一册，就等于「英文册可以随便落后」。
+CHANGELOGS = ("CHANGELOG.md", "CHANGELOG.en.md")
+
 
 def read(rel: str) -> str:
-    return (ROOT / rel).read_text(encoding="utf-8")
+    path = ROOT / rel
+    if not path.is_file():
+        # 中英分册之后「文件被误删」也是一种漂移：少一册就等于少两处校验，
+        # 直接 traceback 会让人以为脚本坏了，这里给可读的一句话。
+        raise SystemExit(f"check_version: 缺少 {rel} —— 中英两册都必须存在（见 README 顶部的语言切换）")
+    return path.read_text(encoding="utf-8")
 
 
 def cargo_toml_version() -> str:
@@ -82,29 +101,30 @@ def main() -> int:
         if got != cur:
             problems.append(f"Cargo.lock：{member} = {got}，真源是 {cur}")
 
-    # ---- README：四个语境各恰好 1 处 ----
-    readme = read("README.md")
-    readme_lines = readme.split("\n")
-    for label, pat in README_PATTERNS:
-        hits = list(pat.finditer(readme))
+    # ---- README：四个语境各恰好 1 处（中英两册各两处）----
+    for rel, label, pat in README_PATTERNS:
+        text = read(rel)
+        hits = list(pat.finditer(text))
         if len(hits) != 1:
-            extra = f"，首处在第 {_line_of(readme, hits[0].start())} 行" if hits else ""
-            problems.append(f"{label}：命中 {len(hits)} 处（应为 1）{extra}")
+            extra = f"，首处在第 {_line_of(text, hits[0].start())} 行" if hits else ""
+            problems.append(f"{rel}：{label} 命中 {len(hits)} 处（应为 1）{extra}")
             continue
         got = hits[0].group(1)
-        line_no = _line_of(readme, hits[0].start())
+        line_no = _line_of(text, hits[0].start())
         if got != cur:
             if re.fullmatch(VER_BETA_X, got) and got.split("-")[0] == cur_base:
                 continue  # 占位形式 0.5.0-beta.x：主版本号一致即认可
-            problems.append(f"README.md:{line_no}：{label} 是 {got}，真源是 {cur}")
+            problems.append(f"{rel}:{line_no}：{label} 是 {got}，真源是 {cur}")
 
-    # ---- CHANGELOG：第一个 ## v 标题 ----
-    m = CHANGELOG_FIRST.search(read("CHANGELOG.md"))
-    if not m:
-        problems.append("CHANGELOG.md：找不到「## vX.Y.Z …」标题")
-    elif m.group(1) != cur:
-        line_no = _line_of(read("CHANGELOG.md"), m.start())
-        problems.append(f"CHANGELOG.md:{line_no}：最新版本节是 v{m.group(1)}，真源是 {cur}")
+    # ---- CHANGELOG：中英两册的首个 ## v 标题 ----
+    for rel in CHANGELOGS:
+        text = read(rel)
+        m = CHANGELOG_FIRST.search(text)
+        if not m:
+            problems.append(f"{rel}：找不到「## vX.Y.Z …」标题")
+        elif m.group(1) != cur:
+            line_no = _line_of(text, m.start())
+            problems.append(f"{rel}:{line_no}：最新版本节是 v{m.group(1)}，真源是 {cur}")
 
     if problems:
         print("版本号漂移，以下各处与 Cargo.toml 的真源不一致：", file=sys.stderr)
@@ -112,7 +132,10 @@ def main() -> int:
             print(f"  - {p}", file=sys.stderr)
         print(f"\n真源：Cargo.toml version = {cur}。请同步上面列出的位置后再提交。", file=sys.stderr)
         return 1
-    print(f"版本一致：{cur}（Cargo.toml / Cargo.lock×{len(LOCK_MEMBERS)} / README×4 / CHANGELOG）")
+    print(
+        f"版本一致：{cur}（Cargo.toml / Cargo.lock×{len(LOCK_MEMBERS)} / "
+        f"README 中英各 2 / CHANGELOG 中英各 1）"
+    )
     return 0
 
 
