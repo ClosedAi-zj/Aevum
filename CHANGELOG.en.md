@@ -15,6 +15,107 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.1.0 — 2026-11-01
+
+A feature release. The four public contracts (project format / presets and parameters / command
+line / MCP tool set) are untouched; install over the previous version. The version moves from
+`1.0.1` to `1.1.0` because this release **changes what you see when you open a photo**: the right
+panel no longer unfolds all eighteen groups at once.
+
+### The right panel opens with only the everyday groups expanded
+
+The Develop module used to open with all eighteen groups unfolded, so reaching "Basic" meant
+scrolling a screen. A registry of 53 groups now decides what starts expanded: the groups you touch
+on every photo and every export open; the ones you set once and forget (camera and lens setup,
+watermark, HDR and panorama merge) start collapsed — the same convention as Lightroom, where only
+"Basic" is open when an image loads. The Develop module's shape count on first paint drops from
+2193 to 1144, roughly half the drawing.
+
+The collapse state is remembered: whatever you fold stays folded on the next launch. Right-click a
+group header for "show only this group / collapse all / expand all".
+
+**This is the only change in this release that may make you go "huh, that's different".** To get
+the old look back: right-click → expand all, once.
+
+### Sub-windows can be dragged, and the corners finally match
+
+The three floating windows (plugins, presets, appearance) refused to move when dragged. They used
+egui's `anchor`, and the framework docs say it plainly: anchoring also makes the window immovable.
+They now use a default position for the first placement and remember where you drag them.
+
+Two details came along: the title bar used to square off the window's top two corners, and all four
+now follow one scale; full-width rules inside windows became indented soft separators, so the
+window no longer reads as "cut in half".
+
+### The bottom filmstrip collapses with one click
+
+The "film" toggle in the timeline header gained a rotating arrow (collapse / expand) and a tooltip.
+The header row stays when collapsed, so the way back is always on screen.
+
+### Appearance and language now have an entry point in the title bar
+
+The customisation feature — appearance, light or dark, skin, accent, corner radius, density, type
+size, layout, filmstrip — already existed. What was missing was a way in: it lives inside the
+"Appearance & Layout" window, and that window had no permanent entry. A gear now sits to the left
+of the export button; `Ctrl+,` still works.
+
+### Crop: nine preset ratios
+
+Original / 16:9 / 3:2 / 4:3 / 5:4 / 1:1 / 4:5 / 9:16 / 2:3, laid out the way Photoshop does.
+MCP's `crop.set` accepts the same nine.
+
+### History: one drag is one step
+
+Dragging a slider used to leave a dozen entries — the intermediate states plus the echo when you
+let go — so finding "the step I just made" was hard. Consecutive operations of the same kind now
+merge into one.
+
+### English UI: the remaining Chinese strings are gone
+
+Untranslated hints, status-bar text, command errors and tooltips are filled in; the entry count
+goes from 706 to 1103. This release also turns "a string is untranslated" into a static check that
+fails on commit, so they will not quietly creep back.
+
+### A directional demosaic option
+
+The diagnostics panel now offers "directional" as a demosaic method (Hamilton–Adams edge-directed
+green interpolation plus a constant-chroma assumption for red and blue).
+
+Against four synthetic scenes with known ground truth (vertical stripes, a 45-degree edge, fine
+texture, a colour edge) its overall PSNR is 3.0–10.6 dB above the old 2x2 cell average. The cost
+is full-resolution decode time: 27 ms to 256 ms at 24 megapixels.
+
+**The default is unchanged — cell average.** If you do not pick it, nothing moves. Why the default
+was not switched: the DNG path carries its own copy of the cell-average demosaic, and both paths
+have to change together, otherwise the same lens produces a DNG and a camera RAW with two different
+levels of sharpness. The DNG path is pinned by per-pixel golden data, so changing it means
+refreezing those. That waits for the next release.
+
+### Known issues
+
+- **`masking` does nothing between 0 and 50.** This is a pre-existing problem found while measuring
+  this release: dragging the slider to 25 or 40 moves the control but has no effect on flat noisy
+  areas at all (the threshold is a square term, so the low end is nearly flat), and it only starts
+  working past 75. Fixing it means changing the mapping curve, which would make **existing projects
+  with masking between 25 and 50 change appearance**, so it waits for a release where that call can
+  be made deliberately. Until then: push it past 75, or rely on sharpening protection (which RAW
+  imports enable at 20).
+- **HDR export (PQ / AVIF 10-bit) is still a placeholder, not a working feature.** `write_avif`
+  currently goes through ffmpeg as 8-bit.
+- The directional demosaic is still well short of ideal on 45-degree edges and colour boundaries:
+  its direction test only considers horizontal and vertical, so diagonal detail falls back to the
+  constant-chroma assumption.
+- There are no real camera RAW samples on the development machine, so every demosaic number above
+  comes from synthetic scenes; behaviour on real photographs is unverified.
+
+### Rolling back
+
+Install `v1.0.1` over it. Project files, presets and `settings.json` are forward compatible — this
+release only adds a `collapsed` field, which older versions ignore. What does not come back is the
+look: `1.0.1` has no collapse memory.
+
+---
+
 ## v1.0.1 — 2026-11-01
 
 A patch release: fixes only, no new features. **Three of the five fixes are "it happened twice"
