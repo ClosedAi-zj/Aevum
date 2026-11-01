@@ -69,6 +69,49 @@ pub struct Settings {
     /// field into `None`, which is exactly "no opinion expressed", so no version tag
     /// is needed to tell the two apart.
     pub collapsed: Option<Vec<String>>,
+    /// 浮窗上次落在哪儿（键 = 窗口标识，值 = 左上角坐标，逻辑点）。
+    ///
+    /// 为什么不用 egui 自己的位置记忆：egui 把 `Area` 的 rect 存在**它的** store 里，
+    /// 而本程序没有打开 eframe 的 storage（也不该为了三个浮窗去开——那会把整套
+    /// 面板状态一起卷进持久化）。所以窗口位置原先只在进程内有效，重启就回默认位。
+    /// 这里自己记一份，读写都走已有的 `settings_dirty` 单出口。
+    ///
+    /// `Option` 的含义与 `collapsed` 一致：`None` = 从没拖过，用各自的首开位置。
+    /// 坐标会被 [`clamp_win_pos`] 夹回当前视口，多显示器拔掉后不会飘到屏幕外。
+    ///
+    /// Where each floating window last sat (key = window id, value = top-left in
+    /// logical points).
+    ///
+    /// Why not egui's own position memory: egui keeps `Area` rects in *its* store, and
+    /// this program never enabled eframe's storage (nor should it, just for three
+    /// windows -- that would drag the whole panel state into persistence). Window
+    /// positions therefore only survived one process. This keeps its own copy, reading
+    /// and writing through the existing single `settings_dirty` exit.
+    ///
+    /// `Option` means the same as on `collapsed`: `None` = never dragged, use each
+    /// window's first-open position. Coordinates are clamped back into the current
+    /// viewport by [`clamp_win_pos`], so unplugging a monitor cannot strand a window
+    /// off-screen.
+    pub win_pos: Option<std::collections::BTreeMap<String, [f32; 2]>>,
+}
+
+/// 把落盘的窗口坐标夹回当前视口，保证整窗可见。
+///
+/// 三条边界都要管：①视口左上不能为负（窗口标题栏拖到屏幕外就再也抓不回来）；
+/// ②右下要让出窗口自身尺寸（否则只剩一条边在屏内）；③视口比窗口还小时，退回
+/// 视口左上角落——宁可错位，也不能算出负的可用宽度。
+///
+/// Clamp a persisted window position back into the current viewport so the whole
+/// window is reachable. Three edges matter: (1) the top-left cannot go negative (a
+/// title bar dragged past the edge can never be grabbed again); (2) the bottom-right
+/// must leave room for the window itself; (3) when the viewport is smaller than the
+/// window, fall back to the viewport's top-left -- misplacement beats a negative
+/// usable width.
+pub fn clamp_win_pos(pos: [f32; 2], win: [f32; 2], view: [f32; 4]) -> [f32; 2] {
+    let [vx, vy, vw, vh] = view;
+    let max_x = (vx + vw - win[0]).max(vx);
+    let max_y = (vy + vh - win[1]).max(vy);
+    [pos[0].clamp(vx, max_x), pos[1].clamp(vy, max_y)]
 }
 
 /// `%APPDATA%/aevum-studio/settings.json`；`AEVUM_SETTINGS`（旧名 `LUMEN_SETTINGS` 回退）
@@ -208,5 +251,38 @@ mod tests {
         let text = serde_json::to_string(&s).unwrap();
         let back: Settings = serde_json::from_str(&text).unwrap();
         assert_eq!(s, back);
+    }
+
+    /// 浮窗位置要能真的过一遍 JSON：存、读、逐位相等。
+    #[test]
+    fn window_positions_survive_the_round_trip() {
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("market".to_owned(), [120.0f32, -8.5]);
+        m.insert("look".to_owned(), [1536.0f32, 52.0]);
+        let s = Settings {
+            win_pos: Some(m),
+            ..Settings::default()
+        };
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(s, back);
+        // 老文件没有这一项 → `None`（从没拖过），不是空表。
+        let absent: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(absent.win_pos, None);
+    }
+
+    /// 夹取的三条边界：负坐标、越右下、视口比窗口还小。
+    #[test]
+    fn window_positions_are_clamped_into_the_viewport() {
+        let view = [0.0f32, 0.0, 1920.0, 1080.0];
+        let win = [400.0f32, 300.0];
+        // 跑到屏幕左上外面（标题栏摸不到了）→ 拉回 0。
+        assert_eq!(clamp_win_pos([-320.0, -80.0], win, view), [0.0, 0.0]);
+        // 跑到右下外面 → 右下要让出窗口自身尺寸。
+        assert_eq!(clamp_win_pos([1800.0, 1000.0], win, view), [1520.0, 780.0]);
+        // 本来就在里面 → 一动都不动（不能因为夹取把位置改出 1px 差）。
+        assert_eq!(clamp_win_pos([640.0, 360.0], win, view), [640.0, 360.0]);
+        // 视口比窗口还小 → 退回视口左上，不是负的可用宽度。
+        let small = [0.0f32, 0.0, 300.0, 200.0];
+        assert_eq!(clamp_win_pos([100.0, 100.0], win, small), [0.0, 0.0]);
     }
 }

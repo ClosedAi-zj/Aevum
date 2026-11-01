@@ -849,6 +849,13 @@ pub struct AppState {
     /// your arrangement is half of "reduce the information load", and the other half is
     /// not unrolling everything on the first screen.
     pub collapsed: HashSet<&'static str>,
+    /// 浮窗上次落在哪儿（键 = 窗口标识，见 `shell::windows::WIN_KEYS`）。启动时从
+    /// `settings.json` 灌回来，拖动结束后写回同一份文件——见 [`AppState::note_win_pos`]。
+    ///
+    /// Where each floating window last sat (key = window id, see
+    /// `shell::windows::WIN_KEYS`). Loaded from `settings.json` at startup and written
+    /// back after a drag ends -- see [`AppState::note_win_pos`].
+    pub win_pos: std::collections::BTreeMap<String, [f32; 2]>,
     /// 偏好（折叠态等）改动过、等帧尾统一落盘。界面代码只置位，不直接写文件：
     /// 一次拖动折叠会连着改几处，逐处写会把 `settings.json` 反复搓。
     ///
@@ -1848,6 +1855,7 @@ impl AppState {
             font_level: self.font_level,
             lang: self.lang,
             collapsed: Some(collapsed),
+            win_pos: (!self.win_pos.is_empty()).then(|| self.win_pos.clone()),
         }
     }
 
@@ -1869,6 +1877,31 @@ impl AppState {
                 .collect(),
             None => default_collapsed(),
         };
+        self.win_pos = s.win_pos.unwrap_or_default();
+    }
+
+    /// 记一个浮窗的新位置，等帧尾统一落盘。
+    ///
+    /// `pointer_busy` 传 `ctx.input(|i| i.pointer.any_down())`：拖动过程中每帧坐标都在变，逐帧
+    /// 落盘等于拿 `settings.json` 当草稿纸。松手那一刻值才稳定，也只在那时记一次。
+    /// 若窗口被拖回原位，`get != Some(&v)` 不成立，连脏标记都不会置。
+    ///
+    /// Record a floating window's new position for the end-of-frame write.
+    ///
+    /// `pointer_busy` is `ctx.input(|i| i.pointer.any_down())`: while dragging, the coordinates change
+    /// every frame and persisting each one turns `settings.json` into scratch paper. Only
+    /// when the button is released is the value stable, and only then is it recorded. If the
+    /// window was dragged back where it started, `get != Some(&v)` fails and not even the
+    /// dirty flag is set.
+    pub fn note_win_pos(&mut self, key: &str, pos: egui::Pos2, pointer_busy: bool) {
+        if pointer_busy {
+            return;
+        }
+        let v = [pos.x, pos.y];
+        if self.win_pos.get(key) != Some(&v) {
+            self.win_pos.insert(key.to_owned(), v);
+            self.settings_dirty = true;
+        }
     }
 
     pub fn new() -> Self {
@@ -1888,6 +1921,7 @@ impl AppState {
             tool: Tool::Hand,
             dock_tab: DockTab::Adjust,
             collapsed: default_collapsed(),
+            win_pos: std::collections::BTreeMap::new(),
             settings_dirty: false,
             status: "打开一个帧文件夹，或把文件夹拖进窗口".to_owned(),
             error: None,
@@ -11476,6 +11510,58 @@ fn run_qa_job(
 #[cfg(test)]
 mod frame_tests {
     use super::*;
+
+    /// 浮窗位置的记录规则：拖动中不记、同值不置脏、真移动了才置脏。
+    ///
+    /// 这三条合起来才是「能跨启动记住位置」而不「每帧写一次文件」：
+    /// 拖动中坐标每帧都变，记了就变成写风暴；同值重复记会让脏标记永远亮着，
+    /// 帧尾保存每帧跑一次。
+    ///
+    /// The rules for recording a window position: not while dragging, not for a repeat
+    /// value, and only a real move sets the dirty flag. Together they mean "remember the
+    /// position across launches" without "write the file every frame".
+    #[test]
+    fn window_position_is_recorded_only_after_the_drag_ends() {
+        let mut state = AppState::new();
+        state.settings_dirty = false;
+
+        // 按着键拖到 A：不记。
+        state.note_win_pos("market", egui::pos2(200.0, 120.0), true);
+        assert!(state.win_pos.is_empty(), "拖动中就记了位置");
+        assert!(!state.settings_dirty, "拖动中置了脏标记");
+
+        // 松手后落在 A：记下来并置脏。
+        state.note_win_pos("market", egui::pos2(200.0, 120.0), false);
+        assert_eq!(state.win_pos.get("market"), Some(&[200.0, 120.0]));
+        assert!(state.settings_dirty);
+
+        // 同一个位置再来一帧：不许再置脏（否则帧尾保存每帧跑一次）。
+        state.settings_dirty = false;
+        state.note_win_pos("market", egui::pos2(200.0, 120.0), false);
+        assert!(!state.settings_dirty, "同值重复记录了");
+
+        // 拖到 B：脏标记必须重新亮。
+        state.note_win_pos("market", egui::pos2(640.0, 360.0), false);
+        assert_eq!(state.win_pos.get("market"), Some(&[640.0, 360.0]));
+        assert!(state.settings_dirty);
+    }
+
+    /// 位置要真的进 `settings.json` 的载荷，并且在读回来之后灌进状态。
+    #[test]
+    fn window_positions_go_through_settings() {
+        let mut state = AppState::new();
+        state.note_win_pos("look", egui::pos2(24.0, 68.0), false);
+        let saved = state.settings();
+        assert_eq!(
+            saved.win_pos.as_ref().and_then(|m| m.get("look")),
+            Some(&[24.0, 68.0]),
+            "位置没进 settings 载荷"
+        );
+
+        let mut fresh = AppState::new();
+        fresh.adopt_settings(saved);
+        assert_eq!(fresh.win_pos.get("look"), Some(&[24.0, 68.0]));
+    }
 
     fn rect(c: CropRect) -> (u32, u32, u32, u32) {
         (c.x, c.y, c.w, c.h)

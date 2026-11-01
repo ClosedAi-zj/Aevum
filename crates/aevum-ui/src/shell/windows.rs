@@ -11,8 +11,61 @@ use crate::layout::StatusSlot;
 use crate::platform;
 use crate::state::AppState;
 use crate::theme::{self, *};
-use egui::{Align, Context, Layout, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
+use egui::{Align, Context, Layout, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
+
+/// 三个浮窗在 `settings.json` 里的键。改名字等于丢掉用户已经调好的位置，
+/// 所以这三个字符串是**对外契约**的一部分，不要顺手重命名。
+///
+/// Keys of the three floating windows in `settings.json`. Renaming one throws away
+/// the position the user already arranged, so these strings are part of the
+/// **external contract** -- do not rename them casually.
+pub(super) const WIN_MARKET: &str = "market";
+pub(super) const WIN_LOOK: &str = "look";
+pub(super) const WIN_ABOUT: &str = "about";
+
+/// 该浮窗上次落在哪儿；没存过就用 `fallback`（各窗的首开位置）。
+///
+/// `assume` 是夹取用的假定窗口尺寸（`Window` 的尺寸要 show 完才知道，而位置得
+/// show 之前给）。宁可夹粗一点：真被夹歪了，用户拖一下就回到他想要的位置；不夹
+/// 则可能整窗落在已拔掉的显示器上，任何操作都摸不到它。
+///
+/// Where the window last sat, or `fallback` (each window's first-open spot) if it has
+/// never been dragged. `assume` is the window size used for clamping -- a `Window`'s
+/// size is only known after `show`, but the position must be supplied before it. Better
+/// to clamp roughly: if a clamp lands slightly off, one drag fixes it; without clamping
+/// the whole window can end up on a monitor that is no longer plugged in, unreachable.
+fn restored_pos(state: &AppState, ctx: &Context, key: &str, fallback: Pos2, assume: Vec2) -> Pos2 {
+    let view = ctx.input(|i| i.viewport_rect());
+    match state.win_pos.get(key) {
+        Some(p) => {
+            let v = crate::settings::clamp_win_pos(
+                *p,
+                [assume.x, assume.y],
+                [view.min.x, view.min.y, view.width(), view.height()],
+            );
+            Pos2::new(v[0], v[1])
+        }
+        None => fallback,
+    }
+}
+
+/// 把浮窗这一帧的位置记下来（拖动中不记，见 `AppState::note_win_pos`）。
+///
+/// Record where the window sits this frame (skipped while dragging, see
+/// `AppState::note_win_pos`).
+fn remember_pos(state: &mut AppState, ctx: &Context, key: &str, rect: Rect) {
+    // 按着键不记：拖动中坐标每帧都变，那一刻写文件等于拿 `settings.json` 当草稿纸。
+    // 松手后的第一帧才是稳定值。`any_down` 比「正在拖这个窗」更宽，但宽的那一侧
+    // 正是我们要的——多等一帧没有代价，写爆文件有。
+    //
+    // Skip while a button is held: coordinates change every frame during a drag, and
+    // writing then turns `settings.json` into scratch paper. The first frame after
+    // release is the stable value. `any_down` is broader than "dragging this window",
+    // and that broader side is what we want -- one extra frame is free, a write storm
+    // is not.
+    state.note_win_pos(key, rect.min, ctx.input(|i| i.pointer.any_down()));
+}
 
 /// 浮窗标题栏的统一口径：底色接管成 panel，**只圆上面两角**。
 ///
@@ -183,15 +236,28 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
     let mut toggle: Option<(String, bool)> = None;
     let mut rescan = false;
 
-    egui::Window::new(crate::i18n::t!("插件"))
+    // 位置走 `settings.json`：`restored_pos` 取上次拖到的地方（没拖过则居中），
+    // 下面 `remember_pos` 在松手后写回。锚点（`.anchor`）会让窗口 immovable
+    // ——「子窗口拖不动」就是它，所以这里只用 pos，不用锚。
+    //
+    // Position comes from `settings.json`: `restored_pos` returns where it was last
+    // dragged (centre on first open), `remember_pos` below writes it back on release.
+    // Anchoring makes a window immovable in egui -- that was the "sub-window cannot be
+    // dragged" bug -- so only pos is used, never an anchor.
+    let pos = restored_pos(
+        state,
+        ctx,
+        WIN_MARKET,
+        ctx.input(|i| i.viewport_rect()).center() - Vec2::new(380.0, 260.0),
+        Vec2::new(760.0, 520.0),
+    );
+    let win = egui::Window::new(crate::i18n::t!("插件"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
         .default_size(Vec2::new(760.0, 520.0))
         .min_size(Vec2::new(620.0, 380.0))
-        // 锚点会让窗口 immovable（egui 文档原话），「子窗口拖不动」就是它：
-        // 改用 default_pos 定首开位置，之后随拖随记（egui 会话内记忆）。
-        .default_pos(ctx.input(|i| i.viewport_rect()).center() - Vec2::new(380.0, 260.0))
+        .default_pos(pos)
         // 标题栏接管成界面自己的深色：egui 默认标题栏的底与描边跟主界面
         // 不是一套口径（实测亮蓝，用户差评），这里统一成 panel 底 + 底缘
         // 一条 divider，标题居中、关闭钮走默认绘制。
@@ -387,6 +453,9 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                 );
             });
         });
+    if let Some(w) = win {
+        remember_pos(state, ctx, WIN_MARKET, w.response.rect);
+    }
     state.market_open = open;
     if let Some((id, on)) = toggle {
         state.registry.set_enabled(&id, on);
@@ -452,13 +521,23 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
     let before = (state.appearance, state.layout);
     let before_lang = state.lang;
     let mut open = state.look_open;
-    egui::Window::new(crate::i18n::t!("外观与布局"))
+    // 首开贴右上角（菜单行下 52px），之后按上次拖到的位置。
+    //
+    // First open hugs the top-right corner (52px below the menu row); afterwards it
+    // returns to wherever it was dragged.
+    let pos = restored_pos(
+        state,
+        ctx,
+        WIN_LOOK,
+        ctx.input(|i| i.viewport_rect()).right_top() - Vec2::new(354.0, -52.0),
+        Vec2::new(340.0, 560.0),
+    );
+    let win = egui::Window::new(crate::i18n::t!("外观与布局"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
         .default_width(340.0)
-        // 同上：锚点 = 不可拖。首开贴右上角（菜单行下 52px），拖动交给用户。
-        .default_pos(ctx.input(|i| i.viewport_rect()).right_top() - Vec2::new(354.0, -52.0))
+        .default_pos(pos)
         // 与插件市场同一个标题栏口径：深色底、无高亮描边。
         .title_frame(title_frame())
         .show(ctx, |ui| {
@@ -683,6 +762,9 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                 );
             });
         });
+    if let Some(w) = win {
+        remember_pos(state, ctx, WIN_LOOK, w.response.rect);
+    }
     state.look_open = open;
 
     if (state.appearance, state.layout) != before {
@@ -701,13 +783,22 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
         return;
     }
     let mut open = true;
-    egui::Window::new(crate::i18n::t!("快捷键与关于"))
+    // 首开居中，之后按上次拖到的位置。
+    //
+    // Centred on first open, then back to where it was dragged.
+    let pos = restored_pos(
+        state,
+        ctx,
+        WIN_ABOUT,
+        ctx.input(|i| i.viewport_rect()).center() - Vec2::new(215.0, 160.0),
+        Vec2::new(430.0, 480.0),
+    );
+    let win = egui::Window::new(crate::i18n::t!("快捷键与关于"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
         .default_width(430.0)
-        // 同上：锚点 = 不可拖。
-        .default_pos(ctx.input(|i| i.viewport_rect()).center() - Vec2::new(215.0, 160.0))
+        .default_pos(pos)
         .title_frame(title_frame())
         .show(ctx, |ui| {
             ui.label(
@@ -767,6 +858,9 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
                 });
             });
         });
+    if let Some(w) = win {
+        remember_pos(state, ctx, WIN_ABOUT, w.response.rect);
+    }
     if !open {
         state.about_open = false;
     }

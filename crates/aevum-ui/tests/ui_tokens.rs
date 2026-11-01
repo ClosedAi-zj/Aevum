@@ -235,6 +235,61 @@ fn no_floating_window_is_anchored() {
     );
 }
 
+/// 每个浮窗都必须**取位置**（`restored_pos`）并**写回位置**（`remember_pos`）。
+///
+/// 这条挡的是「新加一个浮窗就忘了接位置持久化」——写漏的时候程序不报错、
+/// 界面也正常，只是那个窗每次启动都回默认位，没人会注意到。
+///
+/// 判据是三个计数相等：`egui::Window::new(` 出现几次，就必须各有几次
+/// `restored_pos(` / `remember_pos(`。数相等而配错对（A 窗取、B 窗写）也可能，
+/// 所以再按窗口块切一遍：每个 `Window::new(` 到下一个之间必须两者都有。
+///
+/// Every floating window must **read** its position (`restored_pos`) and **write** it
+/// back (`remember_pos`). This catches "new floating window, forgot to hook up position
+/// persistence" -- which fails silently: nothing errors, the UI looks fine, the window
+/// just opens at its default spot every launch and nobody notices.
+///
+/// The criterion is three equal counts, then a per-block check (a window that reads
+/// someone else's position and writes yet another would still balance the counts).
+#[test]
+fn every_floating_window_restores_and_records_its_position() {
+    let src = read_clean("shell/windows.rs");
+    let starts: Vec<usize> = src
+        .match_indices("egui::Window::new(")
+        .map(|(p, _)| p)
+        .collect();
+    assert!(
+        starts.len() >= 3,
+        "只找到 {} 个浮窗，扫描口径变了",
+        starts.len()
+    );
+
+    for (i, start) in starts.iter().enumerate() {
+        // 块 = 本窗口的 `Window::new(` 到下一个之间。`restored_pos` 写在
+        // `Window::new` **之前**（位置得先算），所以往前多看一段。
+        let head = src[..*start].rfind("fn ").unwrap_or(0);
+        let block = &src[head..*start];
+        let tail_end = starts.get(i + 1).copied().unwrap_or(src.len());
+        let body = &src[*start..tail_end];
+        let name = src[*start..]
+            .split('\n')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        assert!(
+            block.contains("restored_pos("),
+            "第 {} 个浮窗（{name}）没有经 restored_pos 取位置——重启后回默认位：\n{block}",
+            i + 1
+        );
+        assert!(
+            body.contains("remember_pos("),
+            "第 {} 个浮窗（{name}）没有 remember_pos 写回位置——拖了记不住：\n{name}",
+            i + 1
+        );
+    }
+}
+
 #[test]
 fn floating_windows_share_one_title_frame() {
     // 「四个圆角弧度一致」不是靠逐个窗口调参调出来的，而是靠**只有一个标题条实现**。
