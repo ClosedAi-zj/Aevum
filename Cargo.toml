@@ -51,6 +51,18 @@ codegen-units = 1
 
 [profile.dev]
 opt-level = 1
+# 调试信息只保留行表（文件名 + 行号），不写变量与类型。
+#
+# 为什么不取默认的 2：MSVC 后端把调试信息单独写进 .pdb，而测试二进制把
+# image / rawler / skrifa / egui 全静态链接进来，**单个 pdb 就到 300 MB**。
+# 2026-11-01 实测：43 个测试目标 × 各自一份 300 MB pdb，光 .pdb 就 28.9 GB，
+# 整个 target 46 GB、E 盘被压到 36 GB 可用。取 1 之后同一份代码的 pdb 降到
+# 个位数 MB（对照 release 无调试信息时是 4.5 MB）。
+#
+# 代价只有一个：断点里看不到局部变量，只能靠 println 或临时调回 2。回栈仍然
+# 有完整的文件名与行号，panic 定位不受影响；需要逐帧看变量时，临时改这一行为
+# 2 再编，不要长期留在仓库里（那是把一个会话的便利摊到所有人的磁盘上）。
+debug = 1
 
 [profile.dev.package."*"]
 opt-level = 3
