@@ -290,6 +290,39 @@ fn every_floating_window_restores_and_records_its_position() {
     }
 }
 
+/// 预设栏三节必须按 `state.preset_order` 排，且节头挂拖拽。
+///
+/// 这条挡的是「有人把次序写回代码里」——写死了照样能编译、能显示，只是用户拖过
+/// 的次序下次启动就没了，而且没有任何测试会红。
+///
+/// The three preset sections must follow `state.preset_order` and their headers must be
+/// drag handles. This catches "someone hard-codes the order again": that compiles and
+/// displays fine, it just silently drops the order the user arranged.
+#[test]
+fn preset_sections_are_ordered_by_state_and_draggable() {
+    let src = read_clean("shell/common.rs");
+    assert!(
+        src.contains("state.preset_order"),
+        "预设栏没有读 `state.preset_order`——次序又被写死进代码了"
+    );
+    assert!(
+        src.contains("move_preset_section("),
+        "预设栏没有调用 `move_preset_section`——拖了也不会换序"
+    );
+    // 写死的三节次序长这样：连着三次 `side_head(ui, "内置"/"快照"/"历史"`。
+    // 现在标题是由 key 查出来的，源码里不该再出现这三个字面量作为 `side_head` 参数。
+    for hard in [
+        "side_head(ui, \"内置\"",
+        "side_head(ui, \"快照\"",
+        "side_head(ui, \"历史\"",
+    ] {
+        assert!(
+            !src.contains(hard),
+            "预设栏出现了写死的节头 `{hard}`——次序应该由 `preset_order` 决定"
+        );
+    }
+}
+
 #[test]
 fn floating_windows_share_one_title_frame() {
     // 「四个圆角弧度一致」不是靠逐个窗口调参调出来的，而是靠**只有一个标题条实现**。

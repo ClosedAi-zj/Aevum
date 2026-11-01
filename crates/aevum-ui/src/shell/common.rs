@@ -71,6 +71,11 @@ pub(super) fn preset_panel(state: &mut AppState, ui: &mut Ui) {
     let n_steps = state.history.steps().len();
     let cursor = state.history.cursor();
     let snapshot_n = state.snapshots.len();
+    // 每一节的节头矩形：拖拽落地时用它判「指针落在哪一节」。
+    //
+    // Header rect per section, used to decide which section the pointer is over when a
+    // dragged section is dropped.
+    let mut bands: Vec<(&'static str, Rect)> = Vec::new();
 
     ui.scope_builder(
         UiBuilder::new()
@@ -84,60 +89,121 @@ pub(super) fn preset_panel(state: &mut AppState, ui: &mut Ui) {
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
 
-                    side_head(ui, "内置", grade::PRESET_NAMES.len());
-                    for name in grade::PRESET_NAMES {
-                        if side_row(ui, name, Some(Glyph::Sliders), state.preset == *name).clicked()
-                        {
-                            want_preset = Some(name);
+                    // 三节按 `state.preset_order` 排（可拖）。**不在这里写死次序**：
+                    // 那份次序是用户摆的，落盘在 settings.json，读回时已经规整成一个
+                    // 完整排列（见 `state::normalise_preset_order`）。
+                    //
+                    // The three sections follow `state.preset_order` (draggable). The order
+                    // is *not* hard-coded here: it belongs to the user, persisted in
+                    // settings.json, and normalised into a full permutation on load.
+                    for (n, key) in state.preset_order.clone().into_iter().enumerate() {
+                        if n > 0 {
+                            side_divider(ui);
                         }
-                    }
+                        let (title, count) = match key {
+                            "builtin" => ("内置", grade::PRESET_NAMES.len()),
+                            "snapshots" => ("快照", snapshot_n),
+                            _ => ("历史", n_steps),
+                        };
+                        let dragging = state.drag_section == Some(key);
+                        let head = side_head(ui, title, count, dragging);
+                        if head.drag_started() {
+                            state.drag_section = Some(key);
+                        }
+                        bands.push((key, head.rect));
 
-                    side_divider(ui);
-                    side_head(ui, "快照", snapshot_n);
-                    if snapshot_n == 0 {
-                        side_note(ui, "右上角 ＋ 存一版");
-                    }
-                    for (i, (label, _)) in state.snapshots.iter().enumerate() {
-                        let row = side_row(ui, label, Some(Glyph::Star), false);
-                        let x_rect = Rect::from_center_size(
-                            Pos2::new(row.rect.right() - 14.0, row.rect.center().y),
-                            Vec2::splat(18.0),
-                        );
-                        let xr = ui.interact(
-                            x_rect,
-                            ui.make_persistent_id(("snap-del", i)),
-                            Sense::click(),
-                        );
-                        let show = row.hovered() || xr.hovered();
-                        if show {
-                            icons::paint(
-                                ui.painter(),
-                                x_rect.shrink(5.0),
-                                Glyph::Close,
-                                if xr.hovered() { danger() } else { dim() },
-                            );
-                        }
-                        if row.clicked() {
-                            want_snap = Some(i);
-                        } else if xr.clicked() {
-                            drop_snap = Some(i);
-                        }
-                    }
-
-                    side_divider(ui);
-                    side_head(ui, "历史", n_steps);
-                    if n_steps == 0 {
-                        side_note(ui, "还没有可撤的改动");
-                    }
-                    // 最新在上：翻历史是为了"回到刚才那一步"，不是从头读流水账。
-                    for (i, step) in state.history.steps().iter().enumerate().rev().take(80) {
-                        if side_row(ui, &step.label, None, i == cursor).clicked() {
-                            want_jump = Some(i);
+                        match key {
+                            "builtin" => {
+                                for name in grade::PRESET_NAMES {
+                                    if side_row(
+                                        ui,
+                                        name,
+                                        Some(Glyph::Sliders),
+                                        state.preset == *name,
+                                    )
+                                    .clicked()
+                                    {
+                                        want_preset = Some(name);
+                                    }
+                                }
+                            }
+                            "snapshots" => {
+                                if snapshot_n == 0 {
+                                    side_note(ui, "右上角 ＋ 存一版");
+                                }
+                                for (i, (label, _)) in state.snapshots.iter().enumerate() {
+                                    let row = side_row(ui, label, Some(Glyph::Star), false);
+                                    let x_rect = Rect::from_center_size(
+                                        Pos2::new(row.rect.right() - 14.0, row.rect.center().y),
+                                        Vec2::splat(18.0),
+                                    );
+                                    let xr = ui.interact(
+                                        x_rect,
+                                        ui.make_persistent_id(("snap-del", i)),
+                                        Sense::click(),
+                                    );
+                                    let show = row.hovered() || xr.hovered();
+                                    if show {
+                                        icons::paint(
+                                            ui.painter(),
+                                            x_rect.shrink(5.0),
+                                            Glyph::Close,
+                                            if xr.hovered() { danger() } else { dim() },
+                                        );
+                                    }
+                                    if row.clicked() {
+                                        want_snap = Some(i);
+                                    } else if xr.clicked() {
+                                        drop_snap = Some(i);
+                                    }
+                                }
+                            }
+                            _ => {
+                                if n_steps == 0 {
+                                    side_note(ui, "还没有可撤的改动");
+                                }
+                                // 最新在上：翻历史是为了"回到刚才那一步"，不是从头读流水账。
+                                for (i, step) in
+                                    state.history.steps().iter().enumerate().rev().take(80)
+                                {
+                                    if side_row(ui, &step.label, None, i == cursor).clicked() {
+                                        want_jump = Some(i);
+                                    }
+                                }
+                            }
                         }
                     }
                 });
         },
     );
+
+    // 拖拽落地：指针落在哪一节的范围里，就把正在拖的那一节挪到那个位置。
+    //
+    // 范围取「本节节头顶 → 下一节节头顶」，比只认 32px 的节头宽容得多；最后一节没有
+    // 下一节，下界给到无穷远。松手（`any_down` 变假）时收尾，无论有没有移动。
+    //
+    // Drop handling: whichever section's range holds the pointer becomes the target index.
+    // The range spans "this header's top to the next header's top", far more forgiving than
+    // the 32px header alone; the last section has no next one, so its bottom is unbounded.
+    // Released (`any_down` false) ends the drag whether or not anything moved.
+    if let Some(key) = state.drag_section {
+        if !ui.ctx().input(|i| i.pointer.any_down()) {
+            state.drag_section = None;
+        } else if let Some(pos) = ui.ctx().pointer_latest_pos()
+            && let Some(target) = bands.iter().enumerate().position(|(i, (k, r))| {
+                if *k == key {
+                    return false;
+                }
+                let top = r.top();
+                let bottom = bands
+                    .get(i + 1)
+                    .map_or(f32::INFINITY, |(_, next)| next.top());
+                pos.y >= top && pos.y < bottom
+            })
+        {
+            state.move_preset_section(key, target);
+        }
+    }
 
     if let Some(name) = want_preset {
         state.apply_preset(name);
@@ -164,9 +230,25 @@ fn side_divider(ui: &mut Ui) {
 }
 
 /// 一节的小标题：▾ 名字 ……… 条数。32px 高、组名 12px 正文色，对齐界面稿 .sec-hd。
-fn side_head(ui: &mut Ui, label: &str, count: usize) {
+///
+/// 节头同时是**拖拽手柄**（`Sense::click_and_drag`）：按住它把整节往上/往下拖就能
+/// 换序。`dragging` 为真时铺一层 `elev()` 底，让用户看得出「正在搬的是这一节」。
+///
+/// The header doubles as the **drag handle** (`Sense::click_and_drag`): hold it and drag
+/// the whole section up or down to reorder. When `dragging` is true an `elev()` fill marks
+/// which section is being carried.
+fn side_head(ui: &mut Ui, label: &str, count: usize, dragging: bool) -> Response {
     let label = crate::i18n::tr(label);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), 32.0),
+        Sense::click_and_drag(),
+    );
+    if dragging {
+        ui.painter().rect_filled(rect, 0, elev());
+    }
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
     let p = ui.painter();
     p.text(
         Pos2::new(rect.left() + 12.0, rect.center().y),
@@ -189,6 +271,7 @@ fn side_head(ui: &mut Ui, label: &str, count: usize) {
         font(SIZE_SMALL),
         dim(),
     );
+    resp
 }
 
 /// 一列可点的行。`glyph` 为 None 时画一枚小圆点（历史行）。

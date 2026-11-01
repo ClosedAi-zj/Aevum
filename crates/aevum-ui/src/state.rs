@@ -304,6 +304,51 @@ pub const GROUP_SPECS: &[GroupSpec] = &[
 ///
 /// The set of group keys folded on the first screen. Used when the user has expressed
 /// no preference; afterwards his own clicks win.
+/// 预设栏的三节。次序可拖，但键名是**落盘契约**：改了名字，用户调好的次序就丢了。
+///
+/// The three preset-column sections. The order is draggable, but the keys are a
+/// **persistence contract**: renaming one throws away the order the user arranged.
+pub const PRESET_SECTIONS: [&str; 3] = ["builtin", "snapshots", "history"];
+
+/// 预设栏的默认次序：内置 → 快照 → 历史（从"别人的"到"自己的"再到"刚才动过的"）。
+///
+/// Default preset-column order: built-in, then snapshots, then history -- from "someone
+/// else's" to "mine" to "what I just touched".
+pub fn default_preset_order() -> Vec<&'static str> {
+    PRESET_SECTIONS.to_vec()
+}
+
+/// 把落盘 / 手改过的次序规整成合法排列：丢掉认不出的键、去掉重复、补上缺的（按默认
+/// 次序追加到末尾）。
+///
+/// 三种坏输入都必须能开起来：老版本没有这一项（空表）、用户删掉一节（少键）、手改成
+/// 了 `["history","bogus"]`（未知键）。规整之后恒为 `PRESET_SECTIONS` 的一个排列，
+/// 界面那一侧就不用再写防御代码。
+///
+/// Normalise a persisted / hand-edited order into a valid permutation: drop unknown keys,
+/// remove duplicates, append whatever is missing in default order.
+///
+/// Three kinds of bad input must still open fine: an older file without the field (empty),
+/// a user who deleted a section (missing key), a hand edit like `["history","bogus"]`
+/// (unknown key). The result is always a permutation of `PRESET_SECTIONS`, so no defensive
+/// code is needed on the drawing side.
+pub fn normalise_preset_order(raw: &[String]) -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::with_capacity(PRESET_SECTIONS.len());
+    for k in raw {
+        if let Some(known) = PRESET_SECTIONS.iter().find(|s| **s == k.as_str())
+            && !out.contains(known)
+        {
+            out.push(known);
+        }
+    }
+    for k in PRESET_SECTIONS {
+        if !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    out
+}
+
 pub fn default_collapsed() -> HashSet<&'static str> {
     GROUP_SPECS
         .iter()
@@ -849,6 +894,18 @@ pub struct AppState {
     /// your arrangement is half of "reduce the information load", and the other half is
     /// not unrolling everything on the first screen.
     pub collapsed: HashSet<&'static str>,
+    /// 预设栏三节的次序（`PRESET_SECTIONS` 的一个排列）。拖节头换序，落
+    /// `settings.json`；读回时由 [`normalise_preset_order`] 补全成完整排列。
+    ///
+    /// Order of the three preset-column sections (a permutation of `PRESET_SECTIONS`).
+    /// Dragging a section header reorders it and persists to `settings.json`; it is
+    /// completed by [`normalise_preset_order`] on load.
+    pub preset_order: Vec<&'static str>,
+    /// 正在被拖的预设节（`None` = 没在拖）。松手后清空。
+    ///
+    /// The preset section currently being dragged (`None` = not dragging). Cleared on
+    /// release.
+    pub drag_section: Option<&'static str>,
     /// 浮窗上次落在哪儿（键 = 窗口标识，见 `shell::windows::WIN_KEYS`）。启动时从
     /// `settings.json` 灌回来，拖动结束后写回同一份文件——见 [`AppState::note_win_pos`]。
     ///
@@ -1855,6 +1912,7 @@ impl AppState {
             font_level: self.font_level,
             lang: self.lang,
             collapsed: Some(collapsed),
+            preset_order: Some(self.preset_order.iter().map(|k| (*k).to_owned()).collect()),
             win_pos: (!self.win_pos.is_empty()).then(|| self.win_pos.clone()),
         }
     }
@@ -1878,6 +1936,24 @@ impl AppState {
             None => default_collapsed(),
         };
         self.win_pos = s.win_pos.unwrap_or_default();
+        self.preset_order = normalise_preset_order(&s.preset_order.unwrap_or_default());
+    }
+
+    /// 把某一节拖到第 `to` 位。越界夹住、原地不动就不置脏。
+    ///
+    /// Move a section to position `to`. Out-of-range values are clamped, and dropping it
+    /// where it already is does not set the dirty flag.
+    pub fn move_preset_section(&mut self, key: &'static str, to: usize) {
+        let Some(from) = self.preset_order.iter().position(|k| *k == key) else {
+            return;
+        };
+        let to = to.min(self.preset_order.len().saturating_sub(1));
+        if from == to {
+            return;
+        }
+        let k = self.preset_order.remove(from);
+        self.preset_order.insert(to, k);
+        self.settings_dirty = true;
     }
 
     /// 记一个浮窗的新位置，等帧尾统一落盘。
@@ -1921,6 +1997,8 @@ impl AppState {
             tool: Tool::Hand,
             dock_tab: DockTab::Adjust,
             collapsed: default_collapsed(),
+            preset_order: default_preset_order(),
+            drag_section: None,
             win_pos: std::collections::BTreeMap::new(),
             settings_dirty: false,
             status: "打开一个帧文件夹，或把文件夹拖进窗口".to_owned(),
@@ -11544,6 +11622,82 @@ mod frame_tests {
         state.note_win_pos("market", egui::pos2(640.0, 360.0), false);
         assert_eq!(state.win_pos.get("market"), Some(&[640.0, 360.0]));
         assert!(state.settings_dirty);
+    }
+
+    /// 预设栏三节：拖动换序 → 进 settings 载荷 → 读回来还是那个次序。
+    ///
+    /// 顺序判据用**字面值**，不用「和默认一样」这种相对说法：一起改了默认次序的话，
+    /// 相对判据会跟着一起漂。
+    ///
+    /// The three preset sections: drag to reorder -> into the settings payload -> read back
+    /// in that order. The assertion uses **literal** values rather than "same as default",
+    /// which would drift along if someone changed the default.
+    #[test]
+    fn preset_sections_reorder_and_persist() {
+        let mut state = AppState::new();
+        assert_eq!(state.preset_order, vec!["builtin", "snapshots", "history"]);
+
+        state.settings_dirty = false;
+        state.move_preset_section("history", 0);
+        assert_eq!(state.preset_order, vec!["history", "builtin", "snapshots"]);
+        assert!(state.settings_dirty, "换序后没置脏，关掉就丢");
+
+        // 拖回原位不算改动。
+        state.settings_dirty = false;
+        state.move_preset_section("history", 0);
+        assert!(!state.settings_dirty, "原地放下也置了脏");
+
+        // 越界夹住，不是崩掉也不是乱插。
+        state.move_preset_section("builtin", 99);
+        assert_eq!(state.preset_order, vec!["history", "snapshots", "builtin"]);
+
+        let saved = state.settings();
+        assert_eq!(
+            saved.preset_order.as_deref(),
+            Some(
+                [
+                    "history".to_owned(),
+                    "snapshots".to_owned(),
+                    "builtin".to_owned()
+                ]
+                .as_slice()
+            )
+        );
+        let mut fresh = AppState::new();
+        fresh.adopt_settings(saved);
+        assert_eq!(fresh.preset_order, vec!["history", "snapshots", "builtin"]);
+    }
+
+    /// 落盘的次序可能是坏的：老文件没有这一项、手删一节、手写未知键、重复。
+    /// 四种都得开得起来，并且结果恒为完整排列（界面那边就不必再防御）。
+    ///
+    /// The persisted order can be bad: absent in an old file, a section deleted by hand, an
+    /// unknown key typed in, a duplicate. All four must still open, and the result is always
+    /// a full permutation, so the drawing side needs no defensive code.
+    #[test]
+    fn preset_order_from_a_broken_file_is_normalised() {
+        let norm = |v: &[&str]| {
+            normalise_preset_order(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        // 老文件 / 空：回到默认次序。
+        assert_eq!(norm(&[]), vec!["builtin", "snapshots", "history"]);
+        // 手删一节：缺的按默认次序补到末尾。
+        assert_eq!(
+            norm(&["history", "builtin"]),
+            vec!["history", "builtin", "snapshots"]
+        );
+        // 未知键：丢掉。
+        assert_eq!(
+            norm(&["history", "bogus", "builtin", "snapshots"]),
+            vec!["history", "builtin", "snapshots"]
+        );
+        // 重复：只留第一次。
+        assert_eq!(
+            norm(&["snapshots", "snapshots", "history"]),
+            vec!["snapshots", "history", "builtin"]
+        );
+        // 全是未知键：等于空。
+        assert_eq!(norm(&["x", "y"]), vec!["builtin", "snapshots", "history"]);
     }
 
     /// 位置要真的进 `settings.json` 的载荷，并且在读回来之后灌进状态。

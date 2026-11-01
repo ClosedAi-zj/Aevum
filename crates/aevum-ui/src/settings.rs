@@ -93,6 +93,14 @@ pub struct Settings {
     /// viewport by [`clamp_win_pos`], so unplugging a monitor cannot strand a window
     /// off-screen.
     pub win_pos: Option<std::collections::BTreeMap<String, [f32; 2]>>,
+    /// 预设栏三节的次序（键见 [`crate::state::PRESET_SECTIONS`]）。`None` / 空表 /
+    /// 带未知键 / 少键，读回来都会被规整成一个完整排列——老文件与手改文件都能开。
+    ///
+    /// Order of the three preset-column sections (keys in
+    /// [`crate::state::PRESET_SECTIONS`]). `None`, empty, unknown keys or missing keys are
+    /// all normalised into a full permutation on load, so old and hand-edited files both
+    /// open fine.
+    pub preset_order: Option<Vec<String>>,
 }
 
 /// 把落盘的窗口坐标夹回当前视口，保证整窗可见。
