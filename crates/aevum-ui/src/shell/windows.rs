@@ -11,6 +11,34 @@ use crate::theme::{self, *};
 use egui::{Align, Align2, Context, Layout, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
+/// 浮窗标题栏的统一口径：底色接管成 panel，**只圆上面两角**。
+///
+/// 此前这里写死 `corner_radius(0.0)`：方角标题条压在圆角窗体上，窗的上两角
+/// 被削成直角、下两角还是圆的——四个角弧度不一致就是这么来的。上两角取
+/// `radius_window()`（与窗体同源），下两角归零交给窗体本体，整窗一套弧度。
+fn title_frame() -> egui::Frame {
+    let r = radius_window() as u8;
+    egui::Frame::new()
+        .fill(panel())
+        .stroke(Stroke::NONE)
+        .corner_radius(egui::CornerRadius {
+            nw: r,
+            ne: r,
+            sw: 0,
+            se: 0,
+        })
+        .inner_margin(egui::Margin::symmetric(12, 8))
+}
+
+/// 窗内分节的软分割线：`theme::soft_rule` 的 UI 包装，占 9px 高、线居中。
+///
+/// egui 自带的 `ui.separator()` 是通栏实线，和浮窗边框顶死，读作「切开」；
+/// 这里换成缩进浅线，读作「分节」。
+fn soft_sep(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 9.0), Sense::hover());
+    theme::soft_rule(ui.painter(), rect.left(), rect.right(), rect.center().y);
+}
+
 /// 菜单里的小标题：比正文小一号、压暗，读作"下面这些属于这一类"。
 fn menu_section(ui: &mut Ui, title: &str) {
     ui.add_space(3.0);
@@ -96,7 +124,7 @@ pub(super) fn plugin_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .color(danger()),
         );
     }
-    ui.separator();
+    soft_sep(ui);
     if state.plugin_result.is_some() && menu_item(ui, "清除插件效果", "") {
         state.plugin_result = None;
         ui.close();
@@ -162,23 +190,11 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
         // 标题栏接管成界面自己的深色：egui 默认标题栏的底与描边跟主界面
         // 不是一套口径（实测亮蓝，用户差评），这里统一成 panel 底 + 底缘
         // 一条 divider，标题居中、关闭钮走默认绘制。
-        .title_frame(
-            egui::Frame::new()
-                .fill(panel())
-                .stroke(Stroke::NONE)
-                .corner_radius(0.0)
-                .inner_margin(egui::Margin::symmetric(12, 8)),
-        )
+        .title_frame(title_frame())
         .show(ctx, |ui| {
-            // 标题栏下面压一条分隔线，把标题区和清单分开。
+            // 标题栏下面压一条软分割线，把标题区和清单分开。
             let head = Rect::from_min_size(ui.min_rect().min, Vec2::new(ui.available_width(), 1.0));
-            theme::rule(
-                ui.painter(),
-                head.left(),
-                head.right(),
-                head.top(),
-                divider(),
-            );
+            theme::soft_rule(ui.painter(), head.left(), head.right(), head.top());
             // 定住下限：`default_size` 只是建议，内容一少窗口就缩成一团，
             // 列表只剩三行可见 —— 那时候滚动条比窗口还长。窗口的 min_size
             // 已经兜底（620×380），不再用 set_min_size 硬顶内容高度——那会
@@ -235,7 +251,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                         }
                     },
                 );
-                ui.separator();
+                soft_sep(ui);
 
                 // 右栏：搜索 + 列表
                 ui.allocate_ui_with_layout(
@@ -336,7 +352,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                                         );
                                     }
                                     ui.add_space(3.0);
-                                    ui.separator();
+                                    soft_sep(ui);
                                     ui.add_space(3.0);
                                 }
 
@@ -438,13 +454,7 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
         .default_width(340.0)
         .anchor(Align2::RIGHT_TOP, Vec2::new(-14.0, 52.0))
         // 与插件市场同一个标题栏口径：深色底、无高亮描边。
-        .title_frame(
-            egui::Frame::new()
-                .fill(panel())
-                .stroke(Stroke::NONE)
-                .corner_radius(0.0)
-                .inner_margin(egui::Margin::symmetric(12, 8)),
-        )
+        .title_frame(title_frame())
         .show(ctx, |ui| {
             // 定宽而不是让内容撑：锚在右上时，egui 会按内容回缩，回缩到比一行控件
             // 还窄就会把左边的选项挤到窗口外面去。
@@ -645,7 +655,7 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
             );
 
             ui.add_space(8.0);
-            ui.separator();
+            soft_sep(ui);
             ui.horizontal(|ui| {
                 if ui
                     .button(RichText::new(crate::i18n::t!("重置")).size(SIZE_BODY))
@@ -691,13 +701,7 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
         .resizable(false)
         .default_width(430.0)
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .title_frame(
-            egui::Frame::new()
-                .fill(panel())
-                .stroke(Stroke::NONE)
-                .corner_radius(0.0)
-                .inner_margin(egui::Margin::symmetric(12, 8)),
-        )
+        .title_frame(title_frame())
         .show(ctx, |ui| {
             ui.label(
                 RichText::new(aevum_core::brand::TITLE)
@@ -743,7 +747,7 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
                     }
                 });
             ui.add_space(8.0);
-            ui.separator();
+            soft_sep(ui);
             ui.horizontal(|ui| {
                 ui.label(theme::caps("GOLDEN 15/15 · 1e-4"));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

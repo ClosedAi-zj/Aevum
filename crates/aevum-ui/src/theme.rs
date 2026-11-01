@@ -967,6 +967,22 @@ pub fn rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32) {
     );
 }
 
+/// 浮窗与侧栏分节的「软分割线」：左右各缩进 12px、颜色再压暗一档。
+///
+/// 通栏 1px 线读作「把两块切开」，缩进的浅线读作「这是两节」——分割样式
+/// 重设计的落点就在这个语义差上。两侧留白让线不顶到边框，视觉上短一截，
+/// 恰好和分节标题的左缘缩进（12px）对齐。
+pub fn soft_rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32) {
+    const INSET: f32 = 12.0;
+    rule(
+        painter,
+        x0 + INSET,
+        x1 - INSET,
+        y,
+        divider().gamma_multiply(0.7),
+    );
+}
+
 /// Lightroom 的数值写法：有符号量带正号，零显示占位。
 pub fn number(value: f64, decimals: usize, signed: bool) -> String {
     let zero = 0.5 * 10f64.powi(-(decimals as i32));

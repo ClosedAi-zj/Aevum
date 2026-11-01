@@ -89,7 +89,7 @@ pub(super) fn preset_panel(state: &mut AppState, ui: &mut Ui) {
                         }
                     }
 
-                    ui.add_space(12.0);
+                    side_divider(ui);
                     side_head(ui, "快照", snapshot_n);
                     if snapshot_n == 0 {
                         side_note(ui, "右上角 ＋ 存一版");
@@ -121,7 +121,7 @@ pub(super) fn preset_panel(state: &mut AppState, ui: &mut Ui) {
                         }
                     }
 
-                    ui.add_space(12.0);
+                    side_divider(ui);
                     side_head(ui, "历史", n_steps);
                     if n_steps == 0 {
                         side_note(ui, "还没有可撤的改动");
@@ -150,6 +150,14 @@ pub(super) fn preset_panel(state: &mut AppState, ui: &mut Ui) {
     {
         state.restore(mv.snap);
     }
+}
+
+/// 侧栏两节之间的软分割线：线短一截、压暗一档，读作「分节」而不是「切开」。
+fn side_divider(ui: &mut Ui) {
+    ui.add_space(5.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
+    theme::soft_rule(ui.painter(), rect.left(), rect.right(), rect.center().y);
+    ui.add_space(5.0);
 }
 
 /// 一节的小标题：▾ 名字 ……… 条数。32px 高、组名 12px 正文色，对齐界面稿 .sec-hd。
