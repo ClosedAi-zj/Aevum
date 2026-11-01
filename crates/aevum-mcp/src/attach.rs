@@ -1559,7 +1559,7 @@ mod qa_acceptance {
         let clashes: BTreeMap<&String, &Vec<&str>> =
             by_name.iter().filter(|(_, ids)| ids.len() > 1).collect();
         assert!(clashes.is_empty(), "工具名重名：{clashes:?}");
-        assert_eq!(by_name.len(), 74, "75 条命令应当正好生成 74 个工具名");
+        assert_eq!(by_name.len(), 75, "75 条命令应当正好生成 75 个工具名");
     }
 
     /// 离线兜底清单：75 条、不重名、描述不空、每条都能路由。
@@ -1572,7 +1572,7 @@ mod qa_acceptance {
             .as_array()
             .expect("tools 数组")
             .clone();
-        assert_eq!(tools.len(), 74, "离线清单不是 75 条");
+        assert_eq!(tools.len(), 75, "离线清单不是 75 条");
 
         let mut names = Vec::new();
         let mut described = 0usize;
@@ -1786,7 +1786,7 @@ mod qa_acceptance {
         let tools = responses[0]["result"]["tools"]
             .as_array()
             .expect("tools 数组");
-        assert_eq!(tools.len(), 74, "在线清单不是 75 条");
+        assert_eq!(tools.len(), 75, "在线清单不是 75 条");
 
         let listed: BTreeSet<String> = tools
             .iter()
