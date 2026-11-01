@@ -1,0 +1,409 @@
+//! 静态守门：界面「一套口径」不许被随手写死破坏。
+//!
+//! # 这些测试为什么存在
+//!
+//! 用户反馈里最刺人的一句是「这些缺陷要我自己一个个指出来」。回头看，被指出的
+//! 几条其实都是**同一种病**：某个数值在别处已经收敛成了 token，但有一两个调用点
+//! 还留着当年的字面量，于是画出来「差一点」——肉眼能看出不对，代码里搜不到。
+//!
+//! * 标题条写死 `corner_radius(0.0)` → 整窗三只角圆、上两角方（`UI-1`）；
+//! * `Window::anchor(…)` → egui 源码注释原话 "Anchoring also makes the window
+//!   immovable"，四个浮窗全都拖不动（`UI-2`）；
+//! * 浮窗里混用 `ui.separator()` → 通栏实线把面板切成两截，与同时改过的软分割线
+//!   并排出现（`UI-1`）；
+//! * 设置入口只挂在菜单里 → 语言与外观「功能在但没人找得到」（`UI-7`）。
+//!
+//! 这些都能在**编译前的静态层**拦住，而且拦的成本极低：扫源码文本即可。所以这里
+//! 不做像素比对（那要跑起渲染器、要维护基线图，重且脆），只钉四条不变式：
+//!
+//! 1. 浮窗不许 `anchor`（一 anchor 就 immovable）；
+//! 2. 浮窗的标题条只有一套（`title_frame()`），且圆角只认 `radius_window()`；
+//! 3. 浮窗内的分割只用软线（`soft_sep`），不用 `ui.separator()`；
+//! 4. 圆角实参要么是 `0`/`0.0`（显式的直角），要么来自 `theme::radius_*` 一族。
+//!
+//! 另外两条钉的是「口径本身还站得住」：刻度有序、入口常驻。
+//!
+//! # 为什么不扫 `Color32`
+//!
+//! 试过：`shell/` 下直写颜色有 60+ 处，绝大多数是画布叠加层（取景框阴影、蒙版
+//! 手柄、直方图渐变）与 macOS 交通灯的固有色——那些颜色**本来就是像素级常量**，
+//! 收进 token 只会把 `theme.rs` 变成垃圾场。所以颜色不设静态禁令，交给
+//! `theme.rs` 里那批对比度测试（WCAG AA）与 `--selftest` 兜。
+
+use std::path::{Path, PathBuf};
+
+/// 把整行注释抹成等长空格：保留字节偏移，后续 `line_of` 仍指得准。
+///
+/// 只抹「整行以 `//` 开头」的注释。要遮的正是文档注释——`windows.rs` 的模块注释里
+/// 有一句「此前这里写死 `corner_radius(0.0)`」，那是**历史说明**，不是调用点；
+/// 不遮它，这条测试会去审一句注释。
+fn without_line_comments(src: &str) -> String {
+    src.split('\n')
+        .map(|line| {
+            if line.trim_start().starts_with("//") {
+                " ".repeat(line.len())
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 取 `open` 处括号里的**第一个**实参区间（字节偏移，右开）。
+///
+/// 只做括号与字符串配平：足够应付 `corner_radius(…)` 这类单参调用。
+fn first_arg(src: &str, open: usize) -> Option<(usize, usize)> {
+    let b = src.as_bytes();
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let start = open + 1;
+    let mut i = open;
+    while i < b.len() {
+        let c = b[i];
+        if in_str {
+            if c == b'\\' {
+                i += 2;
+                continue;
+            }
+            if c == b'"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'"' => in_str = true,
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some((start, i));
+                }
+            }
+            b',' if depth == 1 => return Some((start, i)),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// 取某个函数定义的函数体文本（按花括号配平）。找不到签名就返回 `None`。
+///
+/// 用来把「这句 token 是不是在这个函数里取的」问清楚，而不是全文件模糊匹配——
+/// 全文件匹配会被隔壁函数的同名调用蒙过去。
+fn fn_body<'a>(src: &'a str, signature: &str) -> Option<&'a str> {
+    let at = src.find(signature)?;
+    let open = src[at..].find('{')? + at;
+    let b = src.as_bytes();
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut i = open;
+    while i < b.len() {
+        let c = b[i];
+        if in_str {
+            if c == b'\\' {
+                i += 2;
+                continue;
+            }
+            if c == b'"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(&src[open..i]);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    entries.sort();
+    for p in entries {
+        if p.is_dir() {
+            rs_files(&p, out);
+        } else if p.extension().is_some_and(|e| e == "rs") {
+            out.push(p);
+        }
+    }
+}
+
+fn line_of(src: &str, at: usize) -> usize {
+    src[..at].bytes().filter(|b| *b == b'\n').count() + 1
+}
+
+fn src_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+}
+
+/// 读一份源码并去掉整行注释；文件不在就当作空串（测试自己会 assert 扫到了东西）。
+fn read_clean(rel: &str) -> String {
+    let p = src_dir().join(rel);
+    let raw = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("读不到 {p:?}：{e}"));
+    without_line_comments(&raw)
+}
+
+#[test]
+fn no_floating_window_is_anchored() {
+    // egui 0.37 的 `Window::anchor` 会把窗口钉死：源码注释原话
+    // "Anchoring also makes the window immovable"。想要「首开在某个位置、之后能拖」，
+    // 唯一正解是 `default_pos`（首帧生效，用户拖动后不再干预）。
+    let mut files = Vec::new();
+    rs_files(&src_dir(), &mut files);
+    assert!(files.len() > 20, "源码目录没扫到东西，路径口径变了");
+
+    let mut hits = Vec::new();
+    for path in &files {
+        let src = without_line_comments(&std::fs::read_to_string(path).expect("读源码"));
+        for (pos, _) in src.match_indices(".anchor(") {
+            hits.push(format!(
+                "{}:{}",
+                path.strip_prefix(src_dir()).unwrap_or(path).display(),
+                line_of(&src, pos)
+            ));
+        }
+    }
+
+    assert!(
+        hits.is_empty(),
+        "这些地方用了 `.anchor(…)`，浮窗会变成拖不动的死窗（{} 处）：\n{}\n\n\
+         改法：`.default_pos(ctx.input(|i| i.viewport_rect()).… )` —— 首开位置照旧，\
+         之后交给用户拖。位置若要跨启动记忆，存 settings.json，别用 anchor 变相实现。",
+        hits.len(),
+        hits.join("\n"),
+    );
+}
+
+#[test]
+fn floating_windows_share_one_title_frame() {
+    // 「四个圆角弧度一致」不是靠逐个窗口调参调出来的，而是靠**只有一个标题条实现**。
+    // 这条测试钉住：windows.rs 里每个 `egui::Window` 都必须挂同一个 `title_frame()`。
+    let src = read_clean("shell/windows.rs");
+    let starts: Vec<usize> = src
+        .match_indices("egui::Window::new(")
+        .map(|(p, _)| p)
+        .collect();
+    assert!(
+        starts.len() >= 3,
+        "windows.rs 里只找到 {} 个浮窗，预期至少 3 个（插件 / 外观与布局 / 快捷键与关于）。\
+         是不是换了构造方式？换了就把这条测试的口径一起改。",
+        starts.len()
+    );
+
+    let mut missing = Vec::new();
+    for (i, start) in starts.iter().enumerate() {
+        let end = starts.get(i + 1).copied().unwrap_or(src.len());
+        let chain = &src[*start..end];
+        // 只看 `.show(` 之前那段 builder 链：`.show()` 的闭包里是窗内容，不算。
+        let head = chain.find(".show(").map(|k| &chain[..k]).unwrap_or(chain);
+        if !head.contains(".title_frame(title_frame())") {
+            missing.push(line_of(&src, *start));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "这些浮窗没挂 `title_frame()`（windows.rs 第 {:?} 行）：标题条会退回默认方角，\
+         压下窗体的圆角，于是整窗四角看起来不一致。",
+        missing
+    );
+}
+
+#[test]
+fn one_radius_for_the_whole_window() {
+    // 标题条的圆角必须由上两角给满、下两角归零（下两角是内容区，给了会是内凹）。
+    // 数值只认 `radius_window()`：写死 `0.0` 就是 UI-1 那个缺陷的原始形态。
+    let src = read_clean("shell/windows.rs");
+
+    let radius_sites: Vec<usize> = src
+        .match_indices("corner_radius(")
+        .map(|(p, _)| p)
+        .collect();
+    assert_eq!(
+        radius_sites.len(),
+        1,
+        "windows.rs 里出现了 {} 处 `corner_radius(`，预期恰好 1 处（在 `title_frame()` 里）。\
+         多出来的那处会让某一个窗口/面板的弧度与整窗对不上——这正是 UI-1 的病因。",
+        radius_sites.len()
+    );
+
+    let open = radius_sites[0] + "corner_radius".len();
+    let arg = first_arg(&src, open).expect("corner_radius 的实参没配平");
+    let arg = src[arg.0..arg.1].trim_end();
+
+    // 弧度是按 `u8` 传的，所以调用点写的是局部变量（`nw: r`）；数值仍必须来自
+    // `radius_window()`——于是断言分两层：外层函数体里有 token，内层四角引同一个值。
+    let body = fn_body(&src, "fn title_frame(").expect("找不到 `title_frame()`");
+    assert!(
+        body.contains("radius_window()"),
+        "标题条的弧度不是从 `radius_window()` 取的。写死的弧度没法跟控件圆角联动，\
+         用户一调外观档位，标题条就会和窗体对不上。"
+    );
+
+    let corner = |side: &str| -> Option<String> {
+        let at = arg.find(&format!("{side}:"))?;
+        let rest = &arg[at + side.len() + 1..];
+        let value: String = rest
+            .chars()
+            .take_while(|c| *c != ',' && *c != '}')
+            .collect();
+        Some(value.trim().to_string())
+    };
+
+    let nw = corner("nw").unwrap_or_else(|| panic!("标题条缺 `nw` 角。实参：{arg}"));
+    let ne = corner("ne").unwrap_or_else(|| panic!("标题条缺 `ne` 角。实参：{arg}"));
+    assert_eq!(
+        nw, ne,
+        "上两角弧度不一致（nw={nw} / ne={ne}）：这就是「四个角看着不一样」的直接来路。"
+    );
+    assert_ne!(
+        nw, "0",
+        "上两角是 0 就是方角标题条压在圆角窗体上——UI-1 的原始缺陷。"
+    );
+
+    for side in ["sw", "se"] {
+        let v = corner(side).unwrap_or_else(|| panic!("标题条缺 `{side}` 角。实参：{arg}"));
+        assert_eq!(
+            v, "0",
+            "标题条的下两角必须归零（接的是方角内容区，给了圆角会内凹），现在是 {v}。"
+        );
+    }
+}
+
+#[test]
+fn floating_windows_use_soft_separators() {
+    // 浮窗里的分节线走 `soft_sep`：左右缩进 12px + 压暗。通栏 `ui.separator()`
+    // 读起来是「把窗口切成两半」，缩进浅线读起来才是「分节」。
+    let src = read_clean("shell/windows.rs");
+
+    let raw: Vec<usize> = src
+        .match_indices("ui.separator()")
+        .map(|(p, _)| p)
+        .collect();
+    assert!(
+        raw.is_empty(),
+        "windows.rs 里还有 {} 处 `ui.separator()`（第 {:?} 行）：通栏实线会把面板读成两截，\
+         与别处的软分割线并排就显脏。换成 `soft_sep(ui)`。",
+        raw.len(),
+        raw.iter().map(|p| line_of(&src, *p)).collect::<Vec<_>>()
+    );
+
+    assert!(
+        src.contains("fn soft_sep("),
+        "`soft_sep` 不见了。分割样式只有这一个实现，删了它各处就会各写各的。"
+    );
+    let uses = src.matches("soft_sep(ui)").count();
+    assert!(
+        uses >= 5,
+        "只在 {} 处用了 `soft_sep(ui)`，浮窗里的分节少得可疑——是不是又混回了别的画法？",
+        uses
+    );
+}
+
+#[test]
+fn corner_radius_arguments_are_theme_tokens() {
+    // 圆角只有三个来源：`0`/`0.0`（显式直角）、`theme::radius_*` 一族、或包成
+    // `egui::CornerRadius { … }` 分角（分角内部的值同样得来自 token）。
+    // 写死 `corner_radius(3.0)` 这类字面量，就是「看起来差不多」的源头。
+    let mut files = Vec::new();
+    rs_files(&src_dir(), &mut files);
+
+    let mut hits = Vec::new();
+    for path in &files {
+        let src = without_line_comments(&std::fs::read_to_string(path).expect("读源码"));
+        for (pos, _) in src.match_indices("corner_radius(") {
+            let open = pos + "corner_radius".len();
+            let Some(span) = first_arg(&src, open) else {
+                continue;
+            };
+            let arg = src[span.0..span.1].trim();
+            let literal = arg
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit() || c == '-');
+            // 直角是有意义的显式选择，放行；其余数字一律要 token。
+            let square = arg == "0" || arg == "0.0";
+            if literal && !square {
+                hits.push(format!(
+                    "{}:{}  corner_radius({arg})",
+                    path.strip_prefix(src_dir()).unwrap_or(path).display(),
+                    line_of(&src, pos),
+                ));
+            }
+        }
+    }
+
+    assert!(
+        hits.is_empty(),
+        "这些圆角写死了数值（{} 处）：\n{}\n\n\
+         改法：控件用 `theme::radius_control()`、窗用 `radius_window()`、容器用 \
+         `radius_panel()`；确实是直角就写明 `0`，让它一眼看出是故意的。",
+        hits.len(),
+        hits.join("\n"),
+    );
+}
+
+#[test]
+fn radius_scale_stays_ordered() {
+    // 三档圆角必须是一个递增序列：窗 > 容器 > 控件。任何一档被改成常量或写反，
+    // 组合出来的界面就会「窗口比按钮还方」。
+    use aevum_ui::theme;
+    let control = theme::radius_control();
+    let panel = theme::radius_panel();
+    let window = theme::radius_window();
+    assert!(control >= 0.0, "控件圆角不能是负的：{control}");
+    assert!(
+        control < panel && panel < window,
+        "圆角刻度失序：控件 {control} / 容器 {panel} / 窗 {window}，应为 控件 < 容器 < 窗"
+    );
+}
+
+#[test]
+fn type_scale_stays_ordered() {
+    // 字号同口径：小 < 标签 < 正文 < 标题。有一档写反，面板就会「说明文字比标题还大」。
+    use aevum_ui::theme;
+    let s = theme::SIZE_SMALL;
+    let l = theme::SIZE_LABEL;
+    let b = theme::SIZE_BODY;
+    let h = theme::SIZE_HEADING;
+    assert!(
+        s < l && l < b && b < h,
+        "字号刻度失序：小 {s} / 标签 {l} / 正文 {b} / 标题 {h}"
+    );
+}
+
+#[test]
+fn appearance_entry_point_stays_in_the_top_bar() {
+    // UI-7 的教训：语言与外观**功能早就有**，但入口只挂在「文件 → 外观」之类的地方，
+    // 用户找不到，于是反馈成「承诺的功能没做」。这条钉住顶栏那枚齿轮别再被收走。
+    let src = read_clean("shell/menu.rs");
+    assert!(
+        src.contains("Glyph::Gear"),
+        "顶栏常驻的设置齿轮不见了。它是外观 / 语言 / 主题的唯一可见入口——\
+         撤回它，那些功能就等于不存在。"
+    );
+    let gear = src.find("Glyph::Gear").expect("刚断言过");
+    let tail = &src[gear..];
+    let window_end = tail.find("\n}");
+    let scope = window_end.map(|k| &tail[..k]).unwrap_or(tail);
+    assert!(
+        scope.contains("look_open = true"),
+        "齿轮还在，但点了不开外观窗（附近找不到 `look_open = true`）。"
+    );
+}
