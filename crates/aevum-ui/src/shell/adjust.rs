@@ -249,9 +249,12 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         }
         if state.issues.len() > 6 {
             ui.label(
-                RichText::new(format!("另有 {} 条…", state.issues.len() - 6))
-                    .size(SIZE_SMALL)
-                    .color(dim()),
+                RichText::new(crate::i18n::tr_fmt(
+                    "另有 {} 条…",
+                    &[&(state.issues.len() - 6)],
+                ))
+                .size(SIZE_SMALL)
+                .color(dim()),
             );
         }
     }
@@ -323,7 +326,7 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
                 kv(
                     ui,
                     "结论",
-                    format!("{} 处", state.qa_findings.len()),
+                    crate::i18n::tr_fmt("{} 处", &[&state.qa_findings.len()]),
                     danger(),
                 );
                 let counts = qa::count_by_kind(&state.qa_findings);
@@ -359,9 +362,12 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
                 }
                 if state.qa_findings.len() > 60 {
                     ui.label(
-                        RichText::new(format!("另有 {} 条…", state.qa_findings.len() - 60))
-                            .size(SIZE_SMALL)
-                            .color(dim()),
+                        RichText::new(crate::i18n::tr_fmt(
+                            "另有 {} 条…",
+                            &[&(state.qa_findings.len() - 60)],
+                        ))
+                        .size(SIZE_SMALL)
+                        .color(dim()),
                     );
                 }
                 note(ui, "点一行跳到那一帧。");
@@ -504,9 +510,12 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
             }
             if report.issues.len() > 4 {
                 ui.label(
-                    RichText::new(format!("另有 {} 条…", report.issues.len() - 4))
-                        .size(SIZE_SMALL)
-                        .color(dim()),
+                    RichText::new(crate::i18n::tr_fmt(
+                        "另有 {} 条…",
+                        &[&(report.issues.len() - 4)],
+                    ))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
                 );
             }
         } else {
@@ -665,7 +674,7 @@ fn copies_group(state: &mut AppState, ui: &mut Ui) {
                 apply = Some(name.clone());
             }
             ui.label(
-                RichText::new(format!("关键帧 {keys}"))
+                RichText::new(crate::i18n::tr_fmt("关键帧 {}", &[&keys]))
                     .size(SIZE_CHROME_LABEL)
                     .color(dim()),
             );
@@ -759,7 +768,7 @@ fn hdr_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     merge_progress_row(state, ui, MergeKind::Hdr);
     if let Some(last) = state.hdr_last.clone() {
         ui.label(
-            RichText::new(format!("已写出 {last}"))
+            RichText::new(crate::i18n::tr_fmt("已写出 {}", &[&last]))
                 .size(SIZE_SMALL)
                 .color(accent()),
         );
@@ -814,7 +823,7 @@ fn pano_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     merge_progress_row(state, ui, MergeKind::Pano);
     if let Some(last) = state.pano_last.clone() {
         ui.label(
-            RichText::new(format!("已写出 {last}"))
+            RichText::new(crate::i18n::tr_fmt("已写出 {}", &[&last]))
                 .size(SIZE_SMALL)
                 .color(accent()),
         );
@@ -1288,7 +1297,7 @@ fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
         {
             let args = serde_json::json!({"kind":"dcp","auto":true});
             if let Err(e) = state.run_ui_command(ctx, "profile.set", &args) {
-                state.error = Some(format!("匹配相机配置失败：{e}"));
+                state.error = Some(crate::i18n::tr_fmt("匹配相机配置失败：{}", &[&e]));
             }
         }
         if ui.button(crate::i18n::t!("选文件")).clicked()
@@ -1298,13 +1307,13 @@ fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
         {
             let args = serde_json::json!({"kind":"dcp","path": path.display().to_string()});
             if let Err(e) = state.run_ui_command(ctx, "profile.set", &args) {
-                state.error = Some(format!("套用相机配置失败：{e}"));
+                state.error = Some(crate::i18n::tr_fmt("套用相机配置失败：{}", &[&e]));
             }
         }
         if dcp_active && ui.button(crate::i18n::t!("清除")).clicked() {
             let args = serde_json::json!({"kind":"dcp","clear":true});
             if let Err(e) = state.run_ui_command(ctx, "profile.set", &args) {
-                state.error = Some(format!("清除相机配置失败：{e}"));
+                state.error = Some(crate::i18n::tr_fmt("清除相机配置失败：{}", &[&e]));
             }
         }
     });
@@ -1326,7 +1335,7 @@ fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
         {
             let args = serde_json::json!({"kind":"lcp","auto":true});
             if let Err(e) = state.run_ui_command(ctx, "profile.set", &args) {
-                state.error = Some(format!("匹配镜头配置失败：{e}"));
+                state.error = Some(crate::i18n::tr_fmt("匹配镜头配置失败：{}", &[&e]));
             }
         }
         if ui.button(crate::i18n::t!("选文件")).clicked()
@@ -1336,13 +1345,13 @@ fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
         {
             let args = serde_json::json!({"kind":"lcp","path": path.display().to_string()});
             if let Err(e) = state.run_ui_command(ctx, "profile.set", &args) {
-                state.error = Some(format!("套用镜头配置失败：{e}"));
+                state.error = Some(crate::i18n::tr_fmt("套用镜头配置失败：{}", &[&e]));
             }
         }
         if state.params.lcp_profile.is_some() && ui.button(crate::i18n::t!("清除")).clicked() {
             let args = serde_json::json!({"kind":"lcp","clear":true});
             if let Err(e) = state.run_ui_command(ctx, "profile.set", &args) {
-                state.error = Some(format!("清除镜头配置失败：{e}"));
+                state.error = Some(crate::i18n::tr_fmt("清除镜头配置失败：{}", &[&e]));
             }
         }
     });
@@ -1497,7 +1506,7 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         let spec = if state.output_w == 0 || state.output_h == 0 {
             state
                 .resolution
-                .map(|(w, h)| format!("原生 {w} × {h}"))
+                .map(|(w, h)| crate::i18n::tr_fmt("原生 {} × {}", &[&w, &h]))
                 .unwrap_or_else(|| "原生".to_owned())
         } else {
             format!("{} × {}", state.output_w, state.output_h)
@@ -1939,7 +1948,10 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                     kv(
                         ui,
                         "变速后",
-                        format!("{} 帧 · {:.1} 秒", frames, seconds),
+                        crate::i18n::tr_fmt(
+                            "{} 帧 · {} 秒",
+                            &[&frames, &format!("{:.1}", seconds)],
+                        ),
                         accent(),
                     );
                 }
@@ -2008,7 +2020,7 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             kv(
                 ui,
                 "画布",
-                format!("拖 {} 那一端", state.motion_box.cn()),
+                crate::i18n::tr_fmt("拖 {} 那一端", &[&crate::i18n::tr(state.motion_box.cn())]),
                 accent(),
             );
         }
@@ -2126,10 +2138,10 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                 };
                 let text = match stage {
                     aevum_core::export::Stage::Frames => {
-                        format!("写帧 {done} / {total}")
+                        crate::i18n::tr_fmt("写帧 {} / {}", &[&done, &total])
                     }
                     aevum_core::export::Stage::Encode => {
-                        format!("编码 {done} / {total}")
+                        crate::i18n::tr_fmt("编码 {} / {}", &[&done, &total])
                     }
                 };
                 ui.add(
@@ -2145,9 +2157,12 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         if let Some(path) = &state.last_saved {
             ui.add(
                 egui::Label::new(
-                    RichText::new(format!("已保存 · {}", theme::ellipsis(path, 34)))
-                        .size(SIZE_SMALL)
-                        .color(ok()),
+                    RichText::new(crate::i18n::tr_fmt(
+                        "已保存 · {}",
+                        &[&theme::ellipsis(path, 34)],
+                    ))
+                    .size(SIZE_SMALL)
+                    .color(ok()),
                 )
                 .wrap(),
             );
@@ -2157,8 +2172,11 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             .add_enabled(
                 !busy,
                 egui::Button::new(
-                    RichText::new(format!("导出当前帧 · {}", state.render_format.cn()))
-                        .size(SIZE_SMALL),
+                    RichText::new(crate::i18n::tr_fmt(
+                        "导出当前帧 · {}",
+                        &[&crate::i18n::tr(state.render_format.cn())],
+                    ))
+                    .size(SIZE_SMALL),
                 )
                 .min_size(Vec2::new(w, 24.0)),
             )
@@ -2226,17 +2244,23 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                 };
                 ui.add(
                     egui::ProgressBar::new(frac).desired_height(4.0).text(
-                        RichText::new(format!("第 {current}/{count} 段 · {phase} {done}/{total}"))
-                            .size(SIZE_SMALL),
+                        RichText::new(crate::i18n::tr_fmt(
+                            "第 {}/{} 段 · {} {}/{}",
+                            &[&current, &count, &phase, &done, &total],
+                        ))
+                        .size(SIZE_SMALL),
                     ),
                 );
             }
         }
         ui.add(
             egui::Label::new(
-                RichText::new(format!(
+                RichText::new(crate::i18n::tr_fmt(
                     "队列文件 · {}",
-                    theme::ellipsis(&state.queue_path.display().to_string(), 30)
+                    &[&theme::ellipsis(
+                        &state.queue_path.display().to_string(),
+                        30,
+                    )],
                 ))
                 .size(SIZE_SMALL)
                 .color(dim()),

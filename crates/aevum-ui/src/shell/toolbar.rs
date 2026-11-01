@@ -709,7 +709,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                         .selectable(false)
                         .sense(Sense::click()),
                 )
-                .on_hover_text(format!("{first}\n（点击消除这条提示）"));
+                .on_hover_text(crate::i18n::tr_fmt("{}\n（点击消除这条提示）", &[&first]));
             // 点一下消一条：还有下一条就顶上来，全消完这一格（连同分隔点）一起消失。
             if resp.clicked() {
                 state.notices.remove(0);
@@ -749,17 +749,26 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                 0.0
             };
             ui.label(
-                RichText::new(format!("{what}中·{stage} ({done}/{total} {pct:.0}%)"))
-                    .size(SIZE_SMALL)
-                    .monospace()
-                    .color(accent()),
+                RichText::new(crate::i18n::tr_fmt(
+                    "{}中·{} ({}/{} {}%)",
+                    &[
+                        &crate::i18n::tr(what),
+                        &crate::i18n::tr(stage),
+                        &done,
+                        &total,
+                        &format!("{pct:.0}"),
+                    ],
+                ))
+                .size(SIZE_SMALL)
+                .monospace()
+                .color(accent()),
             );
             // 续跑跳过的那几帧由导出线程数完写进原子量，所以这一格是晚一拍才出现的。
             let skipped = state.export_skipped();
             if skipped > 0 {
                 ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
                 ui.label(
-                    RichText::new(format!("续跑跳过 {skipped}"))
+                    RichText::new(crate::i18n::tr_fmt("续跑跳过 {}", &[&skipped]))
                         .size(SIZE_SMALL)
                         .monospace()
                         .color(muted()),
@@ -827,14 +836,18 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| sidecar.display().to_string());
             let apply = ui.add(egui::Button::new(
-                RichText::new(format!("应用边车 {}", theme::ellipsis(&name, 28))).size(SIZE_SMALL),
+                RichText::new(crate::i18n::tr_fmt(
+                    "应用边车 {}",
+                    &[&theme::ellipsis(&name, 28)],
+                ))
+                .size(SIZE_SMALL),
             ));
             if apply.clicked() {
                 state.apply_sidecar_hint();
             }
-            apply.on_hover_text(format!(
+            apply.on_hover_text(crate::i18n::tr_fmt(
                 "检测到 Lightroom 边车，点击套用：{}",
-                sidecar.display()
+                &[&sidecar.display()],
             ));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

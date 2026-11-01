@@ -31,11 +31,24 @@ import sys
 from pathlib import Path
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import i18n_table
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "crates" / "aevum-ui" / "src"
 EN_FILE = SRC / "i18n_en.rs"
 
 HAN = re.compile(r"[\u4e00-\u9fff]")
+
+
+def table_key(body: str) -> str:
+    """字面量内容 → 表里的键。
+
+    表侧存的是**反转义之后**的字符串（`i18n_table.parse` 走 `unescape`），所以这里
+    也必须反转义：`"{}\\n双击打开这个目录"` 在源码里是反斜杠 + n，运行期却是真正的
+    换行，两边口径不一致就会把已经译过的条目误报成缺译。
+    """
+    return i18n_table.unescape('"' + body + '"')
 
 # 显式标记：宏调用的字面量。`t!(` 与字符串之间允许换行（rustfmt 会拆行）。
 T_MACRO = re.compile(r'\bt!\(\s*"([^"\\]*)"', re.S)
@@ -96,18 +109,22 @@ def collect() -> dict[str, set[str]]:
             for m in T_MACRO.finditer(line):
                 body = m.group(1)
                 if HAN.search(body):
-                    found.setdefault(body, set()).add(f"{rel}:{lineno}")
+                    found.setdefault(table_key(body), set()).add(f"{rel}:{lineno}")
             for m in TR_FMT.finditer(line):
                 body = m.group(1)
                 if HAN.search(body):
-                    found.setdefault(body, set()).add(f"{rel}:{lineno} (tr_fmt)")
+                    found.setdefault(table_key(body), set()).add(
+                        f"{rel}:{lineno} (tr_fmt)"
+                    )
             # 宏已经包住的就不再按辅助函数重复记一遍（同一行两种情况都可能出现）。
             for name, pats in AUX_PATTERNS:
                 for pat in pats:
                     for m in pat.finditer(line):
                         body = m.group(1)
                         if HAN.search(body):
-                            found.setdefault(body, set()).add(f"{rel}:{lineno} ({name})")
+                            found.setdefault(table_key(body), set()).add(
+                                f"{rel}:{lineno} ({name})"
+                            )
     return found
 
 

@@ -39,7 +39,7 @@ pub(super) fn import_xmp_dialog(state: &mut AppState) {
         return;
     };
     if let Err(e) = state.import_xmp_preset(&path) {
-        state.error = Some(format!("导入 XMP 失败：{e}"));
+        state.error = Some(crate::i18n::tr_fmt("导入 XMP 失败：{}", &[&e]));
     }
 }
 
@@ -70,7 +70,7 @@ pub(super) fn export_xmp_dialog(state: &mut AppState) {
     };
     // 保存对话框自己会问是否覆盖，这里视为用户已确认。
     if let Err(e) = state.export_xmp_preset(&path, true) {
-        state.error = Some(format!("导出 XMP 失败：{e}"));
+        state.error = Some(crate::i18n::tr_fmt("导出 XMP 失败：{}", &[&e]));
     }
 }
 
@@ -112,7 +112,7 @@ pub(super) fn import_look_dialog(state: &mut AppState, ctx: &Context) {
     };
     let args = serde_json::json!({ "path": path.display().to_string() });
     if let Err(e) = state.run_ui_command(ctx, "cube.import", &args) {
-        state.error = Some(format!("导入外观失败：{e}"));
+        state.error = Some(crate::i18n::tr_fmt("导入外观失败：{}", &[&e]));
     }
 }
 
@@ -147,6 +147,6 @@ pub(super) fn export_look_dialog(state: &mut AppState, ctx: &Context) {
         "confirm": true,
     });
     if let Err(e) = state.run_ui_command(ctx, "cube.export", &args) {
-        state.error = Some(format!("导出外观失败：{e}"));
+        state.error = Some(crate::i18n::tr_fmt("导出外观失败：{}", &[&e]));
     }
 }

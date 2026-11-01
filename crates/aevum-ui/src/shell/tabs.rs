@@ -134,7 +134,7 @@ pub(super) fn info_tab(state: &mut AppState, ui: &mut Ui) {
                     kv(
                         ui,
                         "原始方向",
-                        format!("{} · 已转正", e.orientation),
+                        crate::i18n::tr_fmt("{} · 已转正", &[&e.orientation]),
                         muted(),
                     );
                 }
@@ -238,7 +238,7 @@ pub(super) fn info_tab(state: &mut AppState, ui: &mut Ui) {
                     });
                 if resp.clicked() && aevum_core::raw::set_demosaic_method(name) {
                     state.preview_dirty = true;
-                    state.status = format!("去马赛克已切换：{label}");
+                    state.status = crate::i18n::tr_fmt("去马赛克已切换：{}", &[&label]);
                 }
             }
         });
@@ -406,7 +406,7 @@ pub(super) fn keys_tab(state: &mut AppState, ui: &mut Ui) {
             p.text(
                 Pos2::new(rect.left() + 18.0, rect.center().y),
                 Align2::LEFT_CENTER,
-                format!("帧 {:04}", i + 1),
+                crate::i18n::tr_fmt("帧 {}", &[&format!("{:04}", i + 1)]),
                 font(SIZE_SMALL),
                 text(),
             );
@@ -474,8 +474,8 @@ pub(super) fn ai_tab(state: &mut AppState, ui: &mut Ui) {
             let line = state.ai_input.clone();
             let id = line.split_whitespace().next().unwrap_or("").to_owned();
             match state.run_ai_line(&ctx, &line) {
-                Ok(_) => state.status = format!("命令已执行：{id}"),
-                Err(e) => state.status = format!("命令失败：{e}"),
+                Ok(_) => state.status = crate::i18n::tr_fmt("命令已执行：{}", &[&id]),
+                Err(e) => state.status = crate::i18n::tr_fmt("命令失败：{}", &[&e]),
             }
         }
         note(ui, "格式：命令 ID + 可选 JSON 参数。");
@@ -532,9 +532,12 @@ pub(super) fn ai_tab(state: &mut AppState, ui: &mut Ui) {
                 if !file.root.is_empty() {
                     ui.add(
                         egui::Label::new(
-                            RichText::new(format!("序列 {}", theme::ellipsis(&file.root, 38)))
-                                .size(SIZE_SMALL)
-                                .color(dim()),
+                            RichText::new(crate::i18n::tr_fmt(
+                                "序列 {}",
+                                &[&theme::ellipsis(&file.root, 38)],
+                            ))
+                            .size(SIZE_SMALL)
+                            .color(dim()),
                         )
                         .wrap(),
                     );
@@ -728,9 +731,9 @@ pub(super) fn history_tab(state: &mut AppState, ui: &mut Ui) {
     }
     note(
         ui,
-        &format!(
+        &crate::i18n::tr_fmt(
             "内存中保留最近 {} 步，换序列后重新开始。",
-            history::HISTORY_LIMIT
+            &[&history::HISTORY_LIMIT],
         ),
     );
 }

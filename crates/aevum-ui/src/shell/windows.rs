@@ -91,7 +91,7 @@ pub(super) fn plugin_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     if bad > 0 {
         ui.label(
-            RichText::new(format!("{bad} 份清单有问题"))
+            RichText::new(crate::i18n::tr_fmt("{} 份清单有问题", &[&bad]))
                 .size(SIZE_SMALL)
                 .color(danger()),
         );
@@ -113,7 +113,7 @@ pub(super) fn plugin_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 if let Err(e) =
                     state.run_ui_command(ctx, cmd, &serde_json::json!({"confirm": true}))
                 {
-                    state.error = Some(format!("{label} 没能执行：{e}"));
+                    state.error = Some(crate::i18n::tr_fmt("{} 没能执行：{}", &[&label, &e]));
                 }
             }
             None => {
@@ -379,7 +379,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                 &root,
                 aevum_core::plugin::Source::User,
             ));
-        state.status = format!("已重新扫描 {}", root.display());
+        state.status = crate::i18n::tr_fmt("已重新扫描 {}", &[&root.display()]);
     }
 }
 

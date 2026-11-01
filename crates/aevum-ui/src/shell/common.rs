@@ -803,9 +803,9 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
                 Stroke::new(1.0, accent().gamma_multiply(0.6)),
             );
         }
-        let _ = reset_resp.clone().on_hover_text(format!(
+        let _ = reset_resp.clone().on_hover_text(crate::i18n::tr_fmt(
             "点一下复位到 {}",
-            theme::number(default, decimals, signed)
+            &[&theme::number(default, decimals, signed)],
         ));
     }
     // 规格表自带的悬停说明（如手动噪声σ的低段死区提示）。挂在整行响应上，

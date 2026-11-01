@@ -79,7 +79,7 @@ fn roots_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                         .sense(Sense::click()),
                 )
                 .on_hover_text(crate::i18n::t!("点开看集合成员"));
-            ui.label(egui::RichText::new(format!("{count} 张")).weak());
+            ui.label(egui::RichText::new(crate::i18n::tr_fmt("{} 张", &[&count])).weak());
             if open.clicked() {
                 state.lib_col = Some(i);
                 state.lib_sel = None;
@@ -147,7 +147,10 @@ fn roots_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                                 .truncate()
                                 .sense(Sense::click()),
                         )
-                        .on_hover_text(format!("{}\n点开看这个目录的编目", dir.display()));
+                        .on_hover_text(crate::i18n::tr_fmt(
+                            "{}\n点开看这个目录的编目",
+                            &[&dir.display()],
+                        ));
                     if !summary.is_empty() {
                         ui.label(egui::RichText::new(&summary).weak());
                     }
@@ -200,7 +203,10 @@ fn lib_filter_bar(
                     }))
                     .frame(false),
                 )
-                .on_hover_text(format!("只看 ≥{s} 星；点已亮的星退回一档"));
+                .on_hover_text(crate::i18n::tr_fmt(
+                    "只看 ≥{} 星；点已亮的星退回一档",
+                    &[&s],
+                ));
             if resp.clicked() {
                 state.lib_filter.stars = if state.lib_filter.stars == s {
                     s - 1
@@ -226,7 +232,10 @@ fn lib_filter_bar(
             } else {
                 p.circle_stroke(r.center(), 4.5, Stroke::new(1.0, color.gamma_multiply(0.7)));
             }
-            let resp = resp.on_hover_text(format!("只看{}色标", LABEL_NAMES[l as usize]));
+            let resp = resp.on_hover_text(crate::i18n::tr_fmt(
+                "只看{}色标",
+                &[&LABEL_NAMES[l as usize]],
+            ));
             if resp.clicked() {
                 state.lib_filter.label = if on { 0 } else { l };
             }
@@ -292,7 +301,7 @@ fn lib_meta_panel(state: &mut AppState, ui: &mut Ui, index: usize) {
             let filled = state.lib_meta.present().len();
             if filled > 0 {
                 ui.label(
-                    RichText::new(format!("已填 {filled} 项"))
+                    RichText::new(crate::i18n::tr_fmt("已填 {} 项", &[&filled]))
                         .size(SIZE_SMALL)
                         .color(accent()),
                 );
@@ -398,9 +407,12 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
     if !state.lib_checked.is_empty() {
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new(format!("已选 {} 张", state.lib_checked.len()))
-                    .size(11.0)
-                    .color(accent()),
+                egui::RichText::new(crate::i18n::tr_fmt(
+                    "已选 {} 张",
+                    &[&state.lib_checked.len()],
+                ))
+                .size(11.0)
+                .color(accent()),
             );
             for i in 0..state.lib_cols.len() {
                 let name = state.lib_cols[i].name.clone();
@@ -412,7 +424,7 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
                         .map(|e| e.path.clone())
                         .collect();
                     let added = state.lib_collection_put_many(i, &paths);
-                    state.status = format!("「{name}」新收 {added} 张");
+                    state.status = crate::i18n::tr_fmt("「{}」新收 {} 张", &[&name, &added]);
                 }
             }
             if state.lib_checked.len() >= 2
@@ -424,7 +436,7 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
                     .clicked()
             {
                 match state.lib_stack_targets() {
-                    Ok(n) => state.status = format!("已并成一叠（{n} 张）"),
+                    Ok(n) => state.status = crate::i18n::tr_fmt("已并成一叠（{} 张）", &[&n]),
                     Err(e) => state.error = Some(e),
                 }
             }
@@ -518,7 +530,10 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
                     menu_style(ui);
                     lib_row_menu(state, ui, index, &f2, &targets, &keywords);
                 });
-                resp.on_hover_text(format!("{}\n双击打开这个目录", f.path.display()));
+                resp.on_hover_text(crate::i18n::tr_fmt(
+                    "{}\n双击打开这个目录",
+                    &[&f.path.display()],
+                ));
             }
         });
 }
@@ -534,7 +549,7 @@ fn lib_row_menu(
     keywords: &[(String, usize)],
 ) {
     let title = if frames.len() > 1 {
-        format!("{} 等 {} 张", f.name, frames.len())
+        crate::i18n::tr_fmt("{} 等 {} 张", &[&f.name, &frames.len()])
     } else {
         f.name.clone()
     };
@@ -586,7 +601,7 @@ fn lib_row_menu(
         }
     });
     for stars in 1..=5u8 {
-        if ui.button(format!("{stars} 星")).clicked() {
+        if ui.button(crate::i18n::tr_fmt("{} 星", &[&stars])).clicked() {
             lib_apply_frames(
                 state,
                 root,
@@ -629,7 +644,7 @@ fn lib_row_menu(
     ui.separator();
     for l in 1..=4u8 {
         if ui
-            .button(format!("{}色标", LABEL_NAMES[l as usize]))
+            .button(crate::i18n::tr_fmt("{}色标", &[&LABEL_NAMES[l as usize]]))
             .clicked()
         {
             lib_apply_frames(
@@ -648,7 +663,7 @@ fn lib_row_menu(
     ui.menu_button(crate::i18n::t!("堆叠"), |ui| {
         if frames.len() >= 2 {
             if ui
-                .button(format!("把这 {} 张并成一叠", frames.len()))
+                .button(crate::i18n::tr_fmt("把这 {} 张并成一叠", &[&frames.len()]))
                 .clicked()
             {
                 let r = state.lib_stack_create(root, frames);
@@ -663,7 +678,9 @@ fn lib_row_menu(
             );
         }
         if let Some(s) = f.stack
-            && ui.button(format!("拆散第 {} 叠", s + 1)).clicked()
+            && ui
+                .button(crate::i18n::tr_fmt("拆散第 {} 叠", &[&(s + 1)]))
+                .clicked()
         {
             let r = state.lib_stack_dissolve(root, s);
             lib_stack_act(state, r, "已拆散这一叠");
@@ -704,7 +721,10 @@ fn lib_stack_act(state: &mut AppState, r: Result<Vec<Vec<usize>>, String>, what:
     match r {
         Ok(stacks) => {
             let frames: usize = stacks.iter().map(|g| g.len()).sum();
-            state.status = format!("{what}：这个目录现在 {} 叠共 {frames} 张", stacks.len());
+            state.status = crate::i18n::tr_fmt(
+                "{}：这个目录现在 {} 叠共 {} 张",
+                &[&what, &stacks.len(), &frames],
+            );
         }
         Err(e) => state.error = Some(e),
     }
@@ -722,7 +742,9 @@ fn collection_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             state.lib_col = None;
         }
         ui.add(egui::Label::new(egui::RichText::new(&collection.name).strong()).truncate());
-        ui.label(egui::RichText::new(format!("{} 张", collection.files.len())).weak());
+        ui.label(
+            egui::RichText::new(crate::i18n::tr_fmt("{} 张", &[&collection.files.len()])).weak(),
+        );
     });
     ui.add_space(4.0);
     let rows = state.lib_collection_rows(col);
@@ -776,7 +798,7 @@ fn collection_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     }
                     ui.separator();
                     for stars in 1..=5u8 {
-                        if ui.button(format!("{stars} 星")).clicked() {
+                        if ui.button(crate::i18n::tr_fmt("{} 星", &[&stars])).clicked() {
                             if let Some(root) = root_of {
                                 lib_apply(
                                     state,
@@ -929,7 +951,10 @@ fn library_row(
                     );
                     let verb = if badge.open { "收起" } else { "展开" };
                     let clicked = bresp.clicked();
-                    bresp.on_hover_text(format!("{verb}这一叠（共 {} 张）", badge.count));
+                    bresp.on_hover_text(crate::i18n::tr_fmt(
+                        "{}这一叠（共 {} 张）",
+                        &[&verb, &badge.count],
+                    ));
                     if clicked && !state.lib_stack_open.insert((root, s)) {
                         state.lib_stack_open.remove(&(root, s));
                     }
@@ -949,7 +974,9 @@ fn library_row(
                         },
                         if s <= f.rating { star() } else { dim() },
                     );
-                    if resp.on_hover_text(format!("评 {s} 星")).clicked()
+                    if resp
+                        .on_hover_text(crate::i18n::tr_fmt("评 {} 星", &[&s]))
+                        .clicked()
                         && let Some(root) = root
                     {
                         let rating = if f.rating == s { 0 } else { s };

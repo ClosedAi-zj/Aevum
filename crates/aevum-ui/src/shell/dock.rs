@@ -395,9 +395,15 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
         "高光裁切罩：关"
     };
     ui.interact(shadow_chip, ui.scope_id().with("st"), Sense::hover())
-        .on_hover_text(format!("{shadow_tip}（J 键循环开关）"));
+        .on_hover_text(crate::i18n::tr_fmt(
+            "{}（J 键循环开关）",
+            &[&crate::i18n::tr(shadow_tip)],
+        ));
     ui.interact(high_chip, ui.scope_id().with("ht"), Sense::hover())
-        .on_hover_text(format!("{high_tip}（J 键循环开关）"));
+        .on_hover_text(crate::i18n::tr_fmt(
+            "{}（J 键循环开关）",
+            &[&crate::i18n::tr(high_tip)],
+        ));
 }
 
 /// 直方图与推子读数：三色柱、白色亮度折线、改动后才变蓝的数值。

@@ -310,9 +310,16 @@ fn curves(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         let m = state.metrics.get(i).copied().flatten();
         let off = state.offset_at(i);
         let text = if let Some(m) = m {
-            format!("帧 {:04} · {:.0} · {off:+.2} EV", i + 1, m.mean * 255.0)
+            crate::i18n::tr_fmt(
+                "帧 {} · {} · {} EV",
+                &[
+                    &format!("{:04}", i + 1),
+                    &format!("{:.0}", m.mean * 255.0),
+                    &format!("{off:+.2}"),
+                ],
+            )
         } else {
-            format!("帧 {:04} · 缺帧", i + 1)
+            crate::i18n::tr_fmt("帧 {} · 缺帧", &[&format!("{:04}", i + 1)])
         };
         let galley = p.layout_no_wrap(text.clone(), mono(SIZE_SMALL), palette().text);
         let bg = Rect::from_min_size(
@@ -492,12 +499,15 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                         cell_resp.context_menu(|ui| {
                             menu_style(ui);
                             ui.label(
-                                RichText::new(format!("帧 {:04}", i + 1))
-                                    .size(SIZE_SMALL)
-                                    .color(dim()),
+                                RichText::new(crate::i18n::tr_fmt(
+                                    "帧 {}",
+                                    &[&format!("{:04}", i + 1)],
+                                ))
+                                .size(SIZE_SMALL)
+                                .color(dim()),
                             );
                             for stars in 1..=5u8 {
-                                if ui.button(format!("{stars} 星")).clicked() {
+                                if ui.button(crate::i18n::tr_fmt("{} 星", &[&stars])).clicked() {
                                     state.set_rating(i, stars);
                                     ui.close();
                                 }

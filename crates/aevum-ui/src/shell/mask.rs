@@ -517,7 +517,7 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.label(
-                RichText::new(format!("{count} 张"))
+                RichText::new(crate::i18n::tr_fmt("{} 张", &[&count]))
                     .size(SIZE_SMALL)
                     .color(dim()),
             );
@@ -680,9 +680,12 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.label(
-                RichText::new(format!("第 {} 张 · 形状 {}", sel + 1, state.mask_comp + 1))
-                    .size(SIZE_SMALL)
-                    .color(dim()),
+                RichText::new(crate::i18n::tr_fmt(
+                    "第 {} 张 · 形状 {}",
+                    &[&(sel + 1), &(state.mask_comp + 1)],
+                ))
+                .size(SIZE_SMALL)
+                .color(dim()),
             );
         });
     });

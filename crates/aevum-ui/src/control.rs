@@ -68,25 +68,27 @@ impl ControlFile {
         let dir = path
             .parent()
             .ok_or_else(|| "control.json 路径没有父目录".to_owned())?;
-        fs::create_dir_all(dir).map_err(|e| format!("创建护带目录失败：{e}"))?;
-        let text =
-            serde_json::to_string_pretty(self).map_err(|e| format!("序列化控制文件失败：{e}"))?;
+        fs::create_dir_all(dir).map_err(|e| crate::i18n::tr_fmt("创建护带目录失败：{}", &[&e]))?;
+        let text = serde_json::to_string_pretty(self)
+            .map_err(|e| crate::i18n::tr_fmt("序列化控制文件失败：{}", &[&e]))?;
         let tmp = dir.join(format!(".control.json.{}.tmp", std::process::id()));
-        fs::write(&tmp, text.as_bytes()).map_err(|e| format!("写控制文件失败：{e}"))?;
+        fs::write(&tmp, text.as_bytes())
+            .map_err(|e| crate::i18n::tr_fmt("写控制文件失败：{}", &[&e]))?;
         match fs::rename(&tmp, path) {
             Ok(()) => Ok(()),
             Err(e) => {
                 let _ = fs::remove_file(&tmp);
-                Err(format!("替换控制文件失败：{e}"))
+                Err(crate::i18n::tr_fmt("替换控制文件失败：{}", &[&e]))
             }
         }
     }
 
     /// 读回控制文件；错误文案直接给 attach 模式用。
     pub fn read(path: &Path) -> Result<Self, String> {
-        let text = fs::read_to_string(path)
-            .map_err(|e| format!("读取控制文件失败（{}）：{e}", path.display()))?;
-        serde_json::from_str(&text).map_err(|e| format!("控制文件格式不对：{e}"))
+        let text = fs::read_to_string(path).map_err(|e| {
+            crate::i18n::tr_fmt("读取控制文件失败（{}）：{}", &[&path.display(), &e])
+        })?;
+        serde_json::from_str(&text).map_err(|e| crate::i18n::tr_fmt("控制文件格式不对：{}", &[&e]))
     }
 }
 
@@ -640,14 +642,14 @@ impl ControlServer {
     /// 绑定随机端口、写 control.json、起接受连接的线程。
     pub fn start(root: &Path, executor: Arc<dyn CommandExecutor>) -> Result<Self, String> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .map_err(|e| format!("控制服务无法绑定 127.0.0.1：{e}"))?;
+            .map_err(|e| crate::i18n::tr_fmt("控制服务无法绑定 127.0.0.1：{}", &[&e]))?;
         let port = listener
             .local_addr()
-            .map_err(|e| format!("读取控制端口失败：{e}"))?
+            .map_err(|e| crate::i18n::tr_fmt("读取控制端口失败：{}", &[&e]))?
             .port();
         listener
             .set_nonblocking(true)
-            .map_err(|e| format!("控制服务设置非阻塞失败：{e}"))?;
+            .map_err(|e| crate::i18n::tr_fmt("控制服务设置非阻塞失败：{}", &[&e]))?;
 
         let file = ControlFile {
             port,
@@ -684,7 +686,7 @@ impl ControlServer {
                     }
                 }
             })
-            .map_err(|e| format!("控制服务线程启动失败：{e}"))?;
+            .map_err(|e| crate::i18n::tr_fmt("控制服务线程启动失败：{}", &[&e]))?;
 
         if let Err(e) = file.write(&path) {
             shutdown.store(true, Ordering::Relaxed);
@@ -823,7 +825,7 @@ pub fn handle_http<R: BufRead, W: Write>(
                 return write_message(
                     out,
                     413,
-                    &format!("请求体 {len} 字节，超过上限 {MAX_BODY} 字节"),
+                    &crate::i18n::tr_fmt("请求体 {} 字节，超过上限 {} 字节", &[&len, &MAX_BODY]),
                 );
             }
             let mut body = vec![0u8; len];
@@ -905,7 +907,7 @@ pub fn rpc_response(request: Value, info: &ControlFile, executor: &dyn CommandEx
         })),
         "system.commands" => Ok(json!({"commands": catalog_json()})),
         other if known => executor.execute(other, &params),
-        other => return rpc_error(id, -32601, &format!("未知命令：{other}")),
+        other => return rpc_error(id, -32601, &crate::i18n::tr_fmt("未知命令：{}", &[&other])),
     };
     match result {
         Ok(value) => json!({"jsonrpc": "2.0", "id": id, "result": value}),
@@ -1039,7 +1041,7 @@ pub fn save_png(path: &Path, image: &egui::ColorImage) -> Result<(), String> {
     if let Some(dir) = path.parent()
         && !dir.as_os_str().is_empty()
     {
-        fs::create_dir_all(dir).map_err(|e| format!("建目录失败：{e}"))?;
+        fs::create_dir_all(dir).map_err(|e| crate::i18n::tr_fmt("建目录失败：{}", &[&e]))?;
     }
     image::save_buffer(path, &buf, w as u32, h as u32, image::ColorType::Rgba8)
         .map_err(|e| e.to_string())
@@ -1062,7 +1064,7 @@ mod tests {
             match id {
                 "grade.get" => Ok(json!({"preset": "原始", "args": args})),
                 "grade.set" => Err("未知调色字段：bogus".to_owned()),
-                other => Err(format!("未知命令：{other}")),
+                other => Err(crate::i18n::tr_fmt("未知命令：{}", &[&other])),
             }
         }
     }

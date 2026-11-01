@@ -501,7 +501,7 @@ impl AevumApp {
                     self.state.dock_tab = tab;
                     self.state.show_dock = true;
                 }
-                None => self.state.error = Some(format!("不认识的面板：{name}")),
+                None => self.state.error = Some(crate::i18n::tr_fmt("不认识的面板：{}", &[&name])),
             }
         }
     }
