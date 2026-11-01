@@ -18,12 +18,45 @@ use image::{Rgb, RgbImage};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-const FFMPEG: &str = r"D:\work\project\pycharm\p\pythonProject4\.venv\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe";
 const NO_WINDOW: u32 = 0x0800_0000;
 
+/// 找 ffmpeg。**找不到就让这条用例红**，除非显式声明可以跳过。
+///
+/// 以前这里是一个写死的绝对路径（某个人的 `pythonProject4\.venv` 里那份 imageio-ffmpeg）：
+/// 那台机器上有，别处没有，而且它连 `AEVUM_FFMPEG` 都不读。于是这些用例在 CI 上
+/// 永远是「静默通过」的空壳 —— 一个什么都没验的用例比没有用例更糟，因为它给出的是
+/// 「绿」。AVIF 导出那个从上线起就坏的 bug 就是这么藏了一整轮的。
+///
+/// 现在与生产代码共用 `find_ffmpeg()`：`AEVUM_FFMPEG` → exe 旁的 `tools/` → `PATH`。
+/// 真没有 ffmpeg 又想跑别的用例，就显式设 `AEVUM_ALLOW_NO_FFMPEG=1`，跳过时会喊一声。
+///
+/// Locates ffmpeg, and **fails the test when it is missing** unless skipping is declared.
+///
+/// This used to be a hard-coded absolute path into one developer's virtualenv: present there,
+/// absent everywhere else, and it did not even consult `AEVUM_FFMPEG`. So these tests were
+/// silently green shells in CI — a test that verifies nothing is worse than no test, because
+/// it returns the illusion of green. The AVIF export bug that shipped broken hid behind
+/// exactly that for a whole release cycle.
 fn ffmpeg() -> Option<PathBuf> {
-    let p = PathBuf::from(FFMPEG);
-    p.is_file().then_some(p)
+    if let Some(p) = aevum_core::export::find_ffmpeg() {
+        return Some(p);
+    }
+    if std::env::var_os("AEVUM_ALLOW_NO_FFMPEG").is_some() {
+        eprintln!(
+            "⚠ 跳过：没有 ffmpeg（已显式声明 AEVUM_ALLOW_NO_FFMPEG）—— 这条用例这次什么都没验。"
+        );
+        eprintln!("⚠ SKIPPED: no ffmpeg (AEVUM_ALLOW_NO_FFMPEG set) — this test verified nothing.");
+        return None;
+    }
+    panic!(
+        "找不到 ffmpeg，这条用例无法执行。
+\
+         指一个：AEVUM_FFMPEG=/path/to/ffmpeg cargo test ...
+\
+         或确认这次可以跳过：AEVUM_ALLOW_NO_FFMPEG=1
+\
+         No ffmpeg found; point at one with AEVUM_FFMPEG, or declare the skip."
+    );
 }
 
 struct TempDir {

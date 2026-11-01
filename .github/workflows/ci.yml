@@ -5,7 +5,10 @@ name: check
 # 这里不重抄任何一步 —— CI 与本地跑的必须是同一个脚本，否则"本机能过 CI 不能过"
 # 就会变成常态。本机跑是 --offline（依赖已缓存），CI 上没有缓存，所以用
 # CARGO_FLAGS="" 让它联网解析。
-# 依赖里带 ffmpeg 的那几个用例会在找不到可执行文件时自己跳过，CI 不装 ffmpeg 也算全绿。
+# 依赖里带 ffmpeg 的那几个用例（12 个：export_video 7 / queue_export 3 / retime_export 1 /
+# export_stills 1）现在**没有 ffmpeg 就红**，所以下面装了 ffmpeg。以前它们是「找不到就跳过」，
+# 于是 CI 常年全绿而一个都没执行 —— 1.2.0 修掉的那个「AVIF 导出从上线起就是坏的」bug，
+# 就是这么藏了一整轮。本机没 ffmpeg 又想跳过，显式设 AEVUM_ALLOW_NO_FFMPEG=1。
 #
 # 为什么没有 MSRV job：`rust-version = "1.88"` 是对下游的**声明**（界面代码用了 1.88 起、
 # 仅 2024 edition 可用的 let-chain），而本仓构建只用 rust-toolchain.toml 里的 1.98.0。
@@ -41,6 +44,18 @@ jobs:
           cargo --version
           cargo clippy --version
           cargo fmt --version
+
+      # 导出类用例的硬依赖。装了它，「全绿」才等于「那 12 个用例真跑过」。
+      # 镜像里通常已经带一份（choco），有就不动；没有才装。
+      - name: ffmpeg
+        shell: bash
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "already present"
+          else
+            choco install -y ffmpeg --no-progress
+          fi
+          ffmpeg -hide_banner -version | head -n 3
 
       - name: gate
         shell: bash

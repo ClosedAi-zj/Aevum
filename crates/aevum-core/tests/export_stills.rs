@@ -184,12 +184,34 @@ fn webp_export_matches_the_png_bit_for_bit() {
     assert_eq!(a.as_raw(), b.as_raw());
 }
 
-/// AVIF 走外部 ffmpeg：没装 ffmpeg 就跳过（CI 同款口径）。质量越高文件越大、
-/// 容器头是 avif brand，临时 PNG 不能留在输出目录，色标要按输出色域写进 nclx。
+/// AVIF 走外部 ffmpeg。质量越高文件越大、容器头是 avif brand，临时 PNG 不能留在输出
+/// 目录，色标要按输出色域写进 nclx。
+///
+/// 没有 ffmpeg 时**红**，不再静默返回：这条用例以前是「找不到 ffmpeg 就 `return`」，
+/// 于是它在本机与 CI 上都没跑过，而 AVIF 导出那时候正好是坏的（写盘名是 `.part`，
+/// ffmpeg 猜不出容器）。一个永远绿的空壳比没有用例更糟。
+///
+/// Fails without ffmpeg instead of returning silently: this used to skip, so it never ran
+/// here or in CI — and AVIF export was broken at the time. A permanently green shell is worse
+/// than no test at all.
 #[test]
 fn avif_export_goes_through_ffmpeg_and_cleans_up() {
     if aevum_core::export::find_ffmpeg().is_none() {
-        return;
+        if std::env::var_os("AEVUM_ALLOW_NO_FFMPEG").is_some() {
+            eprintln!(
+                "⚠ 跳过：没有 ffmpeg（已显式声明 AEVUM_ALLOW_NO_FFMPEG）—— 这条用例这次什么都没验。"
+            );
+            eprintln!(
+                "⚠ SKIPPED: no ffmpeg (AEVUM_ALLOW_NO_FFMPEG set) — this test verified nothing."
+            );
+            return;
+        }
+        panic!(
+            "找不到 ffmpeg，这条用例无法执行。\n\
+             指一个：AEVUM_FFMPEG=/path/to/ffmpeg cargo test ...\n\
+             或确认这次可以跳过：AEVUM_ALLOW_NO_FFMPEG=1\n\
+             No ffmpeg found; point at one with AEVUM_FFMPEG, or declare the skip."
+        );
     }
     let td = TempDir::new("avif");
     let paths = make_sequence(&td.path.join("src"), 1);

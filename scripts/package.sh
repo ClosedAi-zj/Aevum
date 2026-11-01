@@ -45,16 +45,9 @@ purge_dir() {
     fi
 }
 
-if [ "${SKIP_CHECK:-}" = "1" ]; then
-    echo "==> 跳过门槛（SKIP_CHECK=1）"
-else
-    echo "==> 门槛：格式 / clippy / 全量测试 / 布局自检"
-    bash "$ROOT/acceptance/check.sh"
-fi
-
-echo "==> 编译 release"
-"${CARGO[@]}" build -p aevum-studio --release --offline
-
+# 先定位 ffmpeg，再过门槛：门槛里的导出用例（12 个）现在没有 ffmpeg 就红，而它们
+# 应该用**将来要装进包里的那个二进制**去测 —— 用别的版本测出来的绿，不代表用户手上
+# 那份能跑。
 ff_src="${AEVUM_FFMPEG_SRC:-}"
 # 第二优先级：上次打包留在 dist/aevum/tools/ 里的 ffmpeg。首次打包时该文件
 # 不存在，-f 判断自然跳过，不会报错。曾经这里的第二优先级是某个 Python venv
@@ -87,6 +80,19 @@ if [ -z "$ff_src" ] || [ ! -f "$ff_src" ]; then
 EOF
     exit 1
 fi
+
+# 门槛里的导出用例就用这一份 ffmpeg 跑（同一份字节将来进包里）。
+export AEVUM_FFMPEG="$ff_src"
+
+if [ "${SKIP_CHECK:-}" = "1" ]; then
+    echo "==> 跳过门槛（SKIP_CHECK=1）"
+else
+    echo "==> 门槛：格式 / clippy / 全量测试 / 布局自检（ffmpeg: $ff_src）"
+    bash "$ROOT/acceptance/check.sh"
+fi
+
+echo "==> 编译 release"
+"${CARGO[@]}" build -p aevum-studio --release --offline
 
 echo "==> 组装 $DIST"
 mkdir -p "$DIST/tools"

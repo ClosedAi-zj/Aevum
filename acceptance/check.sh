@@ -38,6 +38,24 @@ echo "==> 2/5 clippy（-D warnings）"
 "${CARGO[@]}" clippy --workspace --all-targets $CARGO_FLAGS -- -D warnings
 
 echo "==> 3/5 全量测试（含与 Python 基准的金标比对）"
+# 导出类用例需要 ffmpeg，**没有就是红**（它们以前是「找不到就跳过」，于是 12 个用例
+# 在本机与 CI 上都没跑过，AVIF 导出坏了一整轮没人知道）。探针顺序按「用户实际拿到
+# 的那个」优先：包内 ffmpeg（dist/aevum/tools，与发行包逐字节相同）→ AEVUM_FFMPEG
+# → PATH。三者都没有就让测试自己红，不在这里偷偷放行。
+if [ -z "${AEVUM_FFMPEG:-}" ]; then
+    for cand in "$ROOT/dist/aevum/tools/ffmpeg.exe" "$(command -v ffmpeg || true)"; do
+        if [ -n "$cand" ] && [ -f "$cand" ]; then
+            export AEVUM_FFMPEG="$cand"
+            break
+        fi
+    done
+fi
+if [ -n "${AEVUM_FFMPEG:-}" ]; then
+    echo "    ffmpeg：$AEVUM_FFMPEG"
+else
+    echo "    ⚠ 没有 ffmpeg：导出类用例会红。装一个、设 AEVUM_FFMPEG，或显式声明"
+    echo "      AEVUM_ALLOW_NO_FFMPEG=1 跳过（跳过会喊出来，别指望它算通过）。"
+fi
 "${CARGO[@]}" test --workspace $CARGO_FLAGS
 
 echo "==> 4/5 界面布局自检（无显示器）"

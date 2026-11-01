@@ -15,6 +15,63 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.2.1 — 2026-11-01
+
+Patch release. **No rendering changes, no contract changes** — one thing only: making the word
+"green" true.
+
+### Fixed: 12 export tests never ran in CI
+
+Seven in `export_video`, three in `queue_export`, one in `retime_export`, one in `export_stills` —
+all of them start with `let Some(ffmpeg) = ffmpeg() else { return };`. No ffmpeg, no work, and the
+test still reports "ok". Meanwhile `.github/workflows/ci.yml` said, in as many words, that CI does
+not install ffmpeg.
+
+Worse, those three files pinned ffmpeg to a **hard-coded absolute path**:
+
+```rust
+const FFMPEG: &str = "D:/work/project/pycharm/p/pythonProject4/.venv/.../ffmpeg-win-x86_64-v7.1.exe";
+```
+
+It exists on exactly one machine, and it does not even consult `AEVUM_FFMPEG`. So even if CI had
+installed ffmpeg, the tests could never reach it — move the repo, rename the directory, delete that
+virtualenv, and they are silent forever.
+
+The "AVIF export has been broken since it shipped" bug fixed in 1.2.0 (the write target is
+`<name>.part`, so ffmpeg cannot infer the container) hid inside exactly this. A permanently green
+shell is worse than no test, because it returns the illusion of green.
+
+Three changes together:
+
+- The probe now uses the production `find_ffmpeg()` (`AEVUM_FFMPEG` → `tools/` next to the exe →
+  `PATH`) — the same binary users actually get;
+- **No ffmpeg now means red**, with the two ways out printed ("point at one" / "declare the skip");
+- CI installs ffmpeg (no-op if the image already has it). CI green now means those 12 tests ran.
+
+If you genuinely have no ffmpeg and want to run the rest, set `AEVUM_ALLOW_NO_FFMPEG=1`: skipping
+still works, but it prints a line saying this test verified nothing this time.
+
+### Also: the local gate finds ffmpeg by itself
+
+`acceptance/check.sh` now probes in user-first order — `dist/aevum/tools/ffmpeg.exe` (byte-identical
+to the shipped package) → `AEVUM_FFMPEG` → `PATH` — and prints which one stage 3 is using. If none is
+found it says plainly that tests will fail rather than quietly letting them through.
+
+### Known issues
+
+- **HDR applies to stills + AVIF only.** Video (x264/x265) is still 8bit SDR, and 16bit HDR in
+  TIFF/PNG is not done either — that needs a PQ curve inside the ICC profile, not a one-liner.
+  Combinations that cannot hold it are refused rather than fallen back from.
+- **There is no HDR preview mapping.** The panel keeps showing the SDR preview; to see HDR you must
+  export and view it on an HDR display or in a player. This is the most visible gap today.
+- Directional demosaicing is still well below ideal on 45° edges and coloured boundaries: the
+  direction test only considers horizontal and vertical, and diagonal detail falls back to the
+  colour-difference constancy assumption.
+- There are no real camera RAW samples on this machine, so that demosaicing data all comes from
+  synthetic targets; behaviour on real photographs remains unverified.
+
+---
+
 ## v1.2.0 — 2026-11-01
 
 Feature release. **One thing up front: this version starts changing pictures in existing

@@ -12,6 +12,56 @@
 
 ---
 
+## v1.2.1 — 2026-11-01
+
+补丁版。**不改出图、不改任何对外契约**，只修一件事：让「全绿」这个说法变成真的。
+
+### 修掉：CI 上 12 个导出用例从来没执行过
+
+`export_video` 7 个、`queue_export` 3 个、`retime_export` 1 个、`export_stills` 1 个 ——
+它们开头都是 `let Some(ffmpeg) = ffmpeg() else { return };`。找不到 ffmpeg 就 `return`，
+测试照样报「ok」。而 `.github/workflows/ci.yml` 里明确写着 CI 不装 ffmpeg。
+
+更糟的是那三个文件里 ffmpeg 的位置是**写死的绝对路径**：
+
+```rust
+const FFMPEG: &str = "D:/work/project/pycharm/p/pythonProject4/.venv/.../ffmpeg-win-x86_64-v7.1.exe";
+```
+
+它只在一个人的某台机器上存在，连 `AEVUM_FFMPEG` 都不读。所以即使 CI 装了 ffmpeg，这些
+用例也永远走不到 —— 换机器、换目录、删掉那个 venv，它们就永久静默。
+
+1.2.0 修的那个「AVIF 导出从上线起就是坏的」（写盘名是 `.part`，ffmpeg 猜不出容器）就是
+藏在这里面：一个永远绿的空壳比没有用例更糟，因为它给出的是「绿」。
+
+三件事一起改：
+
+- 探测改用生产代码的 `find_ffmpeg()`（`AEVUM_FFMPEG` → exe 旁的 `tools/` → `PATH`），
+  与用户实际拿到的那个二进制一致；
+- **没有 ffmpeg 就红**，并给出「怎么指一个 / 怎么显式跳过」的两条出路；
+- CI 装 ffmpeg（镜像里已有就不动）。现在 CI 的绿等于那 12 个用例真跑过。
+
+真没有 ffmpeg 又要跑别的用例，显式设 `AEVUM_ALLOW_NO_FFMPEG=1`：跳过照旧，但会在输出里
+喊一行「这条用例这次什么都没验」。
+
+### 顺带：本机门槛自己会找到 ffmpeg
+
+`acceptance/check.sh` 现在按「用户实际拿到的那个」优先探测：`dist/aevum/tools/ffmpeg.exe`
+（与发行包逐字节相同）→ `AEVUM_FFMPEG` → `PATH`，并在第 3 关打印用的是哪个。三者都没有
+就明确说要红，不在门槛里偷偷放行。
+
+### 已知问题
+
+- **HDR 只对静帧 + AVIF 生效**。视频（x264/x265）仍是 8bit SDR；TIFF/PNG 的 16bit HDR 也没做
+  ——那需要给 ICC 塞 PQ 曲线，不是一行事。传不成立的组合会报错，不会回落。
+- **没有 HDR 预览映射**。面板里看到的仍是 SDR 预览，HDR 什么样得导出后拿去 HDR 屏或播放器看。
+  这是当前最明显的体验缺口。
+- 方向自适应去马赛克在 45° 斜边与彩色边界上仍明显低于理想值：方向判据只认水平与垂直，
+  斜向细节靠色差恒定假设兜底。
+- 本机没有真实相机 RAW 样本，那组去马赛克数据全部来自合成靶，真实照片上的表现待验。
+
+---
+
 ## v1.2.0 — 2026-11-01
 
 功能版。**先说清楚一件事：这一版会让存量工程里的图开始变化。** 两处是修 bug，修
