@@ -129,6 +129,51 @@ fn fn_body<'a>(src: &'a str, signature: &str) -> Option<&'a str> {
     None
 }
 
+/// 把 `open` 处括号里的实参按顶层逗号切开（字节偏移，右开）。
+///
+/// `first_arg` 只认第一个；`group_header` 的键是第三个实参，所以要多参版本。
+/// 跳过字符串里的逗号与括号这一层必须做：实参里会有 `format!("{}, {}")`。
+fn args_of(src: &str, open: usize) -> Vec<(usize, usize)> {
+    let b = src.as_bytes();
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut start = open + 1;
+    let mut i = open;
+    while i < b.len() {
+        let c = b[i];
+        if in_str {
+            if c == b'\\' {
+                i += 2;
+                continue;
+            }
+            if c == b'"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'"' => in_str = true,
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    out.push((start, i));
+                    return out;
+                }
+            }
+            b',' if depth == 1 => {
+                out.push((start, i));
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
 fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
@@ -405,5 +450,77 @@ fn appearance_entry_point_stays_in_the_top_bar() {
     assert!(
         scope.contains("look_open = true"),
         "齿轮还在，但点了不开外观窗（附近找不到 `look_open = true`）。"
+    );
+}
+
+#[test]
+fn panel_groups_match_the_registry() {
+    // `state::GROUP_SPECS` 一张表管三件事：首屏折叠、右键「只看这一组」、落盘回查。
+    // 三者都靠**键名对上**，而键名是字符串 —— 打错一个字母不会编译失败，只会
+    // 悄悄失效（默认折叠不生效、或者落盘读回来被当垃圾键丢掉）。这条测试把
+    // 「源码里的 group_header 调用」和表逐条对齐。
+    use aevum_ui::state::GROUP_SPECS;
+    use std::collections::BTreeSet;
+
+    let mut files = Vec::new();
+    rs_files(&src_dir(), &mut files);
+    let mut seen: Vec<(String, String, usize)> = Vec::new();
+    for path in &files {
+        let src = without_line_comments(&std::fs::read_to_string(path).expect("读源码"));
+        for (pos, _) in src.match_indices("group_header(") {
+            let open = pos + "group_header".len();
+            // 第 3 个实参才是键（ui, state, key, title, resettable）。
+            let Some(span) = args_of(&src, open).into_iter().nth(2) else {
+                continue;
+            };
+            let arg = src[span.0..span.1].trim();
+            let Some(key) = arg.strip_prefix('"').and_then(|r| r.split('"').next()) else {
+                continue; // 键不是字面量：动态拼的组名登记不了，也进不了设置文件。
+            };
+            seen.push((
+                key.to_owned(),
+                path.strip_prefix(src_dir())
+                    .unwrap_or(path)
+                    .display()
+                    .to_string(),
+                line_of(&src, pos),
+            ));
+        }
+    }
+
+    assert!(
+        seen.len() > 40,
+        "只扫到 {} 个 group_header 调用，路径或调用形状变了？",
+        seen.len()
+    );
+
+    let registry: BTreeSet<&str> = GROUP_SPECS.iter().map(|s| s.key).collect();
+    assert_eq!(
+        registry.len(),
+        GROUP_SPECS.len(),
+        "登记表里有重复键：折叠状态会写到同一个键上，两个组一起动"
+    );
+
+    let used: BTreeSet<&str> = seen.iter().map(|(k, _, _)| k.as_str()).collect();
+    let unregistered: Vec<String> = seen
+        .iter()
+        .filter(|(k, _, _)| !registry.contains(k.as_str()))
+        .map(|(k, f, l)| format!("{f}:{l}  \"{k}\""))
+        .collect();
+    assert!(
+        unregistered.is_empty(),
+        "这些分组头没在 `state::GROUP_SPECS` 里登记（{} 处）：\n{}\n\n\
+         不登记的后果是静默失效：首屏默认折叠不认它、右键「只看这一组」漏掉它、\
+         折叠状态也存不进 settings.json。补一行 `in_module(…)` / `in_tab(…)`。",
+        unregistered.len(),
+        unregistered.join("\n"),
+    );
+
+    let orphan: Vec<&str> = registry.difference(&used).copied().collect();
+    assert!(
+        orphan.is_empty(),
+        "登记表里这些键没有任何分组头在用（{:?}）：改名或删组时忘了同步表。\
+         它们会一直往 settings.json 里写一个没人读的键。",
+        orphan
     );
 }

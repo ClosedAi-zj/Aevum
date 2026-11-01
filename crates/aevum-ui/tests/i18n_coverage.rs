@@ -98,8 +98,18 @@ fn sweep(lang: Lang) -> (Vec<String>, Vec<String>) {
     frame(&mut state, &ctx, &mut screen);
 
     // 六个模块 × 六个 dock 标签：dock 只画当前那一页，不逐个切就是漏的。
+    //
+    // 每个模块跑两遍：先默认态（低频组是折叠的），再全展开。折叠组里的文案
+    // ——相机镜头配置、水印、HDR/全景合并那些——默认态根本不画，只扫默认态
+    // 就等于把这些段落的翻译验收整个跳过了。
     for module in Module::ALL {
         state.module = module;
+        state.collapsed = aevum_ui::state::default_collapsed();
+        for tab in DockTab::ALL {
+            state.dock_tab = tab;
+            frame(&mut state, &ctx, &mut screen);
+        }
+        state.collapsed.clear();
         for tab in DockTab::ALL {
             state.dock_tab = tab;
             frame(&mut state, &ctx, &mut screen);

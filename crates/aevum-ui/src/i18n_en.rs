@@ -339,6 +339,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("只看 ≥{} 星；点已亮的星退回一档", "Show ≥{} stars only; click a lit star to step back"),
     ("只看{}色标", "Show {} labels only"),
     ("只看旗标为「选用」的", "Show flagged as picked only"),
+    ("只看这一组", "Show only this group"),
     ("右", "Right"),
     ("右上", "Top right"),
     ("右上角 ＋ 存一版", "\"+\" at the top right saves a version"),

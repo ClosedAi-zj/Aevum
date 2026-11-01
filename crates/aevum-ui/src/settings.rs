@@ -17,7 +17,7 @@ const FILE: &str = "settings.json";
 
 /// 落盘的全部内容。新增字段必须给缺省值（`#[serde(default)]`），
 /// 否则老版本写的文件会在新版本里解析失败。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub appearance: Appearance,
@@ -26,6 +26,19 @@ pub struct Settings {
     pub font_level: usize,
     /// 界面语言：跟随系统 / 中文 / English。缺省「跟随系统」，老设置文件读进来也落在这一档。
     pub lang: LangPref,
+    /// 折叠中的面板分组键（键表见 [`crate::state::GROUP_SPECS`]）。
+    ///
+    /// 三层含义必须分清，否则「首屏该展开什么」会来回打摆：
+    ///
+    /// * `None` —— 还没表过态（首次启动，或老版本写的文件）。用
+    ///   [`crate::state::default_collapsed`]，低频组折起来；
+    /// * `Some(vec![])` —— 用户把每一组都点开了。这是**明确表态**，不许再拿默认态
+    ///   覆盖他；
+    /// * `Some([...])` —— 用户自己折起来的那些。
+    ///
+    /// 所以这里是 `Option` 而不是裸 `Vec`：`#[serde(default)]` 让缺字段落成 `None`，
+    /// 恰好等于「没表过态」，不用再写版本号判别。
+    pub collapsed: Option<Vec<String>>,
 }
 
 /// `%APPDATA%/aevum-studio/settings.json`；`AEVUM_SETTINGS`（旧名 `LUMEN_SETTINGS` 回退）
@@ -117,6 +130,19 @@ mod tests {
         assert_eq!(s.appearance.skin, Appearance::default().skin);
         assert_eq!(s.layout, Layout::default());
         assert_eq!(s.font_level, 0);
+        // 老文件里没有 collapsed 这一项：必须是 `None`（没表过态），不能是空 Vec——
+        // 空 Vec 的意思是「用户把每一组都点开了」，两者混一起，首屏默认态就会
+        // 在升级后第一次启动时被跳过。
+        assert_eq!(s.collapsed, None);
+    }
+
+    /// 「全展开」和「没表过态」在 JSON 里必须能区分开。
+    #[test]
+    fn empty_collapsed_is_not_the_same_as_absent() {
+        let all_open: Settings = serde_json::from_str(r#"{"collapsed":[]}"#).unwrap();
+        assert_eq!(all_open.collapsed, Some(Vec::new()));
+        let absent: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(absent.collapsed, None);
     }
 
     #[test]

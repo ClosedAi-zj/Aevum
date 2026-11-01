@@ -54,16 +54,22 @@ pub fn selftest() -> Result<String, String> {
     let mut per_module = Vec::new();
     for module in state::Module::ALL {
         state.module = module;
-        let mut shapes = 0;
-        for _ in 0..2 {
-            let mut out = ctx.run_ui(input(), |ui| shell::ui(&mut state, ui));
-            shapes = out.shapes.len();
-            out.textures_delta.clear();
+        // 两种折叠态都要画：**默认态**是用户真正看见的第一屏（折叠后的排版也是
+        // 界面的一部分，标题条压没压线、首屏还剩几段，都靠它回归）；**全展开态**
+        // 保住展开后的布局覆盖——默认折叠了低频组，只画默认态就等于少测半屏。
+        state.collapsed = state::default_collapsed();
+        let closed = paint(&ctx, &mut state);
+        state.collapsed.clear();
+        let opened = paint(&ctx, &mut state);
+        for (label, shapes) in [("默认折叠", closed), ("全展开", opened)] {
+            if shapes < 80 {
+                return Err(format!(
+                    "{} 模块（{label}）只画出 {shapes} 个形状",
+                    module.cn()
+                ));
+            }
         }
-        if shapes < 80 {
-            return Err(format!("{} 模块只画出 {shapes} 个形状", module.cn()));
-        }
-        per_module.push(format!("{} {shapes}", module.cn()));
+        per_module.push(format!("{} {closed}/{}", module.cn(), opened));
     }
 
     let ctx2 = egui::Context::default();
@@ -83,6 +89,17 @@ pub fn selftest() -> Result<String, String> {
         "加载态 {loaded} 形状 · 空状态 {empty_shapes} 形状 · 模块 {}",
         per_module.join(" / ")
     ))
+}
+
+/// 连跑两帧取稳态形状数（首帧要吃字体与纹理的冷启动）。
+fn paint(ctx: &egui::Context, state: &mut AppState) -> usize {
+    let mut shapes = 0;
+    for _ in 0..2 {
+        let mut out = ctx.run_ui(input(), |ui| shell::ui(state, ui));
+        shapes = out.shapes.len();
+        out.textures_delta.clear();
+    }
+    shapes
 }
 
 fn input() -> egui::RawInput {

@@ -133,6 +133,165 @@ impl Module {
     }
 }
 
+/// 面板分组的登记表：键、所属模块、首屏是否展开。
+///
+/// 一张表供三处用，所以必须与 `group_header(…)` 的调用点一一对应：
+///
+/// * **首屏折叠** —— [`AppState::new`] 按 `open == false` 播种 `collapsed`；
+/// * **右键「只看这一组」** —— 按 `module` 把同模块的其他组折起来；
+/// * **落盘回查** —— `settings.json` 里只存键名，读回来要在这里查成 `&'static str`
+///   （`collapsed` 存的是 `&'static str`，不查表就没法从 JSON 变回来）。
+///
+/// 「常用/不常用」的判断口径只有一条：**每张照片、每次导出都会动的那几组展开**，
+/// 设一次就不再碰的（相机镜头配置、水印、HDR/全景合并…）折叠。参考 Lightroom
+/// 的默认态——打开一张图只看见「基本」是展开的，其余都是折叠的标题条；面板是
+/// 按需打开的抽屉，不是一屏到底的清单。
+///
+/// 漏登记、重复登记、或者登记了却没人调用，都会在 `tests/ui_tokens.rs` 里变红。
+pub struct GroupSpec {
+    pub key: &'static str,
+    /// 挂在哪个模块下面。`None` = 挂在 dock 标签页（信息 / 代理 / 图库）而不是模块：
+    /// 这几个面板不随模块切换，右键「只看这一组」只该收同页的组。
+    pub module: Option<Module>,
+    /// dock 页的归属页名（`module` 为 `None` 时才有意义）。不带页名的话，
+    /// 「只看这一组」会把快捷键页、代理页一起收掉——切过去就是一屏折着的面板。
+    pub page: &'static str,
+    /// 首屏展开（`false` = 首屏折叠，点标题条展开）。
+    pub open: bool,
+}
+
+/// 模块下的分组（绝大多数是这种）。
+const fn in_module(key: &'static str, module: Module, open: bool) -> GroupSpec {
+    GroupSpec {
+        key,
+        module: Some(module),
+        page: "",
+        open,
+    }
+}
+
+/// dock 标签页里的分组（信息 / 代理 / 图库那几页）。
+const fn in_tab(page: &'static str, key: &'static str, open: bool) -> GroupSpec {
+    GroupSpec {
+        key,
+        module: None,
+        page,
+        open,
+    }
+}
+
+pub const GROUP_SPECS: &[GroupSpec] = &[
+    // ── 序列 ────────────────────────────────────────────────────────────
+    // 帧列表与体检是这一屏的主体，其余三组都是「跑完看一次」的读数。
+    in_module("seq", Module::Sequence, true),
+    in_module("seq-issues", Module::Sequence, true),
+    in_module("seq-qa", Module::Sequence, true),
+    in_module("seq-align", Module::Sequence, false),
+    in_module("seq-align-report", Module::Sequence, false),
+    in_module("seq-spec", Module::Sequence, false),
+    // ── 去闪 ────────────────────────────────────────────────────────────
+    in_module("deflicker", Module::Deflicker, true),
+    in_module("def-stats", Module::Deflicker, true),
+    in_module("def-exposure", Module::Deflicker, false),
+    // ── 显影 ────────────────────────────────────────────────────────────
+    // 展开的五组是「一张照片必然要过的手」；曲线/色阶/HSL/分级这些是深加工，
+    // 想用的时候点开——它们各自占半屏，全展开就是十八段连续滚动。
+    in_module("basic", Module::Develop, true),
+    in_module("color", Module::Develop, true),
+    in_module("effects", Module::Develop, true),
+    in_module("detail", Module::Develop, true),
+    in_module("masks", Module::Develop, true),
+    in_module("mask-params", Module::Develop, true),
+    in_module("look", Module::Develop, false),
+    in_module("levels", Module::Develop, false),
+    in_module("parametric", Module::Develop, false),
+    in_module("curve", Module::Develop, false),
+    in_module("hsl", Module::Develop, false),
+    in_module("mono", Module::Develop, false),
+    in_module("grade", Module::Develop, false),
+    in_module("grain", Module::Develop, false),
+    in_module("profiles", Module::Develop, false),
+    in_module("lens", Module::Develop, false),
+    in_module("copies", Module::Develop, false),
+    in_module("hdr", Module::Develop, false),
+    in_module("pano", Module::Develop, false),
+    // ── 构图 ────────────────────────────────────────────────────────────
+    // 这一屏只有两组，且辅助线只是三个勾选框：没有折叠的必要。
+    in_module("frame", Module::Frame, true),
+    in_module("frame-guides", Module::Frame, true),
+    // ── 成片 ────────────────────────────────────────────────────────────
+    // 输出/时间/编码/导出/队列是导一次片必经的五步；水印、变速、运镜是单条片子
+    // 才用的创作项，折起来。
+    in_module("render-out", Module::Render, true),
+    in_module("render-time", Module::Render, true),
+    in_module("render-codec", Module::Render, true),
+    in_module("render-export", Module::Render, true),
+    in_module("render-queue", Module::Render, true),
+    in_module("render-watermark", Module::Render, false),
+    in_module("render-retime", Module::Render, false),
+    in_module("render-motion", Module::Render, false),
+    // ── 声音 ────────────────────────────────────────────────────────────
+    in_module("audio", Module::Audio, true),
+    in_module("audio-time", Module::Audio, true),
+    in_module("audio-mix", Module::Audio, false),
+    in_module("audio-timeline", Module::Audio, false),
+    // ── dock 标签页 ─────────────────────────────────────────────────────
+    // 信息页是读数（EXIF / 采集 / 引擎 / 诊断），本来就是「摊开看一眼」的用法；
+    // 快捷键与代理日志同理。这几页只有两三组，折叠省不下多少，保持展开。
+    in_tab("info", "info-meta", true),
+    in_tab("info", "info-capture", true),
+    in_tab("info", "info-frame", true),
+    in_tab("info", "info-print", true),
+    in_tab("info", "info-engine", true),
+    in_tab("info", "info-diag", true),
+    in_tab("keys", "keys", true),
+    in_tab("ai", "ai-link", true),
+    in_tab("ai", "ai-cmds", true),
+    in_tab("ai", "ai-log", true),
+    in_tab("ai", "ai-console", true),
+];
+
+/// 首屏折叠的分组键集合。用户没表过态时用它，之后以他点出来的为准。
+pub fn default_collapsed() -> HashSet<&'static str> {
+    GROUP_SPECS
+        .iter()
+        .filter(|s| !s.open)
+        .map(|s| s.key)
+        .collect()
+}
+
+/// 按 `collapsed` 里的键名查表：查不到就是历史遗留键（旧版本有、这一版删了），丢掉。
+pub fn group_spec(key: &str) -> Option<&'static GroupSpec> {
+    GROUP_SPECS.iter().find(|s| s.key == key)
+}
+
+/// 面板折叠的三个整批动作（右键分组头调）。放在 state 而不是界面里，是因为
+/// 「作用域」这件事得能单测：只看这一组只该收**同模块/同 dock 页**的组。
+impl AppState {
+    /// 只看这一组：同作用域的兄弟组全折起来，自己展开。
+    pub fn solo_group(&mut self, key: &str) {
+        let Some(me) = group_spec(key) else { return };
+        self.collapsed = GROUP_SPECS
+            .iter()
+            .filter(|s| (s.module, s.page) == (me.module, me.page) && s.key != key)
+            .map(|s| s.key)
+            .collect();
+        self.settings_dirty = true;
+    }
+
+    /// 全部收起（只影响当前作用域之外的组也一起收：这是「清屏」的语义）。
+    pub fn collapse_all_groups(&mut self) {
+        self.collapsed = GROUP_SPECS.iter().map(|s| s.key).collect();
+        self.settings_dirty = true;
+    }
+
+    /// 全部展开。
+    pub fn expand_all_groups(&mut self) {
+        self.collapsed.clear();
+        self.settings_dirty = true;
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Aspect {
     Native,
@@ -577,7 +736,13 @@ pub struct AppState {
     pub module: Module,
     pub tool: Tool,
     pub dock_tab: DockTab,
+    /// 折叠中的面板分组。初值来自 [`default_collapsed`]（低频组首屏折起来），
+    /// 之后以用户点出来的为准，并随 `settings.json` 落盘——面板记得住你的摆法是
+    /// 「减少信息负担」的一半，另一半是首屏别全摊开。
     pub collapsed: HashSet<&'static str>,
+    /// 偏好（折叠态等）改动过、等帧尾统一落盘。界面代码只置位，不直接写文件：
+    /// 一次拖动折叠会连着改几处，逐处写会把 `settings.json` 反复搓。
+    pub settings_dirty: bool,
     pub status: String,
     pub error: Option<String>,
     /// 状态栏的常驻告警：护带目录写不进去、override 路径失效之类。
@@ -1212,13 +1377,22 @@ impl AppState {
         self.plugin_job.is_some()
     }
 
-    /// 当前偏好的快照（外观 + 布局 + 字号 + 语言），落盘与回填都用它。
+    /// 当前偏好的快照（外观 + 布局 + 字号 + 语言 + 折叠态），落盘与回填都用它。
     pub fn settings(&self) -> crate::settings::Settings {
+        // 折叠态按登记表次序输出：`HashSet` 的遍历顺序每次进程都不同，原样写文件
+        // 会让「什么都没改」也产生 diff，也让 golden/回归比对没法做。排序之后
+        // 同一份界面状态永远写出一份字节相同的 JSON。
+        let collapsed: Vec<String> = GROUP_SPECS
+            .iter()
+            .filter(|s| self.collapsed.contains(s.key))
+            .map(|s| s.key.to_owned())
+            .collect();
         crate::settings::Settings {
             appearance: self.appearance,
             layout: self.layout,
             font_level: self.font_level,
             lang: self.lang,
+            collapsed: Some(collapsed),
         }
     }
 
@@ -1228,6 +1402,15 @@ impl AppState {
         self.layout = s.layout;
         self.font_level = s.font_level.min(3);
         self.lang = s.lang;
+        // `None` = 老设置文件里没有这一项（或者从没打开过外观窗）→ 用首屏默认态；
+        // `Some(vec![])` = 用户把每一组都展开了，这是明确表态，必须尊重。
+        self.collapsed = match s.collapsed {
+            Some(list) => list
+                .iter()
+                .filter_map(|k| group_spec(k).map(|s| s.key))
+                .collect(),
+            None => default_collapsed(),
+        };
     }
 
     pub fn new() -> Self {
@@ -1246,7 +1429,8 @@ impl AppState {
             module: Module::Sequence,
             tool: Tool::Hand,
             dock_tab: DockTab::Adjust,
-            collapsed: HashSet::new(),
+            collapsed: default_collapsed(),
+            settings_dirty: false,
             status: "打开一个帧文件夹，或把文件夹拖进窗口".to_owned(),
             error: None,
             notices: Vec::new(),
@@ -1978,6 +2162,13 @@ impl AppState {
                 }
                 ctx.request_repaint_after(Duration::from_secs_f32(dt * 0.5));
             }
+        }
+        // 偏好（折叠态）落盘的唯一出口。界面那边只置 `settings_dirty`，帧尾在这里
+        // 写一次：右键「全部收起」会一口气改十几个键，逐处写会把文件反复搓。
+        // 写失败不打断用户（`settings::save` 自己会出声），置回 false 免得每帧重试。
+        if self.settings_dirty {
+            self.settings_dirty = false;
+            crate::settings::save(&self.settings());
         }
     }
 
@@ -14938,5 +15129,125 @@ mod notice_tests {
         let mut state = AppState::new();
         state.drain_notices();
         assert!(state.notices.is_empty(), "没有告警时状态栏那格必须不存在");
+    }
+}
+
+#[cfg(test)]
+mod panel_tests {
+    use super::*;
+
+    /// 首屏只留高频组：显影这一屏有十八组，默认若全摊开就是一条十八段的长滚。
+    #[test]
+    fn first_screen_keeps_only_the_frequent_groups_open() {
+        let dev_open = GROUP_SPECS
+            .iter()
+            .filter(|s| s.open && s.module == Some(Module::Develop))
+            .count();
+        assert!(
+            dev_open <= 6,
+            "显影首屏展开了 {dev_open} 组——「减少信息负担」就靠这个数往下压"
+        );
+        let closed = default_collapsed();
+        // 典型的高频/低频各取一个：开基本、折曲线。
+        assert!(!closed.contains("basic"));
+        assert!(closed.contains("curve"));
+        assert!(closed.contains("profiles"));
+        // 每个模块都得有展开的组，否则整屏只剩标题条，等于误伤。
+        for module in Module::ALL {
+            assert!(
+                GROUP_SPECS
+                    .iter()
+                    .any(|s| s.open && s.module == Some(module)),
+                "{} 模块首屏一个展开的组都没有",
+                module.cn()
+            );
+        }
+    }
+
+    /// 折叠态要能从 JSON 走一圈回来：键名 ↔ `&'static str` 的互转全靠登记表。
+    #[test]
+    fn collapse_state_survives_a_settings_round_trip() {
+        let mut a = AppState::new();
+        assert_eq!(a.collapsed, default_collapsed(), "首屏该是默认折叠态");
+        a.collapsed.insert("basic"); // 用户连「基本」也折了
+        a.collapsed.remove("curve"); // 又把曲线点开
+
+        let json = serde_json::to_string(&a.settings()).expect("序列化设置");
+        let back: crate::settings::Settings = serde_json::from_str(&json).expect("解析设置");
+        let mut b = AppState::new();
+        b.adopt_settings(back);
+        assert_eq!(b.collapsed, a.collapsed, "折叠态没过一圈就丢了");
+    }
+
+    /// 老设置文件里没有这一项 → 回到首屏默认；**不是**「全展开」。这条如果不成立，
+    /// 升级上来的用户第一眼看到的就是那屏十八段长滚，等于这次优化对老用户失效。
+    #[test]
+    fn missing_collapsed_field_falls_back_to_defaults() {
+        let old: crate::settings::Settings = serde_json::from_str(r#"{"font_level":1}"#).unwrap();
+        let mut s = AppState::new();
+        s.adopt_settings(old);
+        assert_eq!(s.collapsed, default_collapsed());
+    }
+
+    /// 反过来：用户亲手把每一组都点开（空列表）是明确表态，默认态不许覆盖他。
+    #[test]
+    fn explicit_all_open_is_respected() {
+        let all_open: crate::settings::Settings =
+            serde_json::from_str(r#"{"collapsed":[]}"#).unwrap();
+        let mut s = AppState::new();
+        s.adopt_settings(all_open);
+        assert!(s.collapsed.is_empty(), "用户全展开的表态被默认态覆盖了");
+    }
+
+    /// 「只看这一组」只收同模块的组：折到别的模块去，切过去就看见一屏全折着的
+    /// 面板——用户会以为功能坏了。dock 页的组（`module == None`）自成一组。
+    #[test]
+    fn solo_only_folds_its_own_scope() {
+        let mut s = AppState::new();
+        s.solo_group("curve");
+        // 同模块（显影）的兄弟组全收起来了，自己不动。
+        assert!(!s.collapsed.contains("curve"), "被 solo 的那组得是展开的");
+        assert!(s.collapsed.contains("basic"));
+        assert!(s.collapsed.contains("profiles"));
+        // 别的模块不受影响。
+        assert!(!s.collapsed.contains("frame"));
+        assert!(!s.collapsed.contains("render-out"));
+        assert!(s.settings_dirty, "折叠态变了必须触发落盘");
+
+        // dock 页同理：solo 信息页的一组，快捷键页与代理页都不受牵连。
+        s.expand_all_groups();
+        s.solo_group("info-meta");
+        assert!(s.collapsed.contains("info-capture"));
+        assert!(!s.collapsed.contains("keys"), "dock 另一页的组被连坐了");
+        assert!(!s.collapsed.contains("ai-log"), "dock 另一页的组被连坐了");
+    }
+
+    /// 全部展开 / 全部收起两个极端都得真的到头。
+    #[test]
+    fn expand_all_and_collapse_all_reach_the_ends() {
+        let mut s = AppState::new();
+        s.expand_all_groups();
+        assert!(s.collapsed.is_empty());
+        s.collapse_all_groups();
+        assert_eq!(s.collapsed.len(), GROUP_SPECS.len());
+        s.expand_all_groups();
+        assert!(s.collapsed.is_empty());
+    }
+
+    /// 旧版本留下的键（这一版已经没有那个组）读回来要丢掉：留着的话既进不了
+    /// 界面的任何一次绘制，又会一直往配置文件里写。
+    #[test]
+    fn unknown_keys_are_dropped_on_load() {
+        let stale: crate::settings::Settings =
+            serde_json::from_str(r#"{"collapsed":["curve","some-removed-group"]}"#).unwrap();
+        let mut s = AppState::new();
+        s.adopt_settings(stale);
+        assert!(s.collapsed.contains("curve"));
+        assert_eq!(
+            s.collapsed.len(),
+            1,
+            "没登记的键被收进来了：{:?}",
+            s.collapsed
+        );
     }
 }

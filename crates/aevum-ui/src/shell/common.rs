@@ -477,7 +477,25 @@ pub(super) fn group_header(
         } else {
             state.collapsed.insert(key);
         }
+        state.settings_dirty = true;
     }
+    // 右键：Lightroom 的「Solo Mode」那套。面板摊开十来个组之后，逐个点头收起来
+    // 太笨；右键标题条给三个动作，全部展开 / 全部收起 / 只看这一组。
+    // 不做成常驻按钮：这三个动作一周用一次，占一条像素都是负担。
+    resp.context_menu(|ui| {
+        if ui.button(crate::i18n::t!("只看这一组")).clicked() {
+            state.solo_group(key);
+            ui.close();
+        }
+        if ui.button(crate::i18n::t!("全部收起")).clicked() {
+            state.collapse_all_groups();
+            ui.close();
+        }
+        if ui.button(crate::i18n::t!("全部展开")).clicked() {
+            state.expand_all_groups();
+            ui.close();
+        }
+    });
     ui.add_space(4.0);
     !state.collapsed.contains(key)
 }
