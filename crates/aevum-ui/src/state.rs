@@ -1476,18 +1476,32 @@ pub struct AppState {
     /// 序列体检的后台任务。测光随导入那趟就算好了，这里只是逐帧 `stat` 一遍
     /// 再跑判定——五千帧的 `stat` 也要 100ms 量级，所以与合并同构放后台，
     /// 不放界面线程上。
+    ///
+    /// The sequence health-check background job. Metering is already computed during the
+    /// import pass; this only `stat`s each frame and runs the verdict -- and `stat` over
+    /// five thousand frames is still on the order of 100 ms, so it runs in the background
+    /// like the merge rather than on the UI thread.
     pub qa_busy: bool,
     /// 最近一次的体检清单（`qa_run` 为假就是还没跑过，空表是「跑过、干净」）。
+    ///
+    /// The findings of the most recent check (a false `qa_run` means it has never run; an
+    /// empty list means "it ran and came back clean").
     pub qa_findings: Vec<Finding>,
     pub qa_run: bool,
     pub qa_error: Option<String>,
     /// 判定松紧：离群门槛是本序列波动的多少倍。面板滑杆与 `sequence.check` 共用。
+    ///
+    /// Verdict tightness: the outlier threshold as a multiple of this sequence's
+    /// fluctuation. Shared by the panel slider and `sequence.check`.
     pub qa_sig: f64,
     qa_done: Arc<AtomicUsize>,
     qa_total: Arc<AtomicUsize>,
     cancel_qa: Arc<AtomicBool>,
 
     /// 批量渲染队列；存盘位置在漫游配置目录，与工程分开。
+    ///
+    /// The batch render queue; its file lives in the roaming config directory, separate
+    /// from the project.
     pub queue: Vec<QueueItem>,
     pub queue_path: PathBuf,
     pub queue_busy: bool,
@@ -1508,8 +1522,14 @@ pub struct AppState {
     rx: Receiver<Msg>,
 
     /// 本机回环控制服务；只在打开序列后存在，Drop 时清理 control.json。
+    ///
+    /// The loopback control server on this machine; exists only while a sequence is open,
+    /// and cleans up control.json when dropped.
     pub control: Option<ControlServer>,
     /// AI 面板的输入行与最近记录；与回环控制共用同一个命令执行器。
+    ///
+    /// The AI panel's input line and recent records; shares one command executor with the
+    /// loopback control channel.
     pub ai_input: String,
     pub ai_log: Vec<AiLogEntry>,
     control_tx: Sender<ControlEvent>,
@@ -1567,6 +1587,16 @@ impl AppState {
     /// 只在全量帧到达（!sketch）后调用；草图帧用旧遮罩顶着——遮罩是示意
     /// 罩层，与草图帧的宽高比一致，拉伸显示对得上，精度无关紧要。
     /// 阈值取 LR 同款口径：r、g、b 全部 ≥250 视为高光裁切，全部 ≤5 视为阴影。
+    ///
+    /// Recompute the clipping mask: pick the highlight / shadow clipped pixels out of the
+    /// most recent full preview's CPU pixels and build an RGBA mask of the same size as the
+    /// preview (red = highlights, blue = shadows, everything else transparent).
+    ///
+    /// Called only after a full frame arrives (!sketch); sketch frames keep the old mask --
+    /// the mask is an indicative overlay with the same aspect ratio as the sketch, so
+    /// stretching it lines up and precision does not matter.
+    /// Thresholds follow Lightroom's: r, g and b all >= 250 counts as highlight clipping,
+    /// all <= 5 as shadow.
     pub fn rebuild_clip_mask(&mut self, ctx: &Context, stamp: u64) {
         if !self.clip_highlights && !self.clip_shadows {
             if self.clip_mask.take().is_some() {
@@ -1596,6 +1626,10 @@ impl AppState {
 
     /// J 键循环剪切警告：关 → 高光 → 两开 → 阴影 → 关（LR 的口径）。
     /// 置 stamp 为 MAX 强制下一帧重算。
+    ///
+    /// The J key cycles the clipping warning: off -> highlights -> both -> shadows -> off
+    /// (Lightroom's order).
+    /// Sets the stamp to MAX to force a recompute on the next frame.
     pub fn clip_cycle(&mut self) {
         match (self.clip_highlights, self.clip_shadows) {
             (false, false) => self.clip_highlights = true,
@@ -1613,6 +1647,14 @@ impl AppState {
     /// 起一条工作线程：真进程 → 握手 → 按 512 的块往返。每块之间向界面报进度，
     /// 用户随时可以取消。结果由 [`AppState::plugin_poll`] 每帧收：成功换一张纹理
     /// 盖在画布上（并等着下一次全量预览把它冲掉），失败进错误横幅并按 id 记一笔。
+    ///
+    /// Apply a filter plugin to the current preview (kanban B06: background-job version).
+    ///
+    /// Starts a worker thread: real process -> handshake -> 512-pixel tile round trips.
+    /// Progress is reported to the UI between tiles and the user can cancel at any time.
+    /// Results are collected each frame by [`AppState::plugin_poll`]: success swaps in a
+    /// texture over the canvas (and waits for the next full preview to wash it away),
+    /// failure raises the error banner and records one against the id.
     pub fn plugin_start(&mut self, ctx: &Context, id: &str) -> Result<String, String> {
         use aevum_core::plugin_host::Host;
         // 一次只跑一个：画布上盖着的插件结果只有一个，两个任务抢同一张纹理
@@ -1685,6 +1727,9 @@ impl AppState {
     }
 
     /// 每帧收一次插件任务的进度与结果。挂在 [`AppState::poll`] 里，不用单独调。
+    ///
+    /// Collect plugin job progress and results once per frame. Called from
+    /// [`AppState::poll`]; no separate call needed.
     pub fn plugin_poll(&mut self, ctx: &Context) {
         let Some(job) = self.plugin_job.as_mut() else {
             return;
@@ -1754,6 +1799,10 @@ impl AppState {
 
     /// 用户点了取消：立旗就回。剩下的交给工作线程 —— 它在下一块边界退出、
     /// 把子进程收尸干净，[`AppState::plugin_poll`] 收到回包后清掉在飞状态。
+    ///
+    /// The user pressed cancel: raise the flag and return. The rest is up to the worker
+    /// thread -- it exits at the next tile boundary, reaps the child process cleanly, and
+    /// [`AppState::plugin_poll`] clears the in-flight state once the reply arrives.
     pub fn plugin_cancel(&mut self) {
         if let Some(job) = &self.plugin_job {
             job.cancel.store(true, Ordering::Relaxed);
@@ -1762,11 +1811,17 @@ impl AppState {
     }
 
     /// 有没有插件正在后台跑。在飞期间再点别的插件只会得到一句提示。
+    ///
+    /// Whether a plugin is running in the background. Clicking another plugin while one is
+    /// in flight only yields a message.
     pub fn plugin_running(&self) -> bool {
         self.plugin_job.is_some()
     }
 
     /// 当前偏好的快照（外观 + 布局 + 字号 + 语言 + 折叠态），落盘与回填都用它。
+    ///
+    /// A snapshot of the current preferences (appearance + layout + font step + language +
+    /// folding state), used for both persisting and restoring.
     pub fn settings(&self) -> crate::settings::Settings {
         // 折叠态按登记表次序输出：`HashSet` 的遍历顺序每次进程都不同，原样写文件
         // 会让「什么都没改」也产生 diff，也让 golden/回归比对没法做。排序之后
@@ -1786,6 +1841,9 @@ impl AppState {
     }
 
     /// 启动时把落盘的偏好灌回来。不动任何图像状态，只改外观与布局。
+    ///
+    /// Pour the persisted preferences back in at startup. Touches no image state, only
+    /// appearance and layout.
     pub fn adopt_settings(&mut self, s: crate::settings::Settings) {
         self.appearance = s.appearance;
         self.layout = s.layout;
@@ -2058,6 +2116,9 @@ impl AppState {
     }
 
     /// 素材是不是只有一张照片。序列级的功能（对齐、去闪）靠邻居帧才有意义。
+    ///
+    /// Whether the material is a single photo. Sequence-level features (alignment,
+    /// deflicker) only make sense with neighbouring frames.
     pub fn is_single(&self) -> bool {
         self.frame_count() == 1
     }
@@ -2070,6 +2131,13 @@ impl AppState {
     ///
     /// 单通道时 `chan` 全零，与只补亮度的老口径逐位一致；开分通道后 `add` 吃三
     /// 通道均值、`chan` 只留色差，两者相加正好还原该通道原本的偏移。
+    ///
+    /// This frame's deflicker compensation, fed straight into the develop chain.
+    ///
+    /// In single-channel mode `chan` is all zeros, bit-identical to the old brightness-only
+    /// definition; with per-channel on, `add` carries the three-channel mean and `chan` keeps
+    /// only the colour difference, and the two together restore each channel's original
+    /// offset exactly.
     pub fn ev_at(&self, i: usize) -> Ev {
         Ev {
             add: self.offset_at(i),
@@ -2085,6 +2153,13 @@ impl AppState {
     ///
     /// 单张照片不能退化成「打开它所在的整个文件夹」——那样用户挑的那张会被邻居淹没，
     /// 护带和成片还会写进一个他根本没选的目录。
+    ///
+    /// A batch of paths dropped or picked: a single one may be a directory or a photo,
+    /// several are taken as a photo list.
+    ///
+    /// A single photo must not degrade into "open the whole folder it sits in" -- the one the
+    /// user picked would drown among its neighbours, and the guard directory and the exports
+    /// would land in a directory he never chose.
     pub fn open_paths(&mut self, ctx: &Context, paths: &[PathBuf]) {
         let seq = match paths {
             [] => return,
@@ -2269,6 +2344,9 @@ impl AppState {
     }
 
     /// 关闭当前序列，回到空状态；不碰磁盘上的素材。
+    ///
+    /// Close the current sequence and return to the empty state; never touches footage on
+    /// disk.
     pub fn close(&mut self) {
         self.save_project();
         self.unload_jobs();
@@ -2515,6 +2593,19 @@ impl AppState {
     /// - **上限 8 条，旧的先走**：新的问题必须留得住，否则刚触发的那条会被老账顶掉。
     ///
     /// 每帧开头调一次就够：`env::drain_notes` 是取走并清空，重复调用不会丢东西。
+    ///
+    /// Move the diagnostics core has queued into the status bar.
+    ///
+    /// Three rules:
+    /// - **order preserved**: whatever core said first is shown first, so cause and effect
+    ///   are never read backwards;
+    /// - **deduplicated**: one copy per sentence (the same sentence reappears only after the
+    ///   user dismissed it);
+    /// - **capped at 8, oldest leaves first**: new problems must survive, otherwise the one
+    ///   just triggered would be pushed out by old debts.
+    ///
+    /// Once at the start of each frame is enough: `env::drain_notes` takes and clears, so
+    /// repeated calls lose nothing.
     pub fn drain_notices(&mut self) {
         for msg in aevum_core::env::drain_notes() {
             if self.notices.iter().any(|m| m == &msg) {
@@ -3000,6 +3091,8 @@ impl AppState {
     }
 
     /// 给界面展示用的控制文件信息；没开服务时为 None。
+    ///
+    /// The control file info for display; None when the server is not running.
     pub fn control_file(&self) -> Option<&ControlFile> {
         self.control.as_ref().map(ControlServer::file)
     }
@@ -3012,6 +3105,9 @@ impl AppState {
 
     /// 抓一份可撤销状态。视图（缩放、面板、当前帧）与只读结果（测光、直方图）不在
     /// 里面，见 [`Snapshot`]。
+    ///
+    /// Capture an undoable state. View state (zoom, panels, current frame) and read-only
+    /// results (metering, histogram) are not part of it; see [`Snapshot`].
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             params: self.params.clone(),
@@ -3057,6 +3153,9 @@ impl AppState {
     }
 
     /// 回放快照：收尾和人在面板上改完是同一套——该重算去闪的重算，该重新探针的探针。
+    ///
+    /// Replay a snapshot: the wind-down is the same as after a human edit in the panel --
+    /// deflicker recomputes when it should, probes re-probe when they should.
     pub fn restore(&mut self, snap: Snapshot) {
         let def_changed = self.def_window != snap.def_window
             || self.def_strength != snap.def_strength
@@ -3120,6 +3219,9 @@ impl AppState {
     }
 
     /// 换序列、关序列：历史从头开始，上一步属于上一个工程。
+    ///
+    /// Switching or closing a sequence: the history restarts, because the previous step
+    /// belongs to the previous project.
     pub fn history_reset(&mut self, label: &str) {
         history::clear_note();
         let snap = self.snapshot();
@@ -3130,6 +3232,12 @@ impl AppState {
     ///
     /// 名字取当前预设 + 序号：`原始 · 2`。比纯序号好认——一列「快照 1/2/3」
     /// 过两天谁也分不清哪份是满意的。
+    ///
+    /// Pin the current parameters as a named snapshot, listed in the left column's snapshot
+    /// section.
+    ///
+    /// The name is the current preset plus an index. That beats a bare index -- a column of
+    /// "Snapshot 1/2/3" leaves nobody able to tell which one they liked two days later.
     pub fn save_snapshot(&mut self) {
         // 预设名按当前语言翻译进 label：快照列表直接显示这串。序号与
         // 分隔符跟在后面 —— 一列「快照 1/2/3」过两天谁也分不清哪份是满意的。
@@ -3141,6 +3249,9 @@ impl AppState {
     }
 
     /// 回到某一份快照。整组参数换回去，照样进历史，撤得回来。
+    ///
+    /// Go back to one snapshot. The whole parameter set is swapped back and still enters the
+    /// history, so it can be undone.
     pub fn restore_snapshot(&mut self, i: usize) {
         let Some((label, snap)) = self.snapshots.get(i).cloned() else {
             return;
@@ -3159,6 +3270,13 @@ impl AppState {
     ///
     /// 判据是状态本身，不是「有没有控件登记过」——画布手柄、色轮、以后新加的控件忘了
     /// 登记文案，改动照样进历史，只是那一行写成字段名。登记的文案优先。
+    ///
+    /// At the end of a UI frame, compare the current state with the snapshot at the cursor:
+    /// record a step if they differ.
+    ///
+    /// The criterion is the state itself, not "did any control register" -- canvas handles,
+    /// colour wheels, and future controls that forgot to register a label still reach the
+    /// history; the row is merely worded as a field name. A registered label wins over that.
     pub fn history_commit(&mut self) {
         let snap = self.snapshot();
         if !self.history.dirty(&snap) {
@@ -3498,6 +3616,9 @@ impl AppState {
     }
 
     /// 历史列表 + 当前光标；面板和 MCP 共用这一份口径。
+    ///
+    /// The history list plus the current cursor; the panel and MCP share this one
+    /// definition.
     pub fn history_json(&self) -> Value {
         let steps: Vec<Value> = self
             .history
@@ -3755,6 +3876,11 @@ impl AppState {
 
     /// 打开序列后按首帧 EXIF 匹配镜头配置文件。lensfun 数据库在磁盘上找，
     /// 没有库、没接镜头、EXIF 缺信息都静默降级——手动三项照旧，只留一行说明。
+    ///
+    /// After opening a sequence, match a lens profile from the first frame's EXIF. The
+    /// lensfun database is looked up on disk; a missing database, an unattached lens, or
+    /// missing EXIF all degrade silently -- the three manual values stay as they are, with one
+    /// explanatory line.
     pub fn match_lens_profile(&mut self) {
         self.lens_profile_note.clear();
         let Some(ex) = self.exif.first() else {
@@ -3774,6 +3900,9 @@ impl AppState {
 
     /// 用给定的 EXIF 三件套跑匹配并落进参数。`match_lens_profile` 的主体，
     /// 独立出来供测试直呼。
+    ///
+    /// Run the match with the given EXIF triple and write it into the parameters. The body of
+    /// `match_lens_profile`, split out so tests can call it directly.
     pub fn lens_match_apply(
         &mut self,
         make: &str,
@@ -3867,6 +3996,9 @@ impl AppState {
     }
 
     /// 按 EXIF 机身找 DCP；找不到只留一行说明，不改动当前参数。
+    ///
+    /// Find a DCP by the EXIF camera body; not finding one only leaves an explanatory line
+    /// and changes no current parameter.
     pub fn match_dcp_profile(&mut self) {
         self.dcp_note.clear();
         let Some(ex) = self.exif.first() else {
@@ -3887,6 +4019,9 @@ impl AppState {
     }
 
     /// 指定一份 `.dcp`。机型对不上就拒绝——配置拿错比不套更糟。
+    ///
+    /// Specify a `.dcp`. Rejected when the camera model does not match -- the wrong profile
+    /// is worse than none.
     pub fn set_dcp_profile(&mut self, path: &str) -> Result<(), String> {
         let p = aevum_core::dcp::Profile::load(path)?;
         if let Some(ex) = self.exif.first() {
@@ -3914,6 +4049,8 @@ impl AppState {
     }
 
     /// 按 EXIF 在默认目录里找 LCP 并折出校正。
+    ///
+    /// Find an LCP in the default directories by EXIF and fold its correction in.
     pub fn match_lcp_profile(&mut self) {
         self.lcp_note.clear();
         let req = match self.exif_lens_request() {
@@ -3941,6 +4078,8 @@ impl AppState {
     }
 
     /// 指定一份 `.lcp`，按当前 EXIF 选帧。
+    ///
+    /// Specify a `.lcp`, picking the frame by the current EXIF.
     pub fn set_lcp_profile(&mut self, path: &str) -> Result<(), String> {
         let file = aevum_core::lcp::load(path)?;
         let req = self.exif_lens_request()?;
@@ -4285,6 +4424,10 @@ impl AppState {
 
     /// 当前帧的拍摄参数。整块读不到（PNG、无 EXIF 的处理过的图）返回 `null`，
     /// 面板和 agent 都按「这条没有」处理，不摆一排空值。
+    ///
+    /// The current frame's shooting parameters. Returns `null` when the whole block is
+    /// unreadable (PNG, or a processed image with no EXIF); the panel and the agent both treat
+    /// that as "this one has none" rather than showing a row of empty values.
     pub fn exif_json(&self) -> Value {
         let Some(e) = self.exif.get(self.selected) else {
             return Value::Null;
@@ -5222,6 +5365,9 @@ impl AppState {
     }
 
     /// 请求取消正在进行的合并；核心算法是一整块，取消只在两帧之间生效。
+    ///
+    /// Request cancellation of the merge in progress; the core algorithm is one block, so
+    /// cancellation only takes effect between two frames.
     pub fn stop_merge(&mut self) {
         if self.merge_busy {
             self.cancel_merge.store(true, Ordering::SeqCst);
@@ -5233,6 +5379,9 @@ impl AppState {
     }
 
     /// 面板画进度用的三元组：种类 + 已完成 + 总数。没在跑就 `None`。
+    ///
+    /// The triple the panel draws progress from: kind + done + total. `None` when nothing is
+    /// running.
     pub fn merge_progress(&self) -> Option<(MergeKind, usize, usize)> {
         if !self.merge_busy {
             return None;
@@ -5326,6 +5475,9 @@ impl AppState {
     }
 
     /// 请求取消正在跑的体检；`stat` 是按批停的，最后一批跑完才真正退出。
+    ///
+    /// Request cancellation of the running health check; `stat` stops per batch, so it really
+    /// exits only after the last batch finishes.
     pub fn stop_qa(&mut self) {
         if self.qa_busy {
             self.cancel_qa.store(true, Ordering::SeqCst);
@@ -5334,6 +5486,9 @@ impl AppState {
     }
 
     /// 面板画进度用的二元组：已完成 / 总数。没在跑就 `None`。
+    ///
+    /// The pair the panel draws progress from: done / total. `None` when nothing is
+    /// running.
     pub fn qa_progress(&self) -> Option<(usize, usize)> {
         if !self.qa_busy {
             return None;
@@ -5345,6 +5500,9 @@ impl AppState {
     }
 
     /// 面板上的「开始体检」：与 `sequence.check` 同一条路径，阈值用面板当前值。
+    ///
+    /// The panel's "start health check": the same path as `sequence.check`, using the
+    /// panel's current threshold.
     pub fn run_qa(&mut self, ctx: &Context) {
         if self.qa_busy || self.headless {
             return;
@@ -5845,6 +6003,10 @@ impl AppState {
 
     /// 面板读数：按速度曲线估输出帧数与时长。只积分曲线，不建整段取样计划——
     /// 几十万帧的计划每帧 UI 算一遍会把界面拖住。
+    ///
+    /// Panel readout: estimate the output frame count and duration from the speed curve.
+    /// Integrates the curve only and never builds a whole sampling plan -- a plan over
+    /// hundreds of thousands of frames, recomputed every UI frame, would stall the UI.
     pub fn retime_estimate(&self) -> Result<(usize, f64), String> {
         let n = self.frame_count();
         let fps = self.output_fps.max(1.0) as f64;
@@ -5956,6 +6118,11 @@ impl AppState {
 
     /// 运镜作用的那一幅像素尺寸：拉直 + 导出取景之后的宽高，与导出里 `bw × bh` 同口径。
     /// 取景框是相对这一幅归一化的，所以画布换算与推近读数都认它。
+    ///
+    /// The pixel size the motion acts on: width and height after straightening and export
+    /// cropping, the same definition as the export's frame size.
+    /// The viewfinder is normalised against this frame, so the canvas conversion and the
+    /// push-in readout both go by it.
     pub fn motion_frame_size(&self) -> (u32, u32) {
         let (w, h) = self.resolution.unwrap_or((1, 1));
         match self.effective_crop() {
@@ -5965,6 +6132,9 @@ impl AppState {
     }
 
     /// 运镜的输出画幅：成片面板给了精确宽高就认它，否则就是那一幅原样铺出去。
+    ///
+    /// The motion output frame: the exact width and height from the render panel when given,
+    /// otherwise that frame laid out as is.
     pub fn motion_output_size(&self) -> (u32, u32) {
         if self.output_w >= 2 && self.output_h >= 2 {
             (self.output_w, self.output_h)
@@ -5974,6 +6144,9 @@ impl AppState {
     }
 
     /// 按输出帧号取当前运镜的取景框；没开就返回 `None`，预览照原来的路走。
+    ///
+    /// The viewfinder of the current motion at the given output frame; `None` when it is
+    /// off, and the preview takes the original path.
     pub fn motion_view_at(&self, i: usize, total: usize) -> Option<Viewfinder> {
         self.motion
             .is_active()
@@ -6302,6 +6475,9 @@ impl AppState {
     // ------------------------------------------------------------ 配乐
 
     /// 换配乐并立刻读一次编码与时长；没有 ffmpeg 只记原因，不影响导出前的报错。
+    ///
+    /// Swap the soundtrack and immediately probe its codec and duration once; without ffmpeg
+    /// only the reason is recorded, which does not change the pre-export error.
     pub fn set_render_audio(&mut self, path: Option<PathBuf>) {
         self.render_audio = path;
         self.audio_info = None;
@@ -6323,6 +6499,8 @@ impl AppState {
     }
 
     /// 画面 / 配乐 / 成片三段时长；没有探针结果时返回 `None`。
+    ///
+    /// The three durations: picture / soundtrack / result. `None` without a probe result.
     pub fn audio_timeline(&self) -> Option<(f64, f64, f64)> {
         let info = self.audio_info.as_ref()?;
         let vdur = self.frame_count() as f64 / self.output_fps.max(1.0) as f64;
@@ -6367,6 +6545,9 @@ impl AppState {
     }
 
     /// 一次改多项配乐设置；`path` 传空串或 null 表示清空。
+    ///
+    /// Change several soundtrack settings at once; an empty string or null for `path` clears
+    /// it.
     pub fn configure_audio(&mut self, args: &Value) -> Result<Value, String> {
         let mut opts = self.render_audio_opts.clone();
         if let Some(v) = args.get("delay") {
@@ -6454,6 +6635,12 @@ impl AppState {
     ///
     /// 与 Python `read_xmp` + `merge` 同口径：预设没写的键回到默认值，
     /// 局部蒙版也随默认值清空（Lightroom 预设不含本工程的蒙版模型）。
+    ///
+    /// Import an XMP preset: replaces the global grading parameters wholesale.
+    ///
+    /// Same definition as Python's `read_xmp` + `merge`: keys the preset does not mention
+    /// return to their defaults, and local masks are cleared along with them (a Lightroom
+    /// preset does not carry this project's mask model).
     pub fn import_xmp_preset(&mut self, path: &Path) -> Result<Value, String> {
         let params =
             xmp::read(path).map_err(|e| crate::i18n::tr_fmt("读不进这个预设：{}", &[&e]))?;
@@ -6477,6 +6664,9 @@ impl AppState {
     }
 
     /// 把当前参数写成 XMP 预设；覆盖已有文件必须显式确认。
+    ///
+    /// Write the current parameters out as an XMP preset; overwriting an existing file
+    /// requires explicit confirmation.
     pub fn export_xmp_preset(&mut self, path: &Path, confirm: bool) -> Result<Value, String> {
         let is_xmp = path
             .extension()
@@ -6639,6 +6829,9 @@ impl AppState {
     // ------------------------------------------------------------ AI 面板
 
     /// 解析并执行一行「命令 ID + JSON 参数」，结果写入最近记录。
+    ///
+    /// Parse and execute one line of "command ID + JSON arguments"; the result goes into the
+    /// recent records.
     pub fn run_ai_line(&mut self, ctx: &Context, line: &str) -> Result<Value, String> {
         let line = line.trim();
         if line.is_empty() {
@@ -6741,6 +6934,11 @@ impl AppState {
     /// 选项栏上下文徽标（界面稿 .ctx .n「N 项调整」）：有几组参数偏离默认值。
     /// 按「组」计数而不是按参数 —— 徽标只回答"动没动过、动了多大片"，
     /// 逐参数细数是 dock 页签自己的职责。
+    ///
+    /// The context badge in the options bar (the ".ctx .n" entry in the design): how many
+    /// groups deviate from their defaults.
+    /// Counted by group rather than by parameter -- the badge only answers "was anything
+    /// touched, and how much of it", while per-parameter detail is the dock tabs' job.
     pub fn changed_groups(&self) -> usize {
         const KEYS: [&str; 12] = [
             "basic",
@@ -6762,6 +6960,11 @@ impl AppState {
     /// 分组头右缘的 accent 圆点开关：这一组里有参数偏离默认值才亮。
     /// 字段清单与 `shell::reset_group` 的复位口径一一对应 —— 那边复位哪些字段，
     /// 这边就比对哪些字段，两边必须同进退。
+    ///
+    /// The accent dot at the right edge of a group header: lit when any parameter in the
+    /// group deviates from its default.
+    /// The field list corresponds one-to-one with `shell::reset_group` -- whichever fields
+    /// that one resets, this one compares; the two must move together.
     pub fn group_changed(&self, key: &str) -> bool {
         let d = GradeParams::default();
         let p = &self.params;
@@ -6822,6 +7025,8 @@ impl AppState {
     // ------------------------------------------------------------ 局部蒙版
 
     /// 新建一张单组件蒙版并选中；返回 0 基序号。
+    ///
+    /// Create a single-component mask and select it; returns its 0-based index.
     pub fn add_mask(&mut self, kind: &str) -> usize {
         let shape = match kind {
             "radial" => mask::ShapeKind::Radial,
@@ -6863,12 +7068,17 @@ impl AppState {
     }
 
     /// 选中某张蒙版，并回到组内第一个形状。
+    ///
+    /// Select one mask and return to the first shape inside its group.
     pub fn select_mask(&mut self, index: usize) {
         self.mask_sel = Some(index);
         self.mask_comp = 0;
     }
 
     /// 组内加一个形状；扁平老格式先升级成单组件组。返回新形状的 0 基序号。
+    ///
+    /// Add a shape to a group; a legacy flat mask is upgraded to a single-component group
+    /// first. Returns the new shape's 0-based index.
     pub fn add_mask_component(&mut self, index: usize, kind: &str) -> Option<usize> {
         if index >= self.params.masks.len() {
             return None;
@@ -6903,6 +7113,9 @@ impl AppState {
     }
 
     /// 删掉组内一个形状；只剩一个时不删，蒙版不能空组。
+    ///
+    /// Remove one shape from a group; the last one is kept, because a mask cannot be an
+    /// empty group.
     pub fn remove_mask_component(&mut self, index: usize, comp: usize) -> bool {
         if index >= self.params.masks.len() {
             return false;
@@ -6931,6 +7144,9 @@ impl AppState {
     }
 
     /// 蒙版改动后统一走这里：重画预览，并把预设标成自定义。
+    ///
+    /// The single path after any mask change: re-render the preview and mark the preset as
+    /// custom.
     pub fn masks_changed(&mut self) {
         self.preview_dirty = true;
         // 指纹本来会自校验，这里整体清一道是保守兜底（宁可多失效）。
@@ -7054,6 +7270,14 @@ impl AppState {
     ///
     /// 写的是绝对值，不是在当前值上再加一档——所以连点几次结果不变；已经曝好的
     /// 图可能只校白平衡，那不是没生效，是这张图本来就不用动。
+    ///
+    /// One-click auto: first propose a version of white balance and tone from the 1 / 50 / 99
+    /// percentiles, then accept it through the real chain.
+    ///
+    /// It writes absolute values rather than adding a step to the current ones -- so
+    /// clicking it several times gives the same result; an already well-exposed image may only
+    /// get its white balance corrected, which is not a no-op, it is an image that needed
+    /// nothing else.
     pub fn auto_exposure(&mut self) {
         let Some(path) = self
             .seq
@@ -7272,6 +7496,9 @@ impl AppState {
     }
 
     /// 展开一个根目录：编目（含评级/色标/旗标）从该目录自己的工程文件折出来。
+    ///
+    /// Expand one root folder: the catalogue (with rating / colour label / flag) is folded out
+    /// of that folder's own project file.
     pub fn lib_scan(&mut self, index: usize) {
         while self.lib_entries.len() < self.lib_roots.len() {
             self.lib_entries.push(Vec::new());
