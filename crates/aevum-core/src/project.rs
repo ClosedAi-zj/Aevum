@@ -2,6 +2,13 @@
 //!
 //! 位置固定为 `<序列根>/.aevum/project.json`；缺字段一律取默认值，
 //! 所以旧工程、只写了一半的工程都能打开。保存先写临时文件再替换。
+//!
+//! Project file: keeps parameters, ratings, keyframes, alignment and render settings on disk
+//! together with the sequence.
+//!
+//! The location is fixed at `<sequence root>/.aevum/project.json`; missing fields always take
+//! their defaults, so old projects and half-written projects both open.
+//! Saving writes a temporary file first and then replaces the original.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -33,14 +40,25 @@ pub struct RenderState {
     pub mode: String,
     pub format: String,
     /// 有损容器（JPEG）的压缩质量 1~100；无损档忽略。
+    ///
+    /// Compression quality for the lossy container (JPEG), 1~100; ignored by lossless formats.
     pub quality: u8,
     /// 把源 JPEG 的 EXIF 块搬进静帧输出。
+    ///
+    /// Copies the EXIF block of the source JPEG into still output.
     pub keep_exif: bool,
     /// 每张静帧旁写一个同名 `.xmp` 旁车（`dc:` 四项 + 这一张的调色参数）。
+    ///
+    /// Writes a same-named `.xmp` sidecar next to every still (the four `dc:` fields plus
+    /// this image's grading parameters).
     pub xmp_sidecar: bool,
     /// 输出锐化用途档键（`off`/`screen`/`glossy`/`matte`）。
+    ///
+    /// Output sharpening purpose key (`off`/`screen`/`glossy`/`matte`).
     pub sharpen_for: String,
     /// 输出锐化强度档键（`low`/`standard`/`high`）。
+    ///
+    /// Output sharpening strength key (`low`/`standard`/`high`).
     pub sharpen_strength: String,
     pub width: u32,
     pub height: u32,
@@ -52,16 +70,30 @@ pub struct RenderState {
     pub video_out: String,
     pub audio: String,
     /// 配乐的延迟 / 音量 / 淡入淡出 / 循环 / 编码；旧工程缺省即为默认。
+    ///
+    /// Delay / volume / fade / loop / codec of the soundtrack; a missing field in an old
+    /// project means the default.
     pub audio_opts: AudioOptions,
     pub long_side: Option<u32>,
     pub keep_frames: bool,
     /// 输出色域键（`srgb`/`p3`/`rec2020`）；旧工程没这个字段时按 sRGB 走，行为不变。
+    ///
+    /// Output color space key (`srgb`/`p3`/`rec2020`); an old project without this field uses
+    /// sRGB, so the behavior is unchanged.
     pub color_space: String,
     /// 水印整块设定；旧工程没有这一段就是没开水印。
+    ///
+    /// Watermark settings as a whole; an old project without this section has no watermark.
     pub watermark: crate::watermark::Watermark,
     /// 时间重映射（变速 + 运动模糊）；旧工程没这一段就是 1:1 原速。
+    ///
+    /// Retime (speed change + motion blur); an old project without this section runs at 1:1
+    /// speed.
     pub retime: crate::retime::Retime,
     /// 运镜（Ken Burns）：取景框从起点走到终点；旧工程没这一段就是不开。
+    ///
+    /// Camera move (Ken Burns): the viewfinder travels from the start box to the end box; an
+    /// old project without this section has it off.
     pub motion: crate::crop::Motion,
 }
 
@@ -99,16 +131,33 @@ impl Default for RenderState {
 ///
 /// 跟着工程文件走，不另开数据库：图库、序列与导出读的是同一份，改一处三边都认。
 /// 全字段可选，空字符串就是没填——写元数据时按空跳过，不往文件里塞空标签。
+///
+/// Description and copyright of one directory (the IPTC fields, written into XMP / EXIF in
+/// Dublin Core terms).
+///
+/// It travels with the project file instead of a separate database: the library, the
+/// sequence and export read the same copy, so one edit is seen by all three.
+/// Every field is optional and an empty string means unset — empty values are skipped when
+/// metadata is written, so no empty tags reach the file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Metadata {
     /// 标题（`dc:title` / EXIF 无对应，只进 XMP 与视频容器）。
+    ///
+    /// Title (`dc:title`; there is no EXIF counterpart, so it only goes into XMP and video
+    /// containers).
     pub title: String,
     /// 说明 / 字幕（`dc:description` / EXIF `ImageDescription`）。
+    ///
+    /// Description / caption (`dc:description` / EXIF `ImageDescription`).
     pub description: String,
     /// 创作者（`dc:creator` / EXIF `Artist`）。
+    ///
+    /// Creator (`dc:creator` / EXIF `Artist`).
     pub creator: String,
     /// 版权声明（`dc:rights` / EXIF `Copyright`）。
+    ///
+    /// Copyright notice (`dc:rights` / EXIF `Copyright`).
     pub copyright: String,
 }
 
@@ -121,6 +170,9 @@ const LIMIT_PERSON_BYTES: usize = 120;
 
 impl Metadata {
     /// 四项全空（或只剩空白）。导出按它决定要不要动元数据。
+    ///
+    /// Whether all four fields are empty or contain only whitespace. Export uses it to decide
+    /// whether metadata is touched at all.
     pub fn is_empty(&self) -> bool {
         [
             &self.title,
@@ -134,6 +186,10 @@ impl Metadata {
 
     /// 收干净的副本：去首尾空白、把换行与连排空白折成单个空格、按上限截断。
     /// EXIF 的 ASCII 标签放不下换行，说明里的换行也得折掉。
+    ///
+    /// A cleaned copy: trims both ends, folds newlines and runs of whitespace into a single
+    /// space, and truncates to the limit.
+    /// ASCII EXIF tags cannot hold newlines, so newlines in the description are folded too.
     pub fn cleaned(&self) -> Self {
         Self {
             title: self
@@ -151,6 +207,9 @@ impl Metadata {
     }
 
     /// 只留填了的项，给导出与 XMP 用：`(键, 值)` 的非空子集，值已归一化。
+    ///
+    /// Keeps only the filled fields for export and XMP: a non-empty subset of `(key, value)`
+    /// pairs with normalized values.
     pub fn present(&self) -> Vec<(&'static str, String)> {
         let c = self.cleaned();
         [
@@ -180,6 +239,11 @@ fn cut_bytes(raw: &str, bytes: usize) -> String {
 
 /// 一套命名调色：与主链同构（基础参数 + 关键帧）。同一个序列的多版调色
 /// 并存互不覆盖，随时取回当前，或指定给某一次导出 / 队列段。
+///
+/// One named grading: structurally identical to the main chain (base parameters plus
+/// keyframes).
+/// Multiple variants of the grading for one sequence coexist without overwriting each other,
+/// and a variant can be recalled at any time or assigned to one export or queue segment.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GradeCopy {
@@ -200,36 +264,75 @@ pub struct ProjectFile {
     pub flags: BTreeMap<usize, i8>,
     pub labels: BTreeMap<usize, u8>,
     /// 逐帧关键词（归一化、排序）；图库按它筛选，序列里也能读。
+    ///
+    /// Per-frame keywords (normalized and sorted); the library filters by them and the
+    /// sequence can read them too.
     pub keywords: BTreeMap<usize, Vec<String>>,
     /// 堆叠：一叠 = 一组帧索引（0 起）。落盘前经 `library::normalize_stacks`
     /// 归一（升序、≥2 帧、叠间不重叠、按头帧排序），旧工程没这一段就是没叠。
+    ///
+    /// Stacks: one stack is a group of frame indices (0-based). Before persisting they are
+    /// normalized by `library::normalize_stacks` (ascending, at least 2 frames, no overlap,
+    /// ordered by head frame); an old project without this section has no stacks.
     pub stacks: Vec<Vec<usize>>,
     /// 这个目录的说明与版权信息；旧工程没这一段就是四项全空。
+    ///
+    /// Description and copyright of this directory; an old project without this section has
+    /// all four fields empty.
     pub metadata: Metadata,
     pub keyframes: BTreeMap<usize, GradeParams>,
     /// 命名调色副本；旧工程没这一段就是没有副本。
+    ///
+    /// Named grading variants; an old project without this section has no variants.
     pub copies: Vec<GradeCopy>,
     pub def_window: f64,
     pub def_strength: f64,
     pub def_multi: bool,
     /// 逐帧去闪烁曝光补偿（EV），渲染队列据此复现效果。
+    ///
+    /// Per-frame deflicker exposure compensation (EV); the render queue reproduces the effect
+    /// from it.
     pub def_offsets: Vec<f32>,
     /// 分通道去闪的逐帧色差残差（R,G,B）；单通道去闪时全为零。
+    ///
+    /// Per-frame chroma residual of per-channel deflicker (R,G,B); all zeros when deflicker
+    /// runs on a single channel.
     pub def_chan: Vec<[f32; 3]>,
     /// 去闪烁是否按 R/G/B 各测各的（压彩色场景的色闪）。
+    ///
+    /// Whether deflicker measures R/G/B separately, to suppress color flicker in colorful
+    /// scenes.
     pub def_channels: bool,
     /// 画幅比例标签（`原生 / 16:9 / 4:3 / 1:1 / 9:16`）。裁剪框是按这个比例定形的，
     /// 两者必须一起存，否则重新打开工程时框和比例会对不上。
+    ///
+    /// Aspect label (`native / 16:9 / 4:3 / 1:1 / 9:16`). The crop box takes its shape from
+    /// this aspect, so the two must be persisted together, or the box and the aspect will
+    /// disagree when the project is reopened.
     pub aspect: String,
     /// 用户拖出来的裁剪框（对齐后坐标，原图像素）。`None` = 没手动裁，
     /// 取景按画幅比例在对齐安全框内居中内接。GUI 恢复的是这一项，
     /// 好让框还能接着拖；`crop` 是它叠完对齐与画幅之后的最终取景。
+    ///
+    /// The crop box dragged by the user (post-alignment coordinates, source pixels). `None`
+    /// means no manual crop, and framing is inscribed centrally inside the alignment safe box
+    /// by aspect.
+    /// The GUI restores this field so the box can still be dragged; `crop` is the final
+    /// framing after alignment and aspect are applied on top of it.
     pub user_crop: Option<CropRect>,
     /// 拉直角度（度，正角=画面逆时针）。取景框是在转过之后的帧里量的，
     /// 所以角度和框必须一起存：只存框会在重开时把画面转回去、框却还留着。
+    ///
+    /// Straighten angle in degrees (positive = counter-clockwise). The viewfinder is measured
+    /// on the rotated frame, so the angle and the box must be persisted together: storing only
+    /// the box would rotate the picture back on reopen while the box stays.
     pub rotate: f64,
     /// 导出取景：GUI 把对齐裁切、用户框、画幅比例叠好后写下来的最终框，
     /// 渲染队列照它裁，不再自己重算几何。
+    ///
+    /// Export framing: the final box the GUI writes after stacking the alignment crop, the
+    /// user box and the aspect, and the render queue crops by it without recomputing
+    /// geometry.
     pub crop: Option<CropRect>,
     pub align: Option<AlignState>,
     pub render: RenderState,
@@ -282,6 +385,13 @@ pub enum ProjectError {
     /// 不拦的话，`create_dir_all` 会抛出 `os error 183`（Windows「文件已存在」）或
     /// `EEXIST`——用户看到的是一串系统错误码，完全猜不到根因是自己帧文件夹里
     /// 多了个叫 `.aevum` 的文件。宁可提前判掉，给一句能照着做的说明。
+    ///
+    /// A same-named **file** (not a directory) sits on the guard path.
+    ///
+    /// Left unchecked, `create_dir_all` raises `os error 183` ("file already exists" on
+    /// Windows) or `EEXIST` — the user sees a string of system error codes and cannot guess
+    /// that the cause is a file named `.aevum` in the frame folder.
+    /// Checking up front yields a message the user can act on.
     #[error(
         "{} 上有个同名文件、不是目录，工程存不进去；请把它移走或改名后重试（程序没有动它）",
         .0.display()
@@ -291,9 +401,17 @@ pub enum ProjectError {
 
 /// 序列根目录下的护带目录：工程文件、控制令牌、操作日志都在这儿。
 /// 名字只这一处定义，`journal`、`control` 与迁移脚本都跟着它走。
+///
+/// The guard directory under the sequence root: project file, control token and operation
+/// journal all live here.
+/// The name is defined only in this one place, and `journal`, `control` and the migration
+/// scripts follow it.
 pub const GUARD_DIR: &str = crate::brand::GUARD_DIR;
 
 /// 更早的护带目录名，**从新到旧**。`.lumen` 是 2026-10 之前，`.lapse` 更早。
+///
+/// Earlier guard directory names, **newest first**. `.lumen` was used before 2026-10, and
+/// `.lapse` is older.
 pub const LEGACY_GUARD_DIRS: [&str; 2] = crate::brand::LEGACY_GUARD_DIRS;
 
 /// 判定过的护带目录：进程内每个目录只探一次（探针是真建真删文件），
@@ -314,6 +432,26 @@ static GUARD_PROBED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 ///
 /// 注意**不在这里顺手搬**：本函数会在 UI 渲染路径与写日志时被调用，
 /// 搬目录是写操作，绝不能藏在「读路径」的语义里。搬只发生在 `adopt_guard_dir`。
+///
+/// Read-only probe: which guard directory to use now. **Moves nothing, creates nothing,
+/// returns no error.**
+///
+/// Priority: `.aevum` > `.lumen` > `.lapse`, falling back to the default `.aevum` when no
+/// guard exists yet.
+///
+/// Every path constructor goes through here, so in the "cannot move" case reads and writes
+/// fall back to the old directory automatically and never split the data by reading the old
+/// one while writing the new one.
+///
+/// A writability check follows the resolution (cached per directory): a read-only disk or a
+/// guard path taken by a same-named file pushes one `env::note`.
+/// This is not an error report but a way to make the problem visible — the function still
+/// returns the path and reads and writes still use it, and the user no longer discovers the
+/// failure only when pressing save.
+///
+/// Note that **no move happens here**: this function is called on the UI render path and
+/// while writing the journal, and moving a directory is a write operation that must never
+/// hide inside a "read path". Moves happen only in `adopt_guard_dir`.
 pub fn guard_dir(root: &Path) -> PathBuf {
     let dir = resolved_guard_dir(root);
     // 解析出目录之后再判「能不能写」：搬不动、盘只读、被同名文件占住——这三种
@@ -402,6 +540,23 @@ fn report_guard_once(dir: &Path) {
 ///
 /// **不覆盖**：`.aevum` 若被一个同名**文件**占着，一律不搬——Windows 上往一个已存在的
 /// 文件上 rename 会把它抹掉，那是静默的数据丢失。这种情况退回旧目录，什么都不动。
+///
+/// Called once when a sequence is opened: moves the **most recent** old guard directory to
+/// `.aevum`.
+///
+/// Returns the directory actually in use — the old one when the move fails, and the caller
+/// can still read and write through it.
+///
+/// Only the most recent one is moved: when `.lumen` and `.lapse` both exist, two versions
+/// were skipped, and the older one may hold items the user put there by hand, so guessing
+/// would overwrite data.
+///
+/// **Idempotent**: the first step checks whether `.aevum` is a directory, so after one move
+/// every open costs an O(1) `is_dir()`.
+///
+/// **Never overwrites**: when `.aevum` is taken by a same-named **file**, nothing is moved —
+/// renaming onto an existing file on Windows wipes it, which is silent data loss. That case
+/// falls back to the old directory and touches nothing.
 pub fn adopt_guard_dir(root: &Path) -> PathBuf {
     adopt_guard_dir_with(root, |from, to| std::fs::rename(from, to))
 }
@@ -413,6 +568,16 @@ pub fn adopt_guard_dir(root: &Path) -> PathBuf {
 /// Windows 上只读属性、文件占用都不一定拦得住 rename，用 chmod 写出来的测试在
 /// Windows 上是空转的：测不到，而且看不出来没测到。所以把 rename 变成参数，
 /// 测试直接传一个必然失败的假 renamer，就能在任何平台上钉死这条路径。
+///
+/// A version with an injection seam: `rename` comes from the caller.
+///
+/// The seam exists because "rename fails → keep using the old directory" is the **most
+/// dangerous** path in this module (a mistake there loses the user's parameters), yet it has
+/// **no stable trigger** on a real file system — read-only attributes and file locks do not
+/// always stop a rename on Windows, and a test built on chmod is a no-op there: nothing is
+/// tested and nothing shows it.
+/// Turning rename into a parameter lets a test pass a renamer that always fails and pin this
+/// path down on any platform.
 pub fn adopt_guard_dir_with(
     root: &Path,
     rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
@@ -517,6 +682,8 @@ pub fn adopt_guard_dir_with(
 }
 
 /// `<root>/.aevum/project.json`（护带目录尚未迁移时落在旧目录里）。
+///
+/// `<root>/.aevum/project.json` (the old directory when the guard has not been migrated yet).
 pub fn project_path(root: &Path) -> PathBuf {
     guard_dir(root).join("project.json")
 }
@@ -557,6 +724,15 @@ fn parse_project(text: &str) -> Result<ProjectFile, ProjectError> {
 /// 崩一下，整个工程就没了（审查确认）。现在与 `queue::save` 同一套
 /// 样板：rename 是原子的，旧文件先改名成 bak、任何一步失败旧文件都
 /// 还在，换失败就滚回去；成功后 bak 删掉。
+///
+/// Writes a temporary file and flushes it to disk, then atomically moves the old file to
+/// .bak and atomically swaps the new one in.
+///
+/// The previous approach was tmp → `remove_file` → `rename`: a crash between remove and
+/// rename lost the whole project (confirmed in review).
+/// The current approach uses the same template as `queue::save`: rename is atomic, the old
+/// file is first renamed to bak, the old file survives any failing step, a failed swap rolls
+/// back, and bak is deleted on success.
 pub fn save(path: &Path, project: &ProjectFile) -> Result<(), ProjectError> {
     if let Some(dir) = path.parent() {
         // 目标被同名文件占住时，`create_dir_all` 抛的是系统级错误码，用户读不懂。

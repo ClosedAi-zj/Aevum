@@ -22,6 +22,37 @@
 //!
 //! 像素只用 `rgb8`。不做 `rgba16`、不做平面格式：色彩管理在宿主侧统一做，
 //! 插件拿到的一律是已经进工作空间的 sRGB 8 位。插件越笨，能出错的地方越少。
+//!
+//! Plugin host: filters run in a separate process and exchange tiles over stdin/stdout.
+//!
+//! Why the extra process is mandatory: third-party filters are built from C/C++, and one null
+//! pointer takes the whole process down.
+//! When a user hits Nik on a two-hour mask, the crash takes down all of Aevum Studio and the last
+//! step with it.
+//! Out of process, the worst case is that this plugin dies while everything else keeps running.
+//!
+//! The protocol is deliberately dumb: **no shared memory, no callbacks, no async**.
+//!
+//! ```text
+//! 宿主 → 插件    {"t":"hello","protocol":1,"id":"…","params":{…}}\n
+//! 插件 → 宿主    {"t":"ready","protocol":1}\n
+//! 宿主 → 插件    {"t":"tile","seq":0,"x":0,"y":0,"w":512,"h":512,"px":"rgb8","len":786432}\n
+//!                <786432 字节原始像素>
+//! 插件 → 宿主    {"t":"tile",…}\n<字节>
+//! 宿主 → 插件    {"t":"end"}\n
+//! 插件退出
+//! ```
+//!
+//! Every frame is one line of JSON plus optional raw bytes.
+//! A traffic capture stays readable and the plugin can be driven from a shell.
+//! A call such as `echo '...' | invert.exe` works as well.
+//! The cost is one extra syscall per frame: a 512×512 tile is 786 KB, so one more write is
+//! negligible.
+//!
+//! Pixels are always `rgb8`.
+//! No `rgba16` and no planar formats: color management lives in the host only.
+//! A plugin only ever receives 8-bit sRGB already inside the working space.
+//! The dumber the plugin, the fewer places it can fail.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -34,27 +65,53 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 /// 协议版本。改了消息形状就要加一，宿主同时接受 `<=` 自己版本的所有插件。
+///
+/// Protocol version. Bump it whenever the message shape changes; the host accepts every plugin
+/// whose version is `<=` its own.
 pub const PROTOCOL: u32 = 1;
 /// 单帧上限：512×512×3 ≈ 786 KB，留一倍余量挡住"len 被写成了 40 亿"。
+///
+/// Per-frame ceiling: a 512×512×3 tile is ≈ 786 KB, and the extra headroom blocks the case where
+/// `len` was written as four billion.
 pub const MAX_FRAME: usize = 8 * 1024 * 1024;
 /// 协议帧（一行 JSON）的长度上限。像素帧有 [`MAX_FRAME`] 顶着，JSON 帧
 /// 没有 —— 坏插件可以一口气吐一条不带换行的 GB 级"行"，把宿主吃成 OOM
 /// （审查确认）。正常帧最长的是出错说明，几 KB 封顶，4 MB 已是千倍余量。
+///
+/// Length ceiling for a protocol frame, which is one line of JSON.
+/// Pixel frames are bounded by [`MAX_FRAME`]; JSON frames were not, so a bad plugin could emit a
+/// single GB-sized line with no newline and run the host out of memory (confirmed in review).
+/// The longest legitimate frame is an error message of a few KB, so 4 MB is a thousandfold margin.
 pub const MAX_LINE: usize = 4 * 1024 * 1024;
 /// 一个 tile 的边长。512 是内部预览的常用块大小，也是缓存对齐的整数倍。
+///
+/// Edge length of one tile. 512 is the usual block size for internal previews and an exact
+/// multiple of the cache alignment.
 pub const TILE: u32 = 512;
 /// 默认超时。超过就当插件卡死，杀掉进程、把错误交回去。
+///
+/// Default timeout. Exceeding it counts as a stuck plugin: the process is killed and the error is
+/// handed back.
 pub const TIMEOUT: Duration = Duration::from_secs(20);
 /// 握手超时。插件要加载自己的依赖（大滤镜可能拖进上百 MB 的 DLL），
 /// 起步比单块宽，但必须有限 —— 否则一个启动即挂死的插件会让
 /// [`Host::start`] 永远阻塞在等 Ready 上（审查发现的挂死路径）。
+///
+/// Handshake timeout. A plugin has to load its own dependencies, and a large filter can drag in
+/// hundreds of MB of DLLs, so the startup budget is wider than a single tile.
+/// It must still be finite: a plugin that hangs on start would otherwise block [`Host::start`]
+/// forever while waiting for Ready (a hang found in review).
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 一条协议消息。
+///
+/// One protocol message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum Msg {
     /// 握手：宿主告诉插件"你是谁、参数是什么"。
+    ///
+    /// Handshake: the host tells the plugin what it is and which parameters it gets.
     Hello {
         protocol: u32,
         id: String,
@@ -62,8 +119,13 @@ pub enum Msg {
         params: BTreeMap<String, f64>,
     },
     /// 插件确认握手成功。协议版本不匹配时插件应当回 [`Msg::Error`]。
+    ///
+    /// The plugin confirms the handshake. On a version mismatch the plugin should answer with
+    /// [`Msg::Error`].
     Ready { protocol: u32 },
     /// 一块像素。`len` 是随后紧跟的字节数，必须等于 `w * h * 3`。
+    ///
+    /// One tile of pixels. `len` is the number of bytes that follow and must equal `w * h * 3`.
     Tile {
         seq: u32,
         x: u32,
@@ -74,10 +136,17 @@ pub enum Msg {
         len: usize,
     },
     /// 干完了，插件可以退出。
+    ///
+    /// Work is done; the plugin may exit.
     End,
     /// 宿主不要结果了（用户取消、或者超时）。
+    ///
+    /// The host no longer wants the result, either because the user cancelled or because a
+    /// timeout fired.
     Cancel,
     /// 任何一端出错。
+    ///
+    /// Either side failed.
     Error { msg: String },
 }
 
@@ -90,21 +159,33 @@ impl Msg {
 }
 
 /// 一次调用的结果。
+///
+/// Result of one call.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Applied {
     pub pixels: Vec<u8>,
     pub width: u32,
     pub height: u32,
     /// 从发 hello 到收完最后一块花了多久。界面用它决定要不要提示"这个插件有点慢"。
+    ///
+    /// Wall-clock time from sending hello to receiving the last tile. The UI uses it to decide
+    /// whether to warn that the plugin is slow.
     pub elapsed: Duration,
 }
 
 /// 用户取消时的约定错误串。界面侧靠它区分"用户取消"与"真失败"：
 /// 取消只清状态、不进错误横幅、不计崩溃。判断用 `contains`，
 /// 与导出、体检那条口径一致。
+///
+/// The agreed error string for a user cancellation.
+/// The UI uses it to separate a cancellation from a real failure: a cancellation only clears
+/// state, never reaches the error banner, and is not counted as a crash.
+/// Matching uses `contains`, the same convention as export and the self-check.
 pub const ERR_CANCELLED: &str = "已取消";
 
 /// 跑起来的插件进程。
+///
+/// A running plugin process.
 pub struct Host {
     child: Child,
     stdin: ChildStdin,
@@ -122,6 +203,12 @@ impl Host {
     ///
     /// `entry` 是可执行文件绝对路径；工作目录设成清单所在目录，
     /// 插件按相对路径找自己的资源才不会失败。
+    ///
+    /// Spawns the process and completes the handshake.
+    ///
+    /// `entry` is the absolute path of the executable.
+    /// The working directory is set to the directory of the manifest, so a plugin that resolves
+    /// its own resources by relative path still works.
     pub fn start(entry: &Path, id: &str, params: &BTreeMap<String, f64>) -> Result<Self, String> {
         Self::start_with(entry, id, params, HANDSHAKE_TIMEOUT)
     }
@@ -193,6 +280,15 @@ impl Host {
     /// 分块是协议层的事：调用方给整图，这里按 [`TILE`] 切开逐块往返。
     /// 之所以不让调用方自己切，是因为"插件必须收整块"这条约束不该漏到界面层。
     /// 不需要进度与取消的调用方用这个入口；要进度/取消走 [`Host::apply_progress`]。
+    ///
+    /// Sends a whole image in and gets a whole image back.
+    ///
+    /// Tiling belongs to the protocol layer: the caller passes the full image and this splits it
+    /// by [`TILE`], round-tripping one block at a time.
+    /// The caller does not tile itself because the rule that a plugin receives only whole blocks
+    /// must not leak into the UI layer.
+    /// Callers that need neither progress nor cancellation use this entry point; for either, use
+    /// [`Host::apply_progress`].
     pub fn apply(&mut self, w: u32, h: u32, rgb: &[u8]) -> Result<Applied, String> {
         self.apply_progress(w, h, rgb, |_, _| true)
     }
@@ -204,6 +300,16 @@ impl Host {
     /// 表示用户要取消：宿主立刻杀掉子进程、等它退干净（不留僵尸占管道），
     /// 然后返回 [`ERR_CANCELLED`]。全部块收完之后还会补一报 `(total, total)`，
     /// 让进度条能真正走到头 —— 那一次的返回值忽略，图已经处理完了。
+    ///
+    /// Same as [`Host::apply`], but reports progress between blocks and allows cancellation.
+    ///
+    /// The arguments of `progress(done, total)` are the finished block count and the total block
+    /// count, where the total is ceil(w/TILE) × ceil(h/TILE).
+    /// The callback runs once **before each block is sent**; returning `false` means the user
+    /// wants to cancel: the host kills the child at once, waits for it to exit cleanly so no
+    /// zombie holds the pipe, and then returns [`ERR_CANCELLED`].
+    /// Once every block is in, one more `(total, total)` report follows so the progress bar can
+    /// reach the end; the return value of that call is ignored because the image is already done.
     pub fn apply_progress(
         &mut self,
         w: u32,
@@ -327,11 +433,16 @@ impl Host {
     }
 
     /// 只看不跑：让插件报告自己的状态（调试用）。
+    ///
+    /// Read only, nothing runs: reports the plugin state for debugging.
     pub fn id(&self) -> &str {
         &self.id
     }
 
     /// 子进程是否已经退出。取消收尾之后用来验尸：退出才是收干净了。
+    ///
+    /// Whether the child process has already exited. Used to inspect the aftermath of a
+    /// cancellation: only an exited process counts as a clean cleanup.
     pub fn has_exited(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(Some(_)))
     }
@@ -345,6 +456,9 @@ impl Host {
     }
 
     /// 收工。先好好说一声，再等它自己退；不按时退就杀。
+    ///
+    /// Finish up. Says goodbye first, then waits for the plugin to exit on its own; a plugin that
+    /// misses the deadline is killed.
     pub fn shutdown(mut self) {
         self.disarm();
         let _ = self.write(&Msg::End);
@@ -518,6 +632,11 @@ fn read_line_limited(reader: &mut impl BufRead, limit: usize) -> Result<Option<S
 ///
 /// 放在核心里而不是示例里，是为了让"写一个插件"只有二十行 ——
 /// 作者该操心的是滤镜本身，不是协议。
+///
+/// One connection on the plugin side. Example plugins use it directly in `main`.
+///
+/// It lives in the core crate rather than the examples so that writing a plugin takes about
+/// twenty lines: the author deals with the filter itself, not the protocol.
 pub struct PluginSide {
     stdin: std::io::Stdout,
     out: BufReader<std::io::Stdin>,
@@ -530,6 +649,9 @@ type TileResult = Result<Option<(u32, u32, u32, u32, u32, Vec<u8>)>, String>;
 
 impl PluginSide {
     /// 握手。返回 Err 表示宿主发了不认识的帧，插件应当退出。
+    ///
+    /// Handshake. An Err means the host sent a frame this side does not understand, and the
+    /// plugin should exit.
     pub fn handshake() -> Result<Self, String> {
         let mut side = Self {
             stdin: std::io::stdout(),
@@ -570,6 +692,9 @@ impl PluginSide {
     }
 
     /// 收一块像素 `(seq, x, y, w, h, 像素)`。返回 `None` 表示宿主说了 `end` 或 `cancel`。
+    ///
+    /// Receives one tile as `(seq, x, y, w, h, pixels)`. `None` means the host said `end` or
+    /// `cancel`.
     pub fn recv_tile(&mut self) -> TileResult {
         let Some(line) = read_line_limited(&mut self.out, MAX_LINE)? else {
             return Ok(None);
@@ -595,6 +720,8 @@ impl PluginSide {
     }
 
     /// 回一块像素。
+    ///
+    /// Sends one tile back.
     pub fn send_tile(
         &mut self,
         seq: u32,

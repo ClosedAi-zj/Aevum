@@ -1,11 +1,22 @@
 //! 局部蒙版：几何权重场与局部参数合成。
 //!
+//! Local masks: geometric weight fields combined with per-point parameters.
+//!
 //! 口径与 Python `acceptance/reference/grade.py` 的 `_comp_field` / `group_field` /
 //! `_mask_field` 一致：几何用归一化坐标存盘，算场时换成像素坐标，
 //! 所以同一组参数在任意预览分辨率下圈住的是画面上的同一块地方。
 //!
+//! The convention matches Python `acceptance/reference/grade.py` `_comp_field` /
+//! `group_field` / `_mask_field`: geometry is persisted in normalized coordinates and
+//! converted to pixel coordinates when the field is computed, so one set of parameters
+//! circles the same region of the picture at any preview resolution.
+//!
 //! 参数是「相对全局的增量」：渲染时拿原图叠上增量重跑主链，再按权重混回，
 //! 局部与全局共用同一套算法，不会有第二套语义。
+//!
+//! Parameters are deltas relative to the global grade: at render time the original image is
+//! run through the main chain again with the delta applied, then blended back by weight;
+//! local and global share one algorithm, with no second set of semantics.
 
 use std::collections::BTreeMap;
 
@@ -14,6 +25,8 @@ use serde_json::{Map, Value, json};
 use crate::grade::GradeParams;
 
 /// 蒙版能携带的逐点参数；与 Python `MASK_KEYS` 一一对应。
+///
+/// Per-point parameters a mask can carry; one-to-one with Python `MASK_KEYS`.
 pub const MASK_KEYS: &[&str] = &[
     "exposure",
     "temperature",
@@ -97,16 +110,28 @@ impl LumRange {
 
 /// 颜色范围：按色相环选一段（`hue` ± `width/2` 度），带羽化与饱和度下限。
 /// 饱和度低于 `sat_min` 的近灰像素自然落选，免得天空外的灰色一律被圈进来。
+///
+/// A color range: picks a span of the hue wheel (`hue` ± `width/2` degrees) with feathering
+/// and a saturation floor. Near-gray pixels below `sat_min` naturally fall outside, keeping
+/// grays beyond the sky from being swept in.
 #[derive(Clone, Debug)]
 pub struct HueRange {
     pub on: bool,
     /// 目标色相 0~360。
+    ///
+    /// Target hue, 0~360.
     pub hue: f64,
     /// 收进来的色相带宽 0~360（180 已是半环）。
+    ///
+    /// Hue bandwidth pulled in, 0~360 (180 is already a half wheel).
     pub width: f64,
     /// 带外再往两边淡出的角度 0~180。
+    ///
+    /// Angle faded out on both sides beyond the band, 0~180.
     pub feather: f64,
     /// 饱和度下限 0~1，边缘 0.05 软过渡。
+    ///
+    /// Saturation floor 0~1, with a 0.05 soft edge.
     pub sat_min: f64,
 }
 
@@ -155,12 +180,21 @@ impl HueRange {
 }
 
 /// 一条画笔笔画的硬上限：采样点数。再多的点直接截断，防炸工程文件。
+///
+/// Hard cap per brush stroke: sampled point count. Extra points are truncated outright to
+/// keep project files from blowing up.
 pub const MAX_STROKE_POINTS: usize = 4096;
 /// 一张画笔组件的笔画数上限。
+///
+/// Stroke count cap for one brush component.
 pub const MAX_STROKES: usize = 256;
 
 /// 一条笔画：归一化点列（行优先坐标，与图像尺寸无关）+ 圆章参数。
 /// `radius` 按图像短边的百分比存（0.002~0.5），`hardness` / `flow` 在 0~1。
+///
+/// One stroke: a normalized point list (row-major coordinates, independent of image size)
+/// plus round-stamp parameters. `radius` is stored as a percentage of the image short side
+/// (0.002~0.5); `hardness` / `flow` are 0~1.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stroke {
     pub points: Vec<[f64; 2]>,
@@ -185,10 +219,14 @@ pub struct Component {
     pub range: Option<LumRange>,
     pub hue: Option<HueRange>,
     /// 只在 `shape == Brush` 时有内容；其余形状恒为空。
+    ///
+    /// Only populated when `shape == Brush`; always empty for the other shapes.
     pub strokes: Vec<Stroke>,
 }
 
 /// 一张局部蒙版：扁平老格式视为单组件组。
+///
+/// One local mask: the flat legacy format counts as a single-component group.
 #[derive(Clone, Debug)]
 pub struct Mask {
     pub id: String,
@@ -199,11 +237,16 @@ pub struct Mask {
     pub range: Option<LumRange>,
     pub hue: Option<HueRange>,
     /// 0~1 权重场，`amount` 已折算进去。
+    ///
+    /// The 0~1 weight field, with `amount` already folded in.
     pub field: Vec<f32>,
 }
 
 impl Mask {
     /// 逐点参数里是否有非零增量（空间项在这里不算，主链重跑用不上）。
+    ///
+    /// Whether any per-point parameter has a nonzero delta (spatial terms do not count here;
+    /// a main chain rerun has no use for them).
     pub fn has_point_delta(&self) -> bool {
         self.params
             .iter()
@@ -211,12 +254,18 @@ impl Mask {
     }
 
     /// 任意参数非零：决定这张蒙版是否「活着」（细节项也要算）。
+    ///
+    /// Whether any parameter is nonzero: decides whether this mask is "alive" (detail terms
+    /// included).
     pub fn has_any_delta(&self) -> bool {
         self.params.values().any(|v| v.abs() > 1e-6)
     }
 }
 
 /// 解析一张蒙版 JSON；字段缺省按 Python `MASK_NEW` 的默认几何补齐。
+///
+/// Parses one mask JSON; missing fields are filled with the default geometry of Python
+/// `MASK_NEW`.
 pub fn parse_mask(v: &Value) -> Option<Mask> {
     let obj = v.as_object()?;
     let grouped = obj.contains_key("components");
@@ -612,6 +661,11 @@ fn finish(
 impl Mask {
     /// 算权重场；一个组的组件按 add / subtract / intersect 合成一张图。
     /// `lum` 是原图亮度图（亮度范围用），`rgb` 是原图本身（颜色范围用），不缺就不传。
+    ///
+    /// Computes the weight field; a group's components are combined into one image via
+    /// add / subtract / intersect. `lum` is the original luminance map (for luminance ranges)
+    /// and `rgb` is the original image itself (for color ranges); pass neither when
+    /// unavailable.
     pub fn build_field(&mut self, w: usize, h: usize, lum: Option<&[f32]>, rgb: Option<&[f32]>) {
         let mut field = vec![0.0f32; w * h];
         let mut first = true;
@@ -643,6 +697,9 @@ impl Mask {
 }
 
 /// 会被渲染的蒙版：强度为 0、参数全 0、或组件为空的只占位。
+///
+/// The masks that will render: zero strength, all-zero parameters, or empty components only
+/// take up space.
 pub fn active_masks(p: &GradeParams) -> Vec<Mask> {
     let mut out = Vec::new();
     for raw in &p.masks {
@@ -658,6 +715,9 @@ pub fn active_masks(p: &GradeParams) -> Vec<Mask> {
 }
 
 /// 是否有蒙版启用亮度范围（调用方要先算一张原图亮度图）。
+///
+/// Whether any mask enables a luminance range (the caller must first compute an
+/// original-image luminance map).
 pub fn uses_luminance(p: &GradeParams) -> bool {
     for raw in &p.masks {
         let Some(mask) = parse_mask(raw) else {
@@ -678,6 +738,9 @@ pub fn uses_luminance(p: &GradeParams) -> bool {
 }
 
 /// 原图亮度图（行优先，`[0,1]` 夹紧），给亮度范围蒙版用。
+///
+/// The original-image luminance map (row-major, clamped to `[0,1]`), for luminance-range
+/// masks.
 pub fn luminance(rgb: &[f32], w: usize, h: usize) -> Vec<f32> {
     let mut out = Vec::with_capacity(w * h);
     for px in rgb.chunks_exact(3) {
@@ -688,6 +751,9 @@ pub fn luminance(rgb: &[f32], w: usize, h: usize) -> Vec<f32> {
 }
 
 /// 把一张蒙版的增量叠到全局参数上，得到「只在这块区域生效」的参数副本。
+///
+/// Folds a mask's delta into the global parameters, producing a copy that applies only
+/// inside this region.
 pub fn apply_delta(p: &GradeParams, d: &BTreeMap<String, f64>) -> GradeParams {
     let mut q = p.clone();
     macro_rules! add {
@@ -733,6 +799,9 @@ fn new_id() -> String {
 }
 
 /// 新形状组件的默认几何（归一化坐标，与图像尺寸无关）。
+///
+/// Default geometry for a new shape component (normalized coordinates, independent of image
+/// size).
 pub fn new_component(kind: ShapeKind) -> Value {
     let (x1, y1, x2, y2, feather) = match kind {
         ShapeKind::Linear => (0.5, 0.30, 0.5, 0.62, 45.0),
@@ -755,6 +824,8 @@ pub fn new_component(kind: ShapeKind) -> Value {
 }
 
 /// 新建一张单组件蒙版，几何与 Python `new_mask` 一致。
+///
+/// Creates a single-component mask whose geometry matches Python `new_mask`.
 pub fn new_mask(kind: ShapeKind) -> Value {
     json!({
         "id": new_id(),
@@ -766,6 +837,9 @@ pub fn new_mask(kind: ShapeKind) -> Value {
 }
 
 /// 扁平老蒙版包成单组件组；几何与强度语义原样保留。
+///
+/// Wraps a flat legacy mask into a single-component group; geometry and strength semantics
+/// are kept as-is.
 pub fn as_group(v: &Value) -> Value {
     let Some(obj) = v.as_object() else {
         return v.clone();

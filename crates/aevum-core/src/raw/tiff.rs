@@ -13,6 +13,28 @@
 //!
 //! 输入按敌意数据处理（用户会把任何来源的文件改个后缀喂进来）：每个偏移与长度都过
 //! `range`/`get`，越界只会变成错误值，不会 panic，也不会静默少读一截。
+//!
+//! Generic TIFF layer: vendor magics, the IFD chain, SubIFDs, tag value access.
+//!
+//! This is the third TIFF parser in the project, and the split from the other two is
+//! deliberate:
+//!
+//! - `exif::` serves JPEG sidecars; its convention is to return a neutral value when a tag
+//!   cannot be read, and never to error;
+//! - `dng::Tiff` reads IFD0 only and accepts magic 42 only; its convention is to reject a
+//!   file on the spot when it does not look like DNG;
+//! - this layer accepts non-42 headers: `II`+`RO` (Olympus ORF/Leica RWL), `II`+`0x0202`
+//!   (Nikon NEF), `II`+`0x0055` (Panasonic RW2). It also walks the IFD chain and SubIFDs
+//!   (330) to enumerate every candidate IFD: the main image is often not in IFD0, so the
+//!   IFD0-only `dng::Tiff` picks the wrong layer here.
+//!
+//! Merging the three layers would force one compromise error convention: either DNG's
+//! strictness is diluted or EXIF's tolerance becomes an error. A separate parser per layer,
+//! each with its own constraints, is the cheaper option.
+//!
+//! Input is treated as hostile (a file from any source arrives with a renamed extension):
+//! every offset and length goes through `range`/`get`, so an out-of-range read yields an
+//! error value instead of a panic, and nothing is silently truncated.
 
 use std::collections::VecDeque;
 

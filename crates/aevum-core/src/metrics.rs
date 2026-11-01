@@ -3,6 +3,14 @@
 //! 亮度是 gamma 编码的灰度（「看起来多亮」），与去闪烁的线性域测光互相独立。
 //! 缩到 512 长边用区域性平均（对应 OpenCV 的 INTER_AREA），比双线性更接近
 //! 缩略图的真实平均亮度。
+//!
+//! Per-frame metering: the shared input of the filmstrip curve, sequence QA, and exposure
+//! ladder.
+//!
+//! Brightness is gamma-encoded gray level, that is, how bright it looks, and is independent of
+//! the linear-domain metering used by deflicker.
+//! Downscaling to a 512 long side uses area averaging (OpenCV `INTER_AREA`), which stays closer
+//! to the true average brightness of a thumbnail than bilinear sampling.
 
 use std::path::{Path, PathBuf};
 
@@ -29,11 +37,17 @@ pub enum MetricsError {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameMetrics {
     /// 全帧平均亮度，0~1。
+    ///
+    /// Full-frame average brightness, 0~1.
     pub mean: f64,
     pub median: f64,
     /// 中间三分之一的平均亮度，避开暗角和边缘。
+    ///
+    /// Average brightness of the middle third, avoiding vignetting and the frame edges.
     pub center: f64,
     /// 拉普拉斯方差，找虚焦帧用。
+    ///
+    /// Laplacian variance, used to find out-of-focus frames.
     pub sharp: f64,
 }
 
@@ -53,6 +67,9 @@ pub fn measure_file(path: impl AsRef<Path>, long_side: u32) -> Result<FrameMetri
 }
 
 /// 一次解码同时给出胶片条指标与去闪测光，省掉第二遍读图。
+///
+/// A single decode yields both the filmstrip metrics and the deflicker metering, saving a second
+/// pass over the image.
 pub fn measure_file_def(
     path: impl AsRef<Path>,
     long_side: u32,
@@ -64,6 +81,9 @@ pub fn measure_file_def(
 }
 
 /// 等比缩到长边不超过 `max_side`；已经够小就原样返回。
+///
+/// Scale proportionally so the long side does not exceed `max_side`; an image that is already
+/// small enough is returned unchanged.
 pub fn fit_long_side(img: &image::RgbImage, max_side: u32) -> image::RgbImage {
     let (w, h) = (img.width(), img.height());
     let long = w.max(h).max(1);
@@ -204,6 +224,15 @@ fn reflect101(mut i: isize, n: usize) -> usize {
 /// 两趟都按输出行并行：横趟每行只读自己那条源行、只写自己那条临时行，纵趟每行也只写
 /// 自己的目标行，所以拆线程不改任何一个数值。素材是 24MP RAW 时这一趟本来要
 /// 200~400ms，缩略图、测光、预览全都卡在它上面。
+///
+/// Area-averaging resize, the weighted mean of INTER_AREA, with the horizontal pass first and
+/// the vertical pass second.
+///
+/// Both passes run in parallel over output rows: in the horizontal pass each row reads only its
+/// own source row and writes only its own temporary row, and in the vertical pass each row writes
+/// only its own target row, so splitting across threads changes no value.
+/// On 24MP RAW material this pass used to take 200~400ms, and thumbnails, metering, and previews
+/// all waited on it.
 pub fn resize_area(img: &image::RgbImage, tw: u32, th: u32) -> image::RgbImage {
     let (sw, sh) = (img.width(), img.height());
     if (sw, sh) == (tw, th) || tw == 0 || th == 0 {
@@ -287,6 +316,23 @@ fn area_weights(src: u32, dst: u32) -> Vec<Vec<(u32, f32)>> {
 /// 两条路（传感器 CFA 或机身内嵌预览）都返回 16bit RGB，位深口径只有一套；
 /// **保真度**不在这里表达，要标注的调用方读 `raw::read`/`raw::info` 返回的
 /// `raw::RawPath`（预览不是传感器数据）。
+///
+/// Decode and rotate upright according to the EXIF orientation.
+///
+/// The image crate does not apply orientation on its own, exposing it only through
+/// `decoder.orientation()`, so a portrait JPEG from a phone or camera decodes lying on its side.
+/// Preview, metering, thumbnails, export, and alignment all enter through this one door, so the
+/// semantics of orientation exist in a single place.
+///
+/// `.dng` also enters here: the image crate does not understand CFA mosaics and only `dng::read`
+/// can decode them, yielding 16bit RGB, so downstream bit-depth decisions follow the high-bit-depth
+/// path by construction.
+///
+/// Vendor RAW (`.rw2`/`.nef`/`.arw`/`.cr2`/`.cr3`/`.orf`/`.rwl`) works the same way: both paths of
+/// `raw::read` (sensor CFA or camera-embedded preview) return 16bit RGB, keeping a single
+/// bit-depth convention; **fidelity** is not expressed here, and callers that need to label it
+/// read the `raw::RawPath` returned by `raw::read`/`raw::info`, where a preview is not sensor
+/// data.
 pub fn decode(path: impl AsRef<Path>) -> Result<DynamicImage, MetricsError> {
     let path = path.as_ref();
     if crate::dng::is_named_dng(path) {
@@ -315,6 +361,9 @@ pub fn decode(path: impl AsRef<Path>) -> Result<DynamicImage, MetricsError> {
 }
 
 /// 解码并等比缩到长边不超过 `max_side`，返回 sRGB 像素，供画布预览用。
+///
+/// Decode and scale proportionally so the long side does not exceed `max_side`, returning sRGB
+/// pixels for canvas preview.
 pub fn decode_rgb(path: impl AsRef<Path>, max_side: u32) -> Result<image::RgbImage, MetricsError> {
     let img = decode(path)?;
     Ok(fit_long_side(&img.to_rgb8(), max_side))
@@ -325,6 +374,15 @@ pub fn decode_rgb(path: impl AsRef<Path>, max_side: u32) -> Result<image::RgbIma
 /// 预览和测光可以继续在 8bit 缩略图上跑，但导出不能：`to_rgb8()` 会把 16bit 源
 /// 一次砍到 256 级，后面所有算法都在 f32 里也算不回被丢掉的位深。位深判定跟着
 /// `export::load_rgb_f32` 同一套 match，两条导出路对「什么是高位深源」要说一样的话。
+///
+/// Decode into sRGB f32 `[0,1]` according to the source bit depth, returning the pixels, width,
+/// height, and whether the source is above 8bit.
+///
+/// Preview and metering can keep running on an 8bit thumbnail, but export cannot: `to_rgb8()` cuts
+/// a 16bit source down to 256 levels in one step, and no later algorithm in f32 can recover the
+/// lost bit depth.
+/// The bit-depth decision uses the same match as `export::load_rgb_f32`, so both export paths say
+/// the same thing about what counts as a high-bit-depth source.
 pub fn decode_rgb_f32(path: impl AsRef<Path>) -> Result<(Vec<f32>, u32, u32, bool), MetricsError> {
     let img = decode(path)?;
     let (w, h) = (img.width(), img.height());
@@ -405,6 +463,15 @@ pub fn decode_profile_preview(
 /// RAW/DNG 先试机身内嵌预览：胶片条要的是一张 128 边的图，为此把 24MP 传感器数据
 /// 解出来（约 300ms）纯属浪费。内嵌预览的像素本来就是机身按 As Shot 出的一张 8 位
 /// JPEG，缩到这个尺寸看不出差别；没有内嵌预览才退回完整解码。
+///
+/// Decode and scale proportionally to a long side of at most `max_side`, for the canvas and the
+/// filmstrip.
+///
+/// For RAW/DNG the camera-embedded preview is tried first: the filmstrip needs a 128-pixel image,
+/// and decoding 24MP sensor data for it (about 300ms) is pure waste.
+/// The embedded preview pixels are an 8-bit JPEG the camera rendered with As Shot settings, and
+/// the difference is invisible at this size; a full decode is the fallback only when no embedded
+/// preview exists.
 pub fn thumbnail(path: impl AsRef<Path>, max_side: u32) -> Result<RgbaImage, MetricsError> {
     let path = path.as_ref();
     if let Some(hit) = read_thumb_cache(path, max_side) {
@@ -499,6 +566,9 @@ fn resize_to_rgba(rgb: &image::RgbImage, max_side: u32) -> RgbaImage {
 type FrameMeasures = Result<(FrameMetrics, deflicker::FrameMeans), MetricsError>;
 
 /// `measure_many` 的返回：逐帧指标、逐帧均值、`(帧号, 原因)` 形式的坏帧清单。
+///
+/// Return value of `measure_many`: per-frame metrics, per-frame means, and a list of bad frames
+/// in `(frame number, reason)` form.
 pub type MeasurePass = (
     Vec<Option<FrameMetrics>>,
     Vec<Option<deflicker::FrameMeans>>,
@@ -507,6 +577,10 @@ pub type MeasurePass = (
 
 /// 并行测一整个序列：一次解码同时出胶片条指标与去闪测光（线性域、长边 320），
 /// 结果顺序与输入一致；读不出来的帧留 `None` 并记一条 issue。
+///
+/// Meter an entire sequence in parallel: a single decode yields both the filmstrip metrics and the
+/// deflicker metering (linear domain, long side 320), and the result order matches the input; a
+/// frame that cannot be read stays `None` and records one issue.
 pub fn measure_many(paths: &[PathBuf], long_side: u32) -> MeasurePass {
     let results: Vec<(usize, FrameMeasures)> = paths
         .par_iter()

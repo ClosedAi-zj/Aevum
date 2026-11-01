@@ -1,6 +1,11 @@
 //! 序列：把文件夹里的帧按自然顺序排好。
 //!
+//! Sequences: lines up the frames in a folder in natural order.
+//!
 //! 只做发现有与排序，不解码。读图在 `metrics` 里，按需并行。
+//!
+//! Only discovery and sorting are done here; no decoding. Image reading
+//! lives in `metrics` and is parallelized on demand.
 
 use std::path::{Path, PathBuf};
 
@@ -46,6 +51,9 @@ pub struct Sequence {
 
 impl Sequence {
     /// 打开一个帧文件夹。顺序是自然序：`f9` 排在 `f10` 前面。
+    ///
+    /// Opens a frame folder. The order is natural order: `f9` sorts before
+    /// `f10`.
     pub fn open(dir: impl AsRef<Path>) -> Result<Self, SequenceError> {
         let root = dir.as_ref().to_path_buf();
         let entries: Vec<PathBuf> = std::fs::read_dir(&root)?
@@ -58,9 +66,18 @@ impl Sequence {
 
     /// 打开明确给定的几张照片，可能是单张。
     ///
+    /// Opens an explicitly given set of photos, possibly a single one.
+    ///
     /// 单张延时帧、或者从胶片目录里挑出来的一段，都不该被迫先包成文件夹才能处理：
     /// 目录里剩下的照片不是素材，拿它们凑成序列等于替用户改了他没要的帧。
     /// 护带（`.aevum/`、control.json、工程文件）仍然落在这几张照片的公共父目录。
+    ///
+    /// A single timelapse frame, or a run picked out of a film directory,
+    /// should not be forced into a folder first: the remaining photos in the
+    /// directory are not source material, and padding the sequence with them
+    /// would change frames the user never asked for. The guard band
+    /// (`.aevum/`, control.json, the project file) still lands in the common
+    /// parent of these photos.
     pub fn open_files(paths: &[PathBuf]) -> Result<Self, SequenceError> {
         let entries: Vec<PathBuf> = paths
             .iter()
@@ -75,6 +92,9 @@ impl Sequence {
     }
 
     /// 文件或目录都收：拖进来什么就开什么。
+    ///
+    /// Accepts either a file or a directory: whatever is dragged in gets
+    /// opened.
     pub fn open_any(path: impl AsRef<Path>) -> Result<Self, SequenceError> {
         let path = path.as_ref();
         if path.is_dir() {
@@ -134,6 +154,9 @@ impl Sequence {
     }
 
     /// 只有一帧时素材就是那张照片，标题该报照片名而不是它所在的文件夹名。
+    ///
+    /// With a single frame the source is that photo, so the title should
+    /// report the photo name rather than the folder it sits in.
     pub fn display_name(&self) -> String {
         if self.is_single()
             && let Some(stem) = self.frames[0]
@@ -147,6 +170,9 @@ impl Sequence {
     }
 
     /// 单张照片：序列级的活（对齐、去闪、关键帧）没有意义，界面据此收掉。
+    ///
+    /// A single photo: sequence-level work (alignment, deflicker, keyframes)
+    /// is meaningless, and the UI collapses it accordingly.
     pub fn is_single(&self) -> bool {
         self.frames.len() == 1
     }
@@ -160,11 +186,17 @@ fn is_image(path: &Path) -> bool {
 }
 
 /// 这个扩展名能不能当帧用。界面用它决定文件选择器放行哪些照片。
+///
+/// Whether the extension can serve as a frame. The UI uses it to decide
+/// which photos the file picker lets through.
 pub fn is_supported_extension(ext: &str) -> bool {
     IMAGE_EXT.contains(&ext.to_ascii_lowercase().as_str())
 }
 
 /// 能直接拖进来的扩展名列表，给文件对话框当过滤器用。
+///
+/// The list of extensions that can be dragged in directly, used as a filter
+/// by file dialogs.
 pub fn image_extensions() -> &'static [&'static str] {
     IMAGE_EXT
 }
@@ -184,6 +216,9 @@ fn common_parent(paths: &[PathBuf]) -> Option<PathBuf> {
 }
 
 /// 自然序比较：数字段按数值比，其余按字符比。
+///
+/// Natural-order comparison: digit runs compare numerically, everything
+/// else compares by character.
 pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let mut ai = a.char_indices().peekable();
     let mut bi = b.char_indices().peekable();

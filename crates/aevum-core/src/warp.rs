@@ -1,33 +1,62 @@
 //! 取景几何：拉直（整幅绕中心旋转）→ 对齐位移 → 裁切窗口，一趟采样做完。
 //!
+//! Framing geometry: straighten (rotate the whole frame about its center)
+//! → alignment offset → crop window, all sampled in a single pass.
+//!
 //! 三步合成一次逆映射是有原因的：分开做要么先把整帧旋转出一份全尺寸缓冲再裁
 //! （24MP 一帧 288MB 的 f32 中转），要么两次插值把画面糊一层。逆映射只按最终
 //! 留下的像素算，行与行互不干扰，按行并行。
 //!
+//! Composing the three steps into one inverse mapping is deliberate: doing
+//! them separately either rotates the full frame into a full-size buffer
+//! first (288 MB of f32 intermediate per 24MP frame) or blurs the image with
+//! a second interpolation. The inverse mapping only computes the pixels that
+//! survive; rows are independent and parallelized per row.
+//!
 //! 边界按 reflect101，和 `cv2.warpAffine` 的默认边界、和对齐模块的口径一致。
+//!
+//! Borders use reflect101, matching the `cv2.warpAffine` default border and
+//! the convention of the alignment module.
 //!
 //! `view_into` 是另一件事：运镜的取景框是个**浮点**窗口，比输出小（推近），
 //! 所以只能重采样，不能走上面这条 1:1 的整数快路。
+//!
+//! `view_into` is a different matter: the camera-move viewfinder is a
+//! **floating-point** window smaller than the output (pushing in), so it can
+//! only resample and cannot take the 1:1 integer fast path above.
 
 use rayon::prelude::*;
 
 /// 一帧的取景变换参数。
+///
+/// The framing transform parameters of one frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Framing {
     /// 拉直角度（度）。正角 = 画面逆时针转，跟 `acceptance/reference/align.py` 的 `rotation_deg` 同向。
+    ///
+    /// Straighten angle in degrees. A positive angle rotates the image
+    /// counter-clockwise, matching `rotation_deg` in
+    /// `acceptance/reference/align.py`.
     pub angle_deg: f64,
     /// 对齐位移（源像素）：`dst(x, y) = src(x - ox, y - oy)`。
+    ///
+    /// Alignment offset in source pixels:
+    /// `dst(x, y) = src(x - ox, y - oy)`.
     pub off: [f64; 2],
 }
 
 impl Framing {
     /// 没有任何几何动作：旋转角为 0 且没有位移。
+    ///
+    /// No geometry at all: rotation angle 0 and no offset.
     pub fn is_identity(&self) -> bool {
         self.angle_deg.abs() <= 1e-9 && self.off[0].abs() <= 1e-9 && self.off[1].abs() <= 1e-9
     }
 }
 
 /// 取景后的输出尺寸（只夹边界，不做变换）。
+///
+/// The output size after framing (bounds clamped only, no transform).
 pub fn window(w: usize, h: usize, crop: Option<(usize, usize, usize, usize)>) -> (usize, usize) {
     let (cx, cy, cw, ch) = crop.unwrap_or((0, 0, w, h));
     let cx = cx.min(w);
@@ -37,8 +66,16 @@ pub fn window(w: usize, h: usize, crop: Option<(usize, usize, usize, usize)>) ->
 
 /// 旋转 + 位移 + 裁切一次做完，写进 `out`，返回输出宽高。
 ///
+/// Performs rotation + offset + crop in one pass, writes into `out`, and
+/// returns the output width and height.
+///
 /// `src` 是 `w × h` 的 rgb f32（0..1）。`crop` 是最终窗口，`None` 为整幅。
 /// 采样坐标：窗口像素先反拉回未旋转的帧（绕画面中心转 `-angle`），再减对齐位移。
+///
+/// `src` is rgb f32 of `w × h` (0..1). `crop` is the final window; `None`
+/// means the whole frame. Sampling coordinates: a window pixel is first
+/// pulled back into the unrotated frame (rotated by `-angle` about the
+/// image center), then the alignment offset is subtracted.
 pub fn transform_into(
     src: &[f32],
     w: usize,
@@ -121,12 +158,26 @@ fn border_pair(v: f64, n: usize) -> (usize, usize, f32) {
 
 /// 运镜（Ken Burns）的采样：把 `src` 里 `(x, y, w, h)` 这个**浮点**窗口铺满 `out_w × out_h`。
 ///
+/// Camera-move (Ken Burns) sampling: fills `out_w × out_h` with the
+/// **floating-point** window `(x, y, w, h)` of `src`.
+///
 /// 源坐标是浮点，所以取景框每挪千分之一格，画面就真的动千分之一格——不像 ffmpeg
 /// 的 zoompan 那样把位移抹成整像素台阶。窗口是 `crop::Viewfinder::pixels` 出来的，
 /// 已经在画内；越界那一圈仍按 reflect101 收回来，与 `transform_into` 同一口径。
 ///
+/// Source coordinates are floating point, so every thousandth of a cell the
+/// viewfinder moves, the image really moves a thousandth of a cell — unlike
+/// ffmpeg's zoompan, which flattens motion into whole-pixel steps. The
+/// window comes from `crop::Viewfinder::pixels` and is already inside the
+/// frame; the ring that falls outside is still pulled back by reflect101,
+/// the same convention as `transform_into`.
+///
 /// 只给「框比输出小」（推近）用。缩小不该走这里：双线性会漏采样点、起摩尔纹，
 /// 那条路是整数裁切 + 面积平均，在 `export` 里拼。
+///
+/// Only for a window smaller than the output (pushing in). Downscaling must
+/// not go through here: bilinear sampling misses points and produces moiré;
+/// that path is an integer crop plus area averaging, assembled in `export`.
 pub fn view_into(
     src: &[f32],
     w: usize,

@@ -12,10 +12,34 @@
 //!   与成片时长互不依赖——时长是速度的积分结果，不是输入。
 //! - 输出帧数 `n_out = ⌊n_src · ∫₀¹ du/speed(u)⌋`，常速时恰好等于 `n_src`。
 //! - 快门 = 曝光区间 / 该帧跨过的源帧跨度；0 = 只做相邻两帧的线性插值。
+//!
+//! Retime (speed change plus motion blur).
+//!
+//! The source frames of a time-lapse are sampled at equal time intervals, while the final
+//! render outputs at equal playback time; a speed curve bridges the two.
+//! Constant 1× maps one frame to one frame, 2× squeezes two frames into one, and 0.5×
+//! splits one frame into two (a cross-dissolve between neighbours).
+//! Compressing too far judders, so a "shutter" is introduced: within the exposure interval
+//! that one output frame covers, the crossed source frames are averaged with weights given
+//! by their overlap time.
+//! This is the accumulate-and-average the time-lapse world uses, turning traffic into
+//! light trails and water into silk, without optical-flow frame interpolation.
+//!
+//! Every convention is pinned here; export and the UI only fetch the plan and lay down
+//! pixels:
+//! - Speed keys use **source progress** (0..1) rather than output seconds, so "the
+//!   sequence starts accelerating at 20%" does not depend on the final render length:
+//!   that length is the integral of speed, not an input.
+//! - Output frame count `n_out = ⌊n_src · ∫₀¹ du/speed(u)⌋`, which equals `n_src` exactly
+//!   at constant speed.
+//! - Shutter = exposure interval / source span crossed by that frame; 0 means only a
+//!   linear interpolation between two neighbouring frames.
 
 use serde::{Deserialize, Serialize};
 
 /// 一条速度键：源进度 `at`（0..1）处的倍速。
+///
+/// One speed key: the speed multiplier at source progress `at` (0..1).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpeedKey {
     pub at: f64,
@@ -23,16 +47,27 @@ pub struct SpeedKey {
 }
 
 /// 重映射设定；`enabled = false` 时导出走原来的 1:1 快路，一个像素都不动。
+///
+/// Retime settings; with `enabled = false` export takes the original 1:1 fast path and not
+/// a single pixel is touched.
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct Retime {
     pub enabled: bool,
     /// 按 `at` 升序；空表等于全程 1×。
+    ///
+    /// Ascending by `at`; an empty table means 1× throughout.
     pub keys: Vec<SpeedKey>,
     /// 曝光区间占本帧源跨度的比例，0..1；0 是锐利插帧，1 是把跨过的帧全平均。
+    ///
+    /// Exposure interval as a fraction of this frame's source span, 0..1; 0 gives a sharp
+    /// interpolation, 1 averages every frame the interval crosses.
     pub shutter: f64,
 }
 
 /// 一次输出帧数上限：慢放拉太长等于用户填错了倍速，宁可当场拒绝。
+///
+/// Upper bound on output frames for one run: stretching a slow-motion segment that far
+/// means a wrong speed was entered, so the request is refused up front.
 pub const MAX_OUTPUT_FRAMES: usize = 200_000;
 
 impl Retime {
@@ -45,6 +80,9 @@ impl Retime {
     }
 
     /// 匀加速进、匀减速出：中段 `peak` 倍速，两头 `edge` 倍速。
+    ///
+    /// Linear acceleration in and linear deceleration out: `peak` speed in the middle,
+    /// `edge` speed at both ends.
     pub fn ease(edge: f64, peak: f64, in_at: f64, out_at: f64, shutter: f64) -> Self {
         Self {
             enabled: true,
@@ -71,6 +109,9 @@ impl Retime {
     }
 
     /// 关掉时等于没参与；开着但常速零快门也当没参与（省一次重采样）。
+    ///
+    /// Switched off means it never took part; switched on but at constant speed with zero
+    /// shutter counts as not taking part either, which saves one resample.
     pub fn is_identity(&self) -> bool {
         if !self.enabled {
             return true;
@@ -84,6 +125,9 @@ impl Retime {
     }
 
     /// 校验并规整：键排序、去重同位、快门夹进 0..1。错误文案直接可展示。
+    ///
+    /// Validates and normalizes: sorts the keys, drops duplicate positions, clamps the
+    /// shutter into 0..1. Error texts are meant for direct display.
     pub fn normalized(&self) -> Result<Self, String> {
         if !self.enabled {
             return Ok(Self::default());
@@ -112,6 +156,9 @@ impl Retime {
 }
 
 /// 源进度 `u`（0..1）处的倍速：键之间线性，两头钳到首尾键。空表 1×。
+///
+/// Speed at source progress `u` (0..1): linear between keys, clamped to the first and last
+/// key outside them. An empty table means 1×.
 pub fn speed_at(keys: &[SpeedKey], u: f64) -> f64 {
     if keys.is_empty() {
         return 1.0;
@@ -142,6 +189,15 @@ pub fn speed_at(keys: &[SpeedKey], u: f64) -> f64 {
 /// 倍速分段线性，倒数不再线性，所以逐段辛普森积分：段内先按关键点上割，
 /// 每段 32 个面板（65 个取样点）——倍速曲线再弯也在这尺度上够平，误差
 /// 远小于 1e-9 帧，还保证同输入同输出（导出要可复现）。
+///
+/// `∫₀ᵘ dv / speed(v)`: the ruler that converts source progress into output frame
+/// numbers.
+///
+/// Speed is piecewise linear and its reciprocal no longer is, so Simpson integration runs
+/// segment by segment: each segment is cut at the key points and receives 32 panels
+/// (65 sample points). However bent the speed curve, it is flat enough at that scale; the
+/// error stays far below 1e-9 frames, and identical input still yields identical output,
+/// which export requires in order to be reproducible.
 pub fn cost_at(keys: &[SpeedKey], u: f64) -> f64 {
     let u = u.clamp(0.0, 1.0);
     if keys.is_empty() || u <= 0.0 {
@@ -213,6 +269,9 @@ fn source_position(keys: &[SpeedKey], n_src: usize, frame: f64) -> f64 {
 }
 
 /// 一个输出帧的取样计划：`(源帧号, 权重)`，权重升序、和为 1。
+///
+/// The sampling plan for one output frame: `(source frame number, weight)`, with weights
+/// ascending and summing to 1.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Samples(pub Vec<(usize, f32)>);
 
@@ -255,6 +314,14 @@ impl Samples {
     ///
     /// 零快门（窗口退化）退化成 `a` 处的两点线性插值：常速整数定位时恰好命中
     /// 单帧，所以 1×/快门 0 是逐像素不变的；慢放时就是相邻两帧交叉淡化。
+    ///
+    /// Overlap integral of the exposure window `[a, a + shutter·(end-a)]` over source cells
+    /// `k..k+1`.
+    ///
+    /// A zero shutter, with the window collapsed, degenerates into a two-point linear
+    /// interpolation at `a`: with constant speed and integer placement it lands exactly on
+    /// one frame, so 1× / shutter 0 is unchanged pixel for pixel; at slower speeds it
+    /// becomes a cross-dissolve between neighbours.
     pub fn from_window(a: f64, end: f64, shutter: f64, n_src: usize) -> Self {
         let last = n_src.saturating_sub(1);
         let anchor = a.clamp(0.0, last as f64);
@@ -280,12 +347,21 @@ impl Samples {
 }
 
 /// 整段重映射计划：每个输出帧取哪些源帧、各占多少。
+///
+/// The retime plan for a whole run: which source frames each output frame takes, and in
+/// what proportion.
 #[derive(Clone, Debug)]
 pub struct Plan {
     pub per_frame: Vec<Samples>,
     /// 每个输出帧落在源序列上的连续位置（帧坐标），供面板回显与调试。
+    ///
+    /// Continuous position of each output frame on the source sequence, in frame
+    /// coordinates, for panel display and debugging.
     pub anchors: Vec<f64>,
     /// 源帧数 → 输出帧数换算后的播放时长（秒），给面板与命令回显用。
+    ///
+    /// Playback duration in seconds after converting source frames into output frames,
+    /// used by the panel and the command echo.
     pub seconds: f64,
 }
 
@@ -299,6 +375,13 @@ impl Plan {
 ///
 /// 与 `plan` 共用同一句话（帧数上限的文案也在这里），所以面板读数与导出实际
 /// 写出的帧数不会各说各的。
+///
+/// Computes the output frame count from the speed curve alone, without building a
+/// sampling plan: the panel reads this value every frame, and planning 200,000 frames is
+/// unaffordable.
+///
+/// It shares one source of truth with `plan` (the frame-limit text lives here as well), so
+/// the panel reading and the frame count export actually writes never disagree.
 pub fn output_frames(keys: &[SpeedKey], n_src: usize) -> Result<usize, String> {
     let frames = (cost_at(keys, 1.0) * n_src as f64).floor().max(1.0) as usize;
     if frames > MAX_OUTPUT_FRAMES {
@@ -310,6 +393,8 @@ pub fn output_frames(keys: &[SpeedKey], n_src: usize) -> Result<usize, String> {
 }
 
 /// 算计划。`fps` 只用来报时长，不影响取样。
+///
+/// Computes the plan. `fps` only reports the duration and does not affect sampling.
 pub fn plan(retime: &Retime, n_src: usize, fps: f64) -> Result<Plan, String> {
     let retime = retime.normalized()?;
     if n_src == 0 {

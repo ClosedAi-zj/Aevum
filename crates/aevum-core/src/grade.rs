@@ -2,6 +2,12 @@
 //!
 //! 参数名与 Python 版的 `grade.DEFAULT` 一一对应，预设也照抄同一张表，
 //! 逐字段由 `tests/golden.rs` 比对，防止搬运时打错一个数字。
+//!
+//! Grading parameter set and pure functions: curve table, vignette field.
+//!
+//! Parameter names correspond one-to-one to `grade.DEFAULT` in the Python version, and presets
+//! copy the same table; `tests/golden.rs` compares every field, catching a mistyped number
+//! during the port.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -19,9 +25,15 @@ fn ident_curve() -> Vec<[f64; 2]> {
 pub struct GradeParams {
     pub exposure: f64,
     /// 曝光高光肩部（0–100）：LR rolloff 口径的有理肩部，0 = 旧线性增益逐位一致。
+    ///
+    /// Exposure highlight shoulder (0–100): a rational shoulder under the LR rolloff convention;
+    /// 0 reproduces the old linear gain bit for bit.
     pub hl_rolloff: f64,
     pub contrast: f64,
     /// 对比度的线性光域混合系数（0–100）：0 = 旧 gamma 域 smoothstep 逐位一致。
+    ///
+    /// Linear-light blend factor for contrast (0–100); 0 reproduces the old gamma-domain
+    /// smoothstep bit for bit.
     pub contrast_linear: f64,
     pub highlights: f64,
     pub shadows: f64,
@@ -29,6 +41,10 @@ pub struct GradeParams {
     pub blacks: f64,
     /// 黑/白场软拐点（0–100）：h/s/w/b 段的 [0,4] 硬钳换成抛物线软拐点，
     /// 输出恒落 [0,1]。0 = 旧硬钳逐位一致。
+    ///
+    /// Soft knee for the black and white points (0–100): the hard [0,4] clamp of the h/s/w/b
+    /// stage becomes a parabolic knee, and the output always lands in [0,1]. 0 reproduces the
+    /// old hard clamp bit for bit.
     pub black_soft: f64,
     pub white_soft: f64,
     pub temperature: f64,
@@ -40,14 +56,26 @@ pub struct GradeParams {
     pub dehaze: f64,
     /// 暗通道去雾量（0–100，He DCP + 大气散射）：0 = 旧逐点路径逐位一致；
     /// >0 在旧口径之后叠加空间感知的 DCP 去雾。见 `develop/dehaze.rs`。
+    ///
+    /// Dark-channel dehaze amount (0–100, He DCP plus atmospheric scattering).
+    /// 0 reproduces the old per-pixel path bit for bit; >0 layers spatially aware DCP dehaze on
+    /// top of the old convention.
+    /// See `develop/dehaze.rs`.
     pub dehaze_dark: f64,
     /// 去雾对比（-50–50）：DCP 透射修正后的中间对比/黑位微调，仅在
     /// `dehaze_dark>0` 时生效。幅度 = contrast·0.15，TODO(fit)。
+    ///
+    /// Dehaze contrast (-50–50): a midtone contrast and black point trim applied after the DCP
+    /// transmission correction, active only when `dehaze_dark>0`.
+    /// Amplitude is contrast·0.15, TODO(fit).
     pub dehaze_contrast: f64,
     pub grain: f64,
     pub grain_size: f64,
     pub grain_freq: f64,
     /// 颗粒亮度调制（-100–100）：暗部增强、高光减弱，负值反转。0 = 恒定幅度逐位一致。
+    ///
+    /// Grain luminance modulation (-100–100): stronger in the shadows, weaker in the highlights,
+    /// inverted for negative values. 0 reproduces constant amplitude bit for bit.
     pub grain_lum: f64,
 
     pub vignette: f64,
@@ -62,6 +90,10 @@ pub struct GradeParams {
     pub sharp_masking: f64,
     /// 锐化的恒开边缘保护（0–100）：噪声底之上的平坦区不锐化。
     /// 0 = 旧路径（只有 masking 生效）逐位一致。对齐 LR/ACR Sharpen3，需拟合 TODO(fit)。
+    ///
+    /// Always-on edge protection for sharpening (0–100): flat regions above the noise floor are
+    /// left unsharpened. 0 reproduces the old path, where only masking applied, bit for bit.
+    /// Aligned with LR/ACR Sharpen3; fitting is required, TODO(fit).
     pub sharp_protect: f64,
     pub nr_luma: f64,
     pub nr_color: f64,
@@ -70,11 +102,20 @@ pub struct GradeParams {
     pub nr_color_smooth: f64,
     /// 多尺度降噪（0–100）：0 = 旧单尺度逐位一致；值 = 粗尺度层混合强度。
     /// 见 `develop/spatial.rs::denoise_apply` 的多尺度分支。
+    ///
+    /// Multiscale denoise (0–100): 0 reproduces the old single-scale path bit for bit; the value
+    /// is the blend strength of the coarse scale layer.
+    /// See the multiscale branch of `develop/spatial.rs::denoise_apply`.
     pub nr_multiscale: f64,
     /// 手动噪声 σ（0–100）：0 = 自动 MAD 估计（Donoho 口径）；>0 手动覆盖
     /// （映射 σ = 0.002 + (v/100)^1.6·0.030，TODO(fit)）。
+    ///
+    /// Manual noise σ (0–100): 0 selects the automatic MAD estimate under the Donoho convention;
+    /// >0 overrides it manually (mapping σ = 0.002 + (v/100)^1.6·0.030, TODO(fit)).
     pub nr_sigma_manual: f64,
     /// AI 亮度降噪强度（0–100），0 = 关。
+    ///
+    /// AI luminance denoise strength (0–100); 0 disables it.
     pub nr_ai: f64,
 
     pub grade_global_h: f64,
@@ -122,16 +163,30 @@ pub struct GradeParams {
     pub curve_b: Vec<[f64; 2]>,
     /// 曲线 HDR 尾部（0–100）：x>1 的输入按 PCHIP 末端斜率延伸而非硬截断，
     /// 输出仍 ≤1。0 = 旧 clamp(0,1) 逐位一致。对齐 LR LumaHDR，需拟合 TODO(fit)。
+    ///
+    /// Curve HDR tail (0–100): inputs with x>1 extend along the PCHIP end slope instead of being
+    /// hard clipped, and the output stays ≤1. 0 reproduces the old clamp(0,1) bit for bit.
+    /// Aligned with LR LumaHDR; fitting is required, TODO(fit).
     pub curve_hdr_tail: f64,
 
     /// 外部 .cube「外观」：主链之前先套一层三维查表，空串表示没有。
     /// Python oracle 没有这一步，金标 case 里这一项恒为空，不影响比对。
+    ///
+    /// External .cube look: a 3D lookup table is applied before the main chain, and an empty
+    /// string means none.
+    /// The Python oracle has no such step, so this field stays empty in golden cases and does
+    /// not affect comparison.
     pub look_cube: String,
     pub dcp_profile: String,
 
     /// 机型镜头配置文件校正（畸变 / 横向色差 / 暗角），显影链最前面套。
     /// 由 EXIF 匹配 lensfun 数据库得出，见 [`crate::lensdb`]；金标 case
     /// 恒为 None，不影响逐像素比对。
+    ///
+    /// Camera and lens profile correction (distortion / lateral chromatic aberration /
+    /// vignetting), applied at the head of the develop chain.
+    /// It comes from matching EXIF against the lensfun database; see [`crate::lensdb`].
+    /// Golden cases always hold None, so per-pixel comparison is unaffected.
     pub lens_profile: Option<crate::lensdb::Correction>,
     pub lcp_profile: Option<crate::lcp::Correction>,
 
@@ -139,6 +194,14 @@ pub struct GradeParams {
     /// 随参数走历史与工程落盘、导出时回写。跨命名空间（dc:、photoshop: 等）不收，
     /// 包元数据（Version/PresetType 等，见 `xmp_map::RESERVED_KEYS`）也不收。
     /// 旧工程 JSON 里没有这个字段——容器级 `#[serde(default)]` 兜底，反序列化为空表。
+    ///
+    /// Keys in the XMP `crs:` namespace that the mapping table does not cover, kept as raw
+    /// strings: collected on import, carried through history and project file persistence, and
+    /// written back on export.
+    /// Keys from other namespaces (dc:, photoshop: and so on) are not collected, nor is package
+    /// metadata (Version/PresetType and so on; see `xmp_map::RESERVED_KEYS`).
+    /// Old project JSON lacks this field, and the container-level `#[serde(default)]` covers it,
+    /// so deserialization yields an empty map.
     pub xmp_extra: BTreeMap<String, String>,
 }
 
@@ -361,6 +424,9 @@ pub fn preset(name: &str) -> GradeParams {
 }
 
 /// 单调三次插值（Fritsch–Carlson）：控制点 → n 级 0..255 查找表。
+///
+/// Monotone cubic interpolation (Fritsch–Carlson): control points to an n-step 0..255 lookup
+/// table.
 pub fn pchip_lut(points: &[[f64; 2]], n: usize) -> Vec<f32> {
     if n == 0 {
         return Vec::new();
@@ -399,6 +465,11 @@ pub fn pchip_lut(points: &[[f64; 2]], n: usize) -> Vec<f32> {
 /// PCHIP 末端斜率（0..255 空间）：Fritsch–Carlson 的 `m[n-1] = 最后一段割线`，
 /// 与 [`pchip_lut`]/`pchip_slopes` 的端点处理一致。曲线 HDR 尾部（B3）用它
 /// 保证延伸段与查表末端 C1 连续。
+///
+/// PCHIP end slope in 0..255 space: `m[n-1] = last segment secant` per Fritsch–Carlson,
+/// consistent with the endpoint handling of [`pchip_lut`] and `pchip_slopes`.
+/// The curve HDR tail (B3) uses it to keep the extended segment C1-continuous with the end of the
+/// lookup table.
 pub fn pchip_end_slope(points: &[[f64; 2]]) -> f64 {
     let mut pts: Vec<[f64; 2]> = points.to_vec();
     pts.sort_by(|a, b| a[0].total_cmp(&b[0]));
@@ -468,6 +539,13 @@ impl From<&GradeParams> for VignetteParams {
 ///
 /// `lum` 是**当前像素**的亮度场（Python 在晕影这一步现算，不是原图亮度）：
 /// 只有开了高光保护 `hl_contrast` 才需要，其余调用传 `None`。
+///
+/// Multiplicative mask for the post-crop vignette.
+/// A positive amount darkens the corners, and a negative amount brightens them.
+///
+/// `lum` is the luminance field of the **current pixel**, computed by Python at the vignette
+/// step rather than taken from the source image: it is needed only when highlight protection
+/// `hl_contrast` is on, and other calls pass `None`.
 pub fn vignette_mask(
     w: usize,
     h: usize,

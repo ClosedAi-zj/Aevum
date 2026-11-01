@@ -8,6 +8,20 @@
 //! 数值口径：全程 float32，与 numpy 一致；`np.rint` 的"四舍六入五成双"用
 //! [`rint`] 复现。RGB↔HSV 按 OpenCV float 约定（H 0~360、S/V 0~1，扇区
 //! R→G→B）。曲线类合成一张 65536 级 uint16 表、量化输入一次查完。
+//!
+//! Lookup-table develop operations: color grading, HSL, monochrome mixing, and the
+//! levels / parametric curve / curve composition tables.
+//!
+//! Every operation is per-pixel or indexed by luminance, with no neighborhood access, so the
+//! draft and `for_lut` paths run them unchanged. Semantics copy the Python
+//! `acceptance/reference/grade.py` routines: `_grade_table` / `_color_grade`, the HSL sections
+//! of `_hsl_tables` / `_core`, `_mono_table` / `_mono`,
+//! `_levels_lut` / `_par_lut` / `_curve_lut`.
+//!
+//! Numeric convention: float32 throughout, matching numpy; the "round half to even" of
+//! `np.rint` is reproduced by [`rint`]. RGB↔HSV follows the OpenCV float convention
+//! (H 0~360, S/V 0~1, sector order R→G→B). Curve-class operations compose one 65536-entry
+//! uint16 table and quantize the input once per lookup.
 
 use rayon::prelude::*;
 
@@ -186,6 +200,9 @@ fn grade_table(p: &GradeParams) -> Vec<[f32; 3]> {
 }
 
 /// 色彩分级：阴影 / 中间调 / 高光三段染色 + 全局轮 + 均衡 + 混合。
+///
+/// Color grading: three-band tint over shadows / midtones / highlights, plus the
+/// global wheel, balance and blending.
 pub fn color_grade(rgb: &mut [f32], p: &GradeParams) {
     if !grade_active(p) {
         return;
@@ -261,6 +278,8 @@ fn hsl_tables(p: &GradeParams) -> HslTables {
 }
 
 /// HSL：8 个色相带的色相偏移 / 饱和度 / 明亮度。
+///
+/// HSL: hue shift / saturation / luminance across 8 hue bands.
 pub fn hsl(rgb: &mut [f32], p: &GradeParams) {
     if p.hsl_h.iter().all(|&v| v == 0.0)
         && p.hsl_s.iter().all(|&v| v == 0.0)
@@ -327,6 +346,8 @@ fn mono_table(p: &GradeParams) -> Vec<f32> {
 }
 
 /// 单色 + 8 色相带亮度混合（Lightroom B&W Mixer）。
+///
+/// Monochrome plus 8-band luminance mixing (Lightroom B&W Mixer).
 pub fn mono(rgb: &mut [f32], p: &GradeParams) {
     let k = (p.mono / 100.0) as f32;
     if k <= 0.0 {
@@ -491,6 +512,9 @@ fn curve_lut(p: &GradeParams) -> (Vec<u16>, Vec<u16>, Vec<u16>) {
 }
 
 /// 色阶 + 参数曲线 + 曲线：合成一张 16bit 表，量化输入一次查完。
+///
+/// Levels plus parametric curve plus curve: one composed 16-bit table, with the
+/// quantized input looked up once.
 pub fn tone_curve(rgb: &mut [f32], p: &GradeParams) {
     if curves_default(p) && !levels_active(p) && !par_active(p) {
         return;

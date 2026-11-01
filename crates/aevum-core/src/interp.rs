@@ -2,6 +2,12 @@
 //!
 //! 口径与 Python `acceptance/reference/sequence.interpolate` 对齐：数值线性插值、HSL 数组
 //! 逐元素插值、曲线按 x 对齐后在 y 上插值；蒙版按稳定 id 配对后逐项插值。
+//!
+//! Parameter interpolation between keyframes.
+//!
+//! Conventions align with the Python `acceptance/reference/sequence.interpolate`: scalars
+//! interpolate linearly, HSL arrays interpolate element by element, curves interpolate on y
+//! after aligning x, and masks interpolate term by term after pairing on a stable id.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound::Excluded;
@@ -12,6 +18,9 @@ use crate::grade::GradeParams;
 use crate::mask::as_group;
 
 /// 按关键帧插值出第 `index` 帧的参数；没有关键帧时返回 `base`。
+///
+/// Interpolates the parameters for frame `index` from the keyframes; returns `base` when there
+/// are no keyframes.
 pub fn params_at(
     base: &GradeParams,
     keyframes: &BTreeMap<usize, GradeParams>,
@@ -40,6 +49,8 @@ pub fn params_at(
 }
 
 /// 两组参数之间线性插值，`t` 在 `[0, 1]`。
+///
+/// Linear interpolation between two parameter sets, with `t` in `[0, 1]`.
 pub fn interpolate(a: &GradeParams, b: &GradeParams, t: f64) -> GradeParams {
     if t <= 0.0 {
         return a.clone();

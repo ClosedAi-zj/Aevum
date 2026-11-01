@@ -7,6 +7,17 @@
 //!
 //! 格点顺序是 .cube 的标准顺序：**红分量变化最快**。索引
 //! `i = (b * size + g) * size + r`，搞反了整张 LUT 的颜色会错位成一片糊。
+//!
+//! Export and import of .cube 3D LUTs.
+//!
+//! Export takes the `for_lut` branch of `develop::render`, the same per-point chain used by
+//! preview and still rendering, so a video and a player applying this LUT share one convention.
+//! The text format is byte-identical to the Python oracle's `grade.write_cube` (see
+//! `tests/cube_golden.rs`).
+//!
+//! Node order is the standard .cube order: **the red component varies fastest**.
+//! The index is `i = (b * size + g) * size + r`; reversed, the colors of the whole LUT turn into a
+//! smear.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -18,6 +29,9 @@ use crate::develop::{self, Ev, Opts};
 use crate::grade::GradeParams;
 
 /// Python `write_cube` 的默认格点数；65³ 已经是专业 LUT 的常见精度。
+///
+/// The default node count of the Python `write_cube`; 65³ is already the common precision for
+/// professional LUTs.
 pub const DEFAULT_SIZE: usize = 65;
 pub const MIN_SIZE: usize = 2;
 pub const MAX_SIZE: usize = 256;
@@ -34,6 +48,11 @@ pub enum CubeError {
 ///
 /// 与 numpy 的 `linspace(0, 1, size, dtype=float32)` 取同一批值：这些档位的
 /// `i / (size-1)` 在 float32 里与 numpy 的结果逐位相同。
+///
+/// Generates `size³` input nodes (red fastest), interleaved row-major into one `[f32]`.
+///
+/// It takes the same values as numpy's `linspace(0, 1, size, dtype=float32)`: at these levels
+/// `i / (size-1)` matches the numpy result bit for bit in float32.
 pub fn lattice(size: usize) -> Vec<f32> {
     check_size(size).expect("格点数超出范围");
     let ax: Vec<f32> = (0..size)
@@ -51,6 +70,8 @@ pub fn lattice(size: usize) -> Vec<f32> {
 }
 
 /// 按参数算出 LUT 数据，顺序与 [`lattice`] 一致。
+///
+/// Computes the LUT data for the given parameters, in the same order as [`lattice`].
 pub fn build(p: &GradeParams, size: usize) -> Vec<[f32; 3]> {
     let mut rgb = lattice(size);
     let n = size * size * size;
@@ -70,11 +91,16 @@ pub fn build(p: &GradeParams, size: usize) -> Vec<[f32; 3]> {
 }
 
 /// 一张 3D LUT：`data[(b * size + g) * size + r]`，取值 `[0,1]`。
+///
+/// One 3D LUT: `data[(b * size + g) * size + r]`, with values in `[0,1]`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CubeLut {
     pub title: String,
     pub size: usize,
     /// 输入定义域。标准 .cube 是 `[0,0,0]`~`[1,1,1]`，别的取值也照实存下来。
+    ///
+    /// The input domain. A standard .cube uses `[0,0,0]`~`[1,1,1]`; other values are stored as
+    /// they are.
     pub domain_min: [f32; 3],
     pub domain_max: [f32; 3],
     pub data: Vec<[f32; 3]>,
@@ -82,6 +108,8 @@ pub struct CubeLut {
 
 impl CubeLut {
     /// 由调色参数生成（导出用）。
+    ///
+    /// Built from grading parameters, for export.
     pub fn from_params(p: &GradeParams, size: usize) -> Self {
         Self {
             title: "grade".to_string(),
@@ -93,6 +121,9 @@ impl CubeLut {
     }
 
     /// 就地套这张 LUT。线性插值，格点上的值与 [`build`] 完全一致。
+    ///
+    /// Applies this LUT in place with linear interpolation; values at the nodes match [`build`]
+    /// exactly.
     pub fn apply(&self, rgb: &mut [f32]) {
         let n = self.size;
         let span = n - 1;
@@ -144,11 +175,15 @@ impl CubeLut {
     }
 
     /// 序列化成 .cube 文本（`\n` 结尾，与 Python 写盘一致）。
+    ///
+    /// Serializes to .cube text ending in `\n`, matching what Python writes to disk.
     pub fn to_text(&self) -> String {
         text(&self.title, self.size, &self.data)
     }
 
     /// 写到 `path`。
+    ///
+    /// Writes to `path`.
     pub fn write(&self, path: &Path) -> Result<(), CubeError> {
         std::fs::write(path, self.to_text())?;
         Ok(())
@@ -161,6 +196,8 @@ fn decimal(v: f32) -> String {
 }
 
 /// 拼出完整文本：五行头部 + `size³` 行数据。
+///
+/// Assembles the full text: a five-line header plus `size³` lines of data.
 pub fn text(title: &str, size: usize, data: &[[f32; 3]]) -> String {
     check_size(size).expect("格点数超出范围");
     assert_eq!(data.len(), size * size * size, "LUT 数据长度与格点数对不上");
@@ -183,12 +220,20 @@ pub fn text(title: &str, size: usize, data: &[[f32; 3]]) -> String {
 /// 由参数直接导出文本（`size` 用 [`DEFAULT_SIZE`] 时与 Python 默认一致）。
 ///
 /// 外部传进来的格点数先校验，免得把 panic 带给调用方（GUI/MCP 都走这里）。
+///
+/// Exports text straight from parameters; with [`DEFAULT_SIZE`] the result matches the Python
+/// default.
+///
+/// A node count arriving from outside is validated first, so no panic reaches the caller (the GUI
+/// and MCP both come through here).
 pub fn export_text(p: &GradeParams, size: usize) -> Result<String, CubeError> {
     check_size(size)?;
     Ok(CubeLut::from_params(p, size).to_text())
 }
 
 /// 由参数导出到文件。
+///
+/// Exports to a file from parameters.
 pub fn export(path: &Path, p: &GradeParams, size: usize) -> Result<(), CubeError> {
     check_size(size)?;
     CubeLut::from_params(p, size).write(path)
@@ -204,6 +249,8 @@ fn check_size(size: usize) -> Result<(), CubeError> {
 }
 
 /// 解析 .cube 文本。只认 `LUT_3D_SIZE`（三维表），一行三个数。
+///
+/// Parses .cube text. Only `LUT_3D_SIZE` (3D tables) is accepted, with three numbers per line.
 pub fn parse(src: &str) -> Result<CubeLut, CubeError> {
     let mut title = String::new();
     let mut size: Option<usize> = None;
@@ -301,6 +348,8 @@ pub fn parse(src: &str) -> Result<CubeLut, CubeError> {
 }
 
 /// 从文件导入。
+///
+/// Imports from a file.
 pub fn read(path: &Path) -> Result<CubeLut, CubeError> {
     let src = std::fs::read_to_string(path)?;
     parse(&src)
@@ -316,6 +365,8 @@ fn looks() -> &'static Mutex<BTreeMap<String, Arc<CubeLut>>> {
 }
 
 /// 读一张 .cube，同一路径只读一次。
+///
+/// Reads a .cube; the same path is read only once.
 pub fn load(path: &str) -> Result<Arc<CubeLut>, CubeError> {
     if let Some(hit) = looks().lock().unwrap_or_else(|e| e.into_inner()).get(path) {
         return Ok(hit.clone());
@@ -329,6 +380,8 @@ pub fn load(path: &str) -> Result<Arc<CubeLut>, CubeError> {
 }
 
 /// 强制重读（改了文件内容、或在界面上重新挑了一张外观时用）。
+///
+/// Forces a re-read, used after the file content changes or a look is picked again in the UI.
 pub fn refresh(path: &str) -> Result<Arc<CubeLut>, CubeError> {
     let lut = Arc::new(read(Path::new(path))?);
     looks()
@@ -343,6 +396,14 @@ pub fn refresh(path: &str) -> Result<Arc<CubeLut>, CubeError> {
 /// 不在这里报错是有意的：渲染是逐帧的热路径，出错也只能退化成不加外观。
 /// 合法性在设置 `look_cube` 的入口校验（`cube.info` / `grade.set`），
 /// 那边会告诉用户到底哪一行不对。
+///
+/// The look attached to the current parameters; when the path cannot be read, rendering proceeds
+/// as if no look were attached.
+///
+/// Saying nothing here is deliberate: rendering is the per-frame hot path, so a failure can only
+/// degrade to no look.
+/// Validity is checked at the entry points that set `look_cube` (`cube.info` / `grade.set`), which
+/// tell the user exactly which line is wrong.
 pub fn active(p: &GradeParams) -> Option<Arc<CubeLut>> {
     if p.look_cube.is_empty() {
         return None;
@@ -351,6 +412,8 @@ pub fn active(p: &GradeParams) -> Option<Arc<CubeLut>> {
 }
 
 /// 一张外观的概览，给界面与 AI 面板看。
+///
+/// An overview of one look, for the UI and the AI panel.
 pub fn describe(lut: &CubeLut) -> LookInfo {
     let mut span = [[f32::MAX, f32::MIN]; 3];
     let mut neutral = true;
@@ -385,6 +448,8 @@ pub fn describe(lut: &CubeLut) -> LookInfo {
 }
 
 /// [`describe`] 的结果。
+///
+/// The result of [`describe`].
 #[derive(Debug, Clone)]
 pub struct LookInfo {
     pub title: String,
@@ -393,8 +458,13 @@ pub struct LookInfo {
     pub domain_min: [f32; 3],
     pub domain_max: [f32; 3],
     /// 每个通道在整张表里的最小/最大值，用来看这张表压了多少动态范围。
+    ///
+    /// The minimum and maximum of each channel across the table, used to see how much dynamic
+    /// range the table compresses.
     pub span: [[f32; 2]; 3],
     /// 是否基本等于恒等表（挂上去等于没挂）。
+    ///
+    /// Whether the table is essentially identity, in which case attaching it changes nothing.
     pub neutral: bool,
 }
 

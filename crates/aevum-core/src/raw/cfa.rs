@@ -10,6 +10,23 @@
 //! 镜头暗角与行增益补偿，也不查任何机型数据库。用了色彩矩阵才正确的 C/M/Y 图案、四拜尔
 //! 与 X-Trans 一律在上层被拒、走预览兜底。白平衡只有 AsShotNeutral 的三通道增益，缺标记
 //! 时完全不调色。
+//!
+//! CFA to RGB: 2×2 cell averaging and AsShotNeutral gains.
+//!
+//! The convention matches `dng::demosaic`, and the same coarse estimator is kept on purpose:
+//! the images produced by the two paths (DNG and vendor RAW) must not visibly disagree. No
+//! code is shared because `dng.rs` is frozen: touching its internals means passing its own
+//! golden test, which costs more than copying 60 lines.
+//!
+//! Every loop is split by pixel or by cell and runs in parallel; the arithmetic order of each
+//! output element is unchanged, so results are bit-identical to the serial version.
+//!
+//! This is **not** accurate color reproduction in the sense of a camera profile: no
+//! ColorMatrix, no camera gamut, no preset baseline, no lens vignetting or row gain
+//! compensation, and no camera model database. C/M/Y patterns, four-color Bayer and X-Trans,
+//! which are only correct with a color matrix, are rejected upstream and fall back to the
+//! preview path. White balance is the three-channel AsShotNeutral gain only; with the tag
+//! missing, no grading is applied at all.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -133,6 +150,9 @@ pub(crate) trait Demosaic: Sync {
 
 /// 默认方法：2×2 单元平均（与 DNG 路径同口径）。directional 稳定一轮后再切，
 /// 切换只改这一个常量。
+///
+/// Default method: 2×2 cell averaging (same convention as the DNG path). Switch once
+/// directional has been stable for a release cycle; the switch touches this constant only.
 pub const DEFAULT_DEMOSAIC: &str = "cell_average";
 
 struct CellAverage;
@@ -175,6 +195,9 @@ pub(crate) fn demosaic_with(
 }
 
 /// 诊断面板可选的去马赛克方法，与注册表一一对应；下标 0 即 [`DEFAULT_DEMOSAIC`]。
+///
+/// Demosaic methods offered by the diagnostics panel, one-to-one with the registry; index 0
+/// is [`DEFAULT_DEMOSAIC`].
 pub const DEMOSAIC_METHODS: [&str; 2] = [DEFAULT_DEMOSAIC, "directional"];
 
 /// 当前生效的方法在 [`DEMOSAIC_METHODS`] 里的下标。解码发生在后台线程（导出与

@@ -1,38 +1,85 @@
 //! LCP 镜头配置：读 Adobe `.lcp`（XMP 封装的 XML），按 EXIF 的机身、镜头、焦距
 //! 选出对应的标定帧，折成一份 [`Correction`]，在显影链最前面应用到像素。
 //!
+//! LCP lens profiles: reads Adobe `.lcp` files (XML wrapped in XMP), picks the calibration
+//! frame matching the EXIF body, lens, and focal length, folds it into one [`Correction`],
+//! and applies it to pixels at the very front of the develop chain.
+//!
 //! 数据形状来自 Adobe Camera Raw 自带的 3633 份在野样本，两种写法都认：
 //! 属性式（`<rdf:Description stCamera:Model="...">`）与元素式
 //! （`<stCamera:Model>...</stCamera:Model>`）；模型既可以挂在 `rdf:Description`
 //! 下，也可以嵌在 `PerspectiveModel` 里。命名空间前缀一律不认，只认本地名。
 //!
+//! The data shapes come from 3633 in-the-wild samples shipped with Adobe Camera Raw; both
+//! spellings are accepted: attribute form (`<rdf:Description stCamera:Model="...">`) and
+//! element form (`<stCamera:Model>...</stCamera:Model>`); the model may hang directly under
+//! `rdf:Description` or be nested inside `PerspectiveModel`. Namespace prefixes are ignored;
+//! only local names are matched.
+//!
 //! 归一化与公式按 Adobe Camera Model 的口径（与 RawTherapee 的实现一致）：
+//!
+//! Normalization and formulas follow the Adobe Camera Model convention (matching the
+//! RawTherapee implementation):
 //!
 //! - 归一化坐标 `x = (px - cx) / fx`，`fx = FocalLengthX × max(w, h)`。
 //!   `FocalLengthX` 是「以 35mm 画幅 35mm 为单位的焦距」，样本里 24mm 全幅
 //!   就是 0.670062（≈24/35）。缺这个字段时用
 //!   `FocalLength × SensorFormatFactor ÷ 35` 推。
+//! - Normalized coordinates `x = (px - cx) / fx`, with `fx = FocalLengthX × max(w, h)`.
+//!   `FocalLengthX` is the focal length in units of a 35mm-wide 35mm frame; a 24mm
+//!   full-frame sample reads 0.670062 (≈24/35). When the field is missing it is derived as
+//!   `FocalLength × SensorFormatFactor ÷ 35`.
 //! - 畸变（校正图 → 源图）：`F = 1 + k1 r² + k2 r⁴ + k3 r⁶ + 2(p2 x + p1 y)`，
 //!   `x_src = x·F + p2 r²`、`y_src = y·F + p1 r²`。
 //!   `RadialDistortParam1..3` 是 k1..k3，`Param4`/`Param5` 是切向 p1/p2。
+//! - Distortion (corrected image → source image):
+//!   `F = 1 + k1 r² + k2 r⁴ + k3 r⁶ + 2(p2 x + p1 y)`,
+//!   `x_src = x·F + p2 r²`, `y_src = y·F + p1 r²`.
+//!   `RadialDistortParam1..3` are k1..k3; `Param4`/`Param5` are the tangential p1/p2.
 //! - 鱼眼：`θ = atan(r)`（r 已是 tan 单位），`f = (1 + k1 θ² + k2 θ⁴)·θ / r`。
+//! - Fisheye: `θ = atan(r)` (r is already in tan units), `f = (1 + k1 θ² + k2 θ⁴)·θ / r`.
 //! - 横向色差：红、蓝各有一份相对绿通道的模型。绿通道只做基础畸变，红/蓝在
 //!   绿通道校正后的坐标上再叠 `ScaleFactor` 与自己的径向/切向偏离。
+//! - Lateral chromatic aberration: red and blue each carry a model relative to the green
+//!   channel. Green gets only the base distortion; red/blue stack `ScaleFactor` and their
+//!   own radial/tangential offsets on top of the green-corrected coordinates.
 //! - 暗角：模型给的是**衰减** `V(r) = 1 + a1 r² + a2 r⁴ + a3 r⁶`，校正就是
 //!   除以它——比 RawTherapee 的泰勒展开更准，也省一次近似。
+//! - Vignetting: the model gives the **falloff** `V(r) = 1 + a1 r² + a2 r⁴ + a3 r⁶`; the
+//!   correction divides by it — more accurate than RawTherapee's Taylor expansion and saves
+//!   an approximation.
 //! - 分段暗角 `VignetteModelPiecewiseParam`（551/3633 份文件里有）：控制点是
 //!   `(r, V)`，r 与上面的归一化半径同口径（3633 帧里 99.8% 的末点落在画幅角
 //!   半径上，相对误差中位数 0.02%），点间按 r 线性插值，V 单调不增。表比多项式
 //!   更贴厂商实测（|差| 中位 0.0045、最大 0.13），所以表覆盖到画幅角时优先用它；
 //!   退化的平表（V≡1，85 帧）和只管住一小段半径的表（7 帧）在输入里就能认出来，
 //!   这时退回多项式，别拿没标过的半径硬外推。
+//! - Piecewise vignetting `VignetteModelPiecewiseParam` (present in 551/3633 files): control
+//!   points are `(r, V)`, with r on the same convention as the normalized radius above (in
+//!   the 3633 frames, 99.8% of end points land on the frame-corner radius, median relative
+//!   error 0.02%); points are linearly interpolated by r, and V is monotonically
+//!   non-increasing. The table tracks vendor measurements better than the polynomial (median
+//!   |diff| 0.0045, max 0.13), so a table covering the frame corner is preferred; degenerate
+//!   flat tables (V≡1, 85 frames) and tables covering only a small radius span (7 frames)
+//!   are recognizable from the input, in which case the code falls back to the polynomial
+//!   instead of extrapolating hard into uncalibrated radii.
 //!
 //! 选帧：同焦距常有多帧（不同对焦距离/光圈）。先按焦距在**对数**上找到包住
 //! 目标的两帧，再在对焦距离（畸变/色差）或光圈（暗角）上挑更接近的一帧；
 //! 两帧之间的系数按对数焦距线性插值。
 //!
+//! Frame selection: one focal length often has several frames (different focus distances or
+//! apertures). First find the two frames bracketing the target on a **logarithmic** focal
+//! scale, then pick the closer one by focus distance (distortion/CA) or aperture
+//! (vignetting); coefficients between the two frames are interpolated linearly by log focal
+//! length.
+//!
 //! 旋转/镜像不处理：像素已按 EXIF 转正，而径向项与旋转无关、切向项在 1e-4
 //! 量级、中心偏移只有千分之几。
+//!
+//! Rotation/mirroring is not handled: pixels are already uprighted per EXIF, radial terms
+//! are rotation-invariant, tangential terms are on the order of 1e-4, and center offsets
+//! are only a few thousandths.
 
 use std::path::{Path, PathBuf};
 
@@ -107,13 +154,21 @@ impl Model {
 }
 
 /// 解析后的整份 LCP。
+///
+/// A fully parsed LCP file.
 #[derive(Clone, Debug, Default)]
 pub struct LcpFile {
     /// 文件路径（面板显示用）。
+    ///
+    /// The file path (for panel display).
     pub path: String,
     /// `ProfileName`，多帧时取第一帧。
+    ///
+    /// The `ProfileName`; the first frame when there are several.
     pub profile: String,
     /// 文件覆盖的镜头名（多帧可能是同一支）。
+    ///
+    /// Lens names covered by the file (several frames may be the same lens).
     pub lens: String,
     pub camera: String,
     frames: Vec<Frame>,
@@ -126,38 +181,62 @@ impl LcpFile {
 }
 
 /// 一次匹配需要的 EXIF 事实。
+///
+/// The EXIF facts one match needs.
 #[derive(Clone, Debug, Default)]
 pub struct Request {
     pub make: String,
     pub model: String,
     pub lens: String,
     /// 实际焦距（mm）。
+    ///
+    /// Actual focal length (mm).
     pub focal_mm: f64,
     /// 35mm 等效焦距（mm），EXIF 有就直接用。
+    ///
+    /// 35mm-equivalent focal length (mm); used directly when EXIF provides it.
     pub focal35_mm: Option<f64>,
     pub aperture: Option<f64>,
 }
 
 /// 折好的校正系数。放进 [`crate::grade::GradeParams`]（默认 `None`），
 /// 预览、导出、队列自然全通。
+///
+/// The folded correction coefficients. Drop it into [`crate::grade::GradeParams`] (default
+/// `None`) and preview, export, and the queue all pick it up.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Correction {
     pub lens: String,
     pub profile: String,
     /// 选中的标定焦距（35mm 等效），面板显示用。
+    ///
+    /// The selected calibration focal length (35mm equivalent), for panel display.
     pub focal35_mm: f64,
     /// 归一化焦距 `[x, y]`：`fx = norm[0] × max(w, h)`。
+    ///
+    /// Normalized focal lengths `[x, y]`: `fx = norm[0] × max(w, h)`.
     pub norm: [f64; 2],
     pub center: [f64; 2],
     /// 畸变 `[k1, k2, k3, p1, p2]`。
+    ///
+    /// Distortion `[k1, k2, k3, p1, p2]`.
     pub dist: Option<[f64; 5]>,
     /// 鱼眼 `[k1, k2]`；与 `dist` 互斥。
+    ///
+    /// Fisheye `[k1, k2]`; mutually exclusive with `dist`.
     pub fisheye: Option<[f64; 2]>,
     /// 红/蓝相对绿通道的色差模型。
+    ///
+    /// Red/blue chromatic aberration models relative to the green channel.
     pub ca: Option<[CaModel; 2]>,
     /// 暗角衰减系数 `[a1, a2, a3]`（校正时取倒数）。
+    ///
+    /// Vignetting falloff coefficients `[a1, a2, a3]` (inverted during correction).
     pub vig: Option<[f64; 3]>,
     /// 暗角分段表 `(r, V)`：r 升序、V 是衰减。覆盖画幅角时优先于 `vig`。
+    ///
+    /// Piecewise vignetting table `(r, V)`: r ascending, V the falloff. Preferred over `vig`
+    /// when it covers the frame corner.
     #[serde(default)]
     pub vig_curve: Option<Vec<(f64, f64)>>,
     pub vig_norm: [f64; 2],
@@ -181,6 +260,9 @@ impl Correction {
     }
 
     /// 命令面与面板共用的 JSON 形状：查到的可以原样读回来。
+    ///
+    /// The JSON shape shared by the command surface and the panel: a found correction reads
+    /// back verbatim.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "profile": self.profile,
@@ -196,6 +278,9 @@ impl Correction {
     }
 
     /// 应用到 sRGB `[0,1]` 像素。先逐像素找源坐标（畸变/色差），再按源半径补暗角。
+    ///
+    /// Applies to sRGB `[0,1]` pixels. First finds per-pixel source coordinates
+    /// (distortion/CA), then adds vignetting by the source radius.
     pub fn apply(&self, rgb: &mut [f32], w: usize, h: usize) {
         if w == 0 || h == 0 || rgb.len() < w * h * 3 || self.is_empty() {
             return;
@@ -418,6 +503,9 @@ fn sample(src: &[f32], w: usize, h: usize, x: f64, y: f64, ch: usize) -> f32 {
 // ---------------------------------------------------------------------------
 
 /// 读并解析一份 `.lcp`。坏文件把原因带出来，不静默当成「没有配置」。
+///
+/// Reads and parses one `.lcp`. A bad file carries the reason out instead of being silently
+/// treated as "no profile".
 pub fn load(path: impl AsRef<Path>) -> Result<LcpFile, String> {
     let path = path.as_ref();
     let src = std::fs::read_to_string(path)
@@ -426,6 +514,8 @@ pub fn load(path: impl AsRef<Path>) -> Result<LcpFile, String> {
 }
 
 /// 文本入口：测试与已经握在手里的 XMP 走这条。
+///
+/// The text entry point: tests and XMP already held in hand go through here.
 pub fn parse(src: &str, path: &Path) -> Result<LcpFile, String> {
     let root = parse_xml(src).map_err(|e| format!("LCP 不是合法 XML：{e}"))?;
     let profiles = find_local(&root, "CameraProfiles")
@@ -675,6 +765,8 @@ fn walk<'a>(node: &'a Node, name: &str, out: &mut Vec<&'a Node>) {
 // ---------------------------------------------------------------------------
 
 /// 按 EXIF 事实从整份 LCP 里折出一份校正。
+///
+/// Folds one correction out of the whole LCP file from the EXIF facts.
 pub fn match_correction(file: &LcpFile, req: &Request) -> Result<Correction, String> {
     let mut candidates: Vec<&Frame> = file
         .frames
@@ -1064,6 +1156,9 @@ fn camera_line(make: &str, model: &str) -> String {
 
 /// 找 LCP 根目录：`AEVUM_LCP`（旧名 `LUMEN_LCP` 回退；目录或单个 `.lcp`）
 /// → Adobe Camera Raw 的默认位置。
+///
+/// Finds the LCP root directory: `AEVUM_LCP` (legacy name `LUMEN_LCP` falls back; a
+/// directory or a single `.lcp`), then the default Adobe Camera Raw location.
 pub fn default_directory() -> Option<PathBuf> {
     if let Some(dir) = crate::env::var_os("LCP") {
         let path = PathBuf::from(dir);
@@ -1080,8 +1175,14 @@ pub fn default_directory() -> Option<PathBuf> {
 
 /// 在默认目录里按 EXIF 自动找一份配置并匹配。
 ///
+/// Automatically finds and matches a profile in the default directory from the EXIF facts.
+///
 /// 先按文件名粗筛（3633 份文件逐个解析要几秒），只解析镜头名能对上的前几份，
 /// 再走 [`match_correction`] 的完整校验。
+///
+/// First a coarse filter by file name (parsing all 3633 files takes seconds), then only the
+/// first few whose lens names match get parsed, followed by the full validation of
+/// [`match_correction`].
 pub fn auto_match(req: &Request) -> Result<(PathBuf, Correction), String> {
     let dir = default_directory().ok_or_else(|| {
         "没找到 LCP 目录（设 AEVUM_LCP，或安装 Adobe Camera Raw 的镜头配置）".to_owned()

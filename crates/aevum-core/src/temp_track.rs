@@ -1,17 +1,41 @@
 //! 非线性色温轨道：滑块位置 ↔ 参数值的双向分段线性映射。
 //!
+//! Non-linear color-temperature track: a bidirectional piecewise-linear
+//! mapping between slider position and parameter value.
+//!
 //! `GradeParams.temperature` 的数值域不变（-100..100），落盘/历史/XMP 语义零变化；
 //! 映射只作用于**滑块位置**：人手在轨道中段（常调区）每挪一像素对应的色温变化更小、
 //! 两端（极端调法）更粗，中段密两端疏，锚点关于 0 对称。数字输入框、历史、落盘、
 //! XMP 全部直接用原始值 `v`，serde 零影响。
 //!
+//! The numeric domain of `GradeParams.temperature` is unchanged (-100..100),
+//! with zero semantic change to persistence, history, or XMP; the mapping
+//! applies only to the **slider position**: in the middle of the track (the
+//! commonly used range) one pixel of hand movement corresponds to a smaller
+//! temperature change, and the ends (extreme adjustments) are coarser —
+//! dense in the middle, sparse at the ends, anchors symmetric about 0. The
+//! numeric input box, history, persistence, and XMP all use the raw value
+//! `v` directly; serde is unaffected.
+//!
 //! **退表机制**：把 [`TempTrack::LINEAR`] 换回去即恢复 v0.3.0 的线性轨道——
 //! 表是数据不是算法，加一张色调表（tint）也只是换个锚点数组。
 //!
+//! **Table retirement**: swapping [`TempTrack::LINEAR`] back in restores
+//! the v0.3.0 linear track — the table is data, not an algorithm, and
+//! adding a tint track is just a different anchor array.
+//!
 //! 插值用分段线性而非 pchip：锚点表本身已是感知曲线，线性段足够平滑，
 //! 单调、无过冲、正反可逆，退表成本最低。
+//!
+//! Interpolation uses piecewise linear rather than pchip: the anchor table
+//! is already a perceptual curve, linear segments are smooth enough,
+//! monotonic, overshoot-free, and reversible in both directions, with the
+//! lowest cost for retiring the table.
 
 /// 一条轨道：名字 + 锚点表 `[pos, val]`（按 pos 升序、单调、可逆）。
+///
+/// One track: a name plus an anchor table `[pos, val]` (ascending by pos,
+/// monotonic, reversible).
 #[derive(Clone, Copy, Debug)]
 pub struct TempTrack {
     pub name: &'static str,
@@ -20,12 +44,18 @@ pub struct TempTrack {
 
 impl TempTrack {
     /// 线性轨道（退表用）：v0.3.0 的行为，pos == val。
+    ///
+    /// The linear track (for table retirement): the v0.3.0 behavior,
+    /// pos == val.
     pub const LINEAR: TempTrack = TempTrack {
         name: "linear",
         points: &[[-100.0, -100.0], [0.0, 0.0], [100.0, 100.0]],
     };
 
     /// 色温轨道（M2）：中段密两端疏，锚点关于 0 对称。
+    ///
+    /// The color-temperature track (M2): dense in the middle, sparse at the
+    /// ends, anchors symmetric about 0.
     ///
     /// ```text
     /// p:  -100  -70  -45  -25  -12  -6   0   6   12   25   45   70  100
@@ -51,11 +81,16 @@ impl TempTrack {
     };
 
     /// 滑块位置 `p` → 参数值 `v`。
+    ///
+    /// Slider position `p` → parameter value `v`.
     pub fn pos_to_val(&self, p: f64) -> f64 {
         track_interp(self.points, p)
     }
 
     /// 参数值 `v` → 滑块位置 `p`（同一张表按 (val, pos) 反查，要求表单调）。
+    ///
+    /// Parameter value `v` → slider position `p` (reverse lookup in the
+    /// same table by (val, pos); the table must be monotonic).
     pub fn val_to_pos(&self, v: f64) -> f64 {
         // 值列与位置列同升序是表契约（COLOR_TEMPERATURE/LINEAR 都满足），
         // 反查直接在值列上走同一套分段插值——手动扫段，不给拖动热路径留

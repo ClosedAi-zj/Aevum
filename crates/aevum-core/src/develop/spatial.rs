@@ -16,6 +16,33 @@
 //!   实测逐点一致），核值用 `exp(-d^2/2σ^2)` 归一化。
 //! - 颗粒场用自实现的 PCG 之外的确定性正态发生器，随机序列与 numpy 不可能
 //!   相同，只对齐统计量与空间结构；场按 (尺寸,size,freq) 缓存，与帧号无关。
+//!
+//! Spatial develop operations: lens correction, noise reduction, sharpening, clarity and
+//! texture, grain, and detail inside masks.
+//!
+//! Semantics follow the Python `acceptance/reference/grade.py`: `_lens` / `_distort_map` /
+//! `_defringe`, `_denoise`, `_sharpen`, `_guided` / `_local_contrast`, `_noise`,
+//! `_mask_spatial`.
+//! All of them need neighborhood access, and the sketch path (`Opts::sketch`) and the `for_lut`
+//! path skip them, so the implementation here must agree with that "skip" logic; otherwise
+//! preview and export are not one chain.
+//!
+//! Implementation notes (each item matches Python):
+//! - Box filter `cv2.blur` = mean + BORDER_REFLECT_101, done here with a separable sliding
+//!   window in O(1).
+//! - Guided filter `_guided`: with `r>=8→1/4` or `r>=4→1/2`, coefficients are computed at
+//!   reduced resolution and then upsampled, but `min(H,W)<64` forces the full-resolution
+//!   branch; **the golden is 48×64, so the golden verifies the s=1 branch only**.
+//!   The downsampled branch (INTER_AREA/INTER_LINEAR) follows cv2 semantics but is not covered
+//!   by a golden, see the comments in `guided`.
+//! - No OpenCV is available for the Gaussian kernel, so the kernel size follows the empirical
+//!   `getGaussianKernel` formula `radius = floor(4*sigma + 0.6)`, `ksize = 2*radius+1`
+//!   (pointwise identical to the measured cv2 5.0.0), and kernel values are normalized with
+//!   `exp(-d^2/2σ^2)`.
+//! - The grain field uses a deterministic normal generator of its own rather than PCG; the
+//!   random sequence cannot match numpy, so only the statistics and spatial structure are
+//!   aligned.
+//!   The field is cached by (dimensions, size, freq) and does not depend on the frame number.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -460,6 +487,14 @@ fn dilate3(m: &[f32], w: usize, h: usize) -> Vec<f32> {
 /// 平坦区 σ̂ 估到 0 时，`eps=0` 会让 `a = cov/(var+eps)` 在 var 也为 0 的
 /// 完全平坦块上变成 0/0；1e-6 比 8bit 量化噪声底（σ≈0.002，方差 4e-6）还低
 /// 一档，既兜住除零，又不会在低噪声图上重新引入「与噪声无关的平滑地板」。
+///
+/// Lower bound of the candidate eps formula (variance domain).
+///
+/// When σ̂ estimates to 0 in a flat area, `eps=0` makes `a = cov/(var+eps)` become 0/0 on a
+/// completely flat block where var is 0 as well.
+/// 1e-6 sits one step below the 8-bit quantization noise floor (σ≈0.002, variance 4e-6), so it
+/// catches the division by zero without reintroducing a "smoothing floor unrelated to noise"
+/// on low-noise images.
 pub const NR_MS_EPS_MIN: f32 = 1e-6;
 
 /// 多尺度 eps 的归一化常数 C（`eps = C·σ̂²/rm`）。
@@ -487,6 +522,37 @@ pub const NR_MS_EPS_MIN: f32 = 1e-6;
 /// 上两条边界的余量更均衡（方差 +3.8 点、MTF +5.0 点，最小 3.8；1.0 是 +7.0/+3.1）。
 /// 再往下压（0.70）只换得 MTF 余量、方差在 1024 上掉到 51.7%（余量 1.7 点），
 /// 是把贴线风险从一边挪到另一边，不要。
+///
+/// Normalization constant C for the multiscale eps (`eps = C·σ̂²/rm`).
+///
+/// Physically eps should be the noise variance (the guided filter eps is in the variance
+/// domain and the noise variance is ∝ σ²), and the 1/rm term is the scale compensation (see
+/// the multiscale branch comment in `denoise_apply`).
+/// C absorbs two things: σ̂ comes from the MAD of the high-frequency residual and is not the
+/// true noise standard deviation (on small images such as 48×64 it is also biased), and the
+/// empirical coefficient for "what fraction of the ripple inside one rm window counts as
+/// noise".
+///
+/// The value comes from the parameter sweep in `tests/fit_denoise.rs` (2026-10-31, three
+/// aspects at σ=0.020 / nr_luma=50; coarse grid step 0.2–0.3, refined grid step 0.05).
+/// After refinement, C values that keep both targets inside the window measure **0.70–1.05**:
+/// 0.70 leaves only 1.7 points of variance margin at 1024×768, and 1.10 drops MTF to 84.8% at
+/// 1536×1152.
+///
+/// | C | 1024×768 | 1536×1152 | 2048×1536 | Verdict |
+/// |---|---|---|---|---|
+/// | 0.6 | 49.1 / 92.2 | 59.5 / 89.3 | 56.5 / 91.4 | 1024 under-denoised |
+/// | **0.8** | **53.8 / 90.0** | **62.7 / 87.3** | **60.3 / 89.5** | all pass, 2.3 pt MTF margin |
+/// | 1.0 | 57.0 / 88.1 | 64.8 / 85.6 | 62.8 / 87.8 | all pass, 0.6 pt MTF margin |
+/// | 1.2 | 59.4 / 86.3 | 66.3 / 84.1 | 64.5 / 86.3 | harms detail at 1536 |
+/// | 1.5 | 62.0 / 83.8 | 67.9 / 82.2 | 66.4 / 84.3 | harms detail everywhere |
+///
+/// 0.8 is taken over the dimensionally rounder 1.0: both pass all three aspects, but 1.0
+/// leaves only 0.6 points of MTF margin (85.6%) at 1536×1152 while 0.8 leaves 2.3 points; and
+/// at the pinned 1024×768, 0.8 has more balanced margins on both bounds (variance +3.8 points,
+/// MTF +5.0 points, minimum 3.8; 1.0 is +7.0/+3.1).
+/// Going lower (0.70) buys MTF margin only, while variance falls to 51.7% at 1024 (1.7 points
+/// of margin), moving the risk of hugging the limit from one side to the other; not taken.
 pub const NR_MS_EPS_C: f32 = 0.8;
 
 /// `_denoise` 的可参数化核心：色度先降（亮度作引导）、亮度后降。公开入口与
@@ -812,10 +878,17 @@ pub fn sharpen(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams) {
 /// 输出编码预留（E2：`UniformsOutputSharpenEncodeSDR/HDR` 单 pass 合并结构）。
 /// 当前导出管线上限是 sRGB f32 [0,1]，本轮只有 SDR 落地；HDR（PQ）留给
 /// atlas §36 里程碑。
+///
+/// Output encoding placeholder (E2: the single-pass `UniformsOutputSharpenEncodeSDR/HDR`
+/// structure).
+/// The current export pipeline tops out at sRGB f32 [0,1], so only SDR lands in this round;
+/// HDR (PQ) is left to the atlas §36 milestone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputEncoding {
     Sdr,
     /// HDR（PQ）输出：decode_pq → USM → encode_pq，当前不可达占位。
+    ///
+    /// HDR (PQ) output: decode_pq → USM → encode_pq, currently an unreachable placeholder.
     #[allow(dead_code)]
     HdrPq,
 }
@@ -823,6 +896,12 @@ pub enum OutputEncoding {
 /// 一次输出锐化的三个用户可见参数（用途档 × 强度档合成后的结果）。
 ///
 /// 打包成结构体是为了让函数签名留在可读范围内；数值本身没有语义变化。
+///
+/// The three user-visible parameters of one output sharpening pass (the result of combining
+/// the use-case and strength steps).
+///
+/// They are packed into a struct so the function signature stays readable; the values
+/// themselves carry no change of meaning.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UsmSettings {
     pub amount: f32,
@@ -848,6 +927,18 @@ impl UsmSettings {
 /// 是**自定**的：`size_gain = clamp(max(w,h)/1600, 1, 3).sqrt()`。
 /// 它保留在 [`UsmTuning`] 里可调，等将来有多分辨率参照再拟合。
 /// 只在 `apply_output_finish`（缩放后、水印前）调用，预览不经过这里。
+///
+/// USM dedicated to output sharpening: high-pass = source − Gaussian blur, a linear soft
+/// threshold (the E2 threshold convention, not masking), Δ clipping to suppress ringing, and
+/// write-back by luma ratio so chroma does not drift.
+///
+/// Output size awareness: LR scales the radius implicitly with the output resolution (a 4K
+/// export needs a larger radius than 1080p to be equivalent), but the public material gives no
+/// exact formula and there is no reference image to align with, so this one is **self-defined**:
+/// `size_gain = clamp(max(w,h)/1600, 1, 3).sqrt()`.
+/// It stays adjustable in [`UsmTuning`], to be fitted once multi-resolution references exist.
+/// It is called only from `apply_output_finish` (after scaling, before the watermark); the
+/// preview never passes through it.
 pub fn output_sharpen_usm(
     rgb: &mut [f32],
     w: usize,
@@ -863,6 +954,13 @@ pub fn output_sharpen_usm(
 /// 生产路径不该用它——默认值才是拟合出来的结论。它存在的意义是让
 /// `tests/fit_sharpen.rs` 能在同一份实现上扫参，而不是复制一份算法来试数
 /// （那样试出来的值跟真正跑的值不是一回事）。
+///
+/// Same as [`output_sharpen_usm`], but with an explicit set of fitting parameters.
+///
+/// The production path must not use it: the defaults are the fitted conclusion.
+/// Its purpose is to let `tests/fit_sharpen.rs` sweep parameters over the same implementation
+/// instead of copying the algorithm to try numbers, since values tried on a copy are not the
+/// values that actually run.
 pub fn output_sharpen_usm_tuned(
     rgb: &mut [f32],
     w: usize,
@@ -882,6 +980,10 @@ pub fn output_sharpen_usm_tuned(
 /// 输出尺寸感知增益：`size_gain = clamp(max(w,h)/1600, 1, 3).sqrt()`，
 /// 半径乘 gain、阈值乘 √gain。见 [`output_sharpen_usm`] 的说明——自定值，
 /// 无参照可拟合。
+///
+/// Output size aware gain: `size_gain = clamp(max(w,h)/1600, 1, 3).sqrt()`; the radius is
+/// multiplied by gain and the threshold by √gain.
+/// See the note on [`output_sharpen_usm`]: a self-defined value with no reference to fit.
 pub fn usm_size_gain(w: usize, h: usize) -> f32 {
     usm_size_gain_with(w, h, UsmTuning::default())
 }
@@ -895,6 +997,18 @@ pub fn usm_size_gain(w: usize, h: usize) -> f32 {
 ///
 /// `delta_cap` 已按上述口径拟合（见 `tests/fit_sharpen.rs`，扫参表可复现）；
 /// `size_scale` / `size_cap` 仍是无参照的自定值——**不要**把它们标成已拟合。
+///
+/// The constants in output sharpening that "can only be fitted, not evidenced", kept in one
+/// place.
+///
+/// They are a struct rather than literals scattered through function bodies because the values
+/// must be fixed by a parameter sweep against the `atlas §46.2` acceptance convention (MTF50
+/// gain of 1.2–1.6×, halo < 3%), and the sweep needs to try different values on the same code;
+/// once settled there is still a single default and the production path behaves the same.
+///
+/// `delta_cap` is already fitted to that convention (see `tests/fit_sharpen.rs`, the sweep table
+/// reproduces it); `size_scale` / `size_cap` are still self-defined values with no reference:
+/// **do not** mark them as fitted.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UsmTuning {
     /// 高通 Δ 的**绝对上限**（作用在乘 `amount` 之前，单位是亮度）。
@@ -907,10 +1021,30 @@ pub struct UsmTuning {
     ///   就是纯线性放大——限幅等于不存在。
     /// - 改成本值上限但放在乘 amount **之后**，则不同力度在同一硬边上被压到同一个
     ///   绝对量，强度滑杆失效（`export_stills` 的强度分层测试当场红）。
+    ///
+    /// **Absolute cap** on the high-pass Δ (applied before the multiplication by `amount`, in
+    /// luma units).
+    ///
+    /// Both pitfalls have been hit before, recorded here so they are not hit again:
+    ///
+    /// - Early code wrote `delta_limit = 0.12·amount`: the bound scaled with the strength (if it
+    ///   ever bit, output would be proportional to amount²), and 0.12 was nearly 3× larger than
+    ///   a typical high-pass amplitude (about 0.042 on a step edge), so it **never bit once**.
+    ///   The measured halo at amount 1.0→2.0 is 8.35%→17.66%, pure linear amplification: the
+    ///   clipping might as well not exist.
+    /// - Moving to this absolute cap but placing it **after** the multiplication by amount
+    ///   squashes different strengths to the same absolute value on the same hard edge, and the
+    ///   strength slider stops working (the strength-tier test in `export_stills` goes red at
+    ///   once).
     pub delta_cap: f32,
     /// 尺寸补偿的参考长边（px）：`size_gain = (max/size_scale).clamp(1,..)^0.5`。
+    ///
+    /// Reference long side for size compensation (px):
+    /// `size_gain = (max/size_scale).clamp(1,..)^0.5`.
     pub size_scale: f32,
     /// 尺寸补偿上限（增益封顶）。
+    ///
+    /// Upper bound of size compensation (gain cap).
     pub size_cap: f32,
 }
 
@@ -925,6 +1059,8 @@ impl Default for UsmTuning {
 }
 
 /// 带调参的尺寸增益，供扫参用。
+///
+/// Size gain with explicit tuning, for parameter sweeps.
 pub fn usm_size_gain_with(w: usize, h: usize, t: UsmTuning) -> f32 {
     ((w.max(h) as f32 / t.size_scale).clamp(1.0, t.size_cap)).sqrt()
 }

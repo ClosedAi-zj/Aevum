@@ -3,10 +3,22 @@
 //! 不做相机响应标定、不还原辐射度：按「曝光好 × 饱和 × 对比」三个公开公式给每个像素
 //! 打分，再按拉普拉斯金字塔逐层加权塌缩——亮部听欠曝那张的、暗部听过曝那张的，
 //! 权重在金字塔里平滑过渡，接缝处不会出硬边。
+//!
+//! HDR merge: fuse several exposures of the same scene into one image (Mertens exposure
+//! fusion).
+//!
+//! No camera response calibration and no radiance recovery: each pixel is scored by the three
+//! published formulas "well-exposed x saturated x contrast", then collapsed level by level
+//! through a Laplacian pyramid with weights — highlights follow the underexposed frame, shadows
+//! follow the overexposed frame, and the weights transition smoothly across the pyramid so a
+//! seam shows no hard edge.
 
 use rayon::prelude::*;
 
 /// 一次最多融几张：全图缓冲要同时在内存里，得给上限一个说法。
+///
+/// Maximum frames per fusion: every full-resolution buffer lives in memory at once, so the
+/// limit needs a stated bound.
 pub const MAX_FRAMES: usize = 9;
 
 #[derive(Debug, thiserror::Error)]
@@ -28,11 +40,17 @@ pub enum HdrError {
 }
 
 /// 读一张图成 f32 RGB（0..1）：与导出共用同一条解码路，方向与 RAW 语义一致。
+///
+/// Reads one image into f32 RGB (0..1) over the decode path shared with export, oriented as
+/// RAW semantics require.
 pub fn load(path: &std::path::Path) -> Result<(Vec<f32>, u32, u32), HdrError> {
     crate::export::load_rgb_f32(path).map_err(|e| HdrError::Read(e.to_string()))
 }
 
 /// 文件级入口：读盘、核尺寸、融合。位移/裁切由调用方先按对齐结果处理好再传进来。
+///
+/// File-level entry point: read from disk, check the sizes, fuse. The caller applies the
+/// shift and crop from the alignment result before passing frames in.
 pub fn merge_paths(paths: &[&std::path::Path]) -> Result<(Vec<f32>, u32, u32), HdrError> {
     check_count(paths.len())?;
     let mut frames = Vec::with_capacity(paths.len());
@@ -70,6 +88,9 @@ fn check_count(n: usize) -> Result<(), HdrError> {
 }
 
 /// 缓冲级融合：`frames` 每项是 `w*h*3` 的 f32 RGB（0..1），返回同尺寸一张。
+///
+/// Buffer-level fusion: each entry of `frames` is `w*h*3` f32 RGB (0..1); one image of the
+/// same size is returned.
 pub fn merge(frames: &[&[f32]], w: usize, h: usize) -> Vec<f32> {
     let n = frames.len();
     if n == 0 || w == 0 || h == 0 {

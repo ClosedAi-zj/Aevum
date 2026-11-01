@@ -13,6 +13,25 @@
 //! `STAGES_READY` 是诚实开关：只有列在这里的阶段才真的参与运算，
 //! `tests/develop_golden.rs` 据此决定哪些 case 必须逐像素对上、哪些只能跳过。
 //! 实现一个新阶段就把它加进来，别在没实现时说"已经一致"。
+//!
+//! Develop main chain: the full pixel pipeline from lens correction to vignetting.
+//!
+//! This is the single source of truth for GUI preview, still export, and video export.
+//! The order matches the Python oracle in `acceptance/reference/grade.py::_core` and `apply`
+//! exactly, and every image is compared by `tests/develop_golden.rs` against
+//! `acceptance/oracle/golden/develop.json`.
+//!
+//! Order, copied from Python and not to be rearranged on intuition:
+//! lens correction → (external .cube look) → denoise → white balance / exposure → contrast → dehaze
+//! → highlights/shadows/whites/blacks → sharpening → clarity → texture → vibrance/saturation
+//! → color grading → HSL → monochrome → levels + parametric curve + curve (one table)
+//! → local masks → grain → vignetting
+//!
+//! `STAGES_READY` is an honesty switch: only the stages listed there take part in the computation,
+//! and `tests/develop_golden.rs` uses it to decide which cases must match pixel for pixel and which
+//! may be skipped.
+//! Adding a new stage means adding it there, not claiming "already consistent" before it is
+//! implemented.
 
 use rayon::prelude::*;
 
@@ -34,6 +53,11 @@ pub(crate) const MIN_PIXELS: usize = 4096;
 /// 已经落地、可以逐像素比对金标的阶段。
 ///
 /// 整条链只剩"输入位深"和外部外观查表不在这里，主链每一段都有 case 压着。
+///
+/// Stages that have landed and can be compared pixel for pixel against the golden.
+///
+/// Only input bit depth and the external look lookup remain outside the chain; every main-chain
+/// stage is pinned by a case.
 pub const STAGES_READY: &[&str] = &[
     "tone",
     "lut",
@@ -47,21 +71,32 @@ pub const STAGES_READY: &[&str] = &[
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Opts {
     /// 拖动草图：跳过最贵的空间运算（降噪、锐化、清晰度、纹理、局部空间项）。
+    ///
+    /// Drag sketch: skips the most expensive spatial operations (denoise, sharpening, clarity,
+    /// texture, and local spatial terms).
     pub sketch: bool,
     /// 只留逐点运算，用来生成 .cube LUT（对应 Python 的 `for_lut=True`）。
+    ///
+    /// Pointwise operations only, used to generate a .cube LUT (the Python `for_lut=True` case).
     pub for_lut: bool,
     /// 局部蒙版内部的一条链：单色与全局专属项跳过。
+    ///
+    /// A chain inside a local mask: monochrome and global-only terms are skipped.
     pub local: bool,
 }
 
 impl Opts {
     /// 导出与松手后的精修：全量。
+    ///
+    /// Export and the refinement after the mouse is released: the full set.
     pub const FULL: Opts = Opts {
         sketch: false,
         for_lut: false,
         local: false,
     };
     /// 拖动中的草图。
+    ///
+    /// The sketch used while dragging.
     pub const SKETCH: Opts = Opts {
         sketch: true,
         for_lut: false,
@@ -77,6 +112,13 @@ impl Opts {
 ///
 /// `chan` 只装色差（三通道均值已并进 `add`），所以全零时与只补亮度的
 /// 老口径逐位一致。
+///
+/// Per-frame exposure correction: a frame-wide EV offset plus per-channel residuals, both supplied
+/// by deflicker.
+///
+/// `chan` holds only the color difference, since the three-channel mean is already merged into
+/// `add`, so when all channels are zero the result is bit-identical to the old convention that
+/// corrected brightness only.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Ev {
     pub add: f32,
@@ -90,6 +132,9 @@ impl Ev {
     };
 
     /// 三通道相同的修正（单通道去闪、或没有修正）。
+    ///
+    /// The same correction for all three channels, as used by single-channel deflicker or by no
+    /// correction at all.
     pub fn flat(add: f32) -> Self {
         Self {
             add,
@@ -100,6 +145,10 @@ impl Ev {
 
 /// `rgb` 是 sRGB 编码、行优先的 `[0,1]` 浮点像素；`gain` 是去闪烁给的
 /// 额外曝光（叠加在参数曝光上）。就地修改并夹到 `[0,1]`。
+///
+/// `rgb` holds sRGB-encoded, row-major `[0,1]` float pixels; `gain` is the extra exposure supplied
+/// by deflicker, added on top of the parameter exposure.
+/// The buffer is modified in place and clamped to `[0,1]`.
 pub fn render(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, opts: Opts) {
     assert_eq!(rgb.len(), w * h * 3, "显影缓冲尺寸不对");
 

@@ -1,26 +1,59 @@
 //! 采样位打包原语：把条带里的字节还原成每采样一个 `u16`。
 //!
+//! Sample bit-packing primitives: restores the bytes of a strip into one
+//! `u16` per sample.
+//!
 //! 这里实现的打包**比策略层实际允许的多**。`MsbRow`/`LsbRow` 有逐位往返测试，但
 //! `crate::raw` 的元数据层只在 8/16 位容器（`U8`/`U16Le`/`U16Be`）上走传感器路径。
 //! 理由是长度算术区分不了写法：14 位、8160 列时，「每行独立打包」与「整图连续打包」的
 //! 条带总字节数完全相同，猜错的后果是整幅图横向错位而不是一个错误，所以宁可退到预览兜底。
 //!
+//! What is implemented here is **more than the policy layer actually
+//! allows**. `MsbRow`/`LsbRow` have bit-exact round-trip tests, but the
+//! metadata layer of `crate::raw` only takes the sensor path on 8/16-bit
+//! containers (`U8`/`U16Le`/`U16Be`). The reason is that length arithmetic
+//! cannot tell the layouts apart: at 14 bits and 8160 columns, per-row
+//! packing and whole-image continuous packing give the same total strip
+//! byte count, and guessing wrong shifts the whole image horizontally
+//! instead of raising one error, so falling back to the preview is
+//! preferred.
+//!
 //! 留着这两个模式不是给「以后随便接上」留后门，而是让位打包这件事有一份可以逐位核对的
 //! 实现：将来有能核对的规范条文与真实样本时，只需要在上层加一条有依据的选择规则，
 //! 不用重写算术。
+//!
+//! Keeping these two modes is not a back door for wiring them up casually
+//! later; it gives bit packing an implementation that can be verified bit by
+//! bit. Once spec clauses and real samples that can be checked against
+//! exist, only an evidence-backed selection rule needs to be added upstream;
+//! the arithmetic itself does not need rewriting.
 
 /// 一种采样排列方式。
+///
+/// One way of arranging samples.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Packing {
     /// 每采样 1 字节。
+    ///
+    /// One byte per sample.
     U8,
     /// 每采样 2 字节，小端。
+    ///
+    /// Two bytes per sample, little-endian.
     U16Le,
     /// 每采样 2 字节，大端。
+    ///
+    /// Two bytes per sample, big-endian.
     U16Be,
     /// `bits` 位一行连续打包，高位在前（TIFF FillOrder=1 的说法）。
+    ///
+    /// `bits` bits packed continuously per row, most significant bit first
+    /// (TIFF FillOrder=1 wording).
     MsbRow { bits: u8 },
     /// `bits` 位一行连续打包，低位在前（TIFF FillOrder=2 的说法）。
+    ///
+    /// `bits` bits packed continuously per row, least significant bit first
+    /// (TIFF FillOrder=2 wording).
     LsbRow { bits: u8 },
 }
 
@@ -29,6 +62,8 @@ const MAX_PACK_BITS: u8 = 16;
 
 impl Packing {
     /// 每采样的有效位宽。
+    ///
+    /// The effective bit width per sample.
     pub fn bits(self) -> u16 {
         match self {
             Self::U8 => 8,
@@ -38,11 +73,17 @@ impl Packing {
     }
 
     /// 是不是「每采样占整数字节」的容器写法。只有容器写法能被元数据层选中。
+    ///
+    /// Whether this is a container layout with a whole number of bytes per
+    /// sample. Only container layouts can be picked by the metadata layer.
     pub fn is_container(self) -> bool {
         matches!(self, Self::U8 | Self::U16Le | Self::U16Be)
     }
 
     /// 一行 `width` 个采样要占多少字节；位宽非法或算不下返回 `None`。
+    ///
+    /// How many bytes a row of `width` samples occupies; returns `None` when
+    /// the bit width is invalid or the arithmetic overflows.
     pub fn row_bytes(self, width: usize) -> Option<usize> {
         let bits = self.bits();
         if bits == 0 || bits > u16::from(MAX_PACK_BITS) {
@@ -62,6 +103,11 @@ impl Packing {
 
     /// 解一行。`out` 必须正好 `width` 个采样，`src` 至少要有整行字节，
     /// 剩下的是行尾填充；任何一条不满足都返回 `false`，调用方按布局判断失败处理。
+    ///
+    /// Unpacks one row. `out` must hold exactly `width` samples, and `src`
+    /// must carry at least the full row of bytes; the remainder is row-end
+    /// padding. Any violated condition returns `false`, and the caller
+    /// handles it as a layout failure.
     pub fn unpack_row(self, src: &[u8], width: usize, out: &mut [u16]) -> bool {
         if out.len() != width || width == 0 {
             return false;
@@ -98,6 +144,11 @@ impl Packing {
 
     /// 反向打包一行，只用来做往返核对（测试与写入侧自检）。超出位宽的值直接返回
     /// `false` 并且不保证 `out` 的状态，调用方不要拿它当编码器用。
+    ///
+    /// Packs one row in reverse, only for round-trip checking (tests and
+    /// writer-side self-checks). Values beyond the bit width return `false`
+    /// immediately, and the state of `out` is not guaranteed; do not use
+    /// this as an encoder.
     pub fn pack_row(self, values: &[u16], out: &mut Vec<u8>) -> bool {
         let bits = self.bits();
         if bits == 0 || values.is_empty() {

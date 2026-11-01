@@ -3,6 +3,14 @@
 //! 口径照搬 Python 实现（`acceptance/reference/deflicker.py`）：中值压单帧跳变，高斯平滑避免
 //! 校正后出现台阶，偏移单位等于调色台的曝光 EV。`acceptance/oracle/golden/deflicker.json`
 //! 是同一算法的冻结输出，单测按 1e-4 比对。
+//!
+//! Sequence deflicker: per-frame metering → robust smoothing → exposure offset (EV).
+//!
+//! The convention follows the Python implementation (`acceptance/reference/deflicker.py`):
+//! a median suppresses single-frame jumps, Gaussian smoothing keeps the correction from
+//! introducing steps, and the offset unit equals the exposure EV of the grading console.
+//! `acceptance/oracle/golden/deflicker.json` is the frozen output of the same algorithm,
+//! and the unit tests compare against it at 1e-4.
 
 use std::path::{Path, PathBuf};
 
@@ -13,25 +21,47 @@ use serde::{Deserialize, Serialize};
 pub const WINDOW_MIN: usize = 3;
 pub const WINDOW_MAX: usize = 199;
 /// 单帧最多补几档：再大就不是闪烁而是坏帧。
+///
+/// Most stops a single frame can be corrected by: anything beyond that is not flicker but
+/// a bad frame.
 pub const MAX_EV: f64 = 3.0;
 /// sRGB 亮度系数，通道顺序 R、G、B。
+///
+/// sRGB luma coefficients, with the channels in R, G, B order.
 pub const LUMA_RGB: [f64; 3] = [0.2126, 0.7152, 0.0722];
 /// 测光只读缩略图：整段序列的耗时几乎全在读图，长边 320 足够定出趋势。
+///
+/// Metering reads thumbnails only: nearly all the time over a sequence goes to decoding,
+/// and a 320 long edge is enough to establish the trend.
 pub const SCAN_LONG: u32 = 320;
 
 /// 一帧的线性光测光：整帧亮度与 R/G/B 分通道各一份。
 ///
 /// 与胶片条用的 gamma 域平均亮度（`metrics::FrameMetrics`）是两套口径：
 /// 去闪要在线性光里做截尾均值，否则明暗跳会被 sRGB 编码压扁，压不住彩色闪烁。
+///
+/// Linear-light metering of one frame: one whole-frame luma value plus one value per
+/// R/G/B channel.
+///
+/// This is a separate convention from the gamma-domain mean luma used by filmstrips
+/// (`metrics::FrameMetrics`): deflicker needs the trimmed mean in linear light, because
+/// sRGB encoding flattens brightness jumps and would leave color flicker uncorrected.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct FrameMeans {
     /// 线性亮度的 1%~99% 截尾均值，0~1。
+    ///
+    /// 1% to 99% trimmed mean of linear luma, 0 to 1.
     pub luma: f64,
     /// R、G、B 各自的截尾均值，0~1。
+    ///
+    /// Trimmed mean of each of R, G and B, 0 to 1.
     pub rgb: [f64; 3],
 }
 
 /// 256 级 sRGB→线性查表；与 Python 的 `_SRGB_LUT` 同为 float64 算完再降 f32。
+///
+/// 256-entry sRGB to linear lookup table; like Python's `_SRGB_LUT`, the values are
+/// computed in float64 and then narrowed to f32.
 pub fn srgb_lut() -> [f32; 256] {
     let mut table = [0.0f32; 256];
     for (i, v) in table.iter_mut().enumerate() {
@@ -46,6 +76,9 @@ pub fn srgb_lut() -> [f32; 256] {
 }
 
 /// 1%~99% 截尾均值：抗坏点与高光，压不住整帧的明暗跳。全被裁掉时退回普通均值。
+///
+/// 1% to 99% trimmed mean: resists hot pixels and highlights, but cannot flatten a
+/// whole-frame brightness jump. Falls back to the plain mean when everything is cut.
 pub fn trimmed_mean(values: &[f64]) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -70,6 +103,9 @@ pub fn trimmed_mean(values: &[f64]) -> f64 {
 }
 
 /// sRGB 像素 -> 线性光测光。调用方负责先把长边缩到 `SCAN_LONG`。
+///
+/// sRGB pixels to linear-light metering. The caller is responsible for shrinking the long
+/// edge to `SCAN_LONG` first.
 pub fn measure_image(img: &RgbImage) -> Option<FrameMeans> {
     let (w, h) = (img.width(), img.height());
     if w == 0 || h == 0 {
@@ -102,12 +138,18 @@ pub fn measure_image(img: &RgbImage) -> Option<FrameMeans> {
 }
 
 /// 读一张图并测光；读不了返回 None，绝不把异常抛给整段分析。
+///
+/// Reads one image and meters it; an unreadable file returns None, and no error is ever
+/// thrown at the whole analysis.
 pub fn measure_path(path: impl AsRef<Path>) -> Option<FrameMeans> {
     let img = crate::metrics::decode_rgb(path, SCAN_LONG).ok()?;
     measure_image(&img)
 }
 
 /// 并行测光；返回与 `paths` 等长的表和 (帧号, 错误) 列表。
+///
+/// Meters in parallel; returns a table as long as `paths` plus a list of (frame number,
+/// error) pairs.
 pub fn measure_many(paths: &[PathBuf]) -> (Vec<Option<FrameMeans>>, Vec<(usize, String)>) {
     let results: Vec<(usize, Option<FrameMeans>)> = paths
         .par_iter()
@@ -129,9 +171,14 @@ pub fn measure_many(paths: &[PathBuf]) -> (Vec<Option<FrameMeans>>, Vec<(usize, 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Stats {
     /// 相邻帧亮度 P95 差，单位 EV。
+    ///
+    /// P95 luma difference between neighbouring frames, in EV.
     pub jitter_before: f64,
     pub jitter_after: f64,
     /// 分通道时三个通道里最抖的那个，校正前后。
+    ///
+    /// When splitting by channel, the most jittery of the three channels, before and
+    /// after correction.
     pub color_before: f64,
     pub color_after: f64,
     pub channels: bool,
@@ -144,6 +191,8 @@ pub struct Stats {
 #[derive(Clone, Debug)]
 pub struct Analysis {
     /// 行优先的 n×cols 偏移表，单位 EV，正 = 提亮。
+    ///
+    /// Row-major n×cols offset table in EV, where positive means brighten.
     pub offsets: Vec<f64>,
     pub cols: usize,
     pub stats: Stats,
@@ -159,6 +208,9 @@ impl Analysis {
     }
 
     /// 单通道结果的逐帧偏移；分通道时取三通道平均。
+    ///
+    /// Per-frame offset of a single-channel result; when splitting by channel, the three
+    /// channels are averaged.
     pub fn exposure_per_frame(&self) -> Vec<f64> {
         (0..self.rows())
             .map(|i| {
@@ -172,6 +224,13 @@ impl Analysis {
     ///
     /// 整帧曝光吃掉均值、这里只留色差，两者相加正好还原该通道的偏移；
     /// 单通道结果全为 0，于是与只补亮度的老口径逐位一致。
+    ///
+    /// Per-frame per-channel residual (each channel offset minus the three-channel mean).
+    ///
+    /// The whole-frame exposure carries the mean and only the color difference is left
+    /// here; adding the two restores that channel's offset exactly. A single-channel
+    /// result is all zeros, so it matches the older brightness-only convention bit for
+    /// bit.
     pub fn chan_residual_per_frame(&self) -> Vec<[f64; 3]> {
         (0..self.rows())
             .map(|i| {
@@ -187,12 +246,17 @@ impl Analysis {
 }
 
 /// 单通道（亮度）去闪烁。`None` 表示这一帧读不出来，按插值补洞。
+///
+/// Single-channel (luma) deflicker. `None` marks a frame that could not be read, and the
+/// gap is filled by interpolation.
 pub fn analyze_luma(means: &[Option<f64>], window: f64, strength: f64, multi: bool) -> Analysis {
     let matrix = Matrix::from_luma(means);
     analyze(&matrix, window, strength, multi)
 }
 
 /// 分通道（R/G/B）去闪烁，用于压彩色场景的色闪。
+///
+/// Per-channel (R/G/B) deflicker, used to suppress color flicker in colorful scenes.
 pub fn analyze_rgb(
     means: &[Option<[f64; 3]>],
     window: f64,

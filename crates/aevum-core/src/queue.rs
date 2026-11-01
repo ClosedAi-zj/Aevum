@@ -8,6 +8,24 @@
 //! 中间帧落在成片旁边的 `<片名>_帧/`；`keep_frames` 为假时编码成功后清掉。
 //! `resume` 为真的那一段只补没写出来的中间帧，跑崩了重排队不必从头再渲一遍。
 //! 某一项失败不拖死整队：记下原因，继续下一项。
+//!
+//! Render queue: several sequences are queued at once and each is rendered
+//! into a graded final render, one after another.
+//!
+//! The queue stores the render intent (source directory, final-render path,
+//! specs) plus the project snapshot taken at enqueue time. Rendering a
+//! segment prefers its snapshot: that is exactly the promise of "regrade
+//! after queueing without requeueing". Old queue items and externally built
+//! items have no snapshot and fall back to reading `.aevum/project.json`
+//! fresh (autosave may already have written the post-enqueue grade; whatever
+//! it reads is what it gets).
+//!
+//! Intermediate frames land in `<video-name>_帧/` next to the final render
+//! and are cleared after successful encoding when `keep_frames` is false. A
+//! segment with `resume` true only fills in intermediate frames not yet
+//! written, so requeueing after a crash does not rerender from scratch. One
+//! failing item does not drag down the whole queue: the reason is recorded
+//! and the next item proceeds.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -81,6 +99,9 @@ pub struct QueueItem {
     pub root: String,
     pub out: String,
     /// 目标画幅；宽高都是 0 时保持源尺寸。
+    ///
+    /// Target aspect and size; when both width and height are 0, the source
+    /// size is kept.
     pub width: u32,
     pub height: u32,
     pub fps: f64,
@@ -89,15 +110,31 @@ pub struct QueueItem {
     pub preset: String,
     pub keep_frames: bool,
     /// 断点续跑：这一段的输出目录里已经写完的帧原样留着，只补没写出来的。
+    ///
+    /// Resume: frames already written in this segment's output directory are
+    /// kept as-is, and only the missing ones are filled in.
     pub resume: bool,
     /// 输出色域键（`srgb`/`p3`/`rec2020`）。留空表示跟随该项自己工程文件里的设置。
+    ///
+    /// Output gamut key (`srgb`/`p3`/`rec2020`). Empty means follow the
+    /// setting in this item's own project file.
     pub color_space: String,
     /// 指定用该序列工程文件里某套调色副本渲染；留空 = 工程里的主调色。
+    ///
+    /// Renders with a named grading variant from the sequence's project
+    /// file; empty = the project's main grade.
     pub copy: String,
     /// 加入队列那一刻的工程快照（完整 [`ProjectFile`]）。渲染优先用它，
     /// 没有才回落磁盘上的 project.json —— 老队列项没有这一段，行为与
     /// 以前一致。之前渲染一律读磁盘：自动保存可能已经把加入之后的调色
     /// 写进去，"排队后再改调色不必重排"就落空了（审查确认）。
+    ///
+    /// Project snapshot taken at enqueue time (a complete [`ProjectFile`]).
+    /// Rendering prefers it and only falls back to the on-disk project.json
+    /// when it is absent; old queue items lack this field and behave exactly
+    /// as before. Rendering used to always read the disk, where autosave may
+    /// already have written the post-enqueue grade, breaking the "regrade
+    /// after queueing without requeueing" promise (confirmed by review).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<ProjectFile>,
     pub status: QueueStatus,
@@ -136,6 +173,9 @@ impl QueueItem {
     }
 
     /// 规整路径与规格；坏值拉回安全默认，保证读旧文件不会整行丢掉。
+    ///
+    /// Normalizes paths and specs; bad values are pulled back to safe
+    /// defaults so reading an old file never drops the whole row.
     pub fn normalized(mut self) -> Result<Self, String> {
         self.root = normalized_path(&self.root)?.display().to_string();
         self.out = normalized_path(&self.out)?.display().to_string();
@@ -166,6 +206,9 @@ impl QueueItem {
     }
 
     /// 加入队列前的检查：目录得真的在，成片别写成源帧。
+    ///
+    /// Checks before enqueueing: the directory must really exist, and the
+    /// final render must not overwrite a source frame.
     pub fn clean(self) -> Result<Self, String> {
         let item = self.normalized()?;
         let root = PathBuf::from(&item.root);
@@ -197,6 +240,9 @@ pub enum QueueError {
 }
 
 /// `<成片去扩展名>_帧`，跟着成片走，删成片时好一起找。
+///
+/// `<final-render stem>_帧`, sitting next to the final render so it can be
+/// found together when the render is deleted.
 pub fn frames_dir(out: &Path) -> PathBuf {
     let Some(name) = out.file_name() else {
         return out.with_extension("_帧");
@@ -212,6 +258,10 @@ pub fn frames_dir(out: &Path) -> PathBuf {
 
 /// 队列文件默认放在漫游配置目录；`AEVUM_RENDER_QUEUE`（旧名 `LUMEN_RENDER_QUEUE` 回退）
 /// 可把它指到别处。
+///
+/// The queue file lives in the roaming config directory by default;
+/// `AEVUM_RENDER_QUEUE` (legacy name `LUMEN_RENDER_QUEUE` as fallback) can
+/// point it elsewhere.
 pub fn default_path() -> PathBuf {
     crate::config_dir::ensure_adopted();
     if let Some(path) = crate::env::var_os("RENDER_QUEUE")
@@ -270,6 +320,9 @@ pub fn save(path: &Path, items: &[QueueItem]) -> Result<(), std::io::Error> {
 }
 
 /// 同一目录只留一行：重复加入等于更新规格并退回待渲。
+///
+/// One row per directory: adding a duplicate updates the specs and resets
+/// the status to pending.
 pub fn add(items: &mut Vec<QueueItem>, item: QueueItem) -> Result<usize, String> {
     let item = item.clean()?;
     let key = normcase(Path::new(&item.root));
@@ -289,6 +342,12 @@ pub fn add(items: &mut Vec<QueueItem>, item: QueueItem) -> Result<usize, String>
 /// 渲染一项：开序列 → 读它自己的工程 → 调色落帧 → ffmpeg 编码。
 ///
 /// 取消时返回 `ExportError::Cancelled`；已写出的中间帧保留（下次重渲覆盖）。
+///
+/// Renders one item: open the sequence, read its own project, grade to
+/// frames, then encode with ffmpeg.
+///
+/// Returns `ExportError::Cancelled` on cancellation; intermediate frames
+/// already written are kept (overwritten on the next rerender).
 pub fn render_item(
     item: &QueueItem,
     ffmpeg: &Path,

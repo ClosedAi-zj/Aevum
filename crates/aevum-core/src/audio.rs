@@ -3,6 +3,13 @@
 //! 口径对齐 Python `acceptance/reference/audio.py`：延迟用 `adelay` 补真静音采样，
 //! 循环用 `-stream_loop`，淡入淡出与音量走滤镜；序列本身没有原声，
 //! 所以配乐是替换式的，不做双路混合。
+//!
+//! Music muxing: duration arithmetic and the ffmpeg audio filter chain.
+//!
+//! The convention matches Python `acceptance/reference/audio.py`: `adelay` pads with true
+//! silent samples, `-stream_loop` handles looping, and fades and volume go through filters.
+//! The sequence itself carries no production sound, so the music is a replacement rather than
+//! a two-path mix.
 
 use std::path::Path;
 
@@ -25,6 +32,8 @@ pub enum AudioCodec {
 
 impl AudioCodec {
     /// AAC 目标码率；`Auto` / `Copy` 没有固定码率。
+    ///
+    /// AAC target bitrate; `Auto` and `Copy` have no fixed bitrate.
     pub fn bitrate(self) -> Option<&'static str> {
         match self {
             AudioCodec::Aac128 => Some("128k"),
@@ -52,15 +61,23 @@ impl AudioCodec {
 #[serde(default)]
 pub struct AudioOptions {
     /// 相对画面起点延后进入（秒）。
+    ///
+    /// Delay before the music enters, relative to the start of the picture (seconds).
     pub delay: f64,
     /// 配乐音量百分比，100 为原始。
+    ///
+    /// Music volume percentage, where 100 is the original level.
     pub gain: f64,
     pub fade_in: f64,
     pub fade_out: f64,
     /// 配乐比画面短时循环铺满。
+    ///
+    /// Loop the music to fill the picture when the music is shorter.
     #[serde(rename = "loop")]
     pub looped: bool,
     /// 配乐比画面长时截到画面结束。
+    ///
+    /// Trim the music at the end of the picture when the music is longer.
     pub trim: bool,
     pub acodec: AudioCodec,
 }
@@ -81,6 +98,9 @@ impl Default for AudioOptions {
 
 impl AudioOptions {
     /// 滤镜链是否需要重编音频：延后、改音量、淡入淡出都算。
+    ///
+    /// Whether the filter chain requires re-encoding the audio: a delay, a volume change, or a
+    /// fade all count.
     pub fn needs_filter(&self) -> bool {
         self.delay > 0.0
             || (self.gain - 100.0).abs() > 0.5
@@ -89,6 +109,8 @@ impl AudioOptions {
     }
 
     /// 配乐在成片里收尾的时刻（输出时间轴，秒）。
+    ///
+    /// The moment the music finishes in the final render, on the output timeline in seconds.
     pub fn music_end(&self, video_dur: f64, audio_dur: f64) -> f64 {
         if self.looped {
             return video_dur;
@@ -98,17 +120,26 @@ impl AudioOptions {
     }
 
     /// 成片时长：不截断时配乐可能比画面长，尾部只剩声音。
+    ///
+    /// Duration of the final render: without trimming the music may outlast the picture, leaving
+    /// only sound at the tail.
     pub fn total_dur(&self, video_dur: f64, audio_dur: f64) -> f64 {
         video_dur.max(self.music_end(video_dur, audio_dur))
     }
 
     /// 该给 `-t` 的时长；循环必须限长，否则配乐无限铺下去。
     /// 不循环也不截断时由流自身结束，不需要 `-t`。
+    ///
+    /// The duration to pass to `-t`; a loop must be bounded or the music plays on without end.
+    /// When neither looping nor trimming is set, the stream ends on its own and `-t` is
+    /// unnecessary.
     pub fn limit_dur(&self, video_dur: f64, _audio_dur: f64) -> Option<f64> {
         (self.looped || self.trim).then_some(video_dur)
     }
 
     /// 这条音频能不能一个比特都不改地塞进目标容器。
+    ///
+    /// Whether this audio stream fits into the target container without a single bit changed.
     pub fn copy_ok(&self, out_ext: &str, codec: &str) -> bool {
         if self.needs_filter() {
             return false;
@@ -123,6 +154,12 @@ impl AudioOptions {
     /// 滤镜链与最终映射的音频标签；`None` 表示不需要滤镜。
     ///
     /// 画面来自 PNG 帧、没有原声，所以这里只处理配乐这一路。
+    ///
+    /// The filter chain and the audio label of the final mapping; `None` means no filter is
+    /// needed.
+    ///
+    /// The picture comes from PNG frames and carries no production sound, so only the music path
+    /// is handled here.
     pub fn filter(&self, video_dur: f64, audio_dur: f64) -> Option<AudioFilter> {
         if !self.needs_filter() {
             return None;
@@ -163,12 +200,18 @@ impl AudioOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AudioFilter {
     /// 传给 `-filter_complex` 的字符串。
+    ///
+    /// The string passed to `-filter_complex`.
     pub complex: String,
     /// 映射到输出音轨的标签。
+    ///
+    /// The label mapped onto the output audio track.
     pub label: String,
 }
 
 /// 配乐探针结果：编码名与时长（秒）。
+///
+/// Music probe result: codec name and duration in seconds.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AudioProbe {
     pub codec: String,
@@ -184,6 +227,11 @@ impl AudioProbe {
 /// 解析 `ffmpeg -hide_banner -i <file>` 的 stderr。
 ///
 /// 与 Python `ff.probe_audio` 同口径：认 `Audio: <codec>` 与 `Duration: h:m:s`。
+///
+/// Parses the stderr of `ffmpeg -hide_banner -i <file>`.
+///
+/// The convention matches Python `ff.probe_audio`: `Audio: <codec>` and `Duration: h:m:s` are
+/// recognized.
 pub fn parse_probe(stderr: &str) -> AudioProbe {
     let mut probe = AudioProbe::default();
     for line in stderr.lines() {
@@ -224,6 +272,8 @@ fn parse_duration(text: &str) -> f64 {
 }
 
 /// 配乐文件扩展名是否在支持列表里。
+///
+/// Whether the music file extension is in the supported list.
 pub fn is_audio_path(path: &Path) -> bool {
     const EXTS: [&str; 11] = [
         "mp3", "wav", "aac", "m4a", "m4b", "flac", "ogg", "opus", "wma", "aif", "aiff",

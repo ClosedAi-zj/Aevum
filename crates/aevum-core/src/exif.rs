@@ -3,6 +3,13 @@
 //! 只解析 JPEG 的 APP1 与 TIFF 的 IFD，不引第三方 EXIF 库：位域就这么几个，
 //! 手写比让依赖树长一圈划算。读不到一律给中性值，绝不报错——EXIF 缺字段的
 //! 相机太多了，硬要解析会把能开的图挡在门外。
+//!
+//! Reads EXIF: orientation, camera body, and the exposure triangle.
+//!
+//! Only the JPEG APP1 segment and the TIFF IFDs are parsed, with no third-party EXIF
+//! library: the bit fields are few enough that hand-written code costs less than a longer
+//! dependency tree. Anything unreadable yields neutral values and never an error; far too
+//! many cameras omit EXIF fields, and forced parsing would keep out images that open fine.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -10,6 +17,9 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 /// 方向：1 原样，2~8 是镜像/旋转组合（语义见 `oriented`）。
+///
+/// Orientation: 1 is as-is, and 2 to 8 are mirror and rotation combinations (see
+/// `oriented` for the semantics).
 pub const TAG_ORIENTATION: u16 = 0x0112;
 const TAG_MAKE: u16 = 0x010F;
 const TAG_MODEL: u16 = 0x0110;
@@ -41,15 +51,23 @@ const MAX_APP1: usize = 4 * 1024 * 1024;
 const MAX_TIFF: usize = 65535 - 2 - 6;
 
 /// 一个文件读出来的 EXIF。全字段可选：什么都读不到是正常状态，不是错误。
+///
+/// The EXIF read from one file. Every field is optional: reading nothing is a normal
+/// state, not an error.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Exif {
     /// 1~8；读不到或越界都是 1。
+    ///
+    /// 1 to 8; 1 when the tag is missing or out of range.
     pub orientation: u8,
     numbers: BTreeMap<u16, f64>,
     texts: BTreeMap<u16, String>,
 }
 
 /// 中性值：方向按 1 走「原样」，0 在 EXIF 里是非法写法，别让调用方特判。
+///
+/// Neutral values: orientation 1 means "as-is", and 0 is an illegal EXIF spelling, so
+/// callers need no special case.
 impl Default for Exif {
     fn default() -> Self {
         Self {
@@ -89,21 +107,30 @@ impl Exif {
     }
 
     /// 说明（`ImageDescription`）。写出来的元数据靠这几个读回来验证。
+    ///
+    /// Description (`ImageDescription`). Metadata that was written is read back through
+    /// these accessors for verification.
     pub fn description(&self) -> Option<&str> {
         self.text(TAG_DESCRIPTION)
     }
 
     /// 标题（`XPTitle`）。EXIF 没有 ASCII 的标题标签，用的是 UCS2 那个。
+    ///
+    /// Title (`XPTitle`). EXIF has no ASCII title tag, so the UCS2 one is used.
     pub fn title(&self) -> Option<&str> {
         self.text(TAG_XP_TITLE)
     }
 
     /// 创作者（`Artist`）。
+    ///
+    /// Creator (`Artist`).
     pub fn artist(&self) -> Option<&str> {
         self.text(TAG_ARTIST)
     }
 
     /// 版权声明（`Copyright`）。
+    ///
+    /// Copyright notice (`Copyright`).
     pub fn copyright(&self) -> Option<&str> {
         self.text(TAG_COPYRIGHT)
     }
@@ -117,6 +144,9 @@ impl Exif {
     }
 
     /// 曝光时间（秒）。只给 APEX TV 的机器在这里折算。
+    ///
+    /// Exposure time in seconds. Cameras that report only the APEX TV value are converted
+    /// here.
     pub fn exposure_sec(&self) -> Option<f64> {
         match self.number(TAG_EXPOSURE) {
             Some(v) if v > 0.0 => Some(v),
@@ -128,6 +158,8 @@ impl Exif {
     }
 
     /// 光圈 F 值，同上走 AV 折算。
+    ///
+    /// Aperture f-number, converted from AV in the same way as above.
     pub fn fnum(&self) -> Option<f64> {
         match self.number(TAG_FNUM) {
             Some(v) if v > 0.0 => Some(v),
@@ -139,6 +171,9 @@ impl Exif {
     }
 
     /// 机身 + 镜头一行，给「信息」面板当标题；什么都没有返回 `None`。
+    ///
+    /// Camera body plus lens on one line, used as the title of the "info" panel; returns
+    /// `None` when neither is available.
     pub fn camera_line(&self) -> Option<String> {
         let model = self.model().or(self.make())?;
         Some(match self.lens() {
@@ -148,6 +183,9 @@ impl Exif {
     }
 
     /// 快门写成 1/200 这种，比 0.005 好读；长于 1 秒写成 `1.3"`。
+    ///
+    /// Shutter speed written as 1/200, which reads better than 0.005; anything longer than
+    /// 1 second is written as `1.3"`.
     pub fn shutter_text(&self) -> Option<String> {
         let sec = self.exposure_sec()?;
         Some(if sec >= 1.0 {
@@ -159,6 +197,11 @@ impl Exif {
 
     /// 相对档数 EV，以 ISO100 / 1 秒 / f1.0 为 0 点。绝对值没意义，只用来看跨帧
     /// 有没有台阶；三要素读不全返回 `None`，宁可缺也不猜——猜错会让台阶检测误判。
+    ///
+    /// Relative EV in stops, with ISO100 / 1 second / f1.0 as the zero point. The absolute
+    /// value means nothing; it serves only to show whether a step exists between frames.
+    /// Returns `None` when any of the three legs is missing, since a gap beats a guess: a
+    /// wrong guess would mislead the step detection.
     pub fn ev(&self) -> Option<f64> {
         let iso = self.iso()?;
         let exp = self.exposure_sec()?;
@@ -174,6 +217,13 @@ impl Exif {
 ///
 /// 每帧解码都会走这里一次，所以按块定位读、不做整读：一张 4K 的 16bit TIFF
 /// 有几十 MB，而方向和曝光都在两个 IFD 加几十字节的值里。
+///
+/// Reads the EXIF of one file. A failure (not an image, no EXIF, truncation) yields a
+/// neutral `Exif`.
+///
+/// Every frame decode passes through here, so reads are block-addressed rather than whole
+/// file: a 4K 16-bit TIFF runs to tens of MB, while orientation and exposure live in two
+/// IFDs plus a few dozen bytes of values.
 pub fn read(path: impl AsRef<Path>) -> Exif {
     let path = path.as_ref();
     let Ok(file) = File::open(path) else {
@@ -198,6 +248,9 @@ pub fn read(path: impl AsRef<Path>) -> Exif {
 }
 
 /// 一批帧的 EXIF，并行读。序列导入时跑一次，界面与曝光台阶检测都吃这份缓存。
+///
+/// EXIF for a batch of frames, read in parallel. Runs once on sequence import, and both
+/// the UI and the exposure step detection consume this cache.
 pub fn read_many(paths: &[std::path::PathBuf]) -> Vec<Exif> {
     use rayon::prelude::*;
     paths.par_iter().map(read).collect::<Vec<_>>()
@@ -208,6 +261,15 @@ pub fn read_many(paths: &[std::path::PathBuf]) -> Vec<Exif> {
 /// 只有 JPEG 能这么搬。TIFF/RAW 的 IFD 里偏移指向的是整个文件，把那段字节塞进
 /// PNG/JPEG/WebP 就是坏数据；容器不支持的写法宁可不写，也不要写出打不开的文件。
 /// 读不到（不是 JPEG、没 APP1、截断）给 `None`，导出照常继续。
+///
+/// Takes the EXIF that can be moved wholesale out of a source file: the TIFF structure of
+/// a JPEG APP1 once the `Exif\0\0` header is stripped.
+///
+/// Only JPEG moves this way. IFD offsets in TIFF/RAW point into the whole file, so
+/// stuffing those bytes into a PNG/JPEG/WebP produces corrupt data; where a container
+/// does not support the spelling, writing nothing beats writing a file that will not
+/// open. Returns `None` when nothing can be read (not a JPEG, no APP1, truncation), and
+/// export carries on as usual.
 pub fn transfer_block(path: impl AsRef<Path>) -> Option<Vec<u8>> {
     let mut f = BufReader::new(File::open(path).ok()?);
     let mut head = [0u8; 2];
@@ -221,6 +283,10 @@ pub fn transfer_block(path: impl AsRef<Path>) -> Option<Vec<u8>> {
 
 /// 直接解析一段 TIFF 结构（`transfer_block` 的产物、或自己写出来的块），不经文件。
 /// 读不出给中性 `Exif`，跟 `read` 一个口径。
+///
+/// Parses a TIFF structure directly (the output of `transfer_block`, or a block written by
+/// this module), without going through a file. Unreadable input yields a neutral `Exif`,
+/// on the same convention as `read`.
 pub fn read_block(block: &[u8]) -> Exif {
     parse_mem(block).unwrap_or_default()
 }
@@ -232,6 +298,20 @@ pub fn read_block(block: &[u8]) -> Exif {
 /// 把条目挪到前面重写会让这些偏移集体作废，得到一份能解析却全是错值的 EXIF。
 /// 元数据全空时原样返回源块（源块也没有就给 `None`，导出不写 EXIF）。
 /// 标题（`dc:title`）在 EXIF 里没有对应标签，只进 XMP 与视频容器。
+///
+/// Writes description / creator / copyright into an EXIF block, where `src` is the TIFF
+/// moved wholesale from the source JPEG (optional).
+///
+/// With a source block, **the existing data is never reordered**: the new IFD0 is appended
+/// at the end of the block, the original entries are copied verbatim, and only the IFD0
+/// pointer in the header is repointed. Existing value offsets and the Exif/GPS sub-IFD
+/// pointers therefore all still point at the right bytes; moving entries to the front and
+/// rewriting them would invalidate every one of those offsets at once, yielding an EXIF
+/// that parses yet holds wrong values throughout.
+/// Empty metadata returns the source block unchanged (with no source block either the
+/// result is `None`, and export writes no EXIF).
+/// Title (`dc:title`) has no matching tag in EXIF and goes only into XMP and video
+/// containers.
 pub fn with_metadata(src: Option<&[u8]>, meta: &crate::project::Metadata) -> Option<Vec<u8>> {
     let fields = meta_fields(meta);
     match src.filter(|b| !b.is_empty()) {
@@ -679,6 +759,12 @@ fn read_rational(order: Order, raw: &[u8], signed: bool) -> Option<f64> {
 /// 按 EXIF 方向把图转正。1 或越界原样返回，不复制。
 ///
 /// 五个解码路径共用这一处，方向的语义只有一份。
+///
+/// Rotates an image upright according to the EXIF orientation. 1 or an out-of-range value
+/// returns the image unchanged, without copying.
+///
+/// All five decode paths share this one place, so the orientation semantics exist only
+/// once.
 pub fn oriented(img: image::DynamicImage, orientation: u8) -> image::DynamicImage {
     match orientation {
         2 => img.fliph(),

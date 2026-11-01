@@ -5,6 +5,15 @@
 //! 谁都没做 `lapse-studio` 回退。结果是用 Python 版升上来的用户，
 //! `settings.json` / `galleries.json` / `plugins/` 已经静默丢过一次。
 //! 本轮顺手补上，别再丢第二次。
+//!
+//! Roaming config directory: `%APPDATA%/aevum-studio`; on first launch the legacy directory
+//! is merged in.
+//!
+//! Why this lives in one module: the "APPDATA + directory name" decision used to be copied
+//! into `ui/settings.rs`, `core/library.rs` and `core/queue.rs` (4 sites), and none of them
+//! fell back to `lapse-studio`. Users who upgraded from the Python build therefore lost
+//! `settings.json` / `galleries.json` / `plugins/` once, silently. That is fixed here so it
+//! does not happen a second time.
 
 use std::path::{Path, PathBuf};
 
@@ -18,11 +27,15 @@ use crate::env;
 const SENTINEL: &str = "adopt-sentinel";
 
 /// 配置目录（**不保证存在**）。
+///
+/// Config directory (**not guaranteed to exist**).
 pub fn dir() -> PathBuf {
     base().join(brand::APP_DIR)
 }
 
 /// 漫游根的上一级：`%APPDATA%`，取不到就退到系统临时目录。
+///
+/// Parent of the roaming root: `%APPDATA%`, falling back to the system temporary directory.
 pub fn base() -> PathBuf {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
@@ -30,24 +43,36 @@ pub fn base() -> PathBuf {
 }
 
 /// 一次性迁移的结果，只用于日志与测试断言。
+///
+/// Result of the one-shot migration, used for logging and test assertions only.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Report {
     /// 整目录 rename 成功时，记录来源目录。
+    ///
+    /// Source directory, recorded when the whole-directory rename succeeded.
     pub renamed: Option<PathBuf>,
     /// 逐项并进来的条目。
+    ///
+    /// Entries merged in one by one.
     pub merged: Vec<PathBuf>,
     /// 目标已有同名条目、故保留新者的条目名。
+    ///
+    /// Names skipped because the target already had an entry with that name.
     pub skipped: Vec<String>,
 }
 
 impl Report {
     /// 有没有真的动过东西。
+    ///
+    /// Whether anything was actually touched.
     pub fn did_something(&self) -> bool {
         self.renamed.is_some() || !self.merged.is_empty()
     }
 }
 
 /// 首启迁移，作用在真实的 `%APPDATA%` 上。
+///
+/// First-launch migration, applied to the real `%APPDATA%`.
 pub fn adopt() -> Report {
     adopt_in(&base())
 }
@@ -65,6 +90,22 @@ pub fn adopt() -> Report {
 /// 用老覆盖新会把用户在新版本里的设置打回去。合并分支里旧目录不删，判错了也能人工找回。
 ///
 /// **幂等**：靠哨兵文件保证只扫一次。
+///
+/// First-launch migration, applied to the given root (test seam).
+///
+/// Three rules:
+/// 1. Target absent + legacy directory present → `rename` the whole directory (same volume,
+///    atomic, fastest). The **old path disappears**, but no file is deleted: everything moved.
+/// 2. Target present + legacy directory present → merge item by item: **fill in what the
+///    target lacks, keep what it has**; the legacy directory stays untouched for inspection.
+/// 3. No file is deleted under any circumstance: the worst case is that nothing moves.
+///
+/// Conflicts resolve in favor of the new directory because the new directory is always
+/// written by a newer build, while the legacy one can only be left over from an older
+/// version. Overwriting new settings with old ones would roll the user's configuration back.
+/// The merge branch never deletes the legacy directory, so a wrong call is still recoverable.
+///
+/// **Idempotent**: a sentinel file guarantees the scan runs once.
 pub fn adopt_in(base: &Path) -> Report {
     let fresh = base.join(brand::APP_DIR);
     let mut report = Report::default();
@@ -176,6 +217,13 @@ fn portable() -> bool {
 ///
 /// 放在「第一个读配置的 API」而不是 `main()`：这样 GUI、MCP 无头、`--selftest`、
 /// 集成测试**四个入口都自动覆盖**，不需要在四处各写一遍启动代码。
+///
+/// Runs once per process; called from the first line of `settings::path`,
+/// `library::default_path` and `queue::default_path`.
+///
+/// Hooking the first API that reads configuration instead of `main()` covers **all four
+/// entry points** at once: the GUI, headless MCP, `--selftest` and integration tests. No
+/// startup code is duplicated across four places.
 pub fn ensure_adopted() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {

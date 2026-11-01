@@ -1,36 +1,80 @@
 //! 输出色彩标记：自己生成 ICC 配置 + 工作色域到目标色域的转换。
 //!
+//! Output color tagging: generates the ICC profile itself plus the
+//! conversion from the working gamut to the target gamut.
+//!
 //! 两条线各管一件事，别混：
+//!
+//! The two tracks each own one job; do not mix them:
 //!
 //! 1. **标记**——静态图（PNG/TIFF）里嵌一份 ICC，视频写 x264/x265 的 VUI。没有标
 //!    记，广色域显示器上同一份像素会被按 sRGB 解释，颜色直接洗淡。
 //! 2. **转换**——像素本身从 sRGB 工作空间搬到目标色域。只改标记不搬像素是错的：
 //!    那等于告诉显示器"这些数已经是 P3 了"，而它们其实还是 sRGB 的。
 //!
+//! 1. **Tagging** — static images (PNG/TIFF) embed an ICC profile, video
+//!    writes the x264/x265 VUI. Without tagging, the same pixels are
+//!    interpreted as sRGB on wide-gamut displays and the colors wash out.
+//! 2. **Conversion** — the pixels themselves move from the sRGB working
+//!    space to the target gamut. Changing the tag without moving pixels is
+//!    wrong: it tells the display "these numbers are already P3" when they
+//!    are still sRGB.
+//!
 //! 调色链路全程按 sRGB（D65、sRGB 传递函数）算，所以这里的"源"永远是 sRGB。
 //! ICC 的原色三刺激值必须放到 D50 PCS，因此带一次 Bradford 自适应——不是多余
 //! 步骤，规范就这么要求，少了它系统会读出偏色的白。
+//!
+//! The grading pipeline computes in sRGB (D65, the sRGB transfer function)
+//! end to end, so the "source" here is always sRGB. The tristimulus values
+//! of the ICC primaries must land in the D50 PCS, hence one Bradford
+//! adaptation — not a redundant step; the spec requires it, and without it
+//! the system reads a color-shifted white.
 //!
 //! 常数全部是公开的色度学标准值（IEC 61966-2-1、SMPTE RP 431-2、ITU-R BT.2020）
 //! 加自己推导的矩阵，不引用任何第三方色彩引擎的数据。头部偏移由
 //! `header_offsets_are_where_the_spec_puts_them` 逐个钉住，改之前先看那条测试。
 //!
+//! Every constant is a published colorimetry standard value (IEC 61966-2-1,
+//! SMPTE RP 431-2, ITU-R BT.2020) plus matrices derived here; no data from
+//! any third-party color engine is referenced. Header offsets are pinned
+//! one by one by `header_offsets_are_where_the_spec_puts_them`; read that
+//! test before changing them.
+//!
 //! 字节的最终裁判不在这里：设 `AEVUM_ICC_DUMP=<目录>` 跑一遍单元测试落盘，再用
 //! `python acceptance/oracle/check_icc.py` 让 littleCMS 读回来核。曲线形状的两次改版（不用
 //! `para` 1 型、不用 `curv` 表）都是那一步实测出来的，别只看单元测试就改回去。
+//!
+//! The final judge of the bytes is not here: set `AEVUM_ICC_DUMP=<dir>` to
+//! run the unit tests and persist the profiles, then run
+//! `python acceptance/oracle/check_icc.py` to have littleCMS read them back
+//! and verify. The two curve-shape revisions (no `para` type 1, no `curv`
+//! table) both came out of that measured step; do not revert them based on
+//! unit tests alone.
 
 use serde::{Deserialize, Serialize};
 
 /// 输出色域。工作空间固定是 sRGB，这里只选"发到哪儿"。
+///
+/// The output gamut. The working space is fixed at sRGB; this only chooses
+/// where the output goes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ColorSpace {
     /// 默认：跟现有链路一致，不嵌 ICC、不改像素。
+    ///
+    /// Default: matches the existing pipeline, no ICC embedding and no pixel
+    /// changes.
     #[default]
     Srgb,
     /// 广色域：DCI-P3 原色 + D65 白 + sRGB 传递函数（Apple 那套 Display P3）。
+    ///
+    /// Wide gamut: DCI-P3 primaries + D65 white + the sRGB transfer function
+    /// (Apple's Display P3).
     DisplayP3,
     /// 超广色域：BT.2020 原色 + D65 白 + γ2.4。SDR 标记，不是 HDR。
+    ///
+    /// Ultra-wide gamut: BT.2020 primaries + D65 white + γ2.4. An SDR tag,
+    /// not HDR.
     Rec2020,
 }
 
@@ -81,6 +125,9 @@ impl ColorSpace {
     }
 
     /// 一句话说明这条标记意味着什么，给面板悬停和 agent 用。
+    ///
+    /// One-line description of what the tag means, for panel tooltips and
+    /// agents.
     pub fn hint(self) -> &'static str {
         match self {
             Self::Srgb => "网络与大多数显示器的默认，不嵌 ICC",
@@ -90,6 +137,8 @@ impl ColorSpace {
     }
 
     /// 命令行/工程文件里的稳定拼写。
+    ///
+    /// The stable spelling used on the command line and in project files.
     pub fn key(self) -> &'static str {
         match self {
             Self::Srgb => "srgb",
@@ -120,9 +169,18 @@ impl ColorSpace {
     /// ffmpeg 的 `-color_primaries / -color_trc / -colorspace` 三元组，两个编码器
     /// 都实测过：x264 与 x265 各自吃下自己那三条，没有一条被拒。
     ///
+    /// The ffmpeg `-color_primaries / -color_trc / -colorspace` triple; both
+    /// encoders were measured: x264 and x265 each accept their own three,
+    /// and none was rejected.
+    ///
     /// Rec.2020 那条只能标 `bt709` 传递函数：VUI 里没有"纯 γ2.4 的 SDR"这一档
     /// （`smpte2084`/`arib-std-b67` 都是 HDR），业界惯例就是写 `bt709`。静态图那
     /// 份 ICC 写的是真正的 γ2.4，所以只有视频这条路带这一点近似。
+    ///
+    /// The Rec.2020 entry can only tag the `bt709` transfer function: the VUI
+    /// has no "pure γ2.4 SDR" tier (`smpte2084`/`arib-std-b67` are both HDR),
+    /// and industry convention writes `bt709`. The static-image ICC carries
+    /// the real γ2.4, so only the video path carries this approximation.
     pub fn vui(self) -> (&'static str, &'static str, &'static str) {
         match self {
             Self::Srgb => ("bt709", "bt709", "bt709"),
@@ -133,6 +191,11 @@ impl ColorSpace {
 
     /// `vui()` 三元的数值版（ISO/IEC 23091-2），写 AVIF 的 `colr/nclx` 用：
     /// ffmpeg 7.1 的 libaom 只把矩阵写进去，原色与传递函数得自己补。
+    ///
+    /// The numeric version of the `vui()` triple (ISO/IEC 23091-2), for
+    /// writing AVIF's `colr/nclx`: ffmpeg 7.1's libaom only writes the
+    /// matrix, and the primaries and transfer function must be filled in by
+    /// the caller.
     pub fn nclx(self) -> [u16; 3] {
         match self {
             Self::Srgb => [1, 1, 1],
@@ -165,8 +228,16 @@ impl ColorSpace {
 
     /// 这份像素从 sRGB 搬到目标色域。原地改，导出每帧上千万像素，不复制。
     ///
+    /// Moves these pixels from sRGB to the target gamut. In place: exports
+    /// push tens of millions of pixels per frame, so no copies.
+    ///
     /// 进来的是 sRGB 编码值（显示值，不是线性光），出去还是编码值，只是换了一套
     /// 原色和曲线。`Srgb` 直接返回，省掉整趟 pow。
+    ///
+    /// The input is sRGB-encoded values (display values, not linear light)
+    /// and the output is still encoded, just with a different set of
+    /// primaries and curves. `Srgb` returns immediately, skipping the whole
+    /// round of pow.
     pub fn convert_in_place(self, data: &mut [f32]) {
         if self == Self::Srgb {
             return;
@@ -186,6 +257,9 @@ impl ColorSpace {
     }
 
     /// 生成 ICC v4.3 矩阵/曲线配置。每次导出算一次就够，别逐帧算。
+    ///
+    /// Generates an ICC v4.3 matrix/curve profile. Computing it once per
+    /// export is enough; do not compute it per frame.
     pub fn icc(self) -> Vec<u8> {
         let name = match self {
             Self::Srgb => "Aevum Studio sRGB",
@@ -267,6 +341,9 @@ impl ColorSpace {
     }
 
     /// 从配置字节里取出某个标签的体（含 8 字节类型头）。读自己写的配置用得到。
+    ///
+    /// Extracts the body of a tag (including the 8-byte type header) from
+    /// profile bytes. Used when reading profiles written here.
     pub fn tag_bytes<'a>(profile: &'a [u8], sig: &[u8; 4]) -> Option<&'a [u8]> {
         let count = u32::from_be_bytes(profile.get(off::TAG_COUNT..132)?.try_into().ok()?) as usize;
         (0..count).find_map(|i| {

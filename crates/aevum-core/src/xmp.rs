@@ -1,12 +1,25 @@
 //! Lightroom / Camera Raw XMP 预设读写。
 //!
+//! Lightroom / Camera Raw XMP preset reading and writing.
+//!
 //! 只做数据转换，不写回 `.lrcat`。`crs:` 键与 `grade::GradeParams` 的映射
 //! 全部在 [`crate::xmp_map`] 的数据表里（键规格、缩放、条件、特例规则），
 //! 这里只负责 XML 解析与曲线子元素这两类表表达不了的形状。
 //! 蒙版、色阶等 PV2012 没有对应键的字段读写时保持无操作。
 //!
+//! Only data conversion; nothing is written back to `.lrcat`. The mapping
+//! between `crs:` keys and `grade::GradeParams` lives entirely in the data
+//! tables of [`crate::xmp_map`] (key specs, scaling, conditions, special
+//! rules); this module only handles XML parsing and curve child elements,
+//! the two shapes the tables cannot express. Fields without a PV2012 key,
+//! such as masks and levels, stay no-ops on read and write.
+//!
 //! XML 不引第三方库，用一个只认元素/属性/文本的最小解析器：命名空间按 URI
 //! 解析，所以 `crs:` 前缀叫什么、属性顺序如何都不影响读取。
+//!
+//! No third-party XML library: a minimal parser that only knows elements,
+//! attributes, and text. Namespaces are resolved by URI, so neither the
+//! name of the `crs:` prefix nor attribute order affects reading.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -433,12 +446,25 @@ fn escape_text(s: &str) -> String {
 
 /// 读一个 XMP 预设/旁车文件，缺失的键保持默认值。
 ///
+/// Reads an XMP preset or sidecar file; missing keys keep their defaults.
+///
 /// 键到参数的换算全部在 `xmp_map::SPECS` 表里（见模块说明）；这里只负责
 /// XML 解析、挑出带 crs 的 Description、把属性与无子节点的子元素并成一张
 /// 键值表，然后交给表——外加两类表管不到的特例：
 /// 1. **曲线**（`ToneCurvePV2012*`）：`rdf:Seq` 子元素，走 `parse_curve`；
 /// 2. **未识别键**：表与包元数据没认领的 `crs:` 键收进 `params.xmp_extra`
 ///    原样保留，跨命名空间（dc:、photoshop: 等）不收。
+///
+/// Key-to-parameter conversion lives entirely in the `xmp_map::SPECS` table
+/// (see the module docs); this function only handles XML parsing, picking
+/// out the Descriptions that carry crs, merging attributes and childless
+/// elements into one key-value table, and handing it to the table — plus
+/// two special cases the table cannot cover:
+/// 1. **Curves** (`ToneCurvePV2012*`): `rdf:Seq` child elements, handled by
+///    `parse_curve`;
+/// 2. **Unrecognized keys**: `crs:` keys claimed by neither the table nor
+///    the packet metadata are kept verbatim in `params.xmp_extra`; keys in
+///    other namespaces (dc:, photoshop:, etc.) are not collected.
 pub fn read(path: &Path) -> Result<GradeParams, XmpError> {
     let bytes = std::fs::read(path)?;
     let text =
@@ -648,6 +674,8 @@ fn packet(namespaces: &[(&str, &str)], attrs: &[(String, String)], body: &str) -
 }
 
 /// 写一个只含 `crs:` 参数的 XMP 预设文件。
+///
+/// Writes an XMP preset file containing only `crs:` parameters.
 pub fn write(path: &Path, params: &GradeParams) -> Result<(), XmpError> {
     let name = path
         .file_stem()
@@ -668,9 +696,17 @@ pub fn write(path: &Path, params: &GradeParams) -> Result<(), XmpError> {
 
 /// 照片旁车的内容：都柏林核心的四项文档信息 + 这一张的 `crs:` 调色参数。
 ///
+/// The content of a photo sidecar: the four Dublin Core document fields +
+/// the `crs:` grading parameters of this image.
+///
 /// 空字段一个标签都不写，跟 EXIF 那边同口径——不往文件里塞空元素。
 /// 与预设的差别只有 `dc:` 这一段，以及没有 `crs:Name`：旁车不是预设，
 /// 不该出现在 Lightroom 的预设列表里。
+///
+/// Empty fields write no tag at all, the same convention as the EXIF side —
+/// no empty elements go into the file. The only differences from a preset
+/// are the `dc:` block and the absence of `crs:Name`: a sidecar is not a
+/// preset and must not show up in Lightroom's preset list.
 pub fn sidecar_xml(params: &GradeParams, meta: &Metadata) -> String {
     let mut body = String::new();
     // `present()` 已经折叠过空白、截过上限、滤掉空项，键名就是都柏林核心的词，
@@ -710,6 +746,9 @@ fn push_seq(xml: &mut String, tag: &str, value: &str) {
 }
 
 /// 把旁车写到图片旁边（同目录、同名、`.xmp`），返回落盘路径。
+///
+/// Writes the sidecar next to the image (same directory, same name, `.xmp`
+/// extension) and returns the persisted path.
 pub fn write_sidecar(
     image: &Path,
     params: &GradeParams,
@@ -736,6 +775,9 @@ pub fn write_sidecar(
 }
 
 /// 图片对应的旁车路径：同目录、同文件名、`.xmp` 后缀。
+///
+/// The sidecar path for an image: same directory, same file name, `.xmp`
+/// extension.
 pub fn sidecar_for(image: &Path) -> PathBuf {
     image.with_extension("xmp")
 }

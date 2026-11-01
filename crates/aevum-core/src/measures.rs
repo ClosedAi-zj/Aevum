@@ -6,6 +6,18 @@
 //! 它只是加速层，不该让序列打不开。
 //!
 //! 不做裁剪：单张照片打开时根目录就是它所在的文件夹，裁剪会把整册序列的账一起抹掉。
+//!
+//! On-disk cache of per-frame metering results: `<序列根>/.aevum/measures.json`.
+//!
+//! Opening a sequence decodes every frame once (512-long-side metrics plus 320-long-side
+//! linear metering), which costs minutes on a thousand-frame timelapse. These numbers depend
+//! only on file content, so entries are keyed by `(mtime, len)`: unchanged frames read the
+//! cache directly, changed frames are measured again and overwritten. A failure to read or
+//! write the whole cache degrades to a full re-measure without an error — it is only an
+//! acceleration layer and must not keep a sequence from opening.
+//!
+//! No trimming: when a single photo is opened the root is its containing folder, and trimming
+//! would wipe the ledger of the entire sequence.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -79,6 +91,9 @@ impl Entry {
 }
 
 /// `<root>/.aevum/measures.json`（护带目录尚未迁移时落在旧目录里）
+///
+/// `<root>/.aevum/measures.json` (it lands in the legacy directory while the guard directory
+/// has not been migrated yet).
 pub fn cache_path(root: &Path) -> PathBuf {
     crate::project::guard_dir(root).join(FILE)
 }
@@ -132,6 +147,8 @@ fn save(root: &Path, long_side: u32, frames: BTreeMap<String, Entry>) {
 }
 
 /// `metrics::measure_many` 的带缓存版本，返回的形状与它完全一致。
+///
+/// Cached version of `metrics::measure_many`, with exactly the same return shape.
 pub fn measure_sequence(root: &Path, paths: &[PathBuf], long_side: u32) -> MeasurePass {
     let mut cached = load(root, long_side);
     let stamps: Vec<Option<(u64, u64)>> = paths.iter().map(|p| stamp(p)).collect();

@@ -3,6 +3,14 @@
 //! 一行一条 JSON，字段固定为 `ts`（Unix 毫秒）、`source`（gui/mcp）、`op`（命令 ID）
 //! 和 `detail`（调用参数）。只记成功调用，失败留给调用方错误通道。
 //! 日志只追加、不轮转：它用于事后追查"这张图是谁导的"，不是回放引擎。
+//!
+//! Operation journal: appends successful operations that touch a project, files or the queue to
+//! `<序列>/.aevum/op_journal.jsonl`.
+//!
+//! One JSON object per line, with fixed fields `ts` (Unix milliseconds), `source` (gui/mcp),
+//! `op` (command ID) and `detail` (call arguments). Only successful calls are recorded; failures
+//! go through the caller's error channel. The journal only appends and never rotates: it serves
+//! to trace "who exported this image" after the fact, not to act as a replay engine.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -25,6 +33,13 @@ pub fn path(root: &Path) -> PathBuf {
 ///
 /// 读命令（get/list/info/status）和纯计算（测光、去闪分析）不记，避免把日志
 /// 变成请求流水。GUI 与 MCP 的 ID 各记各的，`source` 字段已经能区分来源。
+///
+/// Which commands count as "writes": only successful calls that modify files, the project, the
+/// queue or an export reach the journal.
+///
+/// Read commands (get/list/info/status) and pure computation (metering, deflicker analysis) are
+/// not recorded, so the journal does not degrade into a request log. GUI and MCP keep separate
+/// IDs, and the `source` field already distinguishes the origin.
 pub fn is_write_op(op: &str) -> bool {
     // 这张表是**手抄的**（同时列 GUI 点号 ID 与 MCP 下划线 ID），改名时最容易漏。
     // 别名层已经会把名字规范化，这里再规范化一次是双保险：万一有调用点绕过了
@@ -80,6 +95,9 @@ pub fn is_write_op(op: &str) -> bool {
 }
 
 /// 追加一条。调用方一般不关心失败——日志写不进去不能拖垮导出。
+///
+/// Appends one entry. Callers usually ignore failures: an unwritable journal must not take
+/// down an export.
 pub fn append(root: &Path, source: &str, op: &str, detail: &Value) -> std::io::Result<()> {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = crate::project::guard_dir(root);
@@ -102,6 +120,9 @@ pub fn append(root: &Path, source: &str, op: &str, detail: &Value) -> std::io::R
 }
 
 /// 读末尾 `limit` 条（按写入顺序）；坏行跳过，不存在的日志返回空。
+///
+/// Reads the last `limit` entries in write order; malformed lines are skipped and a missing
+/// journal returns empty.
 pub fn tail(root: &Path, limit: usize) -> Vec<Value> {
     if limit == 0 {
         return Vec::new();

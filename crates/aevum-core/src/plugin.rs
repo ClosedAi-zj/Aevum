@@ -15,6 +15,32 @@
 //!    就永远是二等公民，参数面板、禁用、崩溃计数都得写两套。
 //!
 //! 这里只管**元数据**，不管执行：宿主进程、tile 协议在 `aevum-ui` 侧另起。
+//!
+//! Plugin system: manifest format, registry, and menu mount points.
+//!
+//! Three things are settled here; changing them later is expensive:
+//!
+//! 1. **Plugins fall into three kinds** (`Filter` / `Decoder` / `Export`), not one
+//!    universal trait.
+//!    One grade, one RAW decoder, and one export target have fundamentally different
+//!    input and output shapes.
+//!    Forcing them into one `trait Plugin` yields a pile of `Option<&mut Frame>`
+//!    parameters and a runtime check for "this kind does not support that capability".
+//! 2. **The plugin declares where its menu hangs; the host does not make it up**.
+//!    `[menu] path = "plug/nik"` means "hang under the `Nik Collection` group of the
+//!    `Plugins` menu".
+//!    If the parent of the path is unknown, the item lands in "Other" and never
+//!    disappears silently; a plugin that is installed but invisible is a worse
+//!    experience than one that cannot be installed.
+//! 3. **Built-in plugins go through a manifest too** (`source = "embedded"`).
+//!    Camera Raw and Nik ship with the package, but in the registry they are the same
+//!    kind of thing as a plugin installed from the market; only the directory differs.
+//!    Once built-in plugins get a back door (hard-coded menus that bypass the manifest),
+//!    market plugins of the same kind stay second-class citizens, and parameter panels,
+//!    disabling, and crash counters all need two implementations.
+//!
+//! This module handles **metadata** only, not execution: the host process and the tile
+//! protocol start on the `aevum-ui` side.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -22,17 +48,28 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// 清单文件名。目录插件与内置插件都用它。
+///
+/// Manifest file name; used by directory plugins and built-in plugins alike.
 pub const MANIFEST: &str = "plugin.toml";
 
 /// 插件类别。决定宿主怎么调它，也决定菜单允许挂在哪些根下。
+///
+/// Plugin kind. It decides how the host invokes the plugin and which menu roots the
+/// menu may mount under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     /// 拿一张图、出另一张图（Nik 全套、Camera Raw 的细节面板）。
+    ///
+    /// Takes one image and returns another (the whole Nik suite, the Camera Raw detail panel).
     Filter,
     /// 把 RAW 字节解成线性图（Camera Raw、PureRAW）。
+    ///
+    /// Decodes RAW bytes into a linear image (Camera Raw, PureRAW).
     Decoder,
     /// 把成片写出去（Exporter、打印、上传）。
+    ///
+    /// Writes the final render out (Exporter, printing, upload).
     Export,
 }
 
@@ -47,6 +84,10 @@ impl Kind {
 
     /// 这类插件允许挂的菜单根。解码器挂「文件」，滤镜挂「插件」，
     /// 导出挂「文件 · 导出」，其余一律归到「插件 · 其他」。
+    ///
+    /// Menu roots this kind may mount under.
+    /// A decoder mounts under "File", a filter under "Plugins", and an export under
+    /// "File · Export"; anything else lands under "Plugins · Other".
     pub fn allowed_roots(self) -> &'static [&'static str] {
         match self {
             Kind::Filter => &["plug"],
@@ -57,15 +98,25 @@ impl Kind {
 }
 
 /// 插件从哪来。只影响权限与展示，不影响调用方式。
+///
+/// Where the plugin comes from. It affects permissions and presentation only, not how
+/// the plugin is invoked.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
     /// 随程序发布，清单编译进二进制，目录在 `plugins/`。
+    ///
+    /// Shipped with the program; the manifest is compiled into the binary and the
+    /// directory lives under `plugins/`.
     Embedded,
     /// 随安装包附带但独立成目录（Nik 这类第三方二进制）。
+    ///
+    /// Bundled with the installer in its own directory (third-party binaries such as Nik).
     #[default]
     Bundled,
     /// 用户从市场装的。
+    ///
+    /// Installed by the user from the market.
     User,
 }
 
@@ -84,6 +135,13 @@ impl Source {
 /// 这是"插件参数和宿主参数长得一样"的前提：`GradeParams` 的七十五个字段
 /// 也走同一张表的形状（`min`/`max`/`default`/`decimals`/`unit`），于是
 /// 插件面板不用为了"跟宿主不一致"再写一套控件。
+///
+/// One parameter. The panel is generated from it and the plugin draws no UI of its own.
+///
+/// This is the premise of "plugin parameters look exactly like host parameters": the
+/// seventy-five fields of `GradeParams` go through the same table shape as well
+/// (`min`/`max`/`default`/`decimals`/`unit`), so the plugin panel needs no second set of
+/// widgets just because it differs from the host.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ParamSpec {
     pub key: String,
@@ -92,15 +150,23 @@ pub struct ParamSpec {
     pub max: f64,
     pub default: f64,
     /// 小数位。0 = 整数档（对比度、饱和度），2 = 保留两位（曝光 EV）。
+    ///
+    /// Decimal places. 0 = integer steps (contrast, saturation), 2 = two places kept
+    /// (exposure in EV).
     #[serde(default)]
     pub decimals: usize,
     /// 单位后缀，空串表示没有。`%`、`EV`、`px`。
+    ///
+    /// Unit suffix; an empty string means none. `%`, `EV`, `px`.
     #[serde(default)]
     pub unit: String,
 }
 
 impl ParamSpec {
     /// 值落到合法区间内。插件传来的数不可信，越界一律夹住。
+    ///
+    /// Clamps the value into the legal range. Numbers from a plugin are untrusted, so
+    /// out-of-range values are always clamped.
     pub fn clamp(&self, v: f64) -> f64 {
         if v.is_nan() {
             return self.default;
@@ -109,6 +175,8 @@ impl ParamSpec {
     }
 
     /// 按 `decimals` 格式化，签名与单位一起给（`+0.35 EV`、`72%`）。
+    ///
+    /// Formats by `decimals` and gives the sign together with the unit (`+0.35 EV`, `72%`).
     pub fn format(&self, v: f64) -> String {
         let mut s = format!("{:.*}", self.decimals, v);
         if self.decimals > 0 && v > 0.0 {
@@ -125,20 +193,32 @@ impl ParamSpec {
 }
 
 /// 菜单挂载点。
+///
+/// A menu mount point.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Menu {
     /// 斜杠分隔的路径，第一段是菜单根，最后一段是分组。
     /// `plug/nik` = 「插件」→「Nik Collection」。
+    ///
+    /// Slash-separated path: the first segment is the menu root and the last one is the group.
+    /// `plug/nik` = "Plugins" → "Nik Collection".
     pub path: String,
     /// 菜单项文字。留空就用插件名。
+    ///
+    /// Menu item text. The plugin name is used when this is empty.
     #[serde(default)]
     pub label: String,
 }
 
 /// 清单主体。
+///
+/// The manifest body.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Meta {
     /// 反向域名，全局唯一。市场靠它判断"这个是同一个插件的哪个版本"。
+    ///
+    /// Reverse domain name, globally unique. The market uses it to tell which version
+    /// of the same plugin this is.
     pub id: String,
     pub name: String,
     pub version: String,
@@ -146,16 +226,23 @@ pub struct Meta {
     pub vendor: String,
     pub kind: Kind,
     /// 入口可执行文件的相对路径。内置解码器没有独立进程时留空。
+    ///
+    /// Relative path of the entry executable. Empty for a built-in decoder that has no
+    /// separate process.
     #[serde(default)]
     pub entry: String,
     #[serde(default)]
     pub source: Source,
     /// 一句话说明，菜单悬停时显示。
+    ///
+    /// One-line description shown on menu hover.
     #[serde(default)]
     pub description: String,
 }
 
 /// `plugin.toml` 的整体结构。
+///
+/// Overall structure of `plugin.toml`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
     pub plugin: Meta,
@@ -165,6 +252,8 @@ pub struct Manifest {
 }
 
 /// 参数表。TOML 里写作 `[[params.item]]`，读出来是 `params.item`。
+///
+/// Parameter table. It is written `[[params.item]]` in TOML and read as `params.item`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Params {
     #[serde(default)]
@@ -173,6 +262,9 @@ pub struct Params {
 
 impl Manifest {
     /// 解析一份清单文本。错误文案直接给人看（哪个字段、为什么不行）。
+    ///
+    /// Parses a manifest text. Error messages are shown to a human as they are (which
+    /// field failed and why).
     pub fn parse(text: &str) -> Result<Self, String> {
         let m: Self = toml::from_str(text).map_err(|e| format!("清单格式不对：{e}"))?;
         m.validate()?;
@@ -180,6 +272,9 @@ impl Manifest {
     }
 
     /// 校验。宁可加载时就报错，也不要等到用户点了菜单才崩。
+    ///
+    /// Validation. Reporting an error at load time is better than crashing after the
+    /// user clicks the menu.
     pub fn validate(&self) -> Result<(), String> {
         let id = &self.plugin.id;
         if id.is_empty() || !id.contains('.') {
@@ -239,6 +334,9 @@ impl Manifest {
     }
 
     /// 菜单实际挂载路径。父级不认识就落进 `plug/other`（见模块注释第 2 条）。
+    ///
+    /// The path the menu actually mounts at. An unknown parent falls into `plug/other`
+    /// (see item 2 of the module docs).
     pub fn menu_path(&self) -> String {
         let raw = self.menu.path.trim_matches('/');
         let mut parts = raw.split('/');
@@ -255,6 +353,8 @@ impl Manifest {
     }
 
     /// 菜单项文字：没写标签就用插件名。
+    ///
+    /// Menu item text: the plugin name is used when no label is set.
     pub fn menu_label(&self) -> &str {
         if self.menu.label.trim().is_empty() {
             &self.plugin.name
@@ -265,16 +365,24 @@ impl Manifest {
 }
 
 /// 注册表里的一项：清单 + 它从哪读来的 + 是否启用。
+///
+/// One entry in the registry: the manifest, where it was read from, and whether the
+/// plugin is enabled.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Loaded {
     pub manifest: Manifest,
     /// 清单所在目录。`entry` 相对它解析。
+    ///
+    /// Directory holding the manifest. `entry` is resolved relative to it.
     pub dir: PathBuf,
     pub enabled: bool,
 }
 
 impl Loaded {
     /// 入口可执行文件的绝对路径；没有入口（内置实现）返回 `None`。
+    ///
+    /// Absolute path of the entry executable; `None` when there is no entry (built-in
+    /// implementation).
     pub fn entry_path(&self) -> Option<PathBuf> {
         if self.manifest.plugin.entry.trim().is_empty() {
             None
@@ -288,6 +396,13 @@ impl Loaded {
 ///
 /// 错误不吞：一个写坏的清单不该让整排插件消失，但也不能让它静默 ——
 /// 用户会以为"我明明装了"。错误留在注册表里，由界面在插件菜单底部显示一条。
+///
+/// All plugins plus the errors collected while loading.
+///
+/// Errors are not swallowed: one broken manifest must not make the whole row of plugins
+/// disappear, and it must not pass silently either; the user would think "I did install
+/// it". Errors stay in the registry and the interface shows one line at the bottom of
+/// the plugin menu.
 #[derive(Clone, Debug, Default)]
 pub struct Registry {
     plugins: Vec<Loaded>,
@@ -295,9 +410,14 @@ pub struct Registry {
 }
 
 /// 菜单树的一个节点：分组 + 组下的插件。
+///
+/// One node of the menu tree: a group and the plugins under it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MenuGroup {
     /// 分组名（路径第二段），界面自己翻成中文标题。
+    ///
+    /// Group name (the second segment of the path); the interface renders it as a
+    /// localized title itself.
     pub group: String,
     pub items: Vec<usize>,
 }
@@ -307,6 +427,12 @@ impl Registry {
     ///
     /// 只扫一层子目录，不递归：插件目录里可能有作者自己的资源树，
     /// 递归会把它当成插件再报一堆错。
+    ///
+    /// Scans all plugins under one directory: `<root>/<any>/plugin.toml`.
+    ///
+    /// Only one level of subdirectories is scanned, never recursively: a plugin directory
+    /// may hold the author's own resource tree, and a recursive scan would take that tree
+    /// for plugins and report a pile of errors.
     pub fn scan(root: &Path, source: Source) -> Self {
         let mut reg = Self::default();
         let Ok(entries) = std::fs::read_dir(root) else {
@@ -353,6 +479,12 @@ impl Registry {
     /// 内置插件：清单直接写在代码里，目录指到 `plugins/` 下。
     ///
     /// 它们和扫出来的插件走同一张表，唯一区别是没有 `plugin.toml` 文件读。
+    ///
+    /// Built-in plugins: their manifests are written directly in code and their directory
+    /// points under `plugins/`.
+    ///
+    /// They go through the same table as scanned plugins; the only difference is that no
+    /// `plugin.toml` file is read.
     pub fn with_builtin(mut self, builtin: Vec<Manifest>, root: &Path) -> Self {
         for m in builtin {
             if self
@@ -375,6 +507,9 @@ impl Registry {
     }
 
     /// 合并两个注册表（内置 + 用户）。后者优先，id 冲突时保留后者。
+    ///
+    /// Merges two registries (built-in and user). The latter wins, so on an id conflict
+    /// the latter is kept.
     pub fn merge(mut self, other: Registry) -> Self {
         for p in other.plugins {
             if let Some(slot) = self
@@ -410,6 +545,8 @@ impl Registry {
     }
 
     /// 按类别归类，市场的左栏用它。
+    ///
+    /// Groups entries by kind; the left column of the market uses it.
     pub fn by_kind(&self) -> BTreeMap<&'static str, Vec<usize>> {
         let mut out: BTreeMap<&'static str, Vec<usize>> = BTreeMap::new();
         for (i, p) in self.plugins.iter().enumerate() {
@@ -421,6 +558,12 @@ impl Registry {
     /// 菜单树：把所有**启用**的插件按 `menu_path` 归组，返回按分组名排序的列表。
     ///
     /// 组内顺序按插件名排，不按加载顺序：用户装了两个插件，名字相邻才找得到。
+    ///
+    /// Menu tree: groups all **enabled** plugins by `menu_path` and returns a list sorted
+    /// by group name.
+    ///
+    /// Items inside a group are ordered by plugin name, not by load order: with two
+    /// plugins installed, adjacent names are what make them findable.
     pub fn menu_tree(&self) -> Vec<MenuGroup> {
         let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (i, p) in self.plugins.iter().enumerate() {
@@ -451,6 +594,8 @@ impl Registry {
     }
 
     /// 某类插件的全部条目（解码器列表、导出目标列表用）。
+    ///
+    /// All entries of one plugin kind (used by the decoder list and the export target list).
     pub fn of_kind(&self, kind: Kind) -> Vec<usize> {
         self.plugins
             .iter()
@@ -468,6 +613,14 @@ impl Registry {
 /// 写在这里而不是落成文件：它们是**程序的一部分**，版本跟程序一起走；
 /// 落成 `plugin.toml` 反而会被人手改坏，改坏了又没人知道该恢复成什么。
 /// 需要覆盖参数的高级用户走 `plugins/<id>/plugin.toml`，那一条路径是市场装的。
+///
+/// Manifests of the plugins that ship with the package.
+///
+/// They are written here rather than persisted as files: they are **part of the program**
+/// and their version moves with the program; persisting them as `plugin.toml` only
+/// invites hand edits, and after a bad edit nobody knows what to restore.
+/// Advanced users who need to override parameters go through `plugins/<id>/plugin.toml`,
+/// and that path belongs to market installs.
 pub fn builtin() -> Vec<Manifest> {
     let mut out = Vec::new();
 

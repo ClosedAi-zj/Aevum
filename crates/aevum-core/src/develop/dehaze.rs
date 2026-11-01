@@ -8,6 +8,19 @@
 //! 数值安全：大气光 A 下限 1e-3、`max(t, t0)` 防除零（对齐 E1「I+offset<1/256
 //! 单独分支」的意图）。`t0 / eps_t / w(0.95)` 全部是编译期常量起步并标注
 //! TODO(fit)，不做滑杆暴露（对齐 LR 单滑杆 UI）。
+//!
+//! Dark channel prior dehaze (public He DCP 2010/2011 math plus E1 structural facts).
+//!
+//! Design document: `docs/算法里程碑设计-2026-10-30.md` §2. Semantics follow the Python
+//! `acceptance/reference/grade.py::_dehaze_dcp` reference equation by equation; the golden
+//! case (48×64) covers only the `guided` full-resolution branch, and the downsampled branch
+//! is covered explicitly by the module unit test `dehaze_downsample_matches_python` (Python
+//! reference-level verification, not a per-pixel freeze).
+//!
+//! Numerical safety: the atmospheric light A has a floor of 1e-3, and `max(t, t0)` guards
+//! against division by zero (matching the E1 intent of a dedicated branch for
+//! "I+offset<1/256"). `t0 / eps_t / w(0.95)` all start as compile-time constants and are
+//! marked TODO(fit), with no slider exposure (matching the LR single-slider UI).
 
 use rayon::prelude::*;
 

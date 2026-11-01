@@ -10,6 +10,25 @@
 //! - 方向**不在这里转**：`metrics::decode` 统一按 EXIF 方向 `oriented`，与其它后端一致。
 //!
 //! rawler 解不动的文件由 `backend::full` 路由退回内置后端，这里只管把认识的那部分解好。
+//!
+//! rawler adapter (feature `raw-rawler`, enabled by default).
+//!
+//! rawler (same lineage as dnglab, pure Rust, MIT OR Apache-2.0) closes two gaps in the
+//! built-in path: CR3's CRX compression and 12/14-bit in-row packing. The built-in path falls
+//! back to preview for both; this path decodes directly from the sensor.
+//!
+//! Conventions aligned with the built-in path:
+//! - Demosaic **reuses `cfa::demosaic`**, the same coarse estimator as the DNG path, so images
+//!   decoded by the two paths do not disagree;
+//! - White balance uses only the gain coefficients in the file (`wb_coeffs`); when they are
+//!   missing nothing is graded — no guessing;
+//! - Levels subtract the black point and scale to the full 16-bit range, the same convention
+//!   as `cfa::scale_levels`;
+//! - Orientation **is not applied here**: `metrics::decode` applies the EXIF orientation
+//!   uniformly via `oriented`, consistent with the other backends.
+//!
+//! Files rawler cannot decode are routed back to the built-in backend by `backend::full`; this
+//! module only decodes the part it recognizes.
 
 use std::path::Path;
 
@@ -21,10 +40,16 @@ use super::cfa;
 use super::{RawError, RawPath, Rgb16Image};
 
 /// 后端名，进 `RawDecode.backend` 与 `active_backend_name()`。
+///
+/// Backend name, carried in `RawDecode.backend` and `active_backend_name()`.
 pub const NAME: &str = "rawler";
 
 /// trait 形态的适配器：留给将来「按后端显式选择」的调用方（如诊断面板强制
 /// 指定后端对比解码结果）。当前路由走 [`decode_full`] 直接函数入口。
+///
+/// Trait-shaped adapter reserved for future callers that select a backend explicitly (for
+/// example a diagnostics panel forcing one backend to compare decode results). The current
+/// routing goes through the direct [`decode_full`] function entry point.
 #[allow(dead_code)]
 pub struct RawlerBackend;
 
@@ -39,6 +64,8 @@ impl RawBackend for RawlerBackend {
 }
 
 /// 路由入口：解 rawler 认识的文件，报告传感器直解路径。
+///
+/// Routing entry point: decodes files rawler recognizes and reports the sensor-direct path.
 pub fn decode_full(path: &Path) -> Result<RawDecode, RawError> {
     let img = rawler::decode_file(path).map_err(|e| RawError::Rawler(e.to_string()))?;
     // 方向跟着 rawler 走：CR3 是 BMFF 容器，我们的 exif::read 读不到它的

@@ -6,6 +6,19 @@
 //!
 //! 与 `exif::` 各写一份 TIFF 解析是有意的：那边是「读不到就给中性值」的 JPEG
 //! 容错语义，这边要把坏文件明确拒掉，两套错误语义不该挤在同一个解析层里。
+//!
+//! DNG reading: TIFF header to IFD0 tags to CFA mosaic to 16bit RGB.
+//!
+//! Only the main image is decoded: single-channel CFA or linear raw data, strip storage,
+//! compression 1 (uncompressed) and 8 (Adobe Deflate).
+//! Tiles, lossless JPEG, PackBits, floating point samples, multiple channels, and C/M/Y patterns
+//! that need a color matrix are rejected outright: guessing wrong pixels that look plausible is
+//! far worse than an error.
+//!
+//! Writing a separate TIFF parser from `exif::` is deliberate.
+//! That side follows a JPEG tolerance convention where an unreadable value becomes a neutral one,
+//! while this side must reject a bad file outright, and two error conventions should not be
+//! squeezed into one parsing layer.
 
 use std::fs::File;
 use std::io::Read;
@@ -58,6 +71,9 @@ const COMP_NONE: u16 = 1;
 const COMP_ADOBE_DEFLATE: u16 = 8;
 
 /// image 0.25 把 `Rgb16Image` 别名留在 crate 内（`pub(crate)`），这里给出等价类型。
+///
+/// image 0.25 keeps the `Rgb16Image` alias crate-internal (`pub(crate)`), so an equivalent type
+/// is defined here.
 pub type Rgb16Image = image::ImageBuffer<image::Rgb<u16>, Vec<u16>>;
 
 #[derive(Debug, Error)]
@@ -101,22 +117,34 @@ pub enum DngError {
 }
 
 /// 主图元数据，只放解码真要用的字段。
+///
+/// Main image metadata, holding only the fields decoding actually needs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DngInfo {
     pub width: u32,
     pub height: u32,
     /// 每采样位深，只可能是 8 或 16。
+    ///
+    /// Bit depth per sample; only 8 or 16 is possible.
     pub bits: u16,
     pub make: Option<String>,
     pub model: Option<String>,
     /// 黑场电平（原始 ADC 值）：标记里多个值取平均，缺标记时为 0。
+    ///
+    /// Black level as a raw ADC value: multiple tag values are averaged, and a missing tag gives 0.
     pub black: u16,
     /// 白场电平（饱和值）：标记里多个值取最大，缺标记时按位深满量程。
+    ///
+    /// White level as the saturation value: the maximum of multiple tag values, with a missing tag
+    /// falling back to the full scale of the bit depth.
     pub white: u16,
 }
 
 impl DngInfo {
     /// 机型一行。Make 常是 Model 的前缀，重复就只留一次。
+    ///
+    /// One line for the camera model.
+    /// Make is often a prefix of Model, so a duplicate is kept only once.
     pub fn camera_line(&self) -> Option<String> {
         match (self.make.as_deref(), self.model.as_deref()) {
             (Some(make), Some(model)) if model.starts_with(make) => self.model.clone(),
@@ -133,6 +161,14 @@ impl DngInfo {
 ///
 /// 头部嗅探要读 1 MiB，只适合扫描目录时认领文件用。逐帧解码走
 /// [`is_named_dng`]，别让每帧都白读一兆。
+///
+/// Whether a file is structurally a DNG: the extension is checked first, otherwise the header is
+/// sniffed, requiring the TIFF magic and a `DNGVersion` in IFD0, so that a TIFF inside an ordinary
+/// TIFF or JPEG is not mistaken for a DNG.
+///
+/// Header sniffing reads 1 MiB and suits only claiming files while scanning a directory.
+/// Per-frame decoding goes through [`is_named_dng`], so that every frame does not read a megabyte
+/// for nothing.
 pub fn is_dng(path: impl AsRef<Path>) -> bool {
     let path = path.as_ref();
     is_named_dng(path) || has_dng_version(path)
@@ -140,6 +176,10 @@ pub fn is_dng(path: impl AsRef<Path>) -> bool {
 
 /// 只看扩展名的轻量版本：改了名的 DNG 在这里不认领，空 `.dng` 照样认领、交给 `read`
 /// 报错。逐帧解码走这条；要按内容认领文件的调用方才用 [`is_dng`]。
+///
+/// Lightweight version that looks only at the extension: a renamed DNG is not claimed here, while
+/// an empty `.dng` is still claimed and left to `read` to report the error.
+/// Per-frame decoding uses this one; callers that must claim files by content use [`is_dng`].
 pub fn is_named_dng(path: impl AsRef<Path>) -> bool {
     path.as_ref()
         .extension()
@@ -165,6 +205,8 @@ fn has_dng_version(path: &Path) -> bool {
 }
 
 /// 只读元数据，不解码像素。
+///
+/// Read metadata only, without decoding pixels.
 pub fn info(path: impl AsRef<Path>) -> Result<DngInfo, DngError> {
     let data = load(path.as_ref(), MAX_FILE_BYTES)?;
     info_bytes(&data)
@@ -185,6 +227,10 @@ pub fn info_bytes(data: &[u8]) -> Result<DngInfo, DngError> {
 
 /// 只读 `AsShotNeutral`，给 DCP 的白平衡用。缺标记返回 `None`：
 /// 没有白平衡的相机 RGB 是绿的，调用方必须自己决定是报错还是退。
+///
+/// Read only `AsShotNeutral`, for the DCP white balance.
+/// A missing tag returns `None`: camera RGB without white balance is green, and the caller must
+/// decide whether to fail or fall back.
 pub fn as_shot_neutral(path: impl AsRef<Path>) -> Result<Option<[f64; 3]>, DngError> {
     let data = load(path.as_ref(), MAX_FILE_BYTES)?;
     let t = Tiff::parse(&data)?;
@@ -200,12 +246,18 @@ pub fn as_shot_neutral(path: impl AsRef<Path>) -> Result<Option<[f64; 3]>, DngEr
 }
 
 /// 解成 16bit RGB。低于 16 位的源已按白场拉到满量程。
+///
+/// Decode into 16bit RGB.
+/// Sources below 16 bits are already stretched to full scale by the white level.
 pub fn read(path: impl AsRef<Path>) -> Result<Rgb16Image, DngError> {
     let data = load(path.as_ref(), MAX_FILE_BYTES)?;
     read_bytes(&data)
 }
 
 /// 字节入口：测试与已经握在手里的一段 DNG（例如从别的容器里抠出来的）走这条。
+///
+/// Byte entry point: tests and a DNG already in hand, for example one extracted from another
+/// container, take this path.
 pub fn read_bytes(data: &[u8]) -> Result<Rgb16Image, DngError> {
     let tiff = Tiff::parse(data)?;
     let m = meta(&tiff)?;

@@ -6,10 +6,24 @@
 //!
 //! 不引 LibRaw/rawspeed/OpenCV，也不用 SIFT/ORB 的受版权描述子——这里的描述子是
 //! 最朴素的轴对齐归一化块，配 RANSAC 足够吃掉平移为主、旋转不大的手持/云台接片。
+//!
+//! Panorama merge: stitch several overlapping photos into one wide image.
+//!
+//! The whole pipeline is clean-room: Harris corners → normalized grayscale patch descriptors →
+//! nearest-neighbor ratio-test matching → RANSAC plus normalized DLT for the homography →
+//! chained pairwise homographies into a per-frame mapping to the reference frame → inverse-map
+//! bilinear sampling with feather blending by distance to the source image border.
+//!
+//! No LibRaw, rawspeed or OpenCV, and no copyright-encumbered SIFT/ORB descriptor: the
+//! descriptor here is the plainest axis-aligned normalized patch, which with RANSAC is enough
+//! for handheld and gimbal stitches where translation dominates and rotation is small.
 
 use rayon::prelude::*;
 
 /// 一次最多拼几张：全图缓冲要同时在内存里，画布还会随张数变宽。
+///
+/// Maximum frames per stitch: every full-resolution buffer lives in memory at once, and the
+/// canvas widens with the frame count.
 pub const MAX_FRAMES: usize = 12;
 
 /// 画布单边上限：拼接失败时单应可能把角点甩到无穷远，先给个天花板。
@@ -38,6 +52,8 @@ pub enum PanoError {
 }
 
 /// 读一张图成 f32 RGB（0..1）：与导出/HDR 共用同一条解码路。
+///
+/// Reads one image into f32 RGB (0..1) over the same decode path as export and HDR.
 pub fn load(path: &std::path::Path) -> Result<(Vec<f32>, u32, u32), PanoError> {
     crate::export::load_rgb_f32(path).map_err(|e| PanoError::Read(e.to_string()))
 }
@@ -53,6 +69,9 @@ fn check_count(n: usize) -> Result<(), PanoError> {
 }
 
 /// 文件级入口：读盘、逐对估计单应、连乘、拼进同一张画布。
+///
+/// File-level entry point: read from disk, estimate a homography per pair, chain them, and
+/// stitch into one canvas.
 pub fn stitch_paths(paths: &[&std::path::Path]) -> Result<(Vec<f32>, u32, u32), PanoError> {
     check_count(paths.len())?;
     let mut imgs = Vec::with_capacity(paths.len());
@@ -67,6 +86,9 @@ pub fn stitch_paths(paths: &[&std::path::Path]) -> Result<(Vec<f32>, u32, u32), 
 }
 
 /// 缓冲级入口：每项是 `(rgb f32 0..1, w, h)`，第 0 张当基准。
+///
+/// Buffer-level entry point: each item is `(rgb f32 0..1, w, h)`, and image 0 is the
+/// reference.
 pub fn stitch(imgs: &[(&[f32], u32, u32)]) -> Result<(Vec<f32>, u32, u32), PanoError> {
     let n = imgs.len();
     if n == 0 {

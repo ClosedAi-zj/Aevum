@@ -24,6 +24,38 @@
 //!
 //! 本模块零依赖（只用 `std` 与 [`crate::brand`] 的常量），好让 `aevum-core`、
 //! `aevum-ui`、`aevum-mcp` 三方都能直接引用而不形成环。
+//!
+//! The **single** mapping table between MCP tool names and GUI control-channel command IDs.
+//!
+//! Why a dedicated table: the product has two MCP entry points, and the command list used to
+//! be written out once per entry point.
+//!
+//! 1. **Server mode** (`aevum --mcp`): implements 34 tools itself, listed in `aevum-mcp::tools`;
+//! 2. **Attach mode** (`aevum --mcp --attach control.json`): implements nothing and forwards
+//!    calls to the running GUI; the command list lives in
+//!    `aevum-ui::control::command_catalog` (72 entries).
+//!
+//! In attach mode a tool name is derived from the command ID by **mechanically adding a
+//! prefix** (`xmp.import` → `aevum_xmp_import`), while server mode calls that tool
+//! `aevum_xmp_read`. One capability, two names: mechanical derivation alone breaks. Attach
+//! mode receives `aevum_xmp_read`, finds no command for it, and reports "unknown tool", even
+//! though the name is formally published. `aevum_xmp_write` is the same case.
+//!
+//! Three things live here; every other site references them instead of writing its own copy:
+//!
+//! - [`COMMANDS`]: every command ID the GUI control channel can execute (one-to-one with
+//!   `command_catalog()`);
+//! - [`TOOL_ROUTES`]: which command each MCP tool name maps to; `None` means the GUI has no
+//!   such capability and the call can only go to server mode;
+//! - [`command_for_mcp_name`] / [`tool_command`]: the two lookup paths; together they cover the
+//!   "34 tool names" and "72 command names" namespaces.
+//!
+//! Tests interlock the three lists (this table, `tools.rs`, `command_catalog()`) entry by
+//! entry: any addition, removal or typo turns the local test suite red at once instead of
+//! waiting for a user report that attach mode does not know some tool.
+//!
+//! The module has no dependencies (only `std` and the constants in [`crate::brand`]), so
+//! `aevum-core`, `aevum-ui` and `aevum-mcp` can all reference it without forming a cycle.
 
 use crate::brand::TOOL_PREFIX;
 
@@ -33,6 +65,14 @@ use crate::brand::TOOL_PREFIX;
 /// （那些是给界面用的文案，不该塞进 core）。这里只抄 ID，并由
 /// `aevum-ui` 的 `catalog_matches_core_command_table` 测试逐条比对——
 /// 少一条、多一条、拼错一个字母，测试都会红。
+///
+/// Every command ID of the GUI control channel, in the same order as `command_catalog()`.
+///
+/// **This is a copy**: the real implementation lives in `aevum-ui::control`, and the
+/// descriptions and JSON Schema live there too (they are UI copy and do not belong in core).
+/// Only the IDs are duplicated here, and `aevum-ui`'s `catalog_matches_core_command_table`
+/// test compares them entry by entry: one entry missing, one extra, or one misspelled letter
+/// turns the test red.
 pub const COMMANDS: &[&str] = &[
     "sequence.info",
     "sequence.open",
@@ -109,14 +149,24 @@ pub const COMMANDS: &[&str] = &[
 ];
 
 /// 一个 MCP 工具在附着模式下能落到哪条 GUI 命令。
+///
+/// Which GUI command a single MCP tool maps to in attach mode.
 #[derive(Debug, Clone, Copy)]
 pub struct ToolRoute {
     /// 对外工具名：`aevum-mcp` 的 `tools/list` 里出现的那个名字。
+    ///
+    /// Public tool name: the one that appears in `aevum-mcp`'s `tools/list`.
     pub tool: &'static str,
     /// 附着模式下要 POST 给 GUI 控制通道的命令 ID。
     ///
     /// `None` 的含义是「GUI 侧没有对应的可执行命令」，**不是**「这条工具不存在」。
     /// 这些能力只在服务模式可用，报错时要说清楚，别让用户以为是名字拼错了。
+    ///
+    /// Command ID to POST to the GUI control channel in attach mode.
+    ///
+    /// `None` means "the GUI side has no matching executable command", **not** "this tool
+    /// does not exist". These capabilities are available in server mode only; the error
+    /// message must say so instead of letting the user suspect a misspelled name.
     pub command: Option<&'static str>,
 }
 
@@ -127,6 +177,16 @@ pub struct ToolRoute {
 /// 工具名**一律沿用已发布的拼法**，哪怕它和命令 ID 对不齐——
 /// `aevum_xmp_read` 就是 `xmp.import`，改名会让已经配好的客户端全部失效。
 /// 这张表存在的意义之一，正是把这种历史错位集中记在一处，而不是散在代码里当隐性知识。
+///
+/// All 34 MCP tools and where each one lands in attach mode.
+///
+/// The order matches `aevum-mcp::tools::build_commands` (`tools.rs` has a test that compares
+/// them entry by entry).
+///
+/// Tool names **keep their published spelling** even where they do not line up with a command
+/// ID: `aevum_xmp_read` maps to `xmp.import`, and renaming it would break every configured
+/// client. Recording that historical mismatch in one place, instead of leaving it implicit in
+/// the code, is one of the reasons this table exists.
 pub const TOOL_ROUTES: &[ToolRoute] = &[
     route("aevum_open_sequence", "sequence.open"),
     route("aevum_sequence_info", "sequence.info"),
@@ -175,6 +235,11 @@ pub const TOOL_ROUTES: &[ToolRoute] = &[
 ///
 /// 返回 `None` 有两种可能，调用方要用 [`is_known_tool`] 区分：
 /// 「这条工具存在但 GUI 干不了」与「根本没这个工具」。
+///
+/// Tool name → attach-mode command ID.
+///
+/// A `None` return has two causes, and callers must tell them apart with [`is_known_tool`]:
+/// "the tool exists but the GUI cannot do it" and "there is no such tool".
 pub fn tool_command(tool: &str) -> Option<&'static str> {
     TOOL_ROUTES
         .iter()
@@ -183,6 +248,8 @@ pub fn tool_command(tool: &str) -> Option<&'static str> {
 }
 
 /// 这个名字是不是已知的 MCP 工具（不区分它在附着模式下能不能跑）。
+///
+/// Whether the name is a known MCP tool, regardless of whether it can run in attach mode.
 pub fn is_known_tool(tool: &str) -> bool {
     TOOL_ROUTES.iter().any(|route| route.tool == tool)
 }
@@ -190,6 +257,11 @@ pub fn is_known_tool(tool: &str) -> bool {
 /// 命令 ID → MCP 工具名：`sequence.info` → `aevum_sequence_info`。
 ///
 /// 严格客户端只接受 `[A-Za-z0-9_-]`，所以工具名不能带点；命令 ID 仍保留点号。
+///
+/// Command ID → MCP tool name: `sequence.info` → `aevum_sequence_info`.
+///
+/// Strict clients accept `[A-Za-z0-9_-]` only, so a tool name cannot contain a dot; command
+/// IDs keep their dots.
 pub fn mcp_name(command: &str) -> String {
     format!("{TOOL_PREFIX}{}", command.replace('.', "_"))
 }
@@ -199,6 +271,14 @@ pub fn mcp_name(command: &str) -> String {
 /// 用于附着模式：GUI 在线的工具清单是从命令目录现生成的，名字就是 `mcp_name(命令 ID)`。
 /// 这批名字里有 `aevum_grade_auto`、`aevum_library_add`、`aevum_history_undo` 等等，
 /// 它们不在 [`TOOL_ROUTES`] 里（那 34 条是服务模式的工具），必须靠这里才能路由。
+///
+/// Tool name → command ID, through the "mechanically added prefix" path only (covers all 72
+/// entries of [`COMMANDS`]).
+///
+/// Used by attach mode: the tool list of a live GUI is generated on the fly from the command
+/// catalog, and each name is `mcp_name(command ID)`. That set includes `aevum_grade_auto`,
+/// `aevum_library_add` and `aevum_history_undo`, none of which appear in [`TOOL_ROUTES`]
+/// (whose 34 entries are server-mode tools), so routing them depends on this function.
 pub fn command_for_mcp_name(name: &str) -> Option<&'static str> {
     COMMANDS.iter().copied().find(|id| mcp_name(id) == name)
 }

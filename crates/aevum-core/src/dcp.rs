@@ -1,11 +1,23 @@
 //! DCP 相机配置：读 Adobe DNG Camera Profile（`.dcp`），把相机的原始 RGB 经
 //! 「白平衡 → 颜色矩阵 → 色调曲线 → sRGB」变成显示参考的像素。
 //!
+//! DCP camera profiles: reads an Adobe DNG Camera Profile (`.dcp`) and turns
+//! raw camera RGB into display-referred pixels via
+//! white balance → color matrix → tone curve → sRGB.
+//!
 //! 为什么不是一条普通滤镜：DCP 的矩阵定义在**相机线性 RGB** 上（白平衡之后），
 //! 套在已经 gamma 编码的 JPEG/TIFF 上只会把颜色搅坏。所以 [`decode`] 自己接管
 //! 解码：只有 DNG / 厂商 RAW 才接，机身内嵌预览与普通图片直接报错。
 //!
+//! Why this is not an ordinary filter: the DCP matrices are defined on
+//! **camera linear RGB** (after white balance); applying them to already
+//! gamma-encoded JPEG/TIFF data only scrambles colors. So [`decode`] takes
+//! over decoding itself: only DNG / vendor RAW is accepted, while embedded
+//! previews and ordinary images are rejected outright.
+//!
 //! 本版套用的字段：
+//!
+//! Fields applied by this version:
 //!
 //! - `UniqueCameraModel`：与 EXIF 机型比对，不一致就拒绝——配置拿错比不套更糟；
 //! - `ColorMatrix1/2`、`ForwardMatrix1/2`：双光源配置按 `AsShotNeutral` 在两组
@@ -19,6 +31,25 @@
 //!   把它放在 ProPhoto 流水线里，逐通道曲线在两种线性域只差饱和色的通道比例，
 //!   这里沿用既有口径以保持已导出的色彩不变。
 //!
+//! - `UniqueCameraModel`: compared against the EXIF model, and a mismatch is
+//!   rejected — a wrong profile is worse than no profile;
+//! - `ColorMatrix1/2`, `ForwardMatrix1/2`: dual-illuminant profiles
+//!   interpolate between the two calibrated white points by `AsShotNeutral`
+//!   (a projection in camera-space chromaticity); single-illuminant profiles
+//!   use that one set directly;
+//! - `ProfileHueSatMap`: after XYZ(D50) and before exposure, trilinear
+//!   interpolation in the HSV space of ProPhoto (RIMM) linear RGB per
+//!   chapter 6 of DNG 1.6; with two illuminants both tables are interpolated
+//!   with the same white-balance weights;
+//! - `BaselineExposureOffset`: an EV offset;
+//! - `ProfileLookTable`: a look table of the same format, after exposure and
+//!   before the curve;
+//! - `ProfileToneCurve`: a piecewise-linear curve on linear light. This
+//!   version applies it in the linear sRGB domain; the spec places it in the
+//!   ProPhoto pipeline, where per-channel curves differ between the two
+//!   linear domains only in channel ratios for saturated colors, so the
+//!   existing convention is kept to keep already-exported colors unchanged.
+//!
 //! HSV 表的索引口径来自规范原文（第 6 章「Applying the Hue/Saturation/Value
 //! Mapping Table」与 `ProfileHueSatMapEncoding`/`ProfileLookTableEncoding`）：
 //! 色相按 360°/色相分段数环绕采样（规范例子：分 3 段即 0°/120°/240°），
@@ -26,10 +57,27 @@
 //! 明度先编码再进表、出表后再解码。负的线性分量（矩阵串色）先夹到 0 再做
 //! HSV——HSV 对负值没有定义。
 //!
+//! The HSV table indexing convention follows the spec text (chapter 6
+//! "Applying the Hue/Saturation/Value Mapping Table" and
+//! `ProfileHueSatMapEncoding`/`ProfileLookTableEncoding`): hue is sampled
+//! circularly at 360° / hue segments (spec example: 3 segments means
+//! 0°/120°/240°), while saturation and value take endpoints in [0,1] as
+//! `index × (segments − 1)`. When the encoding is sRGB, value is encoded
+//! before entering the table and decoded after leaving it. Negative linear
+//! components (matrix cross-talk) are clamped to 0 before the HSV step —
+//! HSV is undefined for negative values.
+//!
 //! 白平衡：DNG 的 `AsShotNeutral` 在这里按浮点乘进像素（DNG 解码器本身不做白
 //! 平衡）；厂商 RAW 的解码路径已经在传感器空间做过同样的增益，不能再做第二次，
 //! 因此 RAW 只套矩阵。缺 `AsShotNeutral` 的 DNG 直接报错：没有白平衡的相机
 //! RGB 是绿的，套出来的颜色一定错。
+//!
+//! White balance: DNG's `AsShotNeutral` is multiplied into the pixels as
+//! floats here (the DNG decoder itself does no white balance); the vendor RAW
+//! decode path has already applied the same gains in sensor space and must
+//! not apply them twice, so RAW only gets the matrices. A DNG missing
+//! `AsShotNeutral` is rejected outright: camera RGB without white balance is
+//! green, and the resulting colors would be wrong.
 
 use std::path::{Path, PathBuf};
 
@@ -37,13 +85,21 @@ use rayon::prelude::*;
 use serde_json::Value;
 
 /// 一份相机配置里用得上的字段。
+///
+/// The fields of a camera profile that are actually used.
 #[derive(Clone, Debug, Default)]
 pub struct Profile {
     /// 文件路径（面板显示用）。
+    ///
+    /// File path (shown in the panel).
     pub path: String,
     /// `ProfileName`（例如 Adobe Standard）。
+    ///
+    /// `ProfileName` (for example Adobe Standard).
     pub name: String,
     /// `UniqueCameraModel`。
+    ///
+    /// `UniqueCameraModel`.
     pub camera: String,
     /// ColorMatrix1/2：未白平衡的相机 RGB → XYZ(D50)。
     color: [Option<Matrix>; 2],
@@ -186,6 +242,8 @@ const PP_TO_XYZ: Matrix = [
 
 impl Profile {
     /// 读并解析一份 `.dcp`。
+    ///
+    /// Reads and parses a `.dcp` file.
     pub fn load(path: impl AsRef<Path>) -> Result<Profile, String> {
         let path = path.as_ref();
         let data =
@@ -216,6 +274,9 @@ impl Profile {
     }
 
     /// 这份配置是否给这台机身。面板在套用前先问一句，错配当场就能看到原因。
+    ///
+    /// Whether this profile belongs to this camera body. The panel asks
+    /// before applying, so a mismatch shows its cause on the spot.
     pub fn matches(&self, make: &str, model: &str) -> bool {
         camera_matches(&self.camera, make, model)
     }
@@ -249,6 +310,9 @@ fn status(a: &Option<HsvTable>, b: &Option<HsvTable>) -> &'static str {
 }
 
 /// 解码并按 DCP 渲染。返回（像素、宽、高、位深是否高于 8bit）。
+///
+/// Decodes and renders through the DCP. Returns (pixels, width, height,
+/// whether the bit depth is above 8bit).
 pub fn decode(path: &Path, profile_path: &Path) -> Result<(Vec<f32>, u32, u32, bool), String> {
     let profile = Profile::load(profile_path)?;
     let (make, model, neutral) = source_facts(path)?;
@@ -790,6 +854,8 @@ impl<'a> Tiff<'a> {
 }
 
 /// 解析字节流。`path` 留空，`load` 会补上。
+///
+/// Parses a byte stream. `path` is left empty; `load` fills it in.
 pub fn parse_bytes(data: &[u8]) -> Result<Profile, String> {
     if data.len() as u64 > MAX_BYTES {
         return Err(format!("DCP 超过 {MAX_BYTES} 字节上限"));
@@ -971,6 +1037,9 @@ fn camera_line(make: &str, model: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// DCP 根目录：`AEVUM_DCP`（旧名 `LUMEN_DCP` 回退）→ Adobe Camera Raw 的默认位置。
+///
+/// DCP root directory: `AEVUM_DCP` (falls back to the old name `LUMEN_DCP`)
+/// → the default Adobe Camera Raw location.
 pub fn default_directory() -> Option<PathBuf> {
     if let Some(dir) = crate::env::var_os("DCP") {
         let path = PathBuf::from(dir);
@@ -986,6 +1055,9 @@ pub fn default_directory() -> Option<PathBuf> {
 }
 
 /// 按机型在默认目录里自动挑一份配置（优先 Adobe Standard）。
+///
+/// Automatically picks a profile for the model in the default directory
+/// (Adobe Standard preferred).
 pub fn auto_match(make: &str, model: &str) -> Result<Profile, String> {
     let dir = default_directory().ok_or_else(|| {
         "没找到 DCP 目录（设 AEVUM_DCP，或安装 Adobe Camera Raw 的相机配置）".to_owned()

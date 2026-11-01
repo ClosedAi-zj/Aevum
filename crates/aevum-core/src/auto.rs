@@ -6,6 +6,19 @@
 //! 曝好的图不会被越点越亮，夜景也不会被硬拉到中灰后爆掉路灯。
 //!
 //! 口径与 Python 金标 `grade.auto_params` 一致。
+//!
+//! Auto correction: produces white balance and a full tonal set in one pass instead of stacking
+//! another exposure step on top of the current values.
+//!
+//! The proposal is first computed on a 256-long-side proxy using the 1/50/99 percentiles, then
+//! actually run through the per-pixel chain for acceptance: the fraction of pixels pinned at
+//! either end may not exceed the original, and the midtones must land closer to the target.
+//! When that fails, stylistic terms (whites / contrast / blacks) are pulled back step by step,
+//! and only as a last resort is exposure pulled — so an already well-exposed image does not get
+//! brighter with each click, and a night scene is not forced to mid-gray with blown street
+//! lamps.
+//!
+//! Conventions match the Python golden `grade.auto_params`.
 
 use crate::develop::{self, Ev, Opts};
 use crate::grade::GradeParams;
@@ -29,6 +42,9 @@ pub struct AutoParams {
 
 impl AutoParams {
     /// 影调是不是真的动了；全 0 表示这张图本来就在安全范围内。
+    ///
+    /// Whether the tone actually moved; all zeros mean the image was already within the safe
+    /// range.
     pub fn touches_tone(self) -> bool {
         self.exposure != 0.0
             || self.contrast != 0.0
@@ -40,6 +56,9 @@ impl AutoParams {
 }
 
 /// `probe` 是 sRGB 编码的 `[0,1]` 像素；返回绝对值，可直接覆盖对应参数。
+///
+/// `probe` holds sRGB-encoded `[0,1]` pixels; the result is absolute and can overwrite the
+/// corresponding parameters directly.
 pub fn auto_params(probe: &[f32], w: usize, h: usize) -> AutoParams {
     if w == 0 || h == 0 || probe.len() < w * h * 3 {
         return AutoParams {

@@ -14,6 +14,28 @@
 //! 台阶处一侧偏离≈0，两种都归零；只有单帧被碰歪、虚焦、曝光飞了才两侧同向。
 //! 门槛 = max(绝对下限, sig × 本序列偏离的中位数)，噪声大的序列自动放宽，
 //! 干净序列仍能抓到 5% 的亮度跳变。
+//!
+//! Sequence audit: pick bad frames, black frames, out-of-focus frames, luma outliers,
+//! duplicates and gaps from per-frame metering.
+//!
+//! The decision conventions match the Python implementation on the `oracle` side
+//! (`acceptance/reference/qa.py`) item by item.
+//! This module reads no images and spawns no threads: the input is a per-frame table of
+//! `metrics::FrameMetrics`, the output is a displayable list, and the UI only draws it.
+//!
+//! Why absolute thresholds are not used:
+//! - `sharp` is a Laplacian variance over 0..255 gray, and its scale moves with resolution,
+//!   noise reduction and composition; a hard-coded decimal holds for one normalization only.
+//! - The luma of a time-lapse sequence changes by itself (day to night can differ by a dozen
+//!   stops), so a z-score against the whole-sequence median reports both sunrise and sunset
+//!   as outliers, and a table full of false positives stops being read.
+//!
+//! The decision therefore becomes **one comparison against each side**: in a gradient the
+//! left deviation is positive and the right one negative (the frame sits on the trend line),
+//! at a step one side is ≈0, and both cases collapse to zero; only a knocked frame, an
+//! out-of-focus frame or a blown exposure deviates the same way on both sides.
+//! The gate is max(absolute floor, sig × median deviation of this sequence), so noisy
+//! sequences widen automatically, while a clean sequence still catches a 5% luma jump.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,6 +43,9 @@ use std::path::{Path, PathBuf};
 use crate::metrics::FrameMetrics;
 
 /// 一帧的体检输入：路径（缺口按编号找）、文件大小（重复帧比对）、测光结果。
+///
+/// Audit input for one frame: path (gaps are located by number), file size (used to compare
+/// duplicate frames) and the metering result.
 #[derive(Clone, Debug)]
 pub struct Probe {
     pub dir: String,
@@ -30,19 +55,35 @@ pub struct Probe {
 }
 
 /// 体检参数。默认值沿用 Python 侧调好的那组，界面上只暴露阈值松紧一档。
+///
+/// Audit parameters. The defaults are the set tuned on the Python side; the UI exposes a
+/// single tightness step.
 #[derive(Clone, Copy, Debug)]
 pub struct Options {
     /// 亮度离群的相对门槛（本序列波动的倍数）。
+    ///
+    /// Relative gate for luma outliers (a multiple of this sequence's jitter).
     pub sig: f64,
     /// 虚焦的相对门槛。
+    ///
+    /// Relative gate for out-of-focus frames.
     pub blur_sig: f64,
     /// 平均亮度低于它就是黑帧（0~1 域）。
+    ///
+    /// A frame whose mean luma is below this is a black frame (0..1 domain).
     pub black: f64,
     /// 左右各看几帧。
+    ///
+    /// How many frames are inspected on each side.
     pub window: usize,
     /// 亮度跳变的绝对下限（对数域，0.05 ≈ 亮度 5%）。
+    ///
+    /// Absolute floor for a luma jump (log domain, 0.05 ≈ 5% luma).
     pub luma_floor: f64,
     /// 清晰度掉多少才算虚焦（对数域，0.30 ≈ 邻居的 26%）。
+    ///
+    /// How far clarity must drop to count as out of focus (log domain, 0.30 ≈ 26% of the
+    /// neighbors).
     pub blur_floor: f64,
     pub gaps: bool,
     pub dup: bool,
@@ -75,6 +116,8 @@ pub enum Kind {
 
 impl Kind {
     /// 对外稳定的机器名（命令返回、日志与筛选都用它）。
+    ///
+    /// Stable machine name for the outside world (command returns, logs and filtering use it).
     pub fn id(self) -> &'static str {
         match self {
             Kind::Read => "read",
@@ -98,6 +141,9 @@ impl Kind {
     }
 
     /// 缺口对应的文件根本不存在，无从「排除这几帧」，只能在表里告知。
+    ///
+    /// The file behind a gap does not exist at all, so those frames cannot be excluded; the
+    /// gap can only be reported in the table.
     pub fn excludable(self) -> bool {
         self != Kind::Gap
     }
@@ -115,17 +161,26 @@ impl Kind {
 }
 
 /// 一条发现。`frame` 是 0 基帧号（对外展示与命令返回时统一转 1 基）。
+///
+/// One finding. `frame` is a 0-based frame number (converted to 1-based for display and
+/// command returns).
 #[derive(Clone, Debug)]
 pub struct Finding {
     pub frame: usize,
     pub kind: Kind,
     /// 判定用的数值：黑帧是亮度、离群也是亮度、虚焦是清晰度、缺口是缺失帧数。
+    ///
+    /// The value behind the decision: luma for a black frame, luma for an outlier too,
+    /// clarity for an out-of-focus frame, and the number of missing frames for a gap.
     pub value: f64,
     pub note: String,
 }
 
 impl Finding {
     /// 命令与无头工具共用的对外形状：帧号 1 基，机器名与中文标签都给。
+    ///
+    /// External shape shared by commands and headless tools: 1-based frame number, with both
+    /// the machine name and the Chinese label.
     pub fn json(&self) -> serde_json::Value {
         serde_json::json!({
             "frame": self.frame + 1,
@@ -139,17 +194,29 @@ impl Finding {
 }
 
 /// 一组发现的对外形状。
+///
+/// External shape of a group of findings.
 pub fn findings_json(v: &[Finding]) -> Vec<serde_json::Value> {
     v.iter().map(Finding::json).collect()
 }
 
 /// 少于这么多可判定的帧就不做离群判定（统计没意义）。
+///
+/// Below this many judgeable frames no outlier decision is made (the statistics are
+/// meaningless).
 pub const MIN_SAMPLES: usize = 8;
 /// 左右各至少几帧才构成可信的局部中位数。
+///
+/// Minimum number of frames on each side for a trustworthy local median.
 pub const MIN_SIDE: usize = 3;
 
 /// 单帧体检输入：只取目录、文件名与文件大小（一次 `stat`），不解码。
 /// 分批跑长任务时用它逐帧攒表，进度与取消都能按帧粒度报。
+///
+/// Single-frame audit input: only the directory, file name and file size (one `stat`), no
+/// decoding.
+/// Long runs use it to accumulate the table frame by frame, so progress and cancellation can
+/// be reported at frame granularity.
 pub fn probe(path: &Path, sample: Option<FrameMetrics>) -> Probe {
     Probe {
         dir: path
@@ -169,6 +236,10 @@ pub fn probe(path: &Path, sample: Option<FrameMetrics>) -> Probe {
 
 /// 从磁盘取整段序列的体检输入：只逐帧 `stat`，测光表由调用方给（界面里已经随导入
 /// 算好了，不该为同一批帧再解一遍）。
+///
+/// Build the audit input for a whole sequence from disk: only a per-frame `stat`; the
+/// metering table comes from the caller (the UI already computed it during import and must
+/// not decode the same frames twice).
 pub fn probes(paths: &[PathBuf], samples: &[Option<FrameMetrics>]) -> Vec<Probe> {
     paths
         .iter()
@@ -178,6 +249,8 @@ pub fn probes(paths: &[PathBuf], samples: &[Option<FrameMetrics>]) -> Vec<Probe>
 }
 
 /// 逐帧体检，返回按（帧号，类型）排序的清单。
+///
+/// Audit frame by frame and return a list sorted by (frame number, kind).
 pub fn audit(v: &[Probe], opts: &Options) -> Vec<Finding> {
     let n = v.len();
     let mut found: BTreeMap<usize, Vec<Finding>> = BTreeMap::new();
@@ -328,6 +401,9 @@ pub fn audit(v: &[Probe], opts: &Options) -> Vec<Finding> {
 }
 
 /// {类型机器名: 帧数}，给界面写「发现 3 处：几乎全黑 1 / 疑似虚焦 1 …」。
+///
+/// {kind machine name: frame count}, used by the UI to write "3 findings: 1 almost black,
+/// 1 suspected out-of-focus, ...".
 pub fn count_by_kind(findings: &[Finding]) -> BTreeMap<&'static str, usize> {
     let mut out = BTreeMap::new();
     for f in findings {

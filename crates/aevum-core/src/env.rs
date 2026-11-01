@@ -6,6 +6,19 @@
 //! 口径说明：`var_str` 把**空串按未设置处理**。这与仓库原有的
 //! `if let Some(p) = std::env::var_os(X) && !p.is_empty()` 写法一致，
 //! 所以把调用点换成 `var_str` 时可以放心删掉那个 `!p.is_empty()`。
+//!
+//! The single access point for environment variables: `AEVUM_<NAME>` takes
+//! priority, `LUMEN_<NAME>` is the fallback.
+//!
+//! Why this layer exists: the same if-else used to be copied across 13
+//! variables and 9 files, and one missed copy turned into the odd bug of "a
+//! variable that does not work under the old name", a bug that only showed
+//! up for portable-drive users.
+//!
+//! Convention note: `var_str` treats an **empty string as unset**. This
+//! matches the repository's original `if let Some(p) = std::env::var_os(X)
+//! && !p.is_empty()` pattern, so call sites can safely drop that
+//! `!p.is_empty()` when switching to `var_str`.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -24,11 +37,15 @@ const NOTE_LIMIT: usize = 32;
 const NOTE_TRUNCATED: &str = "（诊断提示过多，其余已省略）";
 
 /// 取一个带前缀的环境变量（`OsString` 版，给路径用）。
+///
+/// Reads one prefixed environment variable (`OsString` version, for paths).
 pub fn var_os(name: &str) -> Option<OsString> {
     var_os_with(name, |k| std::env::var_os(k))
 }
 
 /// 字符串版；**空串按未设置处理**。
+///
+/// String version; an **empty string counts as unset**.
 pub fn var_str(name: &str) -> Option<String> {
     var_os(name)
         .map(|v| v.to_string_lossy().into_owned())
@@ -41,6 +58,14 @@ pub fn var_str(name: &str) -> Option<String> {
 ///
 /// `pub` 而不是 `pub(crate)`：`aevum-ui` 与 `aevum-mcp` 的测试也要用它，
 /// 但**产品代码只用 `var_os` / `var_str`**，别直接调这个。
+///
+/// Test seam: the getter is a parameter, so unit tests can feed a fake table
+/// instead of `unsafe { env::set_var }` (it is unsafe under edition 2024,
+/// and process-level variables stomp on each other in parallel tests).
+///
+/// `pub` rather than `pub(crate)`: tests in `aevum-ui` and `aevum-mcp` need
+/// it too, but **product code uses only `var_os` / `var_str`** and must not
+/// call this directly.
 pub fn var_os_with(name: &str, get: impl Fn(&str) -> Option<OsString>) -> Option<OsString> {
     let fresh = format!("{}{name}", brand::ENV_PREFIX);
     if let Some(v) = get(&fresh) {
@@ -72,11 +97,17 @@ fn note_legacy(legacy: &str) {
 }
 
 /// override 路径的目标形态。
+///
+/// Shape of the target behind an override path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
     /// 落盘文件（settings/library/queue 的 json）。
+    ///
+    /// A file persisted to disk (the settings/library/queue json).
     File,
     /// 目录本身（留给后续 project 等用）。
+    ///
+    /// The directory itself (reserved for future uses such as project).
     Dir,
 }
 
@@ -85,6 +116,15 @@ pub enum Target {
 /// 无头与命令行模式下这条就是用户唯一能看见的出口。
 ///
 /// 重复消息照样打 stderr 但只入队一次：stderr 是「现场」，队列是「待办」。
+///
+/// Pushes one process-level diagnostic note: it enters the global queue
+/// (deduplicated by content, capped at 32 entries) and also prints one
+/// stderr line. stderr is invisible under the GUI subsystem (harmless); in
+/// headless and command-line modes this line is the only thing the user
+/// sees.
+///
+/// Repeated messages still print to stderr but enter the queue only once:
+/// stderr is the live log, the queue is the to-do list.
 pub fn note(msg: impl Into<String>) {
     let msg = msg.into();
     eprintln!("提示：{msg}");
@@ -106,6 +146,8 @@ pub fn note(msg: impl Into<String>) {
 }
 
 /// 取走全部提示（清空队列），给 GUI 每帧轮询用。
+///
+/// Takes all notes (emptying the queue), for per-frame polling by the GUI.
 pub fn drain_notes() -> Vec<String> {
     let queue = NOTES.get_or_init(|| Mutex::new(Vec::new()));
     let mut q = queue
@@ -115,6 +157,8 @@ pub fn drain_notes() -> Vec<String> {
 }
 
 /// 快照但不清空，给测试与无头模式用。
+///
+/// Snapshots without clearing, for tests and headless mode.
 pub fn notes_snapshot() -> Vec<String> {
     let queue = NOTES.get_or_init(|| Mutex::new(Vec::new()));
     let q = queue
@@ -128,6 +172,15 @@ pub fn notes_snapshot() -> Vec<String> {
 ///
 /// 为什么缓存：`path()` 这三个口子每帧可能被调多次，探针是真实的建删文件
 /// 操作，不能每次都来一遍；告警同理，响一次就够了，刷屏只会把它淹掉。
+///
+/// Validates an override path and reports problems: the same (variable,
+/// path) pair is probed and warned about only once per process. The return
+/// value matches [`check_override`]; `None` means no problem.
+///
+/// Why cached: the `path()` entry points may be called many times per frame,
+/// and the probe performs real file create/delete operations that must not
+/// run every time. Warnings likewise: one alert is enough, and flooding the
+/// screen only drowns it.
 pub fn check_override_cached(var: &'static str, path: &Path, target: Target) -> Option<String> {
     static CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -153,6 +206,18 @@ pub fn check_override_cached(var: &'static str, path: &Path, target: Target) -> 
 /// 可写性一律以「探针文件能不能建出来」为准——Windows 上目录的只读位
 /// 语义不同，`permissions().readonly()` 对目录不可信；目标文件本身的
 /// 只读位是实打实挡写入的，作为补充原因说明。
+///
+/// Judges whether an override path is currently usable. No printing, no
+/// directory creation, no deleting user files.
+///
+/// **No fallback is a product promise** (setting any override means portable
+/// mode, and `%APPDATA%` is never touched), so this function only judges and
+/// words the verdict; whether to use the path is up to the caller.
+/// Writability is always decided by whether a probe file can be created.
+/// On Windows the directory read-only bit has different semantics and
+/// `permissions().readonly()` is not trustworthy for directories; the
+/// read-only bit on the target file itself does genuinely block writes and
+/// serves as a supplementary reason.
 pub fn check_override(var: &'static str, path: &Path, target: Target) -> Option<String> {
     let shown = absolute_for_show(path);
     let tip = "；把该变量去掉以使用默认配置，或改指一个可写的位置。";
@@ -227,6 +292,15 @@ fn usable_parent(parent: Option<&Path>) -> Result<(), String> {
 ///
 /// `pub` 是给 `project::guard_dir` 用的：护带目录能不能写必须用同一把尺子量，
 /// 各抄一份探针迟早会有一份忘了删探针文件。
+///
+/// Creates a probe file inside `dir` and immediately deletes it. The probe
+/// name carries the pid and nanoseconds to avoid collisions; `create_new`
+/// guarantees no existing file is overwritten, so even a failed delete does
+/// not damage user data.
+///
+/// `pub` exists for `project::guard_dir`: whether a guarded directory is
+/// writable must be measured with the same ruler, and copies of the probe
+/// logic will eventually forget to delete the probe file.
 pub fn dir_is_writable(dir: &Path) -> bool {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -247,6 +321,12 @@ pub fn dir_is_writable(dir: &Path) -> bool {
 /// 展示用绝对路径（字符串）：消息里必须能让用户在资源管理器里找到这个地方。
 ///
 /// `pub` 是给 `project::guard_dir` 用的：告警文案里的路径口径要和 override 一致。
+///
+/// Absolute path for display (a string): messages must let the user find the
+/// location in a file explorer.
+///
+/// `pub` exists for `project::guard_dir`: the path convention in warning
+/// text must match the override checks.
 pub fn absolute_for_show(path: &Path) -> String {
     std::path::absolute(path)
         .unwrap_or_else(|_| path.to_path_buf())

@@ -36,6 +36,65 @@
 //! 原则对任何后端都成立。
 //!
 //! 与 `dng::Tiff`、`exif` 各写一份 TIFF 解析是有意的第三层，理由见 [`tiff`] 模块头。
+//!
+//! Camera RAW direct read: `.rw2` `.nef` `.arw` `.cr2` `.cr3` `.orf` `.rwl`.
+//!
+//! The convention is the user-chosen "generic fallback: CFA + embedded preview".
+//! Both routes must report which one ran ([`RawPath`]), so the UI can label fidelity
+//! rather than force callers to parse error strings.
+//!
+//! 1. **Sensor route** ([`RawPath::Sensor`], 16-bit): decoded only when the IFD is explicit:
+//!    single-channel CFA or linear raw data, no compression, an 8- or 16-bit container, and
+//!    a strip length divisible by the row length.
+//! 2. **Preview fallback** ([`RawPath::Preview`], full JPEG written by the camera): when the
+//!    layout is unknown (12/14-bit in-row packing, lossless JPEG, CRX, tiled storage,
+//!    private CFA position markers, ...) the embedded preview is used instead.
+//!    The preview itself is 8-bit, but it is scaled to 16-bit by `v * 257` on return:
+//!    downstream detects bit depth from the color type (`metrics::decode_rgb_f32`), so both
+//!    routes returning one type keeps a single bit-depth semantics.
+//!    **This is width representation only, not added precision**; fidelity is stated by
+//!    `RawPath` and is never faked by bit depth.
+//!
+//! Pixels are never guessed. A guess that yields "looks normal, actually misaligned" is
+//! rejected, and the preview is preferred instead:
+//!
+//! - 12/14-bit packing: "per-row packing" and "continuous whole-image packing" give exactly
+//!   the same total strip byte count at common widths (14-bit, 8160 columns), so length
+//!   arithmetic cannot tell the two apart, and a wrong guess shears the whole frame.
+//!   `unpack::` keeps two packing primitives plus bit-exact round-trip tests, but the
+//!   metadata layer does not pick them: that needs spec text that can be checked.
+//!   Real samples confirm the trade-off: the Panasonic DC-S5M2 RW2 is 14-bit private
+//!   packing and takes the preview.
+//! - Private CFA position markers: only the standard `CFARepeatPatternDim`(33421) and
+//!   `CFAPattern`(33422) are recognized.
+//!   Vendor private 32xxx pattern markers are not interpreted; when the standard marker is
+//!   absent the preview is used, without assuming "RGBG is probably this order".
+//! - Color matrices (ColorMatrix1/2, camera gamut, preset baseline) are out of scope, see
+//!   `cfa::`. White balance uses only the three channel gains from AsShotNeutral(50728);
+//!   without that marker no grading is applied.
+//! - BigTIFF/RRIF (magic 43, `II`+`UU`) and tiled storage are unsupported: the semantics
+//!   here are "read rows by strip", and changing the container must not change that;
+//!   a named error is more honest than a half implementation.
+//!
+//! **CR3 is not TIFF**: it is an ISO base media container, and the raw data uses Canon's
+//! proprietary CRX compression, for which public specs offer no verifiable decoding path,
+//! so the built-in path **does not decode CRX**.
+//! On the built-in path CR3 does exactly one thing: find the full JPEG preview the camera
+//! wrote inside the container bytes, return it as [`RawPath::Preview`] when found, and give
+//! a named error when not.
+//! This branch must not be read as "CR3 sensor decoding is supported".
+//!
+//! **Since M2, `read` routes through `backend::`**: under the default feature
+//! (`raw-rawler`) the rawler sensor decode is tried first: CRX and the 12/14-bit packing
+//! layouts the built-in path rejects are covered there, returning [`RawPath::Sensor`].
+//! When rawler cannot decode, the built-in two routes above take over.
+//! Built with `--no-default-features` there is no rawler, and behavior is identical to
+//! v0.3.0.
+//! The module header here describes the trade-offs of the **built-in backend**; those
+//! "never guess pixels" principles hold for every backend.
+//!
+//! Keeping a third TIFF parser alongside `dng::Tiff` and `exif` is deliberate; the reasons
+//! are in the [`tiff`] module header.
 
 pub mod backend;
 mod cfa;
@@ -56,11 +115,22 @@ pub use cfa::DEMOSAIC_METHODS;
 /// 解码侧配置：不进影调参数、不落盘到工程/预设，诊断面板读它标注现状，
 /// 切换走 [`set_demosaic_method`]。只影响传感器直解（内置 CFA 路与 rawler 路）；
 /// 机身内嵌预览与缩略图不走去马赛克，不受它影响。
+///
+/// Name of the active demosaic method (`"cell_average"` | `"directional"`).
+///
+/// Decode-side configuration: not part of tone parameters, not persisted to a project or
+/// preset file; the diagnostics panel reads it to label the current state and switches via
+/// [`set_demosaic_method`].
+/// It affects sensor decode only (the built-in CFA route and the rawler route); the camera
+/// embedded preview and thumbnails do not run demosaic and are unaffected.
 pub fn demosaic_method() -> &'static str {
     cfa::selected_demosaic()
 }
 
 /// 切换去马赛克方法并让后续解码生效；未知名字返回 `false` 且不改动。
+///
+/// Switch the demosaic method for subsequent decodes; an unknown name returns `false` and
+/// leaves the current method unchanged.
 pub fn set_demosaic_method(name: &str) -> bool {
     cfa::set_selected_demosaic(name)
 }
@@ -127,16 +197,25 @@ const COMP_JPEG_OLD: u32 = 7;
 const RAW_EXTENSIONS: [&str; 7] = ["rw2", "nef", "arw", "cr2", "cr3", "orf", "rwl"];
 
 /// 这张图到底是传感器数据还是机身预览。
+///
+/// Whether a decode came from sensor data or from the camera embedded preview.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RawPath {
     /// 传感器 CFA/线性原始数据，按 16 位解出来。
+    ///
+    /// Sensor CFA or linear raw data, decoded as 16-bit.
     Sensor,
     /// 机身内嵌 JPEG 预览。8 位真实精度，返回时顶到 16 位。
+    ///
+    /// Camera embedded JPEG preview. Real 8-bit precision, scaled to 16-bit on return.
     Preview,
 }
 
 impl RawPath {
     /// 给「信息」面板的一句口径说明。UI 集成方要标注保真度就读这个，别去猜错误串。
+    ///
+    /// One-line convention note for the info panel.
+    /// UI integrators read this to label fidelity instead of guessing from the error string.
     pub fn describe(self) -> &'static str {
         match self {
             Self::Sensor => "传感器原始数据（CFA 直解，16 位）",
@@ -146,6 +225,10 @@ impl RawPath {
 
     /// [`Self::describe`] 的单行版：面板里那一行是右对齐且不换行的，
     /// 长句会被面板左边缘裁掉（「TIFF/RW2」只剩「F/RW2」），所以紧凑口径单独给一条。
+    ///
+    /// Single-line version of [`Self::describe`]: the panel row is right-aligned and does not
+    /// wrap, so a long sentence is clipped at the left edge ("TIFF/RW2" keeps only "F/RW2");
+    /// the compact convention therefore gets its own entry.
     pub fn short(self) -> &'static str {
         match self {
             Self::Sensor => "传感器直解",
@@ -161,22 +244,35 @@ impl std::fmt::Display for RawPath {
 }
 
 /// 不解像素就能拿到的信息。
+///
+/// Information available without decoding pixels.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RawInfo {
     pub width: u32,
     pub height: u32,
     /// 每采样位深：传感器路径是容器位深（8/16），预览路径固定报 8——那是它真实的精度。
+    ///
+    /// Bits per sample: the sensor route reports the container depth (8/16), while the
+    /// preview route always reports 8, which is its real precision.
     pub bits: u16,
     pub make: Option<String>,
     pub model: Option<String>,
     /// 走了哪条路。信息面板必须显示它，否则预览和传感器数据在界面上长得一样。
+    ///
+    /// Which route ran. The info panel must show it, otherwise a preview and sensor data
+    /// look the same in the UI.
     pub path: RawPath,
     /// 容器种类（`TIFF/NEF`、`TIFF/RO`、`ISO/BMFF`……），只用于把「为什么走预览」说清楚。
+    ///
+    /// Container kind (`TIFF/NEF`, `TIFF/RO`, `ISO/BMFF`, ...), used only to explain why the
+    /// preview route ran.
     pub container: &'static str,
 }
 
 impl RawInfo {
     /// 机型一行。Make 常是 Model 的前缀，重复就只留一次。
+    ///
+    /// Camera line. Make is often a prefix of Model; a duplicate is kept once.
     pub fn camera_line(&self) -> Option<String> {
         match (self.make.as_deref(), self.model.as_deref()) {
             (Some(make), Some(model)) if model.starts_with(make) => self.model.clone(),
@@ -188,6 +284,8 @@ impl RawInfo {
     }
 
     /// 尺寸 + 位深 + 来源一行，给信息面板直接显示。
+    ///
+    /// Size + bit depth + source in one line, shown directly by the info panel.
     pub fn fidelity_line(&self) -> String {
         format!(
             "{}×{} · {} 位 · {}",
@@ -274,6 +372,16 @@ impl RawError {
     /// 都不得退：坏文件静默换一张预览，界面上一切正常，用户却以为拿到的是传感器数据——
     /// 这比报错糟糕得多。条带字节数对不上属于前者：它说明我们对打包的判断错了，
     /// 而不是数据坏了。
+    ///
+    /// Whether decode may fall back to the embedded preview.
+    ///
+    /// Only "this layout is unknown" may fall back.
+    /// "File is corrupt", "over the limit" and "the IFD structure is not camera-written" must
+    /// not.
+    /// Silently swapping in a preview for a broken file leaves the UI looking fine while the
+    /// user believes sensor data was returned, which is far worse than an error.
+    /// A strip byte count mismatch belongs to the first group: it means the packing judgement
+    /// was wrong, not that the data is broken.
     pub fn soft_fallback(&self) -> bool {
         matches!(
             self,
@@ -298,6 +406,13 @@ impl RawError {
 ///
 /// 与 `dng::is_named_dng` 同一套取舍——改了名的 RAW 在这里不认领，空 `cr2` 照样认领、
 /// 交给 `read` 报错。认领错一个后缀的代价是每帧白读一兆，报错的代价是序列里少一帧。
+///
+/// Claim by extension only: the per-frame decode hot path uses this and never sniffs content.
+///
+/// Same trade-off as `dng::is_named_dng`: a renamed RAW is not claimed here, while an empty
+/// `cr2` is still claimed and left for `read` to reject.
+/// The cost of claiming a wrong suffix is a wasted megabyte per frame; the cost of rejecting
+/// is a missing frame in the sequence.
 pub fn is_raw_name(path: impl AsRef<Path>) -> bool {
     path.as_ref()
         .extension()
@@ -306,6 +421,9 @@ pub fn is_raw_name(path: impl AsRef<Path>) -> bool {
 }
 
 /// 结构上像不像 RAW（扩展名或头部认领）。目录扫描时用，逐帧解码用 [`is_raw_name`]。
+///
+/// Whether this looks like RAW structurally (claimed by extension or header).
+/// Used by directory scans; per-frame decode uses [`is_raw_name`].
 pub fn is_raw(path: impl AsRef<Path>) -> bool {
     let path = path.as_ref();
     if is_raw_name(path) {
@@ -322,6 +440,8 @@ pub fn is_raw(path: impl AsRef<Path>) -> bool {
 const SNIFF_BYTES: u64 = 1 << 20;
 
 /// 只读元数据，不解码像素。
+///
+/// Read metadata only, without decoding pixels.
 pub fn info(path: impl AsRef<Path>) -> Result<RawInfo, RawError> {
     let data = load(path.as_ref(), MAX_FILE_BYTES)?;
     info_bytes(&data)
@@ -352,6 +472,14 @@ pub fn info_bytes(data: &[u8]) -> Result<RawInfo, RawError> {
 /// M2 起经 `backend::` 路由：默认 feature 下先试 rawler 传感器直解（补齐 CRX 与
 /// 12/14 位打包），解不动再退内置双路径。签名与 [`RawPath`] 语义不变，`--no-default-features`
 /// 时行为与 v0.3.0 逐位一致。
+///
+/// Decode to 16-bit RGB and report whether the sensor or the preview route ran.
+///
+/// Since M2 this routes through `backend::`: under the default feature the rawler sensor
+/// decode is tried first (covering CRX and 12/14-bit packing), and the built-in two routes
+/// take over when it cannot decode.
+/// The signature and the [`RawPath`] semantics are unchanged; with `--no-default-features`
+/// the behavior is bit-for-bit identical to v0.3.0.
 pub fn read(path: impl AsRef<Path>) -> Result<(Rgb16Image, RawPath), RawError> {
     let (image, path, _orientation) = read_full(path)?;
     Ok((image, path))
@@ -361,6 +489,13 @@ pub fn read(path: impl AsRef<Path>) -> Result<(Rgb16Image, RawPath), RawError> {
 ///
 /// 方向由后端报告——BMFF 容器（CR3）的 Exif item 我们的 `exif::read` 定位不到，
 /// rawler 解容器时顺带就有；调用方拿它喂 `exif::oriented`，别再自己读一遍。
+///
+/// Full version of [`read`]: it also returns the EXIF orientation code (1..8, 1 = no
+/// rotation).
+///
+/// The orientation is reported by the backend: `exif::read` cannot locate the Exif item of a
+/// BMFF container (CR3), while rawler obtains it while decoding the container.
+/// Callers feed it to `exif::oriented` instead of reading it again.
 pub fn read_full(path: impl AsRef<Path>) -> Result<(Rgb16Image, RawPath, u8), RawError> {
     let decoded = backend::full(path.as_ref())?;
     Ok((decoded.image, decoded.path, decoded.orientation))
@@ -371,6 +506,14 @@ pub fn read_full(path: impl AsRef<Path>) -> Result<(Rgb16Image, RawPath, u8), Ra
 /// 给「几百像素就够」的用途（胶片条、任何列表缩略图）：24MP RAW 走完整解码要
 /// 300ms 上下，抽内嵌预览是它的十分之一，128 边的缩略图用哪条路的像素看不出差别。
 /// 没有内嵌预览的文件返回 [`RawError::NoContainerPreview`]，调用方自己决定退回 [`read`]。
+///
+/// Embedded JPEG preview only; demosaic is never run.
+///
+/// For uses where a few hundred pixels are enough (filmstrip, any list thumbnail): a full
+/// decode of a 24MP RAW takes around 300ms, while extracting the embedded preview is a tenth
+/// of that, and a 128px thumbnail shows no difference between the two routes.
+/// A file without an embedded preview returns [`RawError::NoContainerPreview`]; the caller
+/// decides whether to fall back to [`read`].
 pub fn preview_only(path: impl AsRef<Path>) -> Result<Rgb16Image, RawError> {
     let data = load(path.as_ref(), MAX_FILE_BYTES)?;
     let found = preview::find(&data).ok_or(RawError::NoContainerPreview)?;
@@ -380,6 +523,12 @@ pub fn preview_only(path: impl AsRef<Path>) -> Result<Rgb16Image, RawError> {
 /// 长边不少于 `min_side` 的候选里挑像素最少的一张内嵌预览。
 ///
 /// 缩略图优先走这条：够用就行，解 1920 边那张比解 6000 边那张便宜十倍。
+///
+/// Pick the embedded preview with the fewest pixels among candidates whose long side is at
+/// least `min_side`.
+///
+/// Thumbnails prefer this route: good enough is enough, and decoding the 1920px candidate
+/// costs a tenth of decoding the 6000px one.
 pub fn preview_at_least(path: impl AsRef<Path>, min_side: u32) -> Result<Rgb16Image, RawError> {
     let data = load(path.as_ref(), MAX_FILE_BYTES)?;
     let found = preview::find_at_least(&data, min_side).ok_or(RawError::NoContainerPreview)?;
@@ -387,6 +536,9 @@ pub fn preview_at_least(path: impl AsRef<Path>, min_side: u32) -> Result<Rgb16Im
 }
 
 /// 字节入口：测试与已经握在手里的一段 RAW（例如从容器里抠出来的）走这条。
+///
+/// Byte entry point: used by tests and for RAW bytes already in hand (for example, extracted
+/// from a container).
 pub fn read_bytes(data: &[u8]) -> Result<(Rgb16Image, RawPath), RawError> {
     if is_bmff(data) {
         let found = preview::find(data).ok_or(RawError::NoContainerPreview)?;

@@ -9,6 +9,22 @@
 //! 只取**像素最多**的那张完整预览。找不到最大的那张（例如它超过尺寸上限）时直接报错，
 //! 不退去用更小的一缩略图：把 160×120 的缩略图当成全尺寸预览喂进序列，导出时会得到
 //! 一张糊图，而界面上一切正常。
+//!
+//! Embedded preview: locate the complete JPEG the camera itself wrote into the container and
+//! hand it to the `image` decoder.
+//!
+//! This is the other half of the generic fallback. A candidate is accepted not because it
+//! "starts like a JPEG" but because its segment structure runs from SOI all the way to EOI:
+//! every marker and every segment length must fall inside the file, and a candidate that fails
+//! is dropped in favor of the next one. A maliciously crafted `FF D8` byte string therefore
+//! wastes at most a few steps (a global step budget applies) and never reaches a large
+//! allocation — the real decode allocation happens inside `image`, and the declared size is
+//! pinned within `MAX_PIXELS` before an explicit `Limits` is passed over.
+//!
+//! Only the complete preview with the **most pixels** is taken. When the largest one is
+//! missing (for example, it exceeds the size limit) the call fails outright instead of falling
+//! back to a smaller thumbnail: a 160×120 thumbnail passed off as a full-size preview into a
+//! sequence produces a blurry final render while the interface looks perfectly normal.
 
 use std::io::Cursor;
 

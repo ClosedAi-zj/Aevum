@@ -16,18 +16,50 @@
 //!
 //! 每条映射带一行注释说明 LR 侧含义与缩放依据。数值换算一律是
 //! `value = clip(raw * scale + offset, min, max)`，导出取逆。
+//!
+//! Data-driven mapping table between `crs:` and [`GradeParams`].
+//!
+//! The v0.3.0 mapping was a hard-coded if-let chain in `xmp.rs`: every added key meant a
+//! logic edit, and keys nobody wrote stayed silently dropped. Now there is only this
+//! [`SPECS`] table:
+//!
+//! - **Import**: [`apply`] walks the table in order, converting each key into a field;
+//!   `crs:` keys claimed by neither the table nor the package metadata are collected by
+//!   the caller into `GradeParams::xmp_extra`, so a round trip loses nothing;
+//! - **Export**: [`emit_attrs`] inverts the same table back into `crs:` attributes, then
+//!   appends `xmp_extra` verbatim (table keys and package metadata take precedence,
+//!   which rules out double writes).
+//!
+//! Table order carries two meanings; read both before adding a key:
+//! 1. **A later entry overrides an earlier one on import**: when one field has several
+//!    keys (PV2010 fallback, SplitToning/ColorGrade aliases, absolute versus incremental
+//!    white balance), the higher-priority entry must come later;
+//! 2. **Export order follows table order**: once import priority is settled, the table
+//!    order also fixes the order in which attributes are written, and it must match the
+//!    v0.3.0 export order (the Lightroom and project regression tests both pin it).
+//!
+//! Each mapping carries a one-line note on the LR-side meaning and the scaling basis.
+//! Every numeric conversion is `value = clip(raw * scale + offset, min, max)`, and export
+//! takes the inverse.
 
 use crate::grade::GradeParams;
 
 /// `crs:` 命名空间 URI。
+///
+/// The `crs:` namespace URI.
 pub const CRS_NS: &str = "http://ns.adobe.com/camera-raw-settings/1.0/";
 
 /// XMP 的 8 个色相带，顺序与 `grade::HSL_NAMES` 一致。
+///
+/// The 8 hue bands of XMP, in the same order as `grade::HSL_NAMES`.
 pub const BANDS: [&str; 8] = [
     "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta",
 ];
 
 /// 包元数据键：不是调色参数，导入不收进 `xmp_extra`，导出由包骨架统一写。
+///
+/// Package metadata keys: not grading parameters, so import does not collect them into
+/// `xmp_extra`, and the package skeleton writes them as a whole on export.
 pub const RESERVED_KEYS: &[&str] = &["PresetType", "Version", "ProcessVersion", "HasSettings"];
 
 /// 不夹取（当前 v0.3.0 导入对这批键不裁剪，保持兼容；LR 的名义量程写在 note 里）。
@@ -35,6 +67,9 @@ const NO_MIN: f64 = f64::NEG_INFINITY;
 const NO_MAX: f64 = f64::INFINITY;
 
 /// 目标槽位。数组字段带下标，曲线是子元素特例、不走这张表。
+///
+/// Target slot. Array fields carry an index; curves are a sub-element special case and do
+/// not go through this table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CrsField {
     Exposure,
@@ -95,39 +130,74 @@ pub enum CrsField {
 }
 
 /// 应用条件。
+///
+/// Application condition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cond {
     /// 只要键存在就应用。
+    ///
+    /// Applies whenever the key exists.
     Always,
     /// `crs:WhiteBalance == "Custom"` 才应用（绝对开尔文只对自定白平衡有意义）。
+    ///
+    /// Applies only when `crs:WhiteBalance == "Custom"`; absolute kelvin means something
+    /// for a custom white balance alone.
     WbCustom,
     /// PV2010 旧键兜底：同槽位的 PV2012 主键存在时不应用。
+    ///
+    /// PV2010 legacy fallback: skipped when the PV2012 primary key for the same slot
+    /// exists.
     Pv2010Fallback,
 }
 
 /// 特例规则。绝大多数键是 [`Rule::Linear`]；其余见各条注释。
+///
+/// Special-case rule. Nearly every key is [`Rule::Linear`]; the remaining variants are
+/// described on the variants themselves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rule {
     /// `value = clip(raw * scale + offset, min, max)`，导出按同界取逆。
+    ///
+    /// `value = clip(raw * scale + offset, min, max)`; export takes the inverse with the
+    /// same bounds.
     Linear,
     /// 只读不写：导入参与换算（或只作条件输入），导出绝不写出该键。
     /// 用于 PV2010 兜底键、绝对开尔文（导出写增量）、ColorGrade 别名（导出写 SplitToning 名）。
+    ///
+    /// Read only: import converts it (or uses it as a condition input only); export never
+    /// writes the key. Used for PV2010 fallback keys, absolute kelvin (export writes the
+    /// incremental key), and ColorGrade aliases (export writes the SplitToning name).
     ReadOnly,
     /// 布尔转单色：`True` → `mono = 100`。
+    ///
+    /// Boolean to monochrome: `True` → `mono = 100`.
     BoolToMono,
     /// 去边的两键取大者合成一个槽位（LR 的 Purple/Green 两个量共享一个强度）。
+    ///
+    /// The two defringe keys collapse into one slot by taking the larger (LR shares one
+    /// strength between Purple and Green).
     DefringeMax,
     /// 纯条件输入：不映射任何字段，导出由别处统一写（WhiteBalance 随 WB 组）。
+    ///
+    /// Pure condition input: maps no field, and export writes it as a group elsewhere
+    /// (WhiteBalance travels with the WB group).
     Skip,
 }
 
 /// 一条映射的完整规格，风格对齐 `aevum_ui::controls::ControlSpec`。
+///
+/// The full spec of one mapping, styled after `aevum_ui::controls::ControlSpec`.
 #[derive(Clone, Copy, Debug)]
 pub struct CrsSpec {
     /// `crs:` 键名，如 `"Exposure2012"`。
+    ///
+    /// The `crs:` key name, such as `"Exposure2012"`.
     pub key: &'static str,
     pub field: CrsField,
     /// `value = raw * scale + offset`（含方向；暗角是 -1，开尔文是 1/45 配偏移）。
+    ///
+    /// `value = raw * scale + offset` (sign included; vignetting is -1, kelvin is 1/45
+    /// paired with an offset).
     pub scale: f64,
     pub offset: f64,
     pub min: f64,
@@ -135,6 +205,8 @@ pub struct CrsSpec {
     pub cond: Cond,
     pub rule: Rule,
     /// 一行注释：LR 侧语义与缩放依据。
+    ///
+    /// One-line note: LR-side semantics and the scaling basis.
     pub note: &'static str,
 }
 
@@ -187,6 +259,9 @@ macro_rules! band {
 }
 
 /// 全表。顺序即应用顺序（后者覆盖）兼导出顺序——两头的约束见模块头。
+///
+/// The whole table. Order is application order (a later entry wins) and export order at
+/// once; see the module header for both constraints.
 pub const SPECS: &[CrsSpec] = &[
     // ── PV2012 六件套（LR 基本面板，同刻度）────────────────────────
     lin(
@@ -982,11 +1057,17 @@ pub const SPECS: &[CrsSpec] = &[
 ];
 
 /// 表里有没有这个键（未知键收集与导出去重的判据）。
+///
+/// Whether the table holds this key; the test for collecting unknown keys and for
+/// de-duplicating on export.
 pub fn has_spec(key: &str) -> bool {
     SPECS.iter().any(|s| s.key == key)
 }
 
 /// 是不是包元数据键（导入不收、导出由包骨架写）。
+///
+/// Whether this is a package metadata key: import skips it, and the package skeleton
+/// writes it on export.
 pub fn is_reserved(key: &str) -> bool {
     RESERVED_KEYS.contains(&key)
 }
@@ -1001,6 +1082,9 @@ fn pv2012_primary(field: CrsField) -> &'static str {
 }
 
 /// 字段槽位。与 `xmp.rs` 的读/写共用，映射与 `CrsField` 一一对应。
+///
+/// Field slot. Shared with the read and write paths in `xmp.rs`; mappings line up with
+/// `CrsField` one to one.
 pub fn field_slot(p: &mut GradeParams, f: CrsField) -> &mut f64 {
     match f {
         CrsField::Exposure => &mut p.exposure,
@@ -1064,6 +1148,9 @@ pub fn field_slot(p: &mut GradeParams, f: CrsField) -> &mut f64 {
 // ---------------------------------------------------------------- 数值
 
 /// 解 `crs:` 数值：与 Python 参考实现一致——容忍 BOM 与空白，解析失败当 0。
+///
+/// Parses a `crs:` number exactly as the Python reference does: tolerates a BOM and
+/// surrounding whitespace, and treats a parse failure as 0.
 pub fn num(raw: &str) -> f64 {
     raw.trim()
         .trim_start_matches('\u{feff}')
@@ -1078,6 +1165,9 @@ fn clip(v: f64, lo: f64, hi: f64) -> f64 {
 }
 
 /// Python 的 `round()` 是银行家舍入（.5 取偶），导出格式化依赖它。
+///
+/// Python's `round()` uses banker's rounding (a .5 goes to the even neighbour), and the
+/// export formatting depends on it.
 pub fn round_half_even(v: f64) -> f64 {
     let floor = v.floor();
     if (v - floor).abs() == 0.5 {
@@ -1092,6 +1182,9 @@ pub fn round_half_even(v: f64) -> f64 {
 }
 
 /// 与 Python `_fmt` 一致：整数不带小数点，其余最多 6 位小数并去掉尾零。
+///
+/// Matches Python `_fmt`: an integer carries no decimal point, and any other value keeps
+/// at most 6 decimals with trailing zeros stripped.
 pub fn fmt_num(v: f64) -> String {
     if !v.is_finite() {
         return "0".to_owned();
@@ -1127,6 +1220,15 @@ fn truthy(raw: Option<&str>) -> bool {
 ///
 /// 返回值的生命周期与映射表无关（值属于调用方的键值表），所以单独标 `'map`，
 /// 闭包不必为了签名把借用拉成 `'static`。
+///
+/// Applies the `crs:` keys to the parameters according to the table. `get` is supplied by
+/// the caller (the key-value pairs parsed from the XMP, with attributes and child
+/// elements that have no children already merged); a missing key yields `None` and that
+/// entry is skipped.
+///
+/// The return lifetime is independent of the mapping table, since the values belong to
+/// the caller's key-value table. That is why `'map` is declared separately, and why the
+/// closure need not widen the borrow to `'static` just for the signature.
 pub fn apply<'map>(p: &mut GradeParams, get: &dyn Fn(&str) -> Option<&'map str>) {
     for spec in SPECS {
         let Some(raw) = get(spec.key) else {
@@ -1171,6 +1273,10 @@ fn apply_one(p: &mut GradeParams, spec: &CrsSpec, raw: &str) {
 
 /// 按表反算出全部 `crs:` 参数属性（不含包元数据与曲线子元素）。
 /// 顺序即表序；`xmp_extra` 的回写由调用方追加在后面。
+///
+/// Inverts the table into every `crs:` parameter attribute, package metadata and curve
+/// sub-elements excluded. The order is the table order; the caller appends the
+/// `xmp_extra` write-back afterwards.
 pub fn emit_attrs(p: &GradeParams) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     for spec in SPECS {

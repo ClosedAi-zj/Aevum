@@ -28,6 +28,49 @@
 //! - 暗角忽略 distance 维：同一 (焦距, 光圈) 有多档距离时取最远一档
 //!   （风光/延时最相关）；
 //! - TCA 只支持 poly3 标定（数据库里 acm 标定的镜头视为没有色差数据）。
+//!
+//! Camera and lens profiles: read a lensfun database from disk and match correction coefficients
+//! (distortion / lateral chromatic aberration / vignetting) by the EXIF maker, model, lens and
+//! focal length.
+//! The result folds into one [`Correction`] that fits in the grading parameters and is applied to
+//! pixels at the head of the develop chain, ahead of the manual distortion slider.
+//!
+//! The database is not shipped with the program: lookup follows `AEVUM_LENSFUN`, then a
+//! `lensfun/` directory beside the exe and under `tools/`, then an explicit path.
+//! A missing database degrades the whole feature to "no profile", and the three manual controls
+//! keep working.
+//! The parser accepts only the small subset of syntax that lensfun XML actually uses; the model
+//! formulas come from the public lensfun documentation:
+//!
+//! - distortion (target coordinate = corrected target radius, the free variable is the
+//!   undistorted radius Ru):
+//!   poly3 `Rd = Ru·(1+k1·Ru²)`, poly5 `Rd = Ru·(1+k1·Ru²+k2·Ru⁴)`,
+//!   ptlens `Rd = Ru·(a·Ru³+b·Ru²+c·Ru+1)`;
+//! - lateral chromatic aberration poly3: radial scale of the red and blue planes against the
+//!   green plane, `f = v + b·r²`;
+//! - vignetting pa: `v = 1 + k1·r² + k2·r⁴ + k3·r⁶`.
+//!
+//! Radii always use "tan units": `r = pixel distance from center × sensor diagonal (mm)
+//! ÷ frame diagonal (px) ÷ focal length (mm)`.
+//! This is the same normalization the lensfun modifier applies, with the diagonal taken in
+//! millimeters as `hypot(36,24)/crop factor`.
+//! The coefficients do not depend on the body; the body crop factor only enters the px↔mm
+//! conversion, so no cross-crop scaling of coefficients is done.
+//! Distortion correction must solve `Ru·P(Ru) = Rd` in the per-pixel direction: the polynomial is
+//! monotonic over the usual range, so Newton iteration solves it once on a 2048-entry radius
+//! lookup table and every pixel interpolates that table.
+//!
+//! Known deviations from lensfun, all deliberate, with these comments as the documentation:
+//! - distortion, chromatic aberration and vignetting share one radial axis from the center, and
+//!   `center-x/center-y` in the database is ignored (most calibrations omit it, and where present
+//!   it is near zero);
+//! - chromatic aberration coefficients are evaluated at the target radius and then multiplied onto
+//!   the undistorted radius; the aberration is a micro-scale of order 1e-4, so the difference
+//!   from this composition order is a higher-order term;
+//! - vignetting ignores the distance dimension: when one (focal length, aperture) pair has several
+//!   distances, the farthest one wins (most relevant to landscape and timelapse);
+//! - TCA supports poly3 calibration only (a lens calibrated with acm in the database counts as
+//!   having no chromatic aberration data).
 
 use std::path::{Path, PathBuf};
 
@@ -38,6 +81,9 @@ use serde::{Deserialize, Serialize};
 const FULL_FRAME_DIAGONAL_MM: f64 = 43.2666153005;
 
 /// 畸变模型。系数含义随模型不同，见 [`Correction::dist`]。
+///
+/// Distortion model. The meaning of the coefficients depends on the model, see
+/// [`Correction::dist`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum DistModel {
     #[default]
@@ -52,20 +98,41 @@ pub enum DistModel {
 /// 一次匹配折出来的校正系数。三段各自独立：数据库里哪段有标定就带上哪段，
 /// 全空等于没有配置文件。放进 [`crate::grade::GradeParams`]（默认 `None`），
 /// 预览、导出、队列自然全通。
+///
+/// The correction coefficients folded out of one match.
+/// The three sections are independent: whichever section the database calibrates is carried over,
+/// and all three empty means no profile is in effect.
+/// Stored in [`crate::grade::GradeParams`] (default `None`), it flows through preview, export and
+/// the queue without further plumbing.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Correction {
     /// 命中的数据库镜头型号（面板与命令面显示用）。
+    ///
+    /// The matched lens model from the database, shown in the panel and the command surface.
     #[serde(default)]
     pub lens: String,
     /// 畸变：(模型, [k1] / [k1,k2] / [a,b,c])。
+    ///
+    /// Distortion: (model, [k1] / [k1,k2] / [a,b,c]).
     pub dist: Option<(DistModel, [f64; 3])>,
     /// 横向色差 poly3：[br, vr, bb, vb]，红/蓝平面 `f = v + b·r²`。
+    ///
+    /// Lateral chromatic aberration poly3: [br, vr, bb, vb], with the red and blue planes at
+    /// `f = v + b·r²`.
     pub tca: Option<[f64; 4]>,
     /// 暗角 pa：[k1, k2, k3]。
+    ///
+    /// Vignetting pa: [k1, k2, k3].
     pub vig: Option<[f64; 3]>,
     /// 插值后的标定焦距（名义值，mm），tan 单位换算用。
+    ///
+    /// The interpolated calibrated focal length (nominal value, mm) used for the tan-unit
+    /// conversion.
     pub focal_mm: f64,
     /// 机身裁切系数（px↔mm 换算用），取不到时回退镜头标定裁切、再回退全幅。
+    ///
+    /// The body crop factor used for the px↔mm conversion; when unavailable it falls back to the
+    /// crop recorded on the lens calibration, then to full frame.
     pub crop: f64,
 }
 
@@ -75,6 +142,9 @@ impl Correction {
     }
 
     /// 命令面与面板共用的 JSON 形状：查到的可以原样读回来。
+    ///
+    /// The JSON shape shared by the command surface and the panel: whatever is queried can be read
+    /// back unchanged.
     pub fn to_json(&self) -> serde_json::Value {
         let (model, k): (&str, [f64; 3]) = match self.dist {
             Some((DistModel::Poly3, k)) => ("poly3", k),
@@ -130,6 +200,8 @@ pub struct DistPoint {
 pub struct TcaPoint {
     pub focal: f64,
     /// [br, vr, bb, vb]（poly3；acm 标定的点不收）。
+    ///
+    /// [br, vr, bb, vb] (poly3; points calibrated with acm are not accepted).
     pub k: [f64; 4],
 }
 
@@ -171,6 +243,10 @@ pub struct LensDb {
 /// 按与 ffmpeg 同一套顺序找 lensfun 数据库目录：`AEVUM_LENSFUN`（目录或
 /// 单个 xml）→ exe 同目录与 `tools/` 下的 `lensfun/`。返回目录内全部
 /// `*.xml`（直接给文件时就是那一个）。
+///
+/// Finds the lensfun database directory in the same order ffmpeg uses: `AEVUM_LENSFUN` (a
+/// directory or a single xml file), then a `lensfun/` directory beside the exe and under `tools/`.
+/// Returns every `*.xml` in that directory; when a file is given directly, just that one.
 pub fn find_database_files() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(p) = crate::env::var_os("LENSFUN") {
@@ -207,6 +283,9 @@ fn xml_files_of(d: &Path) -> Vec<PathBuf> {
 }
 
 /// 读一组 XML 合成一个库；坏文件跳过（返回成功读入的文件数）。
+///
+/// Reads a set of XML files into one database; bad files are skipped, and the count of files read
+/// successfully is returned.
 pub fn load_files(files: &[PathBuf]) -> (LensDb, usize) {
     let mut db = LensDb::default();
     let mut ok = 0;
@@ -223,6 +302,9 @@ pub fn load_files(files: &[PathBuf]) -> (LensDb, usize) {
 }
 
 /// 一步到位：找库、读库。没有库或读不动都返回空库（调用方按空处理）。
+///
+/// One step: find the database and read it. A missing or unreadable database yields an empty one,
+/// which the caller treats as no profile.
 pub fn load_auto() -> LensDb {
     let files = find_database_files();
     if files.is_empty() {
@@ -289,6 +371,9 @@ fn model_matches(maker_a: &str, model_a: &str, maker_b: &str, model_b: &str) -> 
 }
 
 /// 按厂商+机型找机身。多个匹配取型号最短的一个（最具体）。
+///
+/// Finds a camera body by maker and model. Among several matches the shortest model name wins,
+/// because it is the most specific.
 pub fn find_camera<'a>(db: &'a LensDb, make: &str, model: &str) -> Option<&'a CameraEntry> {
     db.cameras
         .iter()
@@ -299,6 +384,11 @@ pub fn find_camera<'a>(db: &'a LensDb, make: &str, model: &str) -> Option<&'a Ca
 /// 按厂商+镜头描述找镜头。EXIF 的 LensModel 往往不带厂商前缀
 /// （`EF24-105mm f/4L IS USM`），数据库一般带（`Canon EF 24-105mm ...`），
 /// 互相包含能对上；多个匹配取型号最短的。
+///
+/// Finds a lens by maker and lens description.
+/// The EXIF LensModel often carries no maker prefix (`EF24-105mm f/4L IS USM`) while the database
+/// usually does (`Canon EF 24-105mm ...`), so mutual containment brings them together; among
+/// several matches the shortest model name wins.
 pub fn find_lens<'a>(db: &'a LensDb, make: &str, lens: &str) -> Option<&'a LensEntry> {
     db.lenses
         .iter()
@@ -338,6 +428,11 @@ fn interp_scalar(points: &[(f64, f64)], focal: f64) -> f64 {
 
 /// 焦距插值出一组校正。`aperture` 未知时暗角取光圈最大的一档（暗角最强、
 /// 最值得修的那一档）。三段全空返回 None。
+///
+/// Interpolates one set of corrections at a focal length.
+/// When `aperture` is unknown, the vignetting section takes the widest aperture, which has the
+/// strongest vignetting and is the entry most worth correcting.
+/// Returns None when all three sections are empty.
 pub fn correction_for(
     entry: &LensEntry,
     focal: f64,
@@ -480,6 +575,9 @@ pub fn correction_for(
 }
 
 /// EXIF 三件套一步匹配：机身定裁切系数、镜头定标定、焦距/光圈插值。
+///
+/// One-step match on the three EXIF fields: the body sets the crop factor, the lens supplies the
+/// calibration, and focal length and aperture drive the interpolation.
 pub fn match_correction(
     db: &LensDb,
     make: &str,
@@ -499,6 +597,12 @@ pub fn match_correction(
 
 /// 把校正应用到一帧 sRGB `[0,1]` 浮点像素（行优先 RGB，与显影链同一缓冲
 /// 格式）。就地修改。顺序：几何（畸变 + 色差一起重采样）→ 暗角 → 夹紧。
+///
+/// Applies the correction to one frame of sRGB `[0,1]` float pixels, row-major RGB in the same
+/// buffer layout as the develop chain.
+/// The buffer is modified in place.
+/// Order: geometry (distortion and chromatic aberration resampled together), then vignetting,
+/// then clamping.
 pub fn apply(rgb: &mut [f32], w: usize, h: usize, c: &Correction) {
     if w == 0 || h == 0 || c.is_empty() {
         return;

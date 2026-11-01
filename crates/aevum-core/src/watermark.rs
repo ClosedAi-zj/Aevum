@@ -7,6 +7,21 @@
 //! 文字层不引第二个字体栈：离线依赖里只有 `skrifa`（egui 带进来的那份），它出轮廓
 //! 不出像素，所以曲线展平与非零环绕扫描线填充在这里自己写。不做 GPOS 排版
 //! （连字、字距、双向），水印是一行落款，不是排版引擎——这一点测试里也钉着。
+//!
+//! Watermark: stamps a line of text or an image onto the final frame at export.
+//!
+//! It only takes effect at the tail of export, under the same rule as output
+//! sharpening: previews never get this layer. The rationale cuts both ways.
+//! Every frame would need recomputation on each slider drag, so each extra
+//! layer costs extra work; and "what the panel shows is what the deliverable
+//! carries" is a rule both sharpening and the watermark must obey.
+//!
+//! The text layer does not pull in a second font stack: among the offline
+//! dependencies only `skrifa` (the one egui brings in) is available, and it
+//! emits outlines, not pixels, so curve flattening and the nonzero-winding
+//! scanline fill are written here. No GPOS typesetting (ligatures, kerning,
+//! bidi): a watermark is one signature line, not a typesetting engine, and
+//! the tests pin that down.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -19,6 +34,8 @@ use skrifa::{FontRef, GlyphId, MetadataProvider};
 use crate::fonts;
 
 /// 九宫格里的一格。屏幕坐标，y 向下。
+///
+/// One cell of the nine-grid. Screen coordinates, y points down.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum Spot {
     #[serde(rename = "top-left")]
@@ -114,6 +131,9 @@ impl Spot {
 }
 
 /// 水印内容种类。两种互斥，界面用一排选择器切，切过去另一侧的输入留着不动。
+///
+/// Kind of watermark content. The two kinds are mutually exclusive; the UI
+/// switches with one selector row and keeps the other side's input intact.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WatermarkKind {
@@ -147,23 +167,45 @@ impl WatermarkKind {
 
 /// 一版水印的全部设定。数值旋钮一律用整数百分比：界面滑杆、工程文件与命令面
 /// 说的是同一个数，省掉一路 `0~1` 与 `0~100` 互相换算的往返误差。
+///
+/// Full settings for one watermark. Numeric knobs are integer percentages
+/// throughout: the UI slider, the project file, and the command surface all
+/// speak the same number, avoiding round-trip error between `0~1` and
+/// `0~100`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Watermark {
     pub enabled: bool,
     pub kind: WatermarkKind,
     /// 文字水印的内容，`\n` 换行（最多按行铺开，不做自动折行）。
+    ///
+    /// Text watermark content; `\n` breaks lines (laid out per line at most,
+    /// no automatic wrapping).
     pub text: String,
     /// 图片水印的路径；带 alpha 就按 alpha 叠，不带就是一块实心图。
+    ///
+    /// Path of the image watermark; composited by its alpha when present,
+    /// otherwise treated as a solid block.
     pub image: PathBuf,
     pub spot: Spot,
     /// 不透明度 0~100。
+    ///
+    /// Opacity, 0~100.
     pub opacity: u8,
     /// 尺寸：相对输出长边的百分比。文字取大写高，图片取宽。
+    ///
+    /// Size: percentage relative to the output long side. Cap height for
+    /// text, width for images.
     pub size: u8,
     /// 边距：相对输出短边的百分比，只有靠边的八格用得到。
+    ///
+    /// Margin: percentage relative to the output short side; only the eight
+    /// edge cells use it.
     pub margin: u8,
     /// 文字颜色（sRGB 0~255）；图片自带颜色，这里忽略。
+    ///
+    /// Text color (sRGB 0~255); images carry their own color, which is
+    /// ignored here.
     pub color: [u8; 3],
 }
 
@@ -185,6 +227,9 @@ impl Default for Watermark {
 
 impl Watermark {
     /// 真的会盖章吗：开关、内容、不透明度三样缺一就不动像素。
+    ///
+    /// Whether a stamp would actually be applied: with any of the switch,
+    /// content, or opacity missing, pixels stay untouched.
     pub fn is_on(&self) -> bool {
         self.enabled
             && self.opacity > 0
@@ -622,6 +667,13 @@ fn origin(w: usize, h: usize, stamp: &Stamp, spot: Spot, margin: usize) -> (usiz
 ///
 /// 关掉、不透明度为 0、内容空、图打不开——一律原像素不动，也不报错：
 /// 水印是交付层的一层皮，不该让一张导出好的片子失败。
+///
+/// Blends the watermark onto the final pixels (sRGB working space, before
+/// gamut transfer).
+///
+/// Switched off, zero opacity, empty content, or an unreadable image all
+/// leave the pixels untouched and raise no error: the watermark is a skin on
+/// the delivery layer and must not fail an otherwise finished export.
 pub fn apply_in_place(rgb: &mut [f32], w: usize, h: usize, wm: &Watermark) {
     if !wm.is_on() || w == 0 || h == 0 {
         return;

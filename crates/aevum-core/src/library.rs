@@ -3,6 +3,15 @@
 //! 清单只存根目录路径与集合成员，落在漫游配置目录（`galleries.json`）；评级、色标、
 //! 旗标仍住在各自序列的 `.aevum/project.json` 里——图库只读写它们，不做第二份真相，
 //! 在序列里改完评分回到图库看，永远是新的。
+//!
+//! Library: a cross-directory list of root directories, manual collections, and a catalog
+//! that maps each directory to "files × rating / color label / flag".
+//!
+//! The list stores only root directory paths and collection members and persists them in
+//! the roaming config directory (`galleries.json`); ratings, color labels, and flags still
+//! live in each sequence's `.aevum/project.json`, and the library only reads and writes
+//! them without keeping a second source of truth, so a rating changed inside a sequence is
+//! always fresh when it is viewed in the library again.
 
 use std::path::{Path, PathBuf};
 
@@ -28,6 +37,9 @@ struct LibraryFile {
 }
 
 /// 手动集合：一组跨目录的照片路径。只存路径，评级/色标照旧从各自工程文件读。
+///
+/// Manual collection: a set of photo paths that may span directories. Only paths are
+/// stored; ratings and color labels are still read from each project file.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Collection {
@@ -36,6 +48,8 @@ pub struct Collection {
 }
 
 /// 清单的全部内容：根目录 + 集合。
+///
+/// All contents of the list: root directories and collections.
 #[derive(Clone, Debug, Default)]
 pub struct Store {
     pub roots: Vec<PathBuf>,
@@ -43,18 +57,30 @@ pub struct Store {
 }
 
 /// 编目里的一张照片：路径加上从该目录工程文件里读出的整理状态。
+///
+/// One photo in the catalog: its path plus the organization state read from that
+/// directory's project file.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LibFile {
     pub path: PathBuf,
     pub name: String,
     /// 自然序帧号（0 开始），也就是工程文件里 ratings/flags/labels 的键。
+    ///
+    /// Natural-order frame number (0-based), which is the key used by ratings/flags/labels
+    /// in the project file.
     pub index: usize,
     pub rating: u8,
     pub label: u8,
     pub flag: i8,
     /// 关键词（已归一化、按字典序去重）；筛选与右键菜单都看它。
+    ///
+    /// Keywords (normalized, deduplicated, in lexicographic order); both filtering and the
+    /// context menu read them.
     pub keywords: Vec<String>,
     /// 所在堆叠的序号（`ProjectFile.stacks` 的下标）；没叠就是 None。
+    ///
+    /// Index of the containing stack (an index into `ProjectFile.stacks`); `None` when the
+    /// photo is not stacked.
     pub stack: Option<usize>,
 }
 
@@ -74,6 +100,9 @@ impl LibFile {
 }
 
 /// 编目筛选：星级下限、只看选用、指定色标（0 = 任意）、指定关键词（空 = 任意）。
+///
+/// Catalog filter: minimum star rating, picked only, a specific color label (0 = any),
+/// and a specific keyword (empty = any).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Filter {
     pub stars: u8,
@@ -96,6 +125,9 @@ impl Filter {
 }
 
 /// 评级/旗标/色标的一次改写：`None` 表示这项不动，`0` 表示清掉。
+///
+/// One rewrite of rating, flag, and color label: `None` leaves an entry alone and `0`
+/// clears it.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Organize {
     pub rating: Option<u8>,
@@ -105,6 +137,10 @@ pub struct Organize {
 
 /// 清单默认放漫游配置目录；`AEVUM_LIBRARY`（旧名 `LUMEN_LIBRARY` 回退）可指到别处
 /// （测试与便携盘用）。
+///
+/// The list lives in the roaming config directory by default; `AEVUM_LIBRARY` (which
+/// falls back to the old name `LUMEN_LIBRARY`) can point elsewhere (for tests and
+/// portable drives).
 pub fn default_path() -> PathBuf {
     crate::config_dir::ensure_adopted();
     if let Some(path) = crate::env::var_os("LIBRARY")
@@ -119,6 +155,9 @@ pub fn default_path() -> PathBuf {
 }
 
 /// 读清单；文件缺失或坏档都当作空清单，图库面板照常能加目录。
+///
+/// Reads the list. A missing file and a broken file both count as an empty list, so the
+/// library panel can still add directories.
 pub fn load(path: &Path) -> Store {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Store::default();
@@ -137,6 +176,9 @@ pub fn load(path: &Path) -> Store {
 }
 
 /// 原子写清单：tmp + rename，坏在半路也不吞旧档。
+///
+/// Writes the list atomically with a tmp file and a rename, so a failure halfway does not
+/// swallow the old file.
 pub fn save(path: &Path, store: &Store) -> Result<(), std::io::Error> {
     let file = LibraryFile {
         version: 2,
@@ -164,6 +206,9 @@ fn key(path: &Path) -> PathBuf {
 }
 
 /// 加一个根目录：同一目录只留一行，重复加入等于挪到末尾。
+///
+/// Adds a root directory: a directory appears only once, so adding it again moves it to
+/// the end.
 pub fn add(roots: &mut Vec<PathBuf>, dir: &Path) -> usize {
     let k = key(dir);
     roots.retain(|r| key(r) != k);
@@ -183,6 +228,9 @@ pub fn remove(roots: &mut Vec<PathBuf>, index: usize) -> Option<PathBuf> {
 }
 
 /// 建一个集合；同名集合直接复用（返回已有序号）。名字空白时叫「未命名集合」。
+///
+/// Creates a collection; a collection with the same name is reused and its index is
+/// returned. A blank name is stored as the literal string "未命名集合".
 pub fn collection_create(cols: &mut Vec<Collection>, name: &str) -> usize {
     let name = name.trim();
     let name = if name.is_empty() {
@@ -208,6 +256,8 @@ pub fn collection_delete(cols: &mut Vec<Collection>, index: usize) -> Option<Col
 }
 
 /// 把一张照片放进集合；已经在集合里返回 `false`。
+///
+/// Puts a photo into a collection; returns `false` when it is already a member.
 pub fn collection_put(cols: &mut [Collection], index: usize, path: &Path) -> bool {
     let Some(c) = cols.get_mut(index) else {
         return false;
@@ -221,6 +271,8 @@ pub fn collection_put(cols: &mut [Collection], index: usize, path: &Path) -> boo
 }
 
 /// 从集合里拿掉一张照片；本来就不在返回 `false`。
+///
+/// Removes a photo from a collection; returns `false` when it was not a member.
 pub fn collection_drop(cols: &mut [Collection], index: usize, path: &Path) -> bool {
     let Some(c) = cols.get_mut(index) else {
         return false;
@@ -233,11 +285,18 @@ pub fn collection_drop(cols: &mut [Collection], index: usize, path: &Path) -> bo
 
 /// 改一个目录里某帧的整理状态并原子落盘。只碰评级/旗标/色标三张表，
 /// 其余字段原样保留；`0` 表示清掉这一项（不写 key）。
+///
+/// Changes the organization state of one frame in a directory and persists it atomically.
+/// Only the rating, flag, and color label tables are touched and every other field is kept
+/// as is; `0` clears that entry and writes no key.
 pub fn organize(dir: &Path, index: usize, patch: &Organize) -> Result<(), project::ProjectError> {
     organize_many(dir, &[index], patch)
 }
 
 /// 一次改一批帧：整批只读写一次工程文件，批量挑片不会变成 N 次落盘。
+///
+/// Changes a batch of frames at once: the project file is read and written once for the
+/// whole batch, so a bulk cull does not turn into N writes to disk.
 pub fn organize_many(
     dir: &Path,
     frames: &[usize],
@@ -277,10 +336,17 @@ pub fn organize_many(
 }
 
 /// 关键词最长字符数：再长在行里、在筛选条里都只会被截断。
+///
+/// Maximum keyword length in characters; anything longer is truncated both in a row and
+/// in the filter bar.
 pub const MAX_KEYWORD_CHARS: usize = 48;
 
 /// 归一化一个关键词：去掉首尾空白、把中间的连续空白压成一个、超长截断。
 /// 空白或只剩空白的返回 `None`。
+///
+/// Normalizes one keyword: trims leading and trailing whitespace, collapses runs of
+/// whitespace in the middle into one, and truncates overlong input.
+/// Returns `None` for empty or whitespace-only input.
 pub fn clean_keyword(raw: &str) -> Option<String> {
     let mut out = String::with_capacity(raw.len());
     for word in raw.split_whitespace() {
@@ -297,6 +363,11 @@ pub fn clean_keyword(raw: &str) -> Option<String> {
 
 /// 一次给一批帧加词/去词，整批只读写一次工程文件；返回实际改动过的帧数。
 /// 同一个词在一帧里只留一份，帧内按字典序排——筛选与右键菜单不用再排。
+///
+/// Adds or removes keywords for a batch of frames at once; the project file is read and
+/// written once for the whole batch and the number of frames actually changed is returned.
+/// A word appears only once per frame and words are sorted lexicographically inside a
+/// frame, so filtering and the context menu need no further sorting.
 pub fn keyword_edit(
     dir: &Path,
     frames: &[usize],
@@ -347,6 +418,9 @@ pub fn keyword_edit(
 }
 
 /// 编目里出现过的所有关键词与出现次数，按词排序；筛选下拉与命令面共用。
+///
+/// All keywords seen in the catalog with their occurrence counts, sorted by word; shared
+/// by the filter dropdown and the command palette.
 pub fn keyword_counts(files: &[LibFile]) -> Vec<(String, usize)> {
     let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for f in files {
@@ -359,6 +433,10 @@ pub fn keyword_counts(files: &[LibFile]) -> Vec<(String, usize)> {
 
 /// 读一个目录的说明与版权信息。没有工程文件、或读不出来（坏 JSON）都当四项全空：
 /// 图库面板不能因为一个目录的工程坏了就打不开。
+///
+/// Reads the description and copyright fields of one directory. A missing project file or
+/// an unreadable one (bad JSON) counts as four empty fields: the library panel must not
+/// fail to open because one directory's project is broken.
 pub fn metadata(dir: &Path) -> project::Metadata {
     project::load(&project::project_path(dir))
         .map(|p| p.metadata)
@@ -368,6 +446,12 @@ pub fn metadata(dir: &Path) -> project::Metadata {
 /// 写一个目录的说明与版权信息：一次 load / 改 / 原子 save，评级、关键词、调色、
 /// 导出设置等其余字段原样保留。返回真正落盘的那一份（已归一化、已截断）。
 /// 工程比程序新时按 `ProjectError::Version` 报上去，绝不覆盖。
+///
+/// Writes the description and copyright fields of one directory in a single load, edit,
+/// and atomic save; ratings, keywords, grading, export settings, and every other field are
+/// kept as is. Returns the copy that was actually persisted (normalized and truncated).
+/// A project newer than the program is reported as `ProjectError::Version` and never
+/// overwritten.
 pub fn set_metadata(
     dir: &Path,
     meta: &project::Metadata,
@@ -391,6 +475,12 @@ pub fn set_metadata(
 
 /// 归一化堆叠：每叠去重升序、不足 2 帧的丢掉、同一帧只留在最先出现的叠里、
 /// 叠按头帧排序。落盘与读回都走它，所以界面看到的和文件里的是同一份结构。
+///
+/// Normalizes stacks: each stack is deduplicated and sorted ascending, stacks with fewer
+/// than two frames are dropped, a frame stays only in the first stack it appears in, and
+/// stacks are sorted by their head frame.
+/// Both persisting and reading go through it, so the interface sees the same structure
+/// that the file holds.
 pub fn normalize_stacks(raw: &[Vec<usize>]) -> Vec<Vec<usize>> {
     let mut seen = std::collections::HashSet::new();
     let mut out: Vec<Vec<usize>> = Vec::new();
@@ -407,6 +497,8 @@ pub fn normalize_stacks(raw: &[Vec<usize>]) -> Vec<Vec<usize>> {
 }
 
 /// 一帧落在哪一叠（叠序号）；没叠返回 None。
+///
+/// The stack a frame belongs to, as a stack index; `None` when the frame is not stacked.
 pub fn stack_of(stacks: &[Vec<usize>], frame: usize) -> Option<usize> {
     stacks
         .iter()
@@ -415,6 +507,12 @@ pub fn stack_of(stacks: &[Vec<usize>], frame: usize) -> Option<usize> {
 
 /// 按文件名前缀自动分叠：去掉扩展名与结尾的数字串后同前缀、且 ≥2 张的归一叠。
 /// 一个目录里装着好几段延时（`A001_0001.jpg`…`B002_0001.jpg`…）时，这就是「同一段」。
+///
+/// Splits stacks automatically by file name prefix: once the extension and the trailing
+/// digit run are removed, files that share the remaining prefix form one stack when at
+/// least two of them match.
+/// When one directory holds several timelapse segments (`A001_0001.jpg`…`B002_0001.jpg`…),
+/// this is what "the same segment" means.
 pub fn auto_stacks(names: &[String]) -> Vec<Vec<usize>> {
     let mut groups: std::collections::BTreeMap<String, Vec<usize>> =
         std::collections::BTreeMap::new();
@@ -430,6 +528,8 @@ pub fn auto_stacks(names: &[String]) -> Vec<Vec<usize>> {
 }
 
 /// 读一个目录的堆叠（已归一化）。没有工程文件就是没叠。
+///
+/// Reads the stacks of one directory, already normalized. No project file means no stacks.
 pub fn stacks(dir: &Path) -> Vec<Vec<usize>> {
     project::load(&project::project_path(dir))
         .map(|p| normalize_stacks(&p.stacks))
@@ -447,6 +547,10 @@ fn load_for_edit(dir: &Path) -> Result<project::ProjectFile, project::ProjectErr
 
 /// 把一组帧合并成一叠：这些帧先从其它叠里摘出来（摘空/摘剩 1 帧的叠随之消失），
 /// 新叠按头帧插回原位。返回落盘后的全部堆叠。
+///
+/// Merges a set of frames into one stack: those frames are first taken out of other stacks
+/// (a stack that ends up empty or with a single frame disappears), and the new stack is
+/// inserted at the position of its head frame. Returns all stacks after persisting.
 pub fn stack_create(
     dir: &Path,
     frames: &[usize],
@@ -482,6 +586,9 @@ pub fn stack_create(
 }
 
 /// 拆掉一叠（成员回到不叠的状态）。序号越界当没这叠。返回落盘后的全部堆叠。
+///
+/// Dissolves one stack, so its members return to the unstacked state. An out-of-range
+/// index is treated as no such stack. Returns all stacks after persisting.
 pub fn stack_dissolve(dir: &Path, stack: usize) -> Result<Vec<Vec<usize>>, project::ProjectError> {
     let path = project::project_path(dir);
     let mut proj = load_for_edit(dir)?;
@@ -501,6 +608,9 @@ pub fn stack_dissolve(dir: &Path, stack: usize) -> Result<Vec<Vec<usize>>, proje
 }
 
 /// 按文件名前缀重新分叠（覆盖现有堆叠）。names 的顺序即帧号顺序。
+///
+/// Re-splits stacks by file name prefix, overwriting the existing stacks. The order of
+/// `names` is the frame numbering.
 pub fn stack_auto(dir: &Path, names: &[String]) -> Result<Vec<Vec<usize>>, project::ProjectError> {
     let path = project::project_path(dir);
     let mut proj = load_for_edit(dir)?;
@@ -516,6 +626,12 @@ pub fn stack_auto(dir: &Path, names: &[String]) -> Result<Vec<Vec<usize>>, proje
 /// 把一个目录编目：图片按自然序列出，评级/色标/旗标/关键词从 `.aevum/project.json`
 /// 折到每张照片上。目录不存在或没有可用图片返回空——图库面板按空目录显示，
 /// 不算错误；真正的 IO 错误（权限等）才往上抛。
+///
+/// Catalogs one directory: images are listed in natural order and ratings, color labels,
+/// flags, and keywords are folded onto each photo from `.aevum/project.json`.
+/// A missing directory or one with no usable image returns an empty list, which the
+/// library panel shows as an empty directory rather than an error; only real IO errors
+/// (permissions and the like) are propagated.
 pub fn scan_root(dir: &Path) -> std::io::Result<Vec<LibFile>> {
     let seq = match Sequence::open(dir) {
         Ok(seq) => seq,
@@ -541,6 +657,9 @@ pub fn scan_root(dir: &Path) -> std::io::Result<Vec<LibFile>> {
 }
 
 /// 目录里编目条目的汇总：总数与星级数，给根目录行当副标题。
+///
+/// Summary of the catalog entries in one directory, total count and rated count, used as
+/// the subtitle of the root directory row.
 pub fn summarize(files: &[LibFile]) -> String {
     let rated = files.iter().filter(|f| f.rating > 0).count();
     let picked = files.iter().filter(|f| f.flag > 0).count();

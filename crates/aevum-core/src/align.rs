@@ -13,6 +13,27 @@
 //!   不引入第三方依赖；与 OpenCV `phaseCorrelate` 的响应/亚像素口径略有差异。
 //! - `residual_scores` 按 `verify_residuals` 的口径取底部 ROI，warp 用双线性
 //!   采样逐像素完成，不生成整幅 warp 结果。
+//!
+//! Sequence alignment: estimate each frame's shift relative to the reference frame → smooth
+//! → compute a shared crop.
+//!
+//! The convention matches Python `acceptance/reference/align.py`: `offset` is the shift that
+//! warpAffine adds, i.e. `dst(x, y) = src(x - off_x, y - off_y)`. The template estimator is
+//! the one used for lr3 final renders: bottom template + CLAHE grayscale + normalized cross
+//! correlation + parabolic subpixel.
+//!
+//! Implementation notes:
+//! - The template region, guard band and search margin (150 px) are copied from Python
+//!   `_setup_template`.
+//! - TM_CCOEFF_NORMED on a 4K template (about 3590×1030) uses a hand-written 2D FFT for the
+//!   cross correlation, then integral and sliding-window sums for the window variance. The
+//!   peak neighborhood is scored on the source image over 3×3 to keep subpixel accuracy, and
+//!   the FFT covers the search window (4096×2048) only, so no full-frame f32 copy is kept.
+//! - `Phase` reuses the same FFT for phase correlation (ROI, normalization and Hann window as
+//!   in Python) with no third-party dependency; its response and subpixel convention differ
+//!   slightly from OpenCV `phaseCorrelate`.
+//! - `residual_scores` takes the bottom ROI with the `verify_residuals` convention and warps
+//!   per pixel with bilinear sampling; no full warped image is materialized.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -34,8 +55,12 @@ const CLAHE_CLIP: f64 = 2.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Estimator {
     /// 底部模板匹配，对相机下坠造成的垂直漂移最稳。
+    ///
+    /// Bottom template matching, most robust against vertical drift from a sinking camera.
     Template,
     /// 相位相关，适合纯平移、光比稳定的序列。
+    ///
+    /// Phase correlation, suited to sequences with pure translation and a stable lighting ratio.
     Phase,
 }
 
@@ -45,12 +70,20 @@ pub struct AlignOptions {
     pub reference: usize,
     pub estimator: Estimator,
     /// 搜索半径，单位像素。
+    ///
+    /// Search radius in pixels.
     pub max_shift: u32,
     /// 平滑窗口；0 表示不平滑。
+    ///
+    /// Smoothing window; 0 disables smoothing.
     pub smooth_window: usize,
     /// 相邻帧位移跳变超过这个值，保留原值不参与平滑。
+    ///
+    /// A shift jump past this value between adjacent frames keeps the raw value unsmoothed.
     pub jump_px: f64,
     /// 相关系数低于这个值记为异常帧。
+    ///
+    /// Frames whose correlation score falls below this value are reported as anomalies.
     pub min_score: f64,
 }
 
@@ -79,6 +112,8 @@ pub struct CropRect {
 pub struct AlignIssue {
     pub frame: usize,
     /// `score` / `jump` / `edge`，供界面翻译成人话。
+    ///
+    /// `score` / `jump` / `edge`, translated into readable text by the UI.
     pub kind: String,
     pub detail: String,
 }
@@ -109,6 +144,8 @@ pub enum AlignError {
 }
 
 /// 估计整段序列的位移并给出统一裁切。
+///
+/// Estimates shifts for the whole sequence and derives a shared crop.
 pub fn measure(paths: &[PathBuf], options: &AlignOptions) -> Result<AlignReport, AlignError> {
     measure_with_progress(paths, options, &|_, _| {})
 }
@@ -116,6 +153,11 @@ pub fn measure(paths: &[PathBuf], options: &AlignOptions) -> Result<AlignReport,
 /// 同一件事，但每完成一帧回调一次 `(已完成, 总数)`。
 ///
 /// 回调在 worker 线程里执行；计数用原子量并加锁保证观测到的 `done` 严格递增。
+///
+/// Same job, but calls back once per finished frame with `(done, total)`.
+///
+/// The callback runs on worker threads; an atomic counter plus a lock makes the observed
+/// `done` values increase strictly.
 pub fn measure_with_progress(
     paths: &[PathBuf],
     options: &AlignOptions,
@@ -224,6 +266,13 @@ pub fn measure_with_progress(
 /// 沿用 Python `preserve_outliers`：局部中值做基线，偏离超过 `jump_px` 的帧
 /// 只有 score 达标（相机真的动了）才保留原值；低分帧视为误匹配，用中值压平。
 /// 返回的是检测到的跳变帧下标，两类都会列出来，供界面提示。
+///
+/// Smooths shifts in place. Returns the indices of anomalous frames kept unsmoothed.
+///
+/// Follows Python `preserve_outliers`: a local median is the baseline; a frame deviating by
+/// more than `jump_px` keeps its raw value only when its score passes (the camera really
+/// moved); a low-score frame is treated as a mismatch and flattened to the median. The return
+/// value holds the detected jump indices, covering both kinds, for UI hints.
 pub fn smooth_offsets(
     offsets: &mut [[f64; 2]],
     scores: &[f64],
@@ -249,6 +298,8 @@ pub fn smooth_offsets(
 }
 
 /// 让所有帧都不出画的最小裁切框。
+///
+/// Smallest crop rectangle that keeps every frame inside the image.
 pub fn common_crop(offsets: &[[f64; 2]], width: u32, height: u32) -> CropRect {
     if offsets.is_empty() || width == 0 || height == 0 {
         return CropRect {
@@ -298,6 +349,13 @@ pub fn common_crop(offsets: &[[f64; 2]], width: u32, height: u32) -> CropRect {
 ///
 /// 返回与 `paths` 等长的皮尔逊相关系数：参考帧为 1.0，读不出来的帧为 0.0。
 /// warp 按 `dst(x,y) = src(x-dx, y-dy)` 做双线性采样，只算 ROI 内的像素。
+///
+/// Measures the residual correlation of the bottom region after alignment, as an acceptance
+/// check that smoothing really suppressed the shake.
+///
+/// Returns one Pearson correlation per path, same length as `paths`: 1.0 for the reference
+/// frame, 0.0 for frames that cannot be read. The warp samples bilinearly as
+/// `dst(x,y) = src(x-dx, y-dy)`, over ROI pixels only.
 pub fn residual_scores(
     paths: &[PathBuf],
     offsets: &[[f64; 2]],

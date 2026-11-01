@@ -16,6 +16,31 @@
 //! 两条路的结果在 1e-6 量级内一致。5984×3959 单帧两路合计约 2.3 秒、
 //! 1600×1067 预览约 0.2 秒（release、16 线程、min-of-5 量法）；标量路径
 //! 单网就要约 5.7 秒，向量化是这项滑杆能用的前提。
+//!
+//! AI denoise: two residual networks of four 3×3 convolutions, one path for luminance and one
+//! for chroma.
+//!
+//! The weights are self-trained by `tools/train_denoise.py` on real timelapse frames from this
+//! machine (see the header comments of `denoise_weights.rs` /
+//! `denoise_chroma_weights.rs`). Inference happens only here, with no external dependency.
+//!
+//! The two paths are trained separately: joint three-channel training lets the luminance
+//! gradient fill the trunk and the chroma output stalls at identity (measured: chroma PSNR was
+//! still 0.00 dB after 5000 epochs). The luminance net takes Rec.601 luma as input, and the
+//! chroma net takes (Cb, Cr) = (B − Y, R − Y) — a signed color difference is identically zero
+//! on gray, so chroma denoise never drags colors off and the two paths do not bleed into each
+//! other. Both nets output deltas, and RGB is recovered through the same definitions on
+//! write-back.
+//!
+//! Tiled inference: only the center of each tile is kept, with an overlap of [`RADIUS`] pixels
+//! around it to feed the receptive field, so a 24MP image never allocates a `w·h·12`
+//! intermediate buffer in one go.
+//!
+//! On x86_64 with AVX2+FMA a hand-written vector path runs (12 channels padded to 16),
+//! otherwise the code falls back to scalar; the two paths agree to within about 1e-6.
+//! A single 5984×3959 frame takes about 2.3 s for both paths and a 1600×1067 preview about
+//! 0.2 s (release, 16 threads, min-of-5 timing); the scalar path alone needs about 5.7 s per
+//! net, so vectorization is the precondition for this slider being usable.
 
 use rayon::prelude::*;
 
@@ -23,6 +48,8 @@ use crate::denoise_chroma_weights as cw;
 use crate::denoise_weights as wt;
 
 /// 4 层 3×3 的感受野半径（像素）。
+///
+/// Receptive field radius of the four 3×3 layers, in pixels.
 pub const RADIUS: usize = 4;
 
 /// 两个网络的中间层通道数都必须与 SIMD 路径的常量一致。
@@ -395,6 +422,9 @@ fn delta_planes<const NIN: usize, const NOUT: usize>(
 }
 
 /// 按强度（0–1）做 AI 降噪：`strength` 是增量回写比例，0 时原样返回。
+///
+/// Runs AI denoise at the given strength (0–1): `strength` scales the write-back of the deltas,
+/// and 0 returns the input unchanged.
 pub fn apply(rgb: &mut [f32], w: usize, h: usize, strength: f32) {
     let k = strength.clamp(0.0, 1.0);
     if k == 0.0 || w == 0 || h == 0 {

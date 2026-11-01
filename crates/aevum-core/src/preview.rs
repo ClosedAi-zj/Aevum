@@ -2,22 +2,37 @@
 //!
 //! 保留这个模块只为兼容既有调用点（GUI 预览、静帧导出、视频导出、MCP）。
 //! 真正的像素顺序、阶段开关与金标比对都在 [crate::develop]。
+//!
+//! Entry point for preview rendering: forwards the caller to the `develop` main chain.
+//!
+//! The module is kept only for compatibility with existing call sites (GUI preview, still
+//! export, video export, MCP). The real pixel order, stage switches and golden comparisons all
+//! live in [crate::develop].
 
 use crate::develop::{self, Ev, Opts};
 use crate::grade::GradeParams;
 
 /// 全量渲染：松手后的精修预览、静帧导出与视频导出都走这里。
+///
+/// Full render: the refined preview after release, still export and video export all come
+/// through here.
 pub fn render(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev) {
     develop::render(rgb, w, h, p, gain, Opts::FULL);
 }
 
 /// 拖动中的草图：跳过最贵的空间运算，保证跟手。
 /// 无空间参数时与 [render] 逐点一致，有差异的那几项正是草图省掉的。
+///
+/// Sketch while dragging: skips the most expensive spatial operations to stay responsive.
+/// With no spatial parameters it matches [render] per pixel; the few differing terms are
+/// exactly what the sketch omits.
 pub fn render_sketch(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev) {
     develop::render(rgb, w, h, p, gain, Opts::SKETCH);
 }
 
 /// 只留逐点运算的一条链，用来生成 .cube LUT。
+///
+/// A chain with only per-pixel operations, used to generate .cube LUTs.
 pub fn render_for_lut(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev) {
     develop::render(
         rgb,

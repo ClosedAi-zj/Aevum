@@ -5,6 +5,18 @@
 //! 几何那一段（旋转 + 位移 + 取景）在 `warp` 里，预览走的是同一个函数。
 //! 编码走外部 ffmpeg：H.264 8bit / H.265 10bit。输出色域由 `RenderOptions::color_space`
 //! 决定——静态图嵌 ICC，视频把原色/传递函数/矩阵三条一起写进 VUI。
+//!
+//! Final render export: per-frame grading → straighten/align offset/crop → resize → PNG/TIFF
+//! sequence → ffmpeg encode.
+//!
+//! Pixels share the convention of preview through `preview::render`: spatial terms and local
+//! masks both come from `GradeParams`, so this path no longer skips any of them; with default
+//! parameters the output matches the Python oracle pixel for pixel.
+//! The geometry stage (rotate + offset + framing) lives in `warp`, and preview calls the same
+//! function.
+//! Encoding runs through an external ffmpeg: H.264 8bit / H.265 10bit. Output color space is
+//! decided by `RenderOptions::color_space` — stills embed an ICC profile, video writes
+//! primaries, transfer function and matrix together into VUI.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -44,16 +56,31 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 ///
 /// JPEG/WebP 只给静帧用：视频中间帧要么保 8bit 无损、要么保 16bit，塞一层有损
 /// 容器等于把画质压两遍，所以 [`StillFormat::frames_ok`] 只认前两种。
+///
+/// Container for still output.
+///
+/// JPEG/WebP are meant for stills only: an intermediate frame keeps either 8bit lossless or
+/// 16bit, and pushing it through a lossy container compresses the image twice, so
+/// [`StillFormat::frames_ok`] accepts only the first two.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StillFormat {
     Png8,
     Tiff16,
     /// 8bit 有损；压缩率由 `RenderOptions::quality` 定（1~100）。
+    ///
+    /// 8bit lossy; the compression rate comes from `RenderOptions::quality` (1~100).
     Jpeg,
     /// 8bit 无损（`image` 的 WebP 编码器只有 VP8L，没有有损档，所以质量对它无效）。
+    ///
+    /// 8bit lossless (the `image` WebP encoder only offers VP8L, with no lossy mode, so
+    /// quality has no effect on it).
     WebP,
     /// 8bit 有损（AV1 静帧），走外部 ffmpeg 的 libaom-av1；质量映射到 crf。
     /// 色域用容器里的 nclx 标记，不嵌 ICC 块，也不带 EXIF。
+    ///
+    /// 8bit lossy (AV1 still), encoded by libaom-av1 in the external ffmpeg; quality maps to
+    /// crf.
+    /// Color space is marked by nclx in the container: no ICC block, no EXIF.
     Avif,
 }
 
@@ -61,6 +88,8 @@ impl StillFormat {
     pub const ALL: [Self; 5] = [Self::Png8, Self::Tiff16, Self::Jpeg, Self::WebP, Self::Avif];
 
     /// 面板/工程/命令行里的稳定拼写。
+    ///
+    /// Stable spelling used by the panel, the project file and the command line.
     pub fn key(self) -> &'static str {
         match self {
             Self::Png8 => "png8",
@@ -105,6 +134,8 @@ impl StillFormat {
     }
 
     /// 容器扩展名；中间帧文件名与清理都按它认。
+    ///
+    /// Container extension; intermediate frame names and cleanup are recognized by it.
     pub fn ext(self) -> &'static str {
         match self {
             Self::Png8 => "png",
@@ -116,33 +147,52 @@ impl StillFormat {
     }
 
     /// 能当 ffmpeg 的中间帧序列：只有无损档，且 TIFF 保住 16bit。
+    ///
+    /// Whether the format can serve as an ffmpeg intermediate sequence: only lossless ones,
+    /// with TIFF keeping 16bit.
     pub fn frames_ok(self) -> bool {
         matches!(self, Self::Png8 | Self::Tiff16)
     }
 
     /// 质量滑块有没有意义。
+    ///
+    /// Whether the quality slider has any effect.
     pub fn lossy(self) -> bool {
         matches!(self, Self::Jpeg | Self::Avif)
     }
 
     /// 容器能不能带 EXIF 块。TIFF 的 IFD 偏移指向整个文件，搬不进去；
     /// AVIF 的 mov muxer 不写 EXIF item。
+    ///
+    /// Whether the container can carry an EXIF block. The TIFF IFD offsets point into the
+    /// whole file, so the block cannot be moved in; the AVIF mov muxer writes no EXIF item.
     pub fn supports_exif(self) -> bool {
         !matches!(self, Self::Tiff16 | Self::Avif)
     }
 }
 
 /// 输出锐化的用途档：对标 LR 的「按输出用途锐化」，作用在缩放之后的那帧上。
+///
+/// Output sharpening purpose: mirrors "sharpen for output" in LR and acts on the frame after
+/// resize.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutputSharpen {
     /// 默认不锐化：导出像素与预览、与 Python oracle 保持一致。
+    ///
+    /// No sharpening by default: exported pixels match preview and the Python oracle.
     #[default]
     Off,
     /// 屏幕：像素 1:1 显示，只需要补缩放丢掉的一点边缘。
+    ///
+    /// Screen: pixels are shown 1:1, so only the edge detail lost in resize is restored.
     Screen,
     /// 光面打印：相纸本身对比高，轻微回补。
+    ///
+    /// Glossy print: paper contrast is already high, so the compensation is mild.
     Glossy,
     /// 哑面打印：染料在涂层里扩散，最需要补偿的就是这一档。
+    ///
+    /// Matte print: dye diffuses in the coating, and this mode needs the most compensation.
     Matte,
 }
 
@@ -197,6 +247,8 @@ impl OutputSharpen {
 }
 
 /// 输出锐化的强度档，对应 LR 的低 / 标准 / 高。
+///
+/// Output sharpening strength, matching low / standard / high in LR.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SharpenStrength {
     Low,
@@ -247,8 +299,13 @@ pub enum Codec {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutputMode {
     /// 只写 PNG/TIFF 序列。
+    ///
+    /// Writes the PNG/TIFF sequence only.
     Stills,
     /// 写序列后编码成视频，成功后按 `keep_frames` 决定是否清掉中间帧。
+    ///
+    /// Writes the sequence, then encodes a video; on success `keep_frames` decides whether the
+    /// intermediate frames are removed.
     Video,
 }
 
@@ -258,32 +315,65 @@ pub struct RenderOptions {
     pub mode: OutputMode,
     pub format: StillFormat,
     /// 有损容器的压缩质量（1~100）；无损档忽略。
+    ///
+    /// Compression quality for lossy containers (1~100); ignored by lossless formats.
     pub quality: u8,
     /// 把源 JPEG 的 EXIF 块原样搬进 PNG/JPEG/WebP。
+    ///
+    /// Copies the EXIF block of the source JPEG unchanged into PNG/JPEG/WebP.
     pub keep_exif: bool,
     /// 说明与版权信息：静帧写进 EXIF，成片写进容器标签。四项全空就一个字节不动。
+    ///
+    /// Description and copyright: written into EXIF for stills and into container tags for the
+    /// final render. When all four fields are empty, not a byte is touched.
     pub metadata: Metadata,
     /// 每张导出的静帧旁边写一个同名 `.xmp` 旁车（`dc:` 四项 + 这一张的 `crs:` 调色）。
     /// 只对静帧模式生效：视频的中间帧是过程产物，不给它们发旁车。
+    ///
+    /// Writes a same-named `.xmp` sidecar next to every exported still (the four `dc:` fields
+    /// plus this image's `crs:` grading).
+    /// Only applies in still mode: intermediate frames of a video are intermediate products
+    /// and get no sidecar.
     pub xmp_sidecar: bool,
     /// 输出锐化用途档；默认 `Off`，保持导出像素与预览一致。
+    ///
+    /// Output sharpening purpose; defaults to `Off`, keeping exported pixels equal to preview.
     pub sharpen_for: OutputSharpen,
     pub sharpen_strength: SharpenStrength,
     /// 中间帧输出目录。
+    ///
+    /// Output directory for intermediate frames.
     pub out_dir: PathBuf,
     /// 成片文件。
+    ///
+    /// Final render file.
     pub video_out: PathBuf,
     pub crop: Option<CropRect>,
     /// 拉直角度（度，正角=画面逆时针）；在裁切之前整幅绕中心转过去。
+    ///
+    /// Straighten angle in degrees (positive = counter-clockwise); the whole frame is rotated
+    /// about its center before cropping.
     pub rotate: f64,
     /// 运镜（Ken Burns）：取景框从 `from` 走到 `to`，逐帧把画面重画进输出画幅。
     /// 默认关着；两个框重合时也当作没开——那种情况一像素都不重采样，不掉清晰度。
     /// 框是归一化的，作用在「拉直 + 裁切之后」的那一幅上，所以跟 `crop`/`rotate`
     /// 是两段独立的几何，先后顺序不会互相吞选区。
+    ///
+    /// Camera move (Ken Burns): the viewfinder travels from `from` to `to` and the picture is
+    /// redrawn into the output aspect frame by frame.
+    /// Off by default; two coincident boxes also count as off — that case resamples nothing
+    /// and loses no sharpness.
+    /// The boxes are normalized and act on the image after straighten + crop, so they form a
+    /// geometry stage separate from `crop`/`rotate` and the order never swallows a selection.
     pub motion: Motion,
     /// 按长边缩放；`None` 保持裁切后的原始尺寸。
+    ///
+    /// Scales by the long side; `None` keeps the original size after crop.
     pub long_side: Option<u32>,
     /// 精确输出宽高：等比 cover 放大后居中裁切。与 `long_side` 同时给时以它为准。
+    ///
+    /// Exact output width and height: cover-scale up, then crop centered. Takes priority when
+    /// given together with `long_side`.
     pub target_size: Option<(u32, u32)>,
     pub fps: f64,
     pub codec: Codec,
@@ -291,6 +381,8 @@ pub struct RenderOptions {
     pub preset: String,
     pub audio: Option<PathBuf>,
     /// 配乐的音量 / 延迟 / 淡入淡出 / 循环等选项；没有配乐时忽略。
+    ///
+    /// Volume / delay / fade / loop options for the soundtrack; ignored when there is none.
     pub audio_opts: AudioOptions,
     pub keep_frames: bool,
     /// 断点续跑：输出目录里已经写完的那一帧（连带该带的旁车）原样留着，只补没写出来的。
@@ -298,10 +390,26 @@ pub struct RenderOptions {
     /// 判据是「文件在且非空」，所以静帧一律先写同名 `.part` 再改名占用（见 `write_still`），
     /// 被杀在中途的那张不会留下半个文件骗过续跑。
     /// 成片模式下它必然走「先落中间帧再编码」两段路：管道直连是一条不落盘的流，没得补。
+    ///
+    /// Resume: a frame already written in the output directory (together with its sidecar) is
+    /// kept as is, and only the missing ones are rendered.
+    /// Off by default, so every frame is re-rendered as before — turning it on reruns without
+    /// re-grading; do not enable it when parameters changed and a re-export is wanted.
+    /// The test is "file exists and is non-empty", so a still is always written to a
+    /// same-named `.part` file and then renamed (see `write_still`), and a frame killed midway
+    /// never leaves half a file that fools resume.
+    /// In final render mode it necessarily takes the two-stage path of writing intermediate
+    /// frames and then encoding: the direct pipe is a stream with nothing on disk to fill in.
     pub resume: bool,
     /// 输出色域：静态图嵌 ICC，视频写 VUI。默认 sRGB，跟改造前的行为一致。
+    ///
+    /// Output color space: stills embed ICC, video writes VUI. Defaults to sRGB, matching the
+    /// behavior before the rework.
     pub color_space: ColorSpace,
     /// 水印：盖在缩放与锐化之后、色域搬运之前；默认关，一像素都不动。
+    ///
+    /// Watermark: applied after resize and sharpening and before the color space move; off by
+    /// default, touching no pixel.
     pub watermark: Watermark,
 }
 
@@ -340,6 +448,10 @@ impl Default for RenderOptions {
 impl RenderOptions {
     /// 输出锐化的实际参数：用途档给基准（强度 amount∈[0,1]、半径、阈值），
     /// 强度档只乘强度。`Off` 返回 `None`，那条路上导出像素与预览逐位一致。
+    ///
+    /// Effective output sharpening parameters: the purpose sets the base (strength
+    /// amount∈[0,1], radius, threshold) and the strength mode only multiplies strength.
+    /// `Off` returns `None`, a path where exported pixels equal preview bit for bit.
     pub fn sharpen_profile(&self) -> Option<(f32, f32, f32)> {
         let (amount, radius, threshold) = self.sharpen_for.profile()?;
         Some((amount * self.sharpen_strength.scale(), radius, threshold))
@@ -349,6 +461,13 @@ impl RenderOptions {
     ///
     /// 用的是输出序号而不是源帧序号：变速把 480 源帧压成 240 输出帧时，运镜照样要
     /// 在 240 帧里走完，不然片尾的框永远停在半路。
+    ///
+    /// Viewfinder of the `i`-th **output** frame out of `total`; `None` when the camera move
+    /// is off or the two boxes coincide.
+    ///
+    /// The index is the output index, not the source frame index: when retime squeezes 480
+    /// source frames into 240 output frames, the move still has to finish within those 240
+    /// frames, otherwise the box stops halfway at the end of the clip.
     pub fn frame_view(&self, i: usize, total: usize) -> Option<Viewfinder> {
         self.motion
             .is_active()
@@ -367,6 +486,9 @@ impl RenderOptions {
     }
 
     /// 单帧导出用的默认设定：GUI「导出当前帧」只需要成片档那几个旋钮。
+    ///
+    /// Defaults for single-frame export: the GUI "Export Current Frame" needs only the final
+    /// render knobs.
     pub fn still(format: StillFormat) -> Self {
         Self {
             mode: OutputMode::Stills,
@@ -378,11 +500,18 @@ impl RenderOptions {
 
 /// 落一张静帧时除了像素之外还要捎上的东西。`icc` / `exif` 由调用方备好：
 /// 批量导出整路任务共用一份 ICC（逐帧重算是白干的活），单帧导出就地算。
+///
+/// Extra data carried along with the pixels when a still is persisted. `icc` / `exif` are
+/// prepared by the caller: a batch export shares one ICC across the whole job (recomputing it
+/// per frame is wasted work), while single-frame export computes it in place.
 #[derive(Clone, Copy, Default)]
 pub struct StillMeta<'a> {
     pub icc: Option<&'a [u8]>,
     pub exif: Option<&'a [u8]>,
     /// 源是 16bit 且容器是 PNG 时保住位深——这是单帧那条路有意和批量不同的地方。
+    ///
+    /// Keeps the bit depth when the source is 16bit and the container is PNG — this is where
+    /// the single-frame path intentionally differs from batch.
     pub deep: bool,
 }
 
@@ -405,6 +534,14 @@ fn still_exif(src: &Path, options: &RenderOptions) -> Option<Vec<u8>> {
 ///
 /// 旁车是同目录同名的**另一个文件**，不属于容器编码那条尾巴，所以批量与单帧两条路
 /// 各自在写完静帧之后调它一次；写什么由 `options.metadata` 与这一张的调色参数决定。
+///
+/// XMP sidecar next to a still: when `xmp_sidecar` is off, or this run produces intermediate
+/// frames of a video, not a byte is written.
+///
+/// The sidecar is **another file** with the same name in the same directory and is not part
+/// of the container encoding tail, so the batch and single-frame paths each call it once
+/// after writing the still; its content comes from `options.metadata` and this image's
+/// grading parameters.
 pub fn write_sidecar(
     dst: &Path,
     params: &GradeParams,
@@ -423,6 +560,13 @@ pub fn write_sidecar(
 /// GUI「导出当前帧」的落盘口：像素已经是最终尺寸，这里补输出锐化、盖水印，再按输出
 /// 色域搬像素并嵌 ICC、从源文件整块搬 EXIF，最后按所选容器编码。批量导出走
 /// `render_frame_into` + `write_still`，两条路共用同一套尾部动作，不许各调一刀。
+///
+/// Persist entry for the GUI "Export Current Frame": pixels are already at final size, so
+/// output sharpening and the watermark are added, pixels are moved into the output color
+/// space with an embedded ICC, EXIF is copied as a whole block from the source, and the
+/// chosen container encodes the result.
+/// Batch export goes through `render_frame_into` + `write_still`; both paths share the same
+/// tail, which must not be adapted separately.
 pub fn write_single_still(
     src: &Path,
     dst: &Path,
@@ -491,6 +635,9 @@ pub enum ExportError {
 }
 
 /// 优先 `AEVUM_FFMPEG`（旧名 `LUMEN_FFMPEG` 回退），其次 PATH 里的 ffmpeg。
+///
+/// Prefers `AEVUM_FFMPEG` (falling back to the old name `LUMEN_FFMPEG`), then ffmpeg on
+/// `PATH`.
 pub fn find_ffmpeg() -> Option<PathBuf> {
     if let Some(p) = crate::env::var_os("FFMPEG")
         && !p.is_empty()
@@ -523,11 +670,16 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
 }
 
 /// `dir/frame_%06d.png`（TIFF 用 `.tif`，JPEG 用 `.jpg`）。
+///
+/// `dir/frame_%06d.png` (`.tif` for TIFF, `.jpg` for JPEG).
 pub fn pattern_for(dir: &Path, format: StillFormat) -> PathBuf {
     dir.join(format!("frame_%06d.{}", format.ext()))
 }
 
 /// 逐帧调色、对齐、裁切并写出。`params`/`gains`/`offsets` 与 `paths` 等长。
+///
+/// Grades, aligns, crops and writes every frame. `params`/`gains`/`offsets` are as long as
+/// `paths`.
 pub fn export_stills(
     paths: &[PathBuf],
     params: &[GradeParams],
@@ -547,6 +699,15 @@ pub fn export_stills(
 /// 帧数由计划说话（可能比 `paths` 多或少），进度与文件名按**输出帧**走；
 /// `params`/`gains`/`offsets` 与 `paths` 一样，始终按**源帧**索引。计划为 `None`
 /// 时逐帧走原来那条 1:1 快路，一个多余像素都不碰。
+///
+/// Still export with retime: `plan` decides the output frame count and the samples of each
+/// frame.
+///
+/// The plan dictates the frame count, which may be larger or smaller than `paths`, and
+/// progress and file names follow **output frames**; `params`/`gains`/`offsets`, like
+/// `paths`, are always indexed by **source frame**.
+/// With `plan` set to `None`, the original 1:1 fast path runs frame by frame and no extra
+/// pixel is touched.
 #[allow(clippy::too_many_arguments)]
 pub fn export_stills_planned(
     paths: &[PathBuf],
@@ -702,6 +863,10 @@ fn samples_at(plan: Option<&Plan>, i: usize) -> Samples {
 
 /// 由重映射设定算导出计划。恒等设定（关掉、或常速零快门）返回 `None`，
 /// 让导出走原来那条一个像素都不重采样的 1:1 快路。
+///
+/// Builds the export plan from the retime settings. An identity setting (off, or normal
+/// speed with a zero shutter) returns `None`, letting export take the original 1:1 fast path
+/// that resamples nothing.
 pub fn plan_for(
     retime: &retime::Retime,
     n_src: usize,
@@ -1088,6 +1253,9 @@ fn to_rgb24(rgb: &mut [f32], color_space: ColorSpace) -> Vec<u8> {
 }
 
 /// 用序列帧编码视频；`-progress pipe:1` 的帧计数转成进度。
+///
+/// Encodes a video from the frame sequence; the frame counter of `-progress pipe:1` becomes
+/// the progress.
 pub fn encode_video(
     ffmpeg: &Path,
     options: &RenderOptions,
@@ -1228,6 +1396,16 @@ type FrameMsg = (usize, Result<(Vec<u8>, u32, u32), ExportError>);
 /// 等，管道那头永远是 0、1、2……。缓冲上限就是工作线程数，编码器慢时反压到
 /// 渲染，不会把几 GB 的帧堆在内存里。首帧先单独渲染，拿到确切的输出尺寸再起
 /// 编码器。
+///
+/// Grades frame by frame and writes straight into ffmpeg's stdin, skipping the PNG sequence.
+///
+/// Rendering runs in parallel with a pixel-count limit while writing follows frame order
+/// strictly: completion order varies, so an early frame waits in a reorder buffer and the
+/// pipe always sees 0, 1, 2…
+/// The buffer bound is the worker count, so a slow encoder back-pressures rendering and
+/// never piles gigabytes of frames in memory.
+/// The first frame is rendered alone to obtain the exact output size before the encoder
+/// starts.
 #[allow(clippy::too_many_arguments)]
 pub fn export_video_direct(
     ffmpeg: &Path,
@@ -1245,6 +1423,9 @@ pub fn export_video_direct(
 }
 
 /// 带时间重映射的直连导出：输出帧数与每帧来源由 `plan` 决定。
+///
+/// Direct export with retime: `plan` decides the output frame count and the source of each
+/// frame.
 #[allow(clippy::too_many_arguments)]
 pub fn export_video_direct_planned(
     ffmpeg: &Path,
@@ -1548,6 +1729,9 @@ pub fn export_video_direct_planned(
 }
 
 /// 成片导出入口：不留帧的 8bit 视频直连 ffmpeg，其余仍走「先写序列再编码」。
+///
+/// Final render entry: an 8bit video that keeps no frames goes straight to ffmpeg, anything
+/// else still writes the sequence first and encodes afterwards.
 #[allow(clippy::too_many_arguments)]
 pub fn export_video(
     ffmpeg: &Path,
@@ -1567,6 +1751,10 @@ pub fn export_video(
 /// 带时间重映射的成片导出。重映射只在**写字节之前**生效：先按 `plan` 渲出目标
 /// 帧序，再交给原来那套编码，所以 `fps`、配乐的 `shortest`/循环算的都是变速后的
 /// 真实时长。
+///
+/// Final render export with retime. Retime applies **before bytes are written**: the target
+/// frame order is rendered from `plan` and then handed to the existing encoder, so `fps` and
+/// the soundtrack `shortest`/loop rules all count the real duration after the speed change.
 #[allow(clippy::too_many_arguments)]
 pub fn export_video_planned(
     ffmpeg: &Path,
@@ -1600,6 +1788,12 @@ pub fn export_video_planned(
 ///
 /// 只跑 `ffmpeg -i`（没有输出，退出码必非零），从 stderr 里读元数据，
 /// 这样不依赖 ffprobe，与 Python `ff.probe_audio` 同口径。
+///
+/// Probes the codec and duration of the soundtrack.
+///
+/// Only `ffmpeg -i` runs (there is no output, so the exit code is always non-zero) and the
+/// metadata is read from stderr, which avoids a dependency on ffprobe and matches the
+/// convention of Python `ff.probe_audio`.
 pub fn probe_audio(ffmpeg: &Path, path: &Path) -> Result<AudioProbe, ExportError> {
     if !ffmpeg.is_file() {
         return Err(ExportError::NoFfmpeg);
@@ -1633,6 +1827,11 @@ pub fn probe_audio(ffmpeg: &Path, path: &Path) -> Result<AudioProbe, ExportError
 /// 构建 ffmpeg 参数（不含可执行文件本身），便于测试逐步核对。
 ///
 /// `audio` 是配乐的探针结果；没有配乐时传 `None`。
+///
+/// Builds the ffmpeg arguments without the executable itself, so tests can check them step
+/// by step.
+///
+/// `audio` is the probe result of the soundtrack; pass `None` when there is none.
 pub fn video_command(
     _ffmpeg: &Path,
     options: &RenderOptions,
@@ -1653,6 +1852,9 @@ pub fn video_command(
 }
 
 /// 从管道读裸 rgb24：省掉中间 PNG 的编码和解码，帧率与尺寸都写在输入选项里。
+///
+/// Reads raw rgb24 from a pipe: this skips intermediate PNG encode and decode, with frame
+/// rate and size given in the input options.
 pub fn pipe_command(
     options: &RenderOptions,
     frames: usize,
@@ -1796,6 +1998,11 @@ fn video_args(
 /// 精确目标尺寸的等比覆盖尺寸：先放大到两边都不小于目标，再居中裁掉多出的边。
 ///
 /// 对应 Python oracle 的 `scale=W:H:force_original_aspect_ratio=increase,crop=W:H`。
+///
+/// Cover size for an exact target: scale up until both sides reach the target, then crop the
+/// surplus centrally.
+///
+/// Mirrors `scale=W:H:force_original_aspect_ratio=increase,crop=W:H` in the Python oracle.
 pub fn cover_size(w: u32, h: u32, tw: u32, th: u32) -> (u32, u32) {
     let scale = (tw as f64 / w.max(1) as f64).max(th as f64 / h.max(1) as f64);
     (
@@ -1805,6 +2012,9 @@ pub fn cover_size(w: u32, h: u32, tw: u32, th: u32) -> (u32, u32) {
 }
 
 /// 给定输入尺寸与长边限制，返回偶数宽高（编码器要求）。
+///
+/// Returns even width and height for the given input size and long-side limit, as required
+/// by the encoder.
 pub fn fit_size(w: u32, h: u32, long_side: Option<u32>) -> (u32, u32) {
     let (mut ow, mut oh) = (w.max(2), h.max(2));
     if let Some(limit) = long_side
@@ -1836,6 +2046,10 @@ struct Rect {
 
 /// 第 `i` 张输出静帧落在哪儿。续跑判据、预扫、清理中间帧都从这里取名字，
 /// 不许在别处再拼一遍 `frame_%06d`。
+///
+/// Location of the `i`-th output still. The resume test, the pre-scan and the intermediate
+/// frame cleanup all take their names from here, and `frame_%06d` must not be assembled
+/// anywhere else.
 pub fn frame_path(dir: &Path, format: StillFormat, index: usize) -> PathBuf {
     let name = format!("frame_{index:06}.{}", format.ext());
     dir.join(name)
@@ -1846,6 +2060,14 @@ pub fn frame_path(dir: &Path, format: StillFormat, index: usize) -> PathBuf {
 /// 「非空」不是多余的一眼：`write_still` 写的是同名 `.part` 再改名占用，正常路径上
 /// 不会有零字节文件，但用户手工截出来的空文件、或者别的程序占位留下的空文件，
 /// 在这儿一律当成没导过——重渲一张比把坏文件当成品留着便宜。
+///
+/// Whether this frame is already exported: the still is on disk and non-empty, and the XMP
+/// sidecar it should carry is on disk and non-empty too.
+///
+/// The "non-empty" check is not redundant: `write_still` writes a same-named `.part` file and
+/// then renames it, so the normal path never yields a zero-byte file, but an empty file a user
+/// truncated by hand, or one left by another program as a placeholder, counts as not exported
+/// here — re-rendering one frame is cheaper than keeping a broken file as a result.
 pub fn frame_is_done(dst: &Path, options: &RenderOptions) -> bool {
     let filled = |p: &Path| p.metadata().is_ok_and(|m| m.is_file() && m.len() > 0);
     filled(dst)
@@ -1856,6 +2078,10 @@ pub fn frame_is_done(dst: &Path, options: &RenderOptions) -> bool {
 
 /// 断点续跑之前先数一遍已经导完多少帧，给状态栏写「跳过 N · 补写 M」。
 /// 只按文件名挨个 stat，一帧一次 IO，4K 序列几千帧也就几毫秒。
+///
+/// Counts finished frames before resuming, so the status bar can show "skipped N · filled M".
+/// Only file names are stat'ed, one IO per frame, which takes a few milliseconds for a
+/// sequence of thousands of 4K frames.
 pub fn existing_frames(options: &RenderOptions, total: usize) -> usize {
     if !options.resume {
         return 0;
@@ -1869,6 +2095,13 @@ pub fn existing_frames(options: &RenderOptions, total: usize) -> usize {
 /// 保持原精度，和 Python `load_full` 一样不从 8bit 起步。
 ///
 /// HDR 合并等模块共用的读图入口：与导出同一条解码路，方向与 RAW 语义一致。
+///
+/// Decodes at full resolution into sRGB f32 [0,1] and writes into the caller's buffer, which
+/// is reused across frames. 16bit / 32f sources keep their precision and never start from
+/// 8bit, as in Python `load_full`.
+///
+/// Shared image entry for modules such as HDR merge: it uses the same decode path as export,
+/// so orientation and RAW semantics agree.
 pub fn load_rgb_f32(path: &Path) -> Result<(Vec<f32>, u32, u32), ExportError> {
     let mut rgb = Vec::new();
     let (w, h) = load_rgb_f32_into(path, &mut rgb)?;

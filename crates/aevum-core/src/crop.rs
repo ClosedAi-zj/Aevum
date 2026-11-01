@@ -1,13 +1,23 @@
 //! 裁剪选区的几何：把手命中、拖框、挪框、缩放、微调。
 //!
+//! Geometry of the crop selection: handle hit-testing, dragging, moving, resizing, and nudging.
+//!
 //! 口径抄 `acceptance/reference/crop.py` 的选区一节——纯函数、不含界面。坐标一律是原图像素，
 //! 界面负责把屏幕位置换算过来。左上角和宽高全取偶：4:2:0 色度抽样要求裁切边界
 //! 成对，导出视频时奇数会被 ffmpeg 静默挪走一像素。
+//!
+//! The convention follows the selection section of `acceptance/reference/crop.py` — pure
+//! functions, no UI. Coordinates are always original-image pixels; the UI is responsible for
+//! converting screen positions. Top-left corners and widths/heights are all rounded to even:
+//! 4:2:0 chroma subsampling requires crop boundaries to be even-paired, and odd values get
+//! silently shifted by one pixel by ffmpeg on video export.
 
 use crate::align::CropRect;
 use serde::{Deserialize, Serialize};
 
 /// 八向把手：四角 + 四边中点。
+///
+/// Eight-way handles: four corners plus the midpoints of the four sides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Handle {
     Nw,
@@ -43,6 +53,8 @@ impl Handle {
 }
 
 /// 光标落在选区上的哪一类位置。
+///
+/// Which kind of position the cursor lands on over the selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Corner(Handle),
@@ -52,6 +64,8 @@ pub enum Hit {
 }
 
 /// 选区四边（屏幕坐标的 x0,y0,x1,y1），`hit_test` 的输入。
+///
+/// The four edges of a selection (`x0,y0,x1,y1` in screen coordinates), input to `hit_test`.
 #[derive(Clone, Copy, Debug)]
 pub struct Edges {
     pub x0: f32,
@@ -67,6 +81,8 @@ impl Edges {
 }
 
 /// PS 风格的命中检测：角 > 边 > 内部 > 外部。
+///
+/// Photoshop-style hit testing: corners > edges > inside > outside.
 pub fn hit_test(rect: Edges, px: f32, py: f32, corner: f32, edge: f32) -> Hit {
     for (handle, cx, cy) in [
         (Handle::Nw, rect.x0, rect.y0),
@@ -97,6 +113,8 @@ pub fn hit_test(rect: Edges, px: f32, py: f32, corner: f32, edge: f32) -> Hit {
 }
 
 /// 整理选区：排序、夹在画面内、全部取偶。
+///
+/// Normalizes a selection: sorts, clamps to the frame, and rounds everything to even.
 pub fn norm_rect(x0: f64, y0: f64, x1: f64, y1: f64, frame_w: u32, frame_h: u32) -> CropRect {
     let fw = frame_w as i64;
     let fh = frame_h as i64;
@@ -133,6 +151,9 @@ pub fn norm_rect(x0: f64, y0: f64, x1: f64, y1: f64, frame_w: u32, frame_h: u32)
 }
 
 /// 按比例在画面里放一个居中的最大选区——切比例后先给用户看到的东西。
+///
+/// Places the largest centered selection for the aspect inside the frame —
+/// what the user sees first after switching aspect.
 pub fn center_rect(frame_w: u32, frame_h: u32, aspect: Option<(u32, u32)>) -> CropRect {
     let (fw, fh) = (frame_w as f64, frame_h as f64);
     let (w, h) = match aspect {
@@ -155,10 +176,20 @@ pub fn center_rect(frame_w: u32, frame_h: u32, aspect: Option<(u32, u32)>) -> Cr
 /// 拉直之后的安全取景框：整幅绕中心转 `angle_deg`（正角=逆时针）后，
 /// 四个角仍然落在原始像素里的最大居中选区——框外就是转出来的空白角。
 ///
+/// The safe viewfinder after straightening: after the whole frame rotates about its center by
+/// `angle_deg` (positive = counterclockwise), the largest centered selection whose corners
+/// still land on original pixels — outside the box lies the blank corner rotated in.
+///
 /// 判据不用搜索：选区反旋回去要装进画面，等价于两条线性约束
 /// `w·|cosθ| + h·|sinθ| ≤ 帧宽`、`w·|sinθ| + h·|cosθ| ≤ 帧高`。
 /// 代 `w = num·k, h = den·k` 各解一个 `k` 上限，取小的那个；框的任何子选区角上
 /// 只会更靠里，所以用户框只要落在这个框里就不会带到空白。
+///
+/// No search is needed for the criterion: a selection rotated back must fit the frame, which
+/// equals two linear constraints `w·|cosθ| + h·|sinθ| ≤ frame width` and
+/// `w·|sinθ| + h·|cosθ| ≤ frame height`. Substituting `w = num·k, h = den·k` solves a `k` cap
+/// for each; take the smaller one. Corners of any sub-selection only sit further inside, so a
+/// user box within this box never picks up blank space.
 pub fn safe_rect(
     frame_w: u32,
     frame_h: u32,
@@ -195,6 +226,9 @@ pub fn safe_rect(
 }
 
 /// 已有选区换比例：绕中心缩放，不把它甩到别处去。
+///
+/// Refits an existing selection to a new aspect: scales around its center without
+/// throwing it elsewhere.
 pub fn refit_rect(
     sel: CropRect,
     frame_w: u32,
@@ -224,6 +258,9 @@ pub fn refit_rect(
 }
 
 /// 空白处拖出新选区。定比例时以按下点为角，取两轴里更大的那个推进。
+///
+/// Drags a new selection out of empty space. With a locked aspect the press point is a corner,
+/// and the larger of the two axes drives the growth.
 pub fn draw_rect(
     anchor: (f64, f64),
     px: f64,
@@ -263,6 +300,8 @@ pub fn draw_rect(
 }
 
 /// 框内拖动：只平移，左上角取偶。
+///
+/// Dragging inside the box: translates only; the top-left corner is rounded to even.
 pub fn move_rect(sel: CropRect, x: f64, y: f64, frame_w: u32, frame_h: u32) -> CropRect {
     let mut x = clampi(x.round() as i64, 0, frame_w as i64 - sel.w as i64);
     let mut y = clampi(y.round() as i64, 0, frame_h as i64 - sel.h as i64);
@@ -277,6 +316,9 @@ pub fn move_rect(sel: CropRect, x: f64, y: f64, frame_w: u32, frame_h: u32) -> C
 }
 
 /// 拖某个把手改大小。定比例时以对角为锚点，短边跟着长边走。
+///
+/// Resizes by dragging a handle. With a locked aspect the opposite corner is the anchor and the
+/// shorter side follows the longer one.
 pub fn resize_rect(
     handle: Handle,
     orig: CropRect,
@@ -381,6 +423,8 @@ pub fn resize_rect(
 }
 
 /// 方向键微调：一格 2 像素（保证仍是偶数），按住 Shift 加大格。
+///
+/// Arrow-key nudging: one step is 2 pixels (stays even); holding Shift uses a larger step.
 pub fn nudge_rect(
     sel: CropRect,
     dx: i64,
@@ -408,6 +452,9 @@ pub fn nudge_rect(
 }
 
 /// 两个选区的交集，空了就返回 `None`。用户框要先落进对齐裁切里才谈得上画幅。
+///
+/// The intersection of two selections, or `None` when empty. A user box must land inside the
+/// alignment crop before aspect can even be discussed.
 pub fn intersect(a: CropRect, b: CropRect) -> Option<CropRect> {
     let x = a.x.max(b.x);
     let y = a.y.max(b.y);
@@ -430,10 +477,15 @@ pub fn intersect(a: CropRect, b: CropRect) -> Option<CropRect> {
 // 口径抄 `acceptance/reference/crop.py` 的运镜一节。
 
 /// 缓动：改的就是「时间 → 进度」那条坡，四档与 Python 的 `KB_EASES` 一一对应。
+///
+/// Easing: changes the time-to-progress slope; the four presets map one-to-one to
+/// Python `KB_EASES`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Ease {
     /// 两头慢中间快（默认）：`3t² − 2t³`。
+    ///
+    /// Slow at both ends, fast in the middle (default): `3t² − 2t³`.
     #[default]
     Smooth,
     Linear,
@@ -445,6 +497,8 @@ impl Ease {
     pub const ALL: [Ease; 4] = [Ease::Smooth, Ease::Linear, Ease::In, Ease::Out];
 
     /// 工程文件与命令面用的键。
+    ///
+    /// The key used in project files and on the command surface.
     pub fn key(self) -> &'static str {
         match self {
             Ease::Smooth => "smooth",
@@ -468,6 +522,8 @@ impl Ease {
     }
 
     /// 0..1 的时间 → 0..1 的进度。
+    ///
+    /// Time in 0..1 mapped to progress in 0..1.
     pub fn curve(self, t: f64) -> f64 {
         let t = t.clamp(0.0, 1.0);
         match self {
@@ -481,7 +537,13 @@ impl Ease {
 
 /// 一个取景框：归一化到「参与运镜的那一幅」的左上角与宽高，0..1。
 ///
+/// A viewfinder: top-left corner and size normalized to 0..1 over the frame that takes part
+/// in the motion.
+///
 /// 用归一化而不是像素：预览是缩过的、导出是全尺寸，同一个框要两边都对得上。
+///
+/// Normalized rather than pixel-based: the preview is scaled down while export is full size,
+/// and the same box must line up on both sides.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Viewfinder {
     pub x: f64,
@@ -491,6 +553,8 @@ pub struct Viewfinder {
 }
 
 /// 整幅画面：运镜不开、或者只推不摇时的起点。
+///
+/// The full frame: the start point when motion is off, or for push-only without panning.
 pub const FULL: Viewfinder = Viewfinder {
     x: 0.0,
     y: 0.0,
@@ -501,6 +565,9 @@ pub const FULL: Viewfinder = Viewfinder {
 impl Viewfinder {
     /// 以 `(cx, cy)` 为中心、铺一个占画面 `span`（0..1 的边长比例）的框。
     /// 换比例重铺、给一个默认终点都用它。
+    ///
+    /// Lays out a box centered on `(cx, cy)` spanning `span` of the frame (edge lengths as
+    /// 0..1 proportions). Used for refitting on an aspect change and for default end boxes.
     pub fn centered(cx: f64, cy: f64, span_w: f64, span_h: f64) -> Self {
         Self {
             x: cx - span_w / 2.0,
@@ -511,6 +578,9 @@ impl Viewfinder {
     }
 
     /// 夹进画内、宽高兜到最小一档。NaN 或负宽高一律退回整幅——宁可不动，也不炸。
+    ///
+    /// Clamps into the frame and floors width/height at the minimum. NaN or negative sizes
+    /// fall back to the full frame — better frozen than blowing up.
     pub fn normalized(self) -> Self {
         let w = if self.w.is_finite() { self.w } else { 0.0 };
         let h = if self.h.is_finite() { self.h } else { 0.0 };
@@ -536,9 +606,19 @@ impl Viewfinder {
     /// 换算成 `frame_w × frame_h` 那一幅上的浮点像素窗口 `(x, y, w, h)`，并收成
     /// `out_w × out_h` 那个画幅的比例：只往里收、中心不动。
     ///
+    /// Converts to a floating-point pixel window `(x, y, w, h)` over the `frame_w × frame_h`
+    /// frame, then trims it to the aspect of the `out_w × out_h` output: trimming inward only,
+    /// the center stays put.
+    ///
     /// 比例必须在**像素**口径上对：归一化的框横竖各按自己的边长走，源幅不是正方形时
     /// `w/h` 并不等于框的像素比例，拿它去比对输出画幅就会把画面拉扁。
     /// 收成输出比例而不是加黑边：框是用户选好的构图，宁可少留一圈，也不拉伸、也不垫底。
+    ///
+    /// The aspect must match in **pixel** terms: a normalized box scales each axis by its own
+    /// edge length, so when the source frame is not square `w/h` is not the box's pixel aspect,
+    /// and comparing it against the output aspect would squash the picture.
+    /// Trim to the output aspect instead of adding black bars: the box is the composition the
+    /// user picked; better to lose a rim than to stretch or letterbox.
     pub fn view_window(self, frame_w: u32, frame_h: u32, out_w: u32, out_h: u32) -> [f64; 4] {
         let s = self.normalized();
         let (fw, fh) = (frame_w as f64, frame_h as f64);
@@ -563,12 +643,18 @@ impl Viewfinder {
     }
 
     /// 中心点，画箭头与读数用。
+    ///
+    /// The center point, used for drawing the arrow and the readout.
     pub fn center(self) -> (f64, f64) {
         (self.x + self.w / 2.0, self.y + self.h / 2.0)
     }
 
     /// 两个框之间取第 `t` 个（`t` 已经是缓动后的进度）。
     /// 两端同比例时结果也同比例：分子分母走的是同一条坡。
+    ///
+    /// The box at fraction `t` between two boxes (`t` is already the eased progress).
+    /// When both ends share the same aspect the result keeps that aspect: numerator and
+    /// denominator ride the same slope.
     pub fn lerp(self, other: Self, t: f64) -> Self {
         let mix = |a: f64, b: f64| (1.0 - t) * a + t * b;
         Self {
@@ -580,6 +666,8 @@ impl Viewfinder {
     }
 
     /// 换算成 `w × h` 那一幅上的浮点像素窗口 `(x, y, w, h)`。
+    ///
+    /// Converts to a floating-point pixel window `(x, y, w, h)` over the `w × h` frame.
     pub fn pixels(self, w: u32, h: u32) -> [f64; 4] {
         let s = self.normalized();
         [
@@ -593,8 +681,17 @@ impl Viewfinder {
     /// 这个框被放大几倍才填满输出画幅：**整幅按输出比例裁进画面**（`view_window`）是 1×，
     /// 框收小到一半就是 2×。>1 说明已经在拿少数像素撑画面——界面按它提醒「再推就糊」。
     ///
+    /// How many times the box must be blown up to fill the output aspect: the **full frame
+    /// cropped into the picture at output aspect** (`view_window`) is 1×, and a box shrunk to
+    /// half is 2×. A value >1 means a few pixels are already stretching the picture — the UI
+    /// uses it to warn that "one more push goes blurry".
+    ///
     /// 以整幅为 1× 而不是「输出像素 ÷ 框像素」：720p 预览导出 4K 本来就放大 3×，
     /// 那一步与运镜无关，算到推近头上会让人一开面板就看到一条假警告。
+    ///
+    /// The full frame counts as 1× rather than "output pixels ÷ box pixels": exporting 4K from
+    /// a 720p preview is already a 3× upscale unrelated to motion; charging it to the push
+    /// would show a false warning the moment the panel opens.
     pub fn zoom(self, out_w: u32, out_h: u32, frame_w: u32, frame_h: u32) -> f64 {
         if frame_w == 0 || frame_h == 0 {
             return 1.0;
@@ -609,9 +706,14 @@ impl Viewfinder {
 }
 
 /// 宽高下限：再小就只剩插值噪声，而且读数会抖得没法看。
+///
+/// The width/height floor: any smaller leaves only interpolation noise, and the readout
+/// shakes unreadably.
 const MIN_SPAN: f64 = 0.02;
 
 /// 运镜设定：取景框从 `from` 走到 `to`，走的是 `ease` 那条坡。
+///
+/// A motion setup: the viewfinder travels from `from` to `to` along the `ease` slope.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Motion {
@@ -636,11 +738,18 @@ impl Default for Motion {
 impl Motion {
     /// 真的会在动：开关开着，而且两个框没重合。重合时导出走原来的快路，
     /// 一像素都不重采样——开着运镜但还没调框，不该白白掉一档清晰度。
+    ///
+    /// Whether the motion actually moves: the switch is on and the two boxes do not coincide.
+    /// When they coincide, export takes the original fast path without resampling a single
+    /// pixel — motion enabled but not yet tuned should not cost a step of sharpness for
+    /// nothing.
     pub fn is_active(self) -> bool {
         self.enabled && (self.from.normalized() != self.to.normalized())
     }
 
     /// 第 `t` 个取景框（`t` 是 0..1 的时间进度）。
+    ///
+    /// The viewfinder at time fraction `t` (0..1).
     pub fn view_at(self, t: f64) -> Viewfinder {
         self.from
             .normalized()
@@ -649,6 +758,9 @@ impl Motion {
 
     /// 第 `i` 帧（共 `n` 帧）的取景框。只有一帧就停在起点，
     /// 别让单帧片子跑出一条算错的坡。
+    ///
+    /// The viewfinder for frame `i` of `n` frames. With a single frame it stays at the start
+    /// instead of running a wrongly computed slope.
     pub fn view_of(self, i: usize, n: usize) -> Viewfinder {
         if n <= 1 {
             return self.from.normalized();
@@ -658,6 +770,10 @@ impl Motion {
 
     /// 换比例时两个框一起重铺：按起点框的变化把终点框等比例带过去。
     /// 各框各自重铺会把它们夹成同一个最大框，运镜幅度就这样悄悄归零了。
+    ///
+    /// Refits both boxes together on an aspect change: the end box is carried over
+    /// proportionally by the start box's change. Refitting each box on its own would clamp
+    /// them into the same largest box, silently zeroing the motion amplitude.
     pub fn refit(self, span_w: f64, span_h: f64) -> Self {
         let from = self.from.normalized();
         let (fcx, fcy) = from.center();
@@ -683,8 +799,15 @@ impl Motion {
 
 /// 命令与 MCP 共用的补丁写法：只改传来的那几键，其余保持当前值。
 ///
+/// The patch spelling shared by the command surface and MCP: only the given keys change, the
+/// rest keep their current values.
+///
 /// 放核心而不是各端各写一份：界面面板、控制通道、MCP 三条路必须报同一句错、
 /// 认同一种框的写法，否则同一份参数在三边得到三个结果。
+///
+/// Lives in the core instead of one copy per front end: the UI panel, the control channel,
+/// and MCP must report the same error and agree on one box spelling, or the same parameters
+/// yield three results on three sides.
 impl Motion {
     pub fn patched(&self, raw: &serde_json::Value) -> Result<Self, String> {
         if raw.get("reset").is_some_and(|v| v.as_bool() == Some(true)) {
@@ -744,6 +867,10 @@ impl Motion {
 
 /// 取景框参数：`[x, y, 宽, 高]` 或 `{x, y, w, h}`，相对那一幅归一化。
 /// 只认数字；越界与退化交给 `Viewfinder::normalized()`，不在这里判。
+///
+/// A viewfinder argument: `[x, y, w, h]` or `{x, y, w, h}`, normalized to the frame.
+/// Only numbers are accepted; out-of-range and degenerate values are left to
+/// `Viewfinder::normalized()`, not checked here.
 pub fn viewfinder_arg(raw: &serde_json::Value, field: &str) -> Result<Viewfinder, String> {
     let num = |v: &serde_json::Value| v.as_f64().filter(|n| n.is_finite());
     let (x, y, w, h) = match raw {
@@ -775,6 +902,9 @@ pub fn viewfinder_arg(raw: &serde_json::Value, field: &str) -> Result<Viewfinder
 }
 
 /// 成对参数：`[宽, 高]` 或 `{w, h}` / `{width, height}`；换画幅跨度（refit）用它。
+///
+/// A pair argument: `[w, h]` or `{w, h}` / `{width, height}`; used for the refit span on an
+/// aspect change.
 pub fn pair_arg(raw: &serde_json::Value, field: &str) -> Result<(f64, f64), String> {
     let num = |v: &serde_json::Value| v.as_f64().filter(|n| n.is_finite());
     match raw {
