@@ -2562,14 +2562,14 @@ impl AppState {
             history::clear_note();
             return;
         }
-        let (key, label) = match history::take_note() {
-            Some((key, label)) => (key, label),
+        match history::take_note() {
+            Some((key, label)) => self.history.push(snap, &key, label),
+            // 没登记控件的路径：整步标成「字段比对」，合并按类认（见 Step::cat）。
             None => {
                 let hint = self.history.diff_hint(&snap);
-                (hint.to_owned(), hint.to_owned())
+                self.history.push_diff(snap, hint);
             }
-        };
-        self.history.push(snap, &key, label);
+        }
     }
 
     /// 历史行里的参数名换成中文短名。面板上的长名在 shell.rs 的滑杆里，这里只要求
@@ -7458,6 +7458,12 @@ impl AppState {
             && (u.x, u.y, u.w, u.h) == (view.x, view.y, view.w, view.h)
         {
             self.user_crop = None;
+            // 退回默认也是一次取景改动：登记进同一条拖动键，收尾并进这一步，
+            // 而不是让字段比对路径在下一帧另起一行「裁剪框」（成对刷屏的另一半）。
+            history::note(
+                "crop-drag",
+                crate::i18n::tr_fmt("裁剪 {} × {}", &[&view.w, &view.h]),
+            );
         }
     }
 
@@ -10465,6 +10471,42 @@ mod frame_tests {
         // 重铺后的左上角照样取偶：5 落回 4，与 Python 的 norm_rect 同一口径。
         assert_eq!(state.user_crop.map(rect), Some((10, 4, 40, 40)));
         assert_eq!(rect(state.effective_crop().unwrap()), (10, 4, 40, 40));
+    }
+
+    /// 一次拖动 = 一步历史：拖框的中间态走登记键（`crop-drag`），松手把铺满的框
+    /// 退回默认走字段比对——两条路并成一步，不许「裁剪框 / 裁剪 4000 × 6000」
+    /// 成对刷屏（v1.0.1 用户实测的历史面板就是这副样子）。
+    #[test]
+    fn crop_drag_and_release_end_up_as_one_history_step() {
+        let mut state = AppState::new();
+        state.resolution = Some((60, 48));
+        let base = state.history.steps().len();
+
+        // 一次完整的「拉一个铺满画面的框」：摆姿态、三帧拖动、松手退回默认。
+        state.history.begin_frame();
+        state.crop_begin([0.0, 0.0], crop::Hit::Outside);
+        state.history_commit();
+
+        for (x, y) in [(20.0, 20.0), (50.0, 40.0), (60.0, 48.0)] {
+            state.history.begin_frame();
+            state.crop_drag_to([x, y]);
+            state.history_commit();
+        }
+
+        state.history.begin_frame();
+        state.crop_end();
+        state.history_commit();
+
+        let labels: Vec<_> = state.history.steps().iter().map(|s| &s.label).collect();
+        assert_eq!(
+            state.history.steps().len(),
+            base + 1,
+            "整次拖动只允许落一步，实际落了这些：{labels:?}"
+        );
+        assert!(
+            labels.last().is_some_and(|l| l.contains("裁剪")),
+            "那一步的文案应该跟着框的尺寸走：{labels:?}"
+        );
     }
 
     /// 拉直之后，画布上能拖的范围只有安全框：伸进空白角的那部分当场被削回来，

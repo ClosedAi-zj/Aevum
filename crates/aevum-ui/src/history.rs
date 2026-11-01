@@ -105,6 +105,15 @@ pub struct Step {
     pub label: String,
     /// 合并拖动用的键：同一个控件连续改动只算一步；空键表示不参与合并。
     pub key: String,
+    /// 这一步改动的「类」：与上一步状态比，第一个不同的字段名（[`History::hint_between`]）。
+    ///
+    /// 同类判据给「没登记控件的路径」用：画布拖框的中间态走登记键（`crop-drag`），
+    /// 收尾的回声（松手把铺满的框退回默认）走字段比对，两条路落的是同一类改动，
+    /// 应当并成一步而不是各占一行（v1.0.1 实测「裁剪框 / 裁剪 4000 × 6000」成对刷屏）。
+    pub cat: &'static str,
+    /// true = 这步走的是字段比对路径（没有控件登记文案），合并时按 [`Step::cat`] 认类；
+    /// false = 控件登记过键，合并只认键——两个不同滑杆挨得再近也不许并成一步。
+    pub cat_merge: bool,
     /// 产生这步的界面帧序号；命令与外部来源填 -1，因此永不与上一帧合并。
     pub frame: i64,
     /// false = 这步的效果已经落在盘上（导出、对齐、存工程），撤销只回参数，产物不删。
@@ -162,6 +171,8 @@ impl History {
         self.steps = vec![Step {
             label: crate::i18n::tr(label).to_owned(),
             key: String::new(),
+            cat: "",
+            cat_merge: false,
             frame: -1,
             revertible: true,
             snap,
@@ -198,12 +209,21 @@ impl History {
 
     /// 记一步参数改动。连续帧 + 同一个 key 会并进最后一步，否则新开一步。
     pub fn push(&mut self, snap: Snapshot, key: &str, label: String) {
-        self.push_with(snap, key, label, true, self.frame)
+        self.push_with(snap, key, label, true, self.frame, false)
+    }
+
+    /// 记一步「控件没登记」的改动：键与类都用字段比对出的类名，合并按类认。
+    ///
+    /// 判据是状态本身（[`History::dirty`]），所以画布手柄、色轮这类没走 `note`
+    /// 的改动照样进历史；它们的收尾回声（如松手退回默认框）也走这条路，
+    /// 类相同就并进前面那一步，不再各占一行。
+    pub fn push_diff(&mut self, snap: Snapshot, hint: &'static str) {
+        self.push_with(snap, hint, hint.to_owned(), true, self.frame, true)
     }
 
     /// 记一步外部效果：留在历史里，但标明不可撤销。
     pub fn push_external(&mut self, snap: Snapshot, label: String) {
-        self.push_with(snap, "", label, false, -1)
+        self.push_with(snap, "", label, false, -1, false)
     }
 
     fn push_with(
@@ -213,6 +233,7 @@ impl History {
         label: String,
         revertible: bool,
         frame: i64,
+        cat_merge: bool,
     ) {
         // 先把文案翻成当前语言再落账：历史行是直接画的，显示期没有第二次机会。
         // `tr` 对已经是英文的串是恒等（查不到就返回原值，且不含汉字时不记缺译），
@@ -229,26 +250,41 @@ impl History {
             self.reset(snap.clone(), base);
             return;
         }
+        // 这一步改的是哪一类：与光标处的状态比，第一个不同的字段名。
+        // 只在确有差异时才走到这里（`dirty` 已挡住无改动），所以类名必然非空。
+        let cat = Self::hint_between(&self.steps[self.cursor].snap, &snap);
+        let tip = &self.steps[self.cursor];
         let merge = revertible
             && !key.is_empty()
             && self.cursor + 1 == self.steps.len()
             && frame > 0
-            && self.steps[self.cursor].revertible
-            && self.steps[self.cursor].key == key
-            && self.steps[self.cursor].frame >= 0
-            && frame - self.steps[self.cursor].frame <= MERGE_FRAME_TOLERANCE;
+            && tip.revertible
+            && tip.frame >= 0
+            && frame - tip.frame <= MERGE_FRAME_TOLERANCE
+            && (
+                // 同一个控件登记的连续改动：认键（两个不同滑杆挨得再近也不并）。
+                tip.key == key
+                // 类相同的「回声」：登记路径与字段比对路径各记一半（拖框走登记键、
+                // 松手退回默认走字段比对），不并就是成对刷屏。至少一边是字段比对
+                // 路径才许按类并——两个不同滑杆同类（都是「调参数」）不能误并。
+                || (cat == tip.cat && (tip.cat_merge || cat_merge))
+            );
         if merge {
             // 一次拖动：起点在光标之前，不动；只把「做完之后的状态」往后推。
             let tip = &mut self.steps[self.cursor];
             tip.snap = snap;
             tip.label = label;
             tip.frame = frame;
+            tip.cat = cat;
+            tip.cat_merge = tip.cat_merge && cat_merge;
             return;
         }
         self.steps.truncate(self.cursor + 1);
         self.steps.push(Step {
             label,
             key: key.to_owned(),
+            cat,
+            cat_merge,
             frame,
             revertible,
             snap,
@@ -323,9 +359,17 @@ impl History {
 
     /// 控件没登记文案时，用第一个不同的字段名当那一行的说明，同时当合并键。
     pub fn diff_hint(&self, now: &Snapshot) -> &'static str {
+        match self.current() {
+            Some(base) => Self::hint_between(base, now),
+            None => "",
+        }
+    }
+
+    /// 两份快照之间第一个不同的字段名：既是没登记时的行说明，也是合并用的「类」。
+    pub fn hint_between(base: &Snapshot, now: &Snapshot) -> &'static str {
         macro_rules! changed {
             ($field:ident, $name:expr) => {
-                if self.current().is_some_and(|s| s.$field != now.$field) {
+                if base.$field != now.$field {
                     return $name;
                 }
             };
