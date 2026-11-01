@@ -1756,9 +1756,10 @@ def apply(img, p, for_lut=False, fast=False):
                 x = _mask_spatial(x, p, lum0)
 
     # 颗粒（空间噪声，不进 LUT；预览与静态导出用固定种子保证可复现）
-    # grain_lum 是亮度调制（对齐 LR shadowScale/highlightScale；系数需拟合）：
+    # grain_lum 是亮度调制（对齐 LR shadowScale/highlightScale）：
     # 暗部增强、高光减弱，负值反转；k=0 走旧路径逐位一致。与 Rust
-    # spatial.rs::grain 逐式对应。
+    # spatial.rs::grain 逐式对应。系数是设计选择而非拟合值（没有参考图）：
+    # 端点为拉满时暗部 ×2.5、高光 ×0.3，0.5 档为 ×1.75 / ×0.65。
     gr = p.get("grain", 0.0)
     if not for_lut and gr:
         H, W = x.shape[:2]

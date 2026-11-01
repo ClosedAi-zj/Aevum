@@ -73,9 +73,16 @@ pub struct GradeParams {
     pub grain_size: f64,
     pub grain_freq: f64,
     /// 颗粒亮度调制（-100–100）：暗部增强、高光减弱，负值反转。0 = 恒定幅度逐位一致。
+    /// 系数是设计选择不是拟合结果——没有参考图可对。端点是：拉满时暗部 ×2.5、高光 ×0.3
+    /// （0.5 档为 ×1.75 / ×0.65）。跨实现一致性由金标 `grain_stats_lum` 保证
+    /// （Python `grade.py` 同一套式子，只比统计量，容差 ±25%）。
     ///
     /// Grain luminance modulation (-100–100): stronger in the shadows, weaker in the highlights,
-    /// inverted for negative values. 0 reproduces constant amplitude bit for bit.
+    /// inverted for negative values. 0 reproduces constant amplitude bit for bit. The
+    /// coefficients are a design choice, not a fitted result — there is no reference image to
+    /// match. The endpoints are ×2.5 in the shadows and ×0.3 in the highlights at full strength
+    /// (×1.75 / ×0.65 at the half detent). Cross-implementation agreement is guarded by the
+    /// `grain_stats_lum` golden case (same formula in Python `grade.py`, statistics only, ±25%).
     pub grain_lum: f64,
 
     pub vignette: f64,
@@ -89,11 +96,17 @@ pub struct GradeParams {
     pub sharp_detail: f64,
     pub sharp_masking: f64,
     /// 锐化的恒开边缘保护（0–100）：噪声底之上的平坦区不锐化。
-    /// 0 = 旧路径（只有 masking 生效）逐位一致。对齐 LR/ACR Sharpen3，需拟合 TODO(fit)。
+    /// 0 = 旧路径（只有 masking 生效）逐位一致。对齐 LR/ACR Sharpen3。
+    /// 强度已实测（`tests/fit_sharpen_protect.rs`）：全量锐化下无保护把噪声放大
+    /// 1.944×，20 压到 1.773、100 压到 1.093，边缘增益全程不动（1.359）——
+    /// 即 20 大致等于 `sharp_masking` 70 的强度，但只吃平坦区。
     ///
     /// Always-on edge protection for sharpening (0–100): flat regions above the noise floor are
     /// left unsharpened. 0 reproduces the old path, where only masking applied, bit for bit.
-    /// Aligned with LR/ACR Sharpen3; fitting is required, TODO(fit).
+    /// Aligned with LR/ACR Sharpen3. Strength has been measured (`tests/fit_sharpen_protect.rs`):
+    /// at full sharpening the unprotected path amplifies noise 1.944×; 20 brings it to 1.773 and
+    /// 100 to 1.093, while the edge gain never moves (1.359) — so 20 is roughly as strong as
+    /// `sharp_masking` 70, but it only touches flat regions.
     pub sharp_protect: f64,
     pub nr_luma: f64,
     pub nr_color: f64,

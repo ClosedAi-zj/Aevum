@@ -825,9 +825,14 @@ pub(crate) fn sharpen_apply(
     base.par_iter_mut()
         .for_each(|v| *v = halo * (*v / halo).tanh());
     let m = masking.clamp(0.0, 100.0) / 100.0;
-    // 恒开边缘保护（对齐 LR/ACR Sharpen3 的保护掩码基础设施，E2；阈值需拟合
-    // TODO(fit)）：噪声底用 MAD σ 现场估计，edge 场复用 masking 的 absbase
-    // 高斯模糊。protect=0 且 masking=0 时整段跳过 = 旧路径逐位一致。
+    // 恒开边缘保护（对齐 LR/ACR Sharpen3 的保护掩码基础设施，E2）：噪声底用 MAD σ
+    // 现场估计，edge 场复用 masking 的 absbase 高斯模糊。protect=0 且 masking=0 时
+    // 整段跳过 = 旧路径逐位一致。
+    //
+    // 两个阈值常量的位置已被实测确认（`tests/fit_sharpen_protect.rs`）：平坦区的
+    // edge 约为 0.8σ（高斯噪声 E|x| = σ√(2/π)），落在 t0=1.2σ 以下 → 全量抑制；
+    // 真实强边的 edge 远超 t1 → 一点不抑制。实测边缘增益全程不动（1.359），
+    // 平坦区噪声放大从 1.944 压到 1.773（protect=20）/ 1.093（protect=100）。
     let pw = protect.clamp(0.0, 100.0) / 100.0 * 0.9;
     if m != 0.0 || pw > 0.0 {
         let absbase: Vec<f32> = base.par_iter().map(|v| v.abs()).collect();
@@ -1380,9 +1385,11 @@ pub fn grain(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams) {
     }
     let field = noise_field(w, h, p.grain_size as f32, p.grain_freq as f32);
     let amp = (p.grain / 100.0 * 0.075) as f32;
-    // 亮度调制（对齐 LR UniformsOverlayGrain 的 shadowScale/highlightScale，E2；
-    // 系数需拟合 TODO(fit)）：暗部增强、高光减弱，C1 平滑、零调制时严格恒等。
+    // 亮度调制（对齐 LR UniformsOverlayGrain 的 shadowScale/highlightScale，E2）：
+    // 暗部增强、高光减弱，C1 平滑、零调制时严格恒等。
     // k=0 走旧路径逐位一致；负 k 自然反转（高光重、暗部轻）。
+    // 系数是设计选择而非拟合值——没有参考图。端点为拉满时暗部 ×2.5、高光 ×0.3；
+    // 跨实现一致性由金标 grain_stats_lum 保证（Python 同一套式子，只比统计量）。
     let k = (p.grain_lum / 100.0) as f32;
     if k != 0.0 {
         rgb.par_chunks_exact_mut(3).enumerate().for_each(|(i, px)| {
