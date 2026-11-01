@@ -839,6 +839,216 @@ fn pano_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
 }
 
+/// 「星空堆栈」分组：选统计量、调半径，一键合成一张。
+///
+/// Star-stacking group: pick the statistic, set the radius, combine into one still.
+fn stack_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
+    use aevum_core::stack::Mode;
+    let busy = state.merge_kind == Some(MergeKind::Stack);
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(crate::i18n::t!("当前帧前后各"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
+        ui.add_enabled(
+            !busy,
+            egui::DragValue::new(&mut state.stack_around)
+                .range(1..=32)
+                .speed(0.2),
+        );
+        ui.label(
+            RichText::new(crate::i18n::t!("帧"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
+    });
+    ui.horizontal_wrapped(|ui| {
+        for mode in Mode::ALL {
+            let picked = bar_chip(ui, mode.cn(), state.stack_mode == mode)
+                .on_hover_text(crate::i18n::tr(match mode {
+                    Mode::Lighten => "取最亮：星轨连成线，云与车流也连成线",
+                    Mode::Average => "算术平均：随机噪声按 √N 下降，移动物变成半透明鬼影",
+                    Mode::Median => "逐通道中值：卫星、飞机、单帧热噪点被整帧丢掉",
+                    Mode::SigmaClip => "σ 截尾平均：先剔离群再平均，杂散光与热噪点都压得住",
+                }))
+                .clicked();
+            if picked && !busy {
+                state.stack_mode = mode;
+            }
+        }
+    });
+    if state.stack_mode == Mode::SigmaClip {
+        let mut k = state.stack_sigma as f64;
+        if slider(
+            ui,
+            "stack_clip_sigma",
+            "截尾 k·σ",
+            &mut k,
+            1.0,
+            8.0,
+            3.0,
+            1,
+            false,
+        ) {
+            state.stack_sigma = k as f32;
+        }
+    }
+    ui.checkbox(
+        &mut state.stack_fill,
+        crate::i18n::t!("补洞：把合成后仍全黑的像素用邻域补上"),
+    );
+    let go = ui
+        .add_enabled(
+            !busy,
+            egui::Button::new(RichText::new(if busy {
+                crate::i18n::t!("堆栈中…")
+            } else {
+                crate::i18n::t!("堆栈")
+            }))
+            .min_size(Vec2::new(0.0, BAR_H))
+            .corner_radius(radius_control()),
+        )
+        .on_hover_text(crate::i18n::t!(
+            "把当前帧前后若干帧按所选统计量合成一张，写进输出目录"
+        ))
+        .clicked();
+    if go {
+        let args = serde_json::json!({
+            "around": state.stack_around,
+            "mode": state.stack_mode.key(),
+            "clip_sigma": state.stack_sigma,
+            "fill_gaps": state.stack_fill,
+            "confirm": true,
+        });
+        if let Err(e) = state.run_ui_command(ctx, "stack.merge", &args) {
+            state.stack_error = Some(e);
+            state.stack_last = None;
+        }
+    }
+    merge_progress_row(state, ui, MergeKind::Stack);
+    if let Some(last) = state.stack_last.clone() {
+        ui.label(
+            RichText::new(crate::i18n::tr_fmt("已写出 {}", &[&last]))
+                .size(SIZE_SMALL)
+                .color(accent()),
+        );
+    }
+    if let Some(err) = state.stack_error.clone() {
+        ui.label(RichText::new(err).size(SIZE_SMALL).color(danger()));
+    }
+}
+
+/// 「时间合成」分组：天地合成或时间切片，一次把不同时刻铺进一张。
+///
+/// Time-blending group: sky-ground or time slice, laying several moments into one frame.
+fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
+    use aevum_core::timeblend::Layout;
+    let busy = state.merge_kind == Some(MergeKind::TimeBlend);
+    ui.horizontal_wrapped(|ui| {
+        for layout in Layout::ALL {
+            let picked = bar_chip(ui, layout.cn(), state.tb_layout == layout)
+                .on_hover_text(crate::i18n::tr(match layout {
+                    Layout::SkyGround => {
+                        "按地平线分天地：天取最后一帧（日落后），地取第一帧（地面还亮着）"
+                    }
+                    Layout::Bands => "横向分带：一带取一帧，从早到晚铺满整幅，云被拉成一段时间",
+                }))
+                .clicked();
+            if picked && !busy {
+                state.tb_layout = layout;
+            }
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(crate::i18n::t!("从当前帧起"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
+        ui.add_enabled(
+            !busy,
+            egui::DragValue::new(&mut state.tb_around)
+                .range(1..=31)
+                .speed(0.2),
+        );
+        ui.label(
+            RichText::new(crate::i18n::t!("帧之后"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
+    });
+    if state.tb_layout == Layout::Bands {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(crate::i18n::t!("带数"))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
+            );
+            ui.add_enabled(
+                !busy,
+                egui::DragValue::new(&mut state.tb_bands)
+                    .range(1..=32)
+                    .speed(0.2),
+            );
+        });
+    } else {
+        let mut h = state.tb_horizon as f64;
+        if slider(ui, "tb_horizon", "地平线", &mut h, 0.0, 1.0, 0.5, 2, false) {
+            state.tb_horizon = h as f32;
+        }
+    }
+    let mut f = state.tb_feather as f64;
+    if slider(ui, "tb_feather", "羽化", &mut f, 0.0, 0.5, 0.04, 3, false) {
+        state.tb_feather = f as f32;
+    }
+    ui.checkbox(
+        &mut state.tb_match,
+        crate::i18n::t!("曝光匹配：先把来源帧亮度对齐到参考帧，接缝才没有台阶"),
+    );
+    let go = ui
+        .add_enabled(
+            !busy,
+            egui::Button::new(RichText::new(if busy {
+                crate::i18n::t!("合成中…")
+            } else {
+                crate::i18n::t!("合成")
+            }))
+            .min_size(Vec2::new(0.0, BAR_H))
+            .corner_radius(radius_control()),
+        )
+        .on_hover_text(crate::i18n::t!(
+            "把当前帧起若干帧按所选布局合成为一张，写进输出目录"
+        ))
+        .clicked();
+    if go {
+        let args = serde_json::json!({
+            "around": state.tb_around,
+            "layout": state.tb_layout.key(),
+            "bands": state.tb_bands,
+            "feather": state.tb_feather,
+            "horizon": state.tb_horizon,
+            "match_exposure": state.tb_match,
+            "confirm": true,
+        });
+        if let Err(e) = state.run_ui_command(ctx, "timeblend.merge", &args) {
+            state.tb_error = Some(e);
+            state.tb_last = None;
+        }
+    }
+    merge_progress_row(state, ui, MergeKind::TimeBlend);
+    if let Some(last) = state.tb_last.clone() {
+        ui.label(
+            RichText::new(crate::i18n::tr_fmt("已写出 {}", &[&last]))
+                .size(SIZE_SMALL)
+                .color(accent()),
+        );
+    }
+    if let Some(err) = state.tb_error.clone() {
+        ui.label(RichText::new(err).size(SIZE_SMALL).color(danger()));
+    }
+}
+
 /// 合并任务的进度条 + 取消按钮：只在这一类任务在跑时出现。
 /// 「读取 k / n+1」的最后一格留给融合或拼接加写盘，那段没法细分进度。
 fn merge_progress_row(state: &mut AppState, ui: &mut Ui, kind: MergeKind) {
@@ -947,6 +1157,12 @@ fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     }
     if group_header(ui, state, "pano", "全景合并", false) {
         pano_group(state, ui, &ctx);
+    }
+    if group_header(ui, state, "stack", "星空堆栈", false) {
+        stack_group(state, ui, &ctx);
+    }
+    if group_header(ui, state, "timeblend", "时间合成", false) {
+        timeblend_group(state, ui, &ctx);
     }
     if changed {
         state.preview_dirty = true;

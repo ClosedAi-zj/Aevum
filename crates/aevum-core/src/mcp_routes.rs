@@ -4,7 +4,7 @@
 //!
 //! 1. **服务模式**（`aevum --mcp`）：自己实现 34 个工具，清单在 `aevum-mcp::tools`；
 //! 2. **附着模式**（`aevum --mcp --attach control.json`）：自己不实现，只把调用转给
-//!    正在运行的 GUI，命令清单在 `aevum-ui::control::command_catalog`（72 条）。
+//!    正在运行的 GUI，命令清单在 `aevum-ui::control::command_catalog`（74 条）。
 //!
 //! 附着模式的工具名由命令 ID **机械加前缀**生成（`xmp.import` → `aevum_xmp_import`），
 //! 而服务模式那边这条工具叫 `aevum_xmp_read`。同一个能力两个名字，只靠机械推导就断线：
@@ -17,7 +17,7 @@
 //! - [`TOOL_ROUTES`]：每个 MCP 工具名落到哪条命令；`None` 表示 GUI 没有这项能力，
 //!   只能直连服务模式；
 //! - [`command_for_mcp_name`] / [`tool_command`]：两条查表路径，合起来覆盖
-//!   「34 个工具名」与「72 个命令名」两个命名空间。
+//!   「34 个工具名」与「74 个命令名」两个命名空间。
 //!
 //! 三份清单（这张表、`tools.rs`、`command_catalog()`）由测试逐条互锁：任何一处增删
 //! 或拼错，本地测试当场就红，不会等用户来报「附着模式不认识某个工具」。
@@ -33,7 +33,7 @@
 //! 1. **Server mode** (`aevum --mcp`): implements 34 tools itself, listed in `aevum-mcp::tools`;
 //! 2. **Attach mode** (`aevum --mcp --attach control.json`): implements nothing and forwards
 //!    calls to the running GUI; the command list lives in
-//!    `aevum-ui::control::command_catalog` (72 entries).
+//!    `aevum-ui::control::command_catalog` (74 entries).
 //!
 //! In attach mode a tool name is derived from the command ID by **mechanically adding a
 //! prefix** (`xmp.import` → `aevum_xmp_import`), while server mode calls that tool
@@ -48,7 +48,7 @@
 //! - [`TOOL_ROUTES`]: which command each MCP tool name maps to; `None` means the GUI has no
 //!   such capability and the call can only go to server mode;
 //! - [`command_for_mcp_name`] / [`tool_command`]: the two lookup paths; together they cover the
-//!   "34 tool names" and "72 command names" namespaces.
+//!   "34 tool names" and "74 command names" namespaces.
 //!
 //! Tests interlock the three lists (this table, `tools.rs`, `command_catalog()`) entry by
 //! entry: any addition, removal or typo turns the local test suite red at once instead of
@@ -128,6 +128,8 @@ pub const COMMANDS: &[&str] = &[
     "export.cancel",
     "hdr.merge",
     "pano.merge",
+    "stack.merge",
+    "timeblend.merge",
     "merge.status",
     "merge.cancel",
     "queue.list",
@@ -266,13 +268,13 @@ pub fn mcp_name(command: &str) -> String {
     format!("{TOOL_PREFIX}{}", command.replace('.', "_"))
 }
 
-/// 工具名 → 命令 ID，只走「机械加前缀」这一条路（覆盖 [`COMMANDS`] 全部 72 条）。
+/// 工具名 → 命令 ID，只走「机械加前缀」这一条路（覆盖 [`COMMANDS`] 全部 74 条）。
 ///
 /// 用于附着模式：GUI 在线的工具清单是从命令目录现生成的，名字就是 `mcp_name(命令 ID)`。
 /// 这批名字里有 `aevum_grade_auto`、`aevum_library_add`、`aevum_history_undo` 等等，
 /// 它们不在 [`TOOL_ROUTES`] 里（那 34 条是服务模式的工具），必须靠这里才能路由。
 ///
-/// Tool name → command ID, through the "mechanically added prefix" path only (covers all 72
+/// Tool name → command ID, through the "mechanically added prefix" path only (covers all 74
 /// entries of [`COMMANDS`]).
 ///
 /// Used by attach mode: the tool list of a live GUI is generated on the fly from the command
@@ -306,7 +308,7 @@ mod tests {
 
     #[test]
     fn command_ids_are_unique_and_non_empty() {
-        assert_eq!(COMMANDS.len(), 72, "命令目录共 72 条，数量变了要同步改这里");
+        assert_eq!(COMMANDS.len(), 74, "命令目录共 74 条，数量变了要同步改这里");
         let mut seen = HashSet::new();
         for id in COMMANDS {
             assert!(!id.is_empty());

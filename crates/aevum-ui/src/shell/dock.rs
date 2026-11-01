@@ -538,7 +538,15 @@ mod dock_paint_tests {
     /// 整段说明只许待在 ⓘ 的悬停提示里：正文铺回去，面板又变成一列散文。
     #[test]
     fn explanations_live_in_group_help_not_on_the_panel() {
-        for key in ["copies", "hdr", "pano", "basic", "color"] {
+        for key in [
+            "copies",
+            "hdr",
+            "pano",
+            "stack",
+            "timeblend",
+            "basic",
+            "color",
+        ] {
             let help = group_help(key).expect("分组没有说明入口");
             assert!(help.chars().count() >= 12, "{key} 的说明太短，等于没写");
         }

@@ -264,6 +264,9 @@ pub const GROUP_SPECS: &[GroupSpec] = &[
     in_module("copies", Module::Develop, false),
     in_module("hdr", Module::Develop, false),
     in_module("pano", Module::Develop, false),
+    // 星空堆栈与时间合成也都是「一次合一张图」的文件级工具，和 HDR / 全景同一档。
+    in_module("stack", Module::Develop, false),
+    in_module("timeblend", Module::Develop, false),
     // ── 构图 ────────────────────────────────────────────────────────────
     // 这一屏只有两组，且辅助线只是三个勾选框：没有折叠的必要。
     in_module("frame", Module::Frame, true),
@@ -716,12 +719,18 @@ struct PreviewMsg {
     hist: [[u32; 256]; 3],
 }
 
-/// HDR / 全景合并的任务种类。两条路共用一套后台任务、进度与状态命令，
-/// 差别只在读帧之后是曝光融合还是特征点拼接。
+/// 多帧合一的任务种类：HDR 融合、全景拼接、星空堆栈、时间合成。四条路共用一套
+/// 后台任务、进度与状态命令，差别只在读帧之后怎么合。
+///
+/// Kinds of multi-frame merge: HDR fusion, panorama stitching, star stacking and time
+/// blending. All four share one background job, progress reporting and status command; only the
+/// combining step differs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MergeKind {
     Hdr,
     Pano,
+    Stack,
+    TimeBlend,
 }
 
 impl MergeKind {
@@ -729,6 +738,8 @@ impl MergeKind {
         match self {
             Self::Hdr => "HDR 合并",
             Self::Pano => "全景拼接",
+            Self::Stack => "星空堆栈",
+            Self::TimeBlend => "时间合成",
         }
     }
 
@@ -737,6 +748,8 @@ impl MergeKind {
         match self {
             Self::Hdr => "hdr",
             Self::Pano => "pano",
+            Self::Stack => "stack",
+            Self::TimeBlend => "timeblend",
         }
     }
 
@@ -745,6 +758,8 @@ impl MergeKind {
         match self {
             Self::Hdr => "HDR",
             Self::Pano => "全景",
+            Self::Stack => "堆栈",
+            Self::TimeBlend => "时间合成",
         }
     }
 
@@ -753,6 +768,8 @@ impl MergeKind {
         match self {
             Self::Hdr => "HDR",
             Self::Pano => "全景",
+            Self::Stack => "堆栈",
+            Self::TimeBlend => "时间合成",
         }
     }
 
@@ -761,8 +778,31 @@ impl MergeKind {
         match self {
             Self::Hdr => aevum_core::hdr::MAX_FRAMES,
             Self::Pano => aevum_core::pano::MAX_FRAMES,
+            Self::Stack => aevum_core::stack::MAX_FRAMES,
+            Self::TimeBlend => aevum_core::timeblend::MAX_FRAMES,
         }
     }
+
+    /// 合成前是否要求每帧对齐后同尺寸：HDR、堆栈、时间合成都是同机位叠帧，
+    /// 尺寸不齐就必须先对齐或裁齐；全景靠特征点自己求几何，尺寸可以不同。
+    ///
+    /// Whether every frame must share one size after alignment. HDR, stacking and time blending
+    /// all overlay frames from a fixed camera, so mismatched sizes must be aligned or cropped
+    /// first; panoramas get their geometry from the features and may differ.
+    fn needs_uniform_size(self) -> bool {
+        !matches!(self, Self::Pano)
+    }
+}
+
+/// 合并时用的那套参数：堆栈走统计模式，时间合成走布局与羽化；HDR / 全景不要额外参数。
+///
+/// The parameter set a merge runs with: a statistical mode for stacking, a layout and feather
+/// for time blending; HDR and panorama need nothing extra.
+#[derive(Clone, Debug)]
+enum MergeSpec {
+    Plain,
+    Stack(aevum_core::stack::Options),
+    TimeBlend(aevum_core::timeblend::Spec),
 }
 
 /// 一次合并的全部输入。界面线程抓完就交给后台线程，线程里碰不到 `AppState`。
@@ -774,6 +814,7 @@ struct MergeJob {
     framing: Vec<(Option<CropRect>, [f64; 2])>,
     dst: PathBuf,
     options: RenderOptions,
+    spec: MergeSpec,
 }
 
 /// 插件后台任务往界面线程送的消息：进度心跳，或最终结果。
@@ -1285,6 +1326,36 @@ pub struct AppState {
     /// a pure view buffer.
     pub pano_last: Option<String>,
     pub pano_error: Option<String>,
+    /// 「星空堆栈」分组的包围半径、统计模式与两个旋钮；纯视图缓冲，不落工程。
+    ///
+    /// Bracket radius, statistical mode and the two knobs of the star-stacking group; pure view
+    /// buffers, never written to the project.
+    pub stack_around: u32,
+    pub stack_mode: aevum_core::stack::Mode,
+    pub stack_sigma: f32,
+    pub stack_fill: bool,
+    /// 最近一次堆栈写出的路径 / 报错，分组里回显一行；纯视图缓冲。
+    ///
+    /// Path or error of the most recent stack, echoed as one line inside the group; a pure view
+    /// buffer.
+    pub stack_last: Option<String>,
+    pub stack_error: Option<String>,
+    /// 「时间合成」分组的半径、布局与羽化；纯视图缓冲，不落工程。
+    ///
+    /// Radius, layout and feather of the time-blend group; pure view buffers, never written to
+    /// the project.
+    pub tb_around: u32,
+    pub tb_layout: aevum_core::timeblend::Layout,
+    pub tb_bands: u32,
+    pub tb_feather: f32,
+    pub tb_horizon: f32,
+    pub tb_match: bool,
+    /// 最近一次时间合成写出的路径 / 报错，分组里回显一行；纯视图缓冲。
+    ///
+    /// Path or error of the most recent time blend, echoed as one line inside the group; a pure
+    /// view buffer.
+    pub tb_last: Option<String>,
+    pub tb_error: Option<String>,
     pub resolution: Option<(u32, u32)>,
     /// 首帧读出来的保真度口径，只有 RAW 才有；「信息」面板用它标注预览/传感器两条路。
     ///
@@ -2123,6 +2194,22 @@ impl AppState {
             pano_around: 1,
             pano_last: None,
             pano_error: None,
+            // 星轨默认给 9 帧（±4）：再少星轨连不成线，再多读盘就成了等待。
+            stack_around: 4,
+            stack_mode: aevum_core::stack::Mode::Lighten,
+            stack_sigma: 3.0,
+            stack_fill: true,
+            stack_last: None,
+            stack_error: None,
+            // 时间切片默认 8 帧、4% 羽化，正好铺满一屏八带。
+            tb_around: 7,
+            tb_layout: aevum_core::timeblend::Layout::SkyGround,
+            tb_bands: 8,
+            tb_feather: 0.04,
+            tb_horizon: 0.5,
+            tb_match: true,
+            tb_last: None,
+            tb_error: None,
             resolution: None,
             source_note: None,
             mask_sel: None,
@@ -2372,6 +2459,10 @@ impl AppState {
         self.hdr_error = None;
         self.pano_last = None;
         self.pano_error = None;
+        self.stack_last = None;
+        self.stack_error = None;
+        self.tb_last = None;
+        self.tb_error = None;
         self.merge_kind = None;
         self.merge_result = None;
         self.merge_error = None;
@@ -2535,6 +2626,10 @@ impl AppState {
         self.hdr_error = None;
         self.pano_last = None;
         self.pano_error = None;
+        self.stack_last = None;
+        self.stack_error = None;
+        self.tb_last = None;
+        self.tb_error = None;
         self.merge_kind = None;
         self.merge_result = None;
         self.merge_error = None;
@@ -3017,6 +3112,8 @@ impl AppState {
                     let (last, err) = match kind {
                         MergeKind::Hdr => (&mut self.hdr_last, &mut self.hdr_error),
                         MergeKind::Pano => (&mut self.pano_last, &mut self.pano_error),
+                        MergeKind::Stack => (&mut self.stack_last, &mut self.stack_error),
+                        MergeKind::TimeBlend => (&mut self.tb_last, &mut self.tb_error),
                     };
                     match result {
                         Ok(v) => {
@@ -3667,6 +3764,8 @@ impl AppState {
             "export.stills" => (String::new(), "导出静帧".to_owned(), false),
             "hdr.merge" => (String::new(), "HDR 合并".to_owned(), false),
             "pano.merge" => (String::new(), "全景合并".to_owned(), false),
+            "stack.merge" => (String::new(), "星空堆栈".to_owned(), false),
+            "timeblend.merge" => (String::new(), "时间合成".to_owned(), false),
             "queue.run" => (String::new(), "批量渲染队列".to_owned(), false),
             "queue.add" | "queue.remove" | "queue.clear" => {
                 (String::new(), "改渲染队列".to_owned(), false)
@@ -3886,6 +3985,8 @@ impl AppState {
             "grade.copy" => self.cmd_grade_copy(args),
             "hdr.merge" => self.cmd_hdr_merge(ctx, args),
             "pano.merge" => self.cmd_pano_merge(ctx, args),
+            "stack.merge" => self.cmd_stack_merge(ctx, args),
+            "timeblend.merge" => self.cmd_timeblend_merge(ctx, args),
             "merge.status" => Ok(self.merge_status_json()),
             "merge.cancel" => {
                 let busy = self.merge_busy;
@@ -5401,7 +5502,7 @@ impl AppState {
         std::fs::create_dir_all(&out_dir)
             .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
 
-        let job = self.build_merge_job(kind, indices, &out_dir)?;
+        let job = self.build_merge_job(kind, indices, &out_dir, MergeSpec::Plain)?;
         Ok(self.start_merge(ctx, job))
     }
 
@@ -5427,6 +5528,7 @@ impl AppState {
         kind: MergeKind,
         indices: Vec<usize>,
         out_dir: &Path,
+        spec: MergeSpec,
     ) -> Result<MergeJob, String> {
         // 调用方大多先过 require_sequence，但 MCP 通道可能绕过：缺序列就
         // 报错返回，而不是在后台线程里 panic（panic 只会静默吞掉任务）。
@@ -5437,9 +5539,10 @@ impl AppState {
         let paths = seq.paths();
         let srcs: Vec<PathBuf> = indices.iter().map(|i| paths[*i].clone()).collect();
         let framing: Vec<(Option<CropRect>, [f64; 2])> = match kind {
-            MergeKind::Hdr => indices.iter().map(|i| self.alignment_at(*i)).collect(),
-            // 全景靠特征点自己求单应，几何全交给拼接，不套对齐位移。
+            // 全景靠特征点自己求单应，几何全交给拼接，不套对齐位移；
+            // 其余三种都是同机位叠帧，对齐位移与统一裁切必须套上，否则星点会拖成双线。
             MergeKind::Pano => indices.iter().map(|_| (None, [0.0, 0.0])).collect(),
+            _ => indices.iter().map(|i| self.alignment_at(*i)).collect(),
         };
         let options = self.frame_render_options();
         let dst = out_dir.join(format!(
@@ -5456,6 +5559,7 @@ impl AppState {
             framing,
             dst,
             options,
+            spec,
         })
     }
 
@@ -5478,6 +5582,14 @@ impl AppState {
             MergeKind::Pano => {
                 self.pano_last = None;
                 self.pano_error = None;
+            }
+            MergeKind::Stack => {
+                self.stack_last = None;
+                self.stack_error = None;
+            }
+            MergeKind::TimeBlend => {
+                self.tb_last = None;
+                self.tb_error = None;
             }
         }
         self.cancel_merge.store(false, Ordering::SeqCst);
@@ -5729,7 +5841,195 @@ impl AppState {
         std::fs::create_dir_all(&out_dir)
             .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
 
-        let job = self.build_merge_job(kind, indices, &out_dir)?;
+        let job = self.build_merge_job(kind, indices, &out_dir, MergeSpec::Plain)?;
+        Ok(self.start_merge(ctx, job))
+    }
+
+    /// 把 `frames`（帧号数组）或锚点 ± `around` 解析成一串合法帧号。
+    ///
+    /// Resolve either a `frames` array or an anchor plus an `around` radius into valid indices.
+    fn pick_indices(
+        &self,
+        args: &Value,
+        n: usize,
+        anchor: IndicesAnchor,
+        default_around: u32,
+    ) -> Result<Vec<usize>, String> {
+        if let Some(list) = args.get("frames") {
+            return list
+                .as_array()
+                .ok_or_else(|| "frames 要是帧号数组，例如 [0,1,2]".to_owned())?
+                .iter()
+                .map(|v| {
+                    v.as_u64()
+                        .and_then(|i| ((i as usize) < n).then_some(i as usize))
+                        .ok_or_else(|| {
+                            crate::i18n::tr_fmt("帧号越界：{}（序列共 {} 帧）", &[&v, &n])
+                        })
+                })
+                .collect();
+        }
+        let around = opt_u32(args, "around")?.unwrap_or(default_around) as usize;
+        let (anchor_value, name) = match anchor {
+            IndicesAnchor::Center => (opt_u32(args, "center")?, "center"),
+            IndicesAnchor::Start => (opt_u32(args, "start")?, "start"),
+        };
+        let at = anchor_value
+            .map(|v| v as usize)
+            .unwrap_or(self.selected.min(n - 1));
+        if at >= n {
+            return Err(crate::i18n::tr_fmt(
+                "{} 越界：{}（序列共 {} 帧）",
+                &[&name, &at, &n],
+            ));
+        }
+        let from = match anchor {
+            IndicesAnchor::Center => at.saturating_sub(around),
+            IndicesAnchor::Start => at,
+        };
+        Ok((from..=at.saturating_add(around).min(n - 1)).collect())
+    }
+
+    /// `stack.merge`：把一段同机位帧按统计量合成一张（星轨 / 降噪 / 去卫星 / σ 截尾）。
+    ///
+    /// `stack.merge`: combine a fixed-camera run of frames into one still using a statistical
+    /// mode (star trails / noise reduction / satellite removal / sigma clipping).
+    fn cmd_stack_merge(&mut self, ctx: &Context, args: &Value) -> Result<Value, String> {
+        let n = self.require_sequence()?.len();
+        if n == 0 {
+            return Err("序列里没有帧".to_owned());
+        }
+        if self.merge_busy {
+            return Err(crate::i18n::tr_fmt(
+                "已有一项{}在进行中；用 merge.status 查询进度，merge.cancel 取消",
+                &[&self.merge_kind.map(MergeKind::cn).unwrap_or("合并")],
+            ));
+        }
+        if !confirm(args) {
+            return Err("stack.merge 是批量写操作，需参数 confirm: true".to_owned());
+        }
+        let kind = MergeKind::Stack;
+        let indices = self.pick_indices(args, n, IndicesAnchor::Center, self.stack_around)?;
+        if indices.len() < 2 {
+            return Err("堆栈至少要 2 帧：给 frames 数组，或把 around 调大".to_owned());
+        }
+        if indices.len() > kind.max_frames() {
+            return Err(crate::i18n::tr_fmt(
+                "堆栈一次最多 {} 帧，实得 {} 帧：把 around 调小，或先分段再合",
+                &[&kind.max_frames(), &indices.len()],
+            ));
+        }
+        let mode = match opt_str(args, "mode")? {
+            Some(raw) => aevum_core::stack::Mode::parse(raw).ok_or_else(|| {
+                crate::i18n::tr_fmt(
+                    "未知堆栈模式 {}；可用 lighten / average / median / sigma-clip",
+                    &[&raw],
+                )
+            })?,
+            None => self.stack_mode,
+        };
+        let clip_sigma = opt_f64(args, "clip_sigma")?
+            .map(|v| v as f32)
+            .unwrap_or(self.stack_sigma);
+        if !clip_sigma.is_finite() || clip_sigma <= 0.0 {
+            return Err("clip_sigma 要大于 0（常用 2–4：3.0 只剔真离群）".to_owned());
+        }
+        let fill_gaps = args
+            .get("fill_gaps")
+            .and_then(Value::as_bool)
+            .unwrap_or(self.stack_fill);
+        let root = self
+            .seq
+            .as_ref()
+            .map(|s| s.root.clone())
+            .unwrap_or_default();
+        let out_dir = self.merge_out_dir(args, &root, kind)?;
+        ensure_out_dir_safe(&root, &out_dir)?;
+        std::fs::create_dir_all(&out_dir)
+            .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
+        let spec = MergeSpec::Stack(aevum_core::stack::Options {
+            mode,
+            clip_sigma,
+            fill_gaps,
+        });
+        let job = self.build_merge_job(kind, indices, &out_dir, spec)?;
+        Ok(self.start_merge(ctx, job))
+    }
+
+    /// `timeblend.merge`：按带或按地平线把不同时刻的帧合成为一张。
+    ///
+    /// `timeblend.merge`: composite frames from different moments, either as horizontal bands or
+    /// split at the horizon.
+    fn cmd_timeblend_merge(&mut self, ctx: &Context, args: &Value) -> Result<Value, String> {
+        let n = self.require_sequence()?.len();
+        if n == 0 {
+            return Err("序列里没有帧".to_owned());
+        }
+        if self.merge_busy {
+            return Err(crate::i18n::tr_fmt(
+                "已有一项{}在进行中；用 merge.status 查询进度，merge.cancel 取消",
+                &[&self.merge_kind.map(MergeKind::cn).unwrap_or("合并")],
+            ));
+        }
+        if !confirm(args) {
+            return Err("timeblend.merge 是批量写操作，需参数 confirm: true".to_owned());
+        }
+        let kind = MergeKind::TimeBlend;
+        let indices = self.pick_indices(args, n, IndicesAnchor::Start, self.tb_around)?;
+        if indices.len() < 2 {
+            return Err(
+                "时间合成至少要 2 帧：给 frames 数组，或把 around 调大（帧号升序 = 时间顺序）"
+                    .to_owned(),
+            );
+        }
+        if indices.len() > kind.max_frames() {
+            return Err(crate::i18n::tr_fmt(
+                "时间合成一次最多 {} 帧，实得 {} 帧：把 around 调小",
+                &[&kind.max_frames(), &indices.len()],
+            ));
+        }
+        let layout = match opt_str(args, "layout")? {
+            Some(raw) => aevum_core::timeblend::Layout::parse(raw).ok_or_else(|| {
+                crate::i18n::tr_fmt("未知布局 {}；可用 sky-ground / bands", &[&raw])
+            })?,
+            None => self.tb_layout,
+        };
+        let bands = opt_u32(args, "bands")?.unwrap_or(self.tb_bands) as usize;
+        if bands == 0 || bands > indices.len() {
+            return Err(crate::i18n::tr_fmt(
+                "bands 要在 1..={} 之间（等于帧数时一带一帧）",
+                &[&indices.len()],
+            ));
+        }
+        let feather = opt_f64(args, "feather")?
+            .map(|v| v as f32)
+            .unwrap_or(self.tb_feather)
+            .clamp(0.0, 0.5);
+        let horizon = opt_f64(args, "horizon")?
+            .map(|v| v as f32)
+            .unwrap_or(self.tb_horizon)
+            .clamp(0.0, 1.0);
+        let match_exposure = args
+            .get("match_exposure")
+            .and_then(Value::as_bool)
+            .unwrap_or(self.tb_match);
+        let root = self
+            .seq
+            .as_ref()
+            .map(|s| s.root.clone())
+            .unwrap_or_default();
+        let out_dir = self.merge_out_dir(args, &root, kind)?;
+        ensure_out_dir_safe(&root, &out_dir)?;
+        std::fs::create_dir_all(&out_dir)
+            .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
+        let spec = MergeSpec::TimeBlend(aevum_core::timeblend::Spec {
+            layout,
+            bands,
+            feather,
+            horizon,
+            match_exposure,
+        });
+        let job = self.build_merge_job(kind, indices, &out_dir, spec)?;
         Ok(self.start_merge(ctx, job))
     }
 
@@ -11008,6 +11308,15 @@ fn clean_copy_name(raw: &str) -> Result<String, String> {
     Ok(name.to_owned())
 }
 
+/// 帧号区间的锚点：包围（当前帧前后各取几张）还是起点（从当前帧往后取几张）。
+///
+/// Where a frame range is anchored: centred on the current frame, or starting at it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IndicesAnchor {
+    Center,
+    Start,
+}
+
 fn confirm(args: &Value) -> bool {
     args.get("confirm")
         .and_then(Value::as_bool)
@@ -11547,7 +11856,7 @@ fn run_merge_job(
                 warp::transform_into(&rgb, w as usize, h as usize, framing, rect, &mut out);
             (out, (cw, ch))
         };
-        if job.kind == MergeKind::Hdr {
+        if job.kind.needs_uniform_size() {
             match dims {
                 None => dims = Some(got),
                 Some(prev) if prev != got => {
@@ -11571,6 +11880,31 @@ fn run_merge_job(
             let (w, h) = dims.unwrap_or((0, 0));
             let refs: Vec<&[f32]> = frames.iter().map(|(b, _, _)| b.as_slice()).collect();
             (aevum_core::hdr::merge(&refs, w, h), w, h)
+        }
+        // 堆栈与时间合成都是同机位叠帧：尺寸在上面的循环里已经查齐，这里直接按首帧算。
+        MergeKind::Stack => {
+            let (w, h) = dims.unwrap_or((0, 0));
+            let refs: Vec<&[f32]> = frames.iter().map(|(b, _, _)| b.as_slice()).collect();
+            let opts = match &job.spec {
+                MergeSpec::Stack(o) => o.clone(),
+                _ => aevum_core::stack::Options::default(),
+            };
+            let out = aevum_core::stack::combine(&refs, w, h, &opts)
+                .map_err(|e| crate::i18n::tr_fmt("堆栈失败：{}", &[&crate::i18n::tr(e.cn())]))?;
+            (out, w, h)
+        }
+        // frames[0] 是最早的一帧：帧号升序就是时间顺序，天地合成靠它分早晚。
+        MergeKind::TimeBlend => {
+            let (w, h) = dims.unwrap_or((0, 0));
+            let refs: Vec<&[f32]> = frames.iter().map(|(b, _, _)| b.as_slice()).collect();
+            let spec = match &job.spec {
+                MergeSpec::TimeBlend(s) => s.clone(),
+                _ => aevum_core::timeblend::Spec::default(),
+            };
+            let out = aevum_core::timeblend::time_slice(&refs, w, h, &spec).map_err(|e| {
+                crate::i18n::tr_fmt("时间合成失败：{}", &[&crate::i18n::tr(e.cn())])
+            })?;
+            (out, w, h)
         }
         // 全景按每张自己的尺寸求单应，混尺寸也能接。
         MergeKind::Pano => {
@@ -15457,6 +15791,184 @@ mod command_tests {
         let path = done["path"].as_str().expect("成片路径");
         assert!(Path::new(path).is_file(), "全景成片没写出来：{path}");
         assert_eq!(state.pano_last.as_deref(), Some(path));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 同机位的三帧测试素材：底子一样，第二帧多一颗「星」，第三帧多一个「热噪点」。
+    ///
+    /// Three fixed-camera test frames: same base, with one "star" added in the second and one
+    /// "hot pixel" in the third.
+    fn stack_frame_dir(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("aevum-stack-{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        for i in 0..3usize {
+            let image = image::RgbImage::from_fn(32, 24, |x, y| {
+                let mut v = 24u8;
+                if i == 1 && (8..10).contains(&x) && (16..18).contains(&y) {
+                    v = 240; // 星点 / a star
+                }
+                if i == 2 && (20..22).contains(&x) && (16..18).contains(&y) {
+                    v = 200; // 热噪点 / a hot pixel
+                }
+                image::Rgb([v, v, v])
+            });
+            image
+                .save(dir.join(format!("s{i:03}.png")))
+                .expect("写堆栈测试帧");
+        }
+        dir
+    }
+
+    /// 星空堆栈：命令只启动后台任务；成片落地，且亮化真的把星点留下来了。
+    ///
+    /// Star stacking: the command only starts the job; the still lands on disk, and lighten
+    /// really keeps the star.
+    #[test]
+    fn stack_merge_writes_one_still_and_guards_input() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let dir = stack_frame_dir("cmd");
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.display().to_string()}),
+            )
+            .expect("打开序列");
+        let need_confirm = state
+            .run_ui_command(&ctx, "stack.merge", &json!({"frames": [0, 1, 2]}))
+            .unwrap_err();
+        assert!(need_confirm.contains("confirm"), "{need_confirm}");
+        let too_few = state
+            .run_ui_command(
+                &ctx,
+                "stack.merge",
+                &json!({"frames": [0], "confirm": true}),
+            )
+            .unwrap_err();
+        assert!(too_few.contains("至少要 2 帧"), "{too_few}");
+        let bad_mode = state
+            .run_ui_command(
+                &ctx,
+                "stack.merge",
+                &json!({"frames": [0, 1], "mode": "median-ish", "confirm": true}),
+            )
+            .unwrap_err();
+        assert!(bad_mode.contains("未知堆栈模式"), "{bad_mode}");
+        let bad_sigma = state
+            .run_ui_command(
+                &ctx,
+                "stack.merge",
+                &json!({"frames": [0, 1], "mode": "sigma-clip", "clip_sigma": 0.0, "confirm": true}),
+            )
+            .unwrap_err();
+        assert!(bad_sigma.contains("clip_sigma"), "{bad_sigma}");
+        let out_dir = dir.join("堆栈");
+        let ok = state
+            .run_ui_command(
+                &ctx,
+                "stack.merge",
+                &json!({
+                    "frames": [0, 1, 2],
+                    "mode": "lighten",
+                    "out_dir": out_dir.display().to_string(),
+                    "confirm": true
+                }),
+            )
+            .expect("启动堆栈");
+        assert_eq!(ok["started"], json!(true));
+        assert_eq!(ok["kind"], json!("stack"));
+        assert_eq!(ok["frames"], json!(3));
+        // 同一时刻只许跑一项：另一条命令也得被挡。
+        let busy = state
+            .run_ui_command(
+                &ctx,
+                "timeblend.merge",
+                &json!({"frames": [0, 1], "confirm": true}),
+            )
+            .unwrap_err();
+        assert!(busy.contains("星空堆栈在进行中"), "{busy}");
+        wait_merge(&mut state, &ctx);
+        let done = state.merge_result.clone().expect("堆栈结果落账");
+        assert_eq!(done["kind"], json!("stack"));
+        assert_eq!(done["width"], json!(32));
+        assert_eq!(done["height"], json!(24));
+        let path = done["path"].as_str().expect("成片路径");
+        let still = image::open(path).expect("读回成片").to_rgb8();
+        // 亮化：第二帧的星点必须留在原位（否则就是模式没被吃进去）。
+        let star = still.get_pixel(8, 16)[0];
+        assert!(star > 200, "星点没留下：{star}");
+        assert_eq!(state.stack_last.as_deref(), Some(path));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 时间合成：天地合成把末帧放到天上、首帧放地上，并写出成片。
+    ///
+    /// Time blending: sky-ground puts the last frame in the sky and the first on the ground,
+    /// and writes the still.
+    #[test]
+    fn timeblend_merge_splits_sky_and_ground() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let dir = stack_frame_dir("tb");
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.display().to_string()}),
+            )
+            .expect("打开序列");
+        let need_confirm = state
+            .run_ui_command(&ctx, "timeblend.merge", &json!({"frames": [0, 1]}))
+            .unwrap_err();
+        assert!(need_confirm.contains("confirm"), "{need_confirm}");
+        let bad_bands = state
+            .run_ui_command(
+                &ctx,
+                "timeblend.merge",
+                &json!({"frames": [0, 1], "bands": 9, "confirm": true}),
+            )
+            .unwrap_err();
+        assert!(bad_bands.contains("bands 要在"), "{bad_bands}");
+        let bad_layout = state
+            .run_ui_command(
+                &ctx,
+                "timeblend.merge",
+                &json!({"frames": [0, 1], "layout": "diagonal", "confirm": true}),
+            )
+            .unwrap_err();
+        assert!(bad_layout.contains("未知布局"), "{bad_layout}");
+        let out_dir = dir.join("时间合成");
+        let ok = state
+            .run_ui_command(
+                &ctx,
+                "timeblend.merge",
+                &json!({
+                    "frames": [0, 1],
+                    "layout": "bands",
+                    "bands": 2,
+                    "out_dir": out_dir.display().to_string(),
+                    "confirm": true
+                }),
+            )
+            .expect("启动时间合成");
+        assert_eq!(ok["kind"], json!("timeblend"));
+        wait_merge(&mut state, &ctx);
+        let done = state.merge_result.clone().expect("合成结果落账");
+        assert_eq!(done["kind"], json!("timeblend"));
+        let path = done["path"].as_str().expect("成片路径");
+        let still = image::open(path).expect("读回成片").to_rgb8();
+        // 上一带取自首帧（没有星点），下一带取自末帧（有热噪点）。
+        let top = still.get_pixel(8, 2)[0];
+        let bottom = still.get_pixel(8, 16)[0];
+        assert!(top < 60, "上半幅应来自首帧：{top}");
+        assert!(bottom > 150, "下半幅应来自末帧：{bottom}");
+        assert_eq!(state.tb_last.as_deref(), Some(path));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

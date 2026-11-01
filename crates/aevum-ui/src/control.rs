@@ -536,14 +536,26 @@ pub fn command_catalog() -> Vec<CommandSpec> {
             schema: r#"{"type":"object","additionalProperties":false,"properties":{"frames":{"type":"array","items":{"type":"integer","minimum":0},"description":"要拼接的帧下标（0 开始，按接片顺序）；给了就忽略 start/around"},"start":{"type":"integer","minimum":0,"description":"起始帧下标（0 开始）；省略用当前选中帧"},"around":{"type":"integer","minimum":1,"maximum":11,"description":"起始帧之后再接几张（1..11，最多凑成 12 张）；省略=1"},"out_dir":{"type":"string","description":"输出目录，不能是序列根或其上级；省略用序列根下 全景/"},"confirm":{"type":"boolean","description":"批量写操作必须为 true"}},"required":["confirm"]}"#,
         },
         CommandSpec {
+            id: "stack.merge",
+            summary: "把同机位的一段帧按统计量合成一张：星轨取最亮、降噪取平均、去卫星取中值、杂散光与热噪点做 σ 截尾（批量写，必须 confirm: true）；会套对齐位移与统一裁切，尺寸对不齐会拒绝。长任务，立即返回，进度用 merge.status 查。",
+            params: "frames?（帧下标数组，0 开始）或 center?+around?（默认当前帧±4）；mode?（lighten/average/median/sigma-clip）、clip_sigma?、fill_gaps?、out_dir?；confirm",
+            schema: r#"{"type":"object","additionalProperties":false,"properties":{"frames":{"type":"array","items":{"type":"integer","minimum":0},"description":"要堆栈的帧下标（0 开始）；给了就忽略 center/around"},"center":{"type":"integer","minimum":0,"description":"包围中心帧下标（0 开始）；省略用当前选中帧"},"around":{"type":"integer","minimum":1,"maximum":32,"description":"中心前后各取几帧（1..32）；省略=4"},"mode":{"type":"string","enum":["lighten","average","median","sigma-clip"],"description":"统计量：星轨用 lighten、降噪用 average、去卫星用 median、杂散光用 sigma-clip；省略沿用面板当前值"},"clip_sigma":{"type":"number","exclusiveMinimum":0,"maximum":10,"description":"σ 截尾的倍数，常用 2–4；只对 sigma-clip 生效"},"fill_gaps":{"type":"boolean","description":"合成后仍全黑的像素用 3×3 邻域补上，闭合星轨之间的空隙"},"out_dir":{"type":"string","description":"输出目录，不能是序列根或其上级；省略用序列根下 堆栈/"},"confirm":{"type":"boolean","description":"批量写操作必须为 true"}},"required":["confirm"]}"#,
+        },
+        CommandSpec {
+            id: "timeblend.merge",
+            summary: "把不同时刻的帧合成为一张：天地合成（天取末帧、地取首帧）或时间切片（横向分带，一带一帧、从早到晚铺满整幅），批量写，必须 confirm: true；会套对齐位移与统一裁切，帧号升序即时间顺序。长任务，立即返回，进度用 merge.status 查。",
+            params: "frames?（帧下标数组，0 开始，升序=时间顺序）或 start?+around?（默认当前帧起 8 帧）；layout?（sky-ground/bands）、bands?、feather?、horizon?、match_exposure?、out_dir?；confirm",
+            schema: r#"{"type":"object","additionalProperties":false,"properties":{"frames":{"type":"array","items":{"type":"integer","minimum":0},"description":"参与合成的帧下标（0 开始，升序即时间顺序）；给了就忽略 start/around"},"start":{"type":"integer","minimum":0,"description":"起始帧下标（0 开始）；省略用当前选中帧"},"around":{"type":"integer","minimum":1,"maximum":31,"description":"起始帧之后再取几帧（1..31）；省略=7（共 8 帧）"},"layout":{"type":"string","enum":["sky-ground","bands"],"description":"sky-ground 按地平线分天地；bands 横向分带、一带一帧"},"bands":{"type":"integer","minimum":1,"maximum":32,"description":"带数，只对 bands 生效；等于帧数时一带一帧"},"feather":{"type":"number","minimum":0,"maximum":0.5,"description":"羽化宽度占画面高度的比例，0.04 约等于 4%"},"horizon":{"type":"number","minimum":0,"maximum":1,"description":"地平线位置（从顶部算起的比例），只对 sky-ground 生效"},"match_exposure":{"type":"boolean","description":"混之前把来源帧亮度对齐到参考帧（钳 ±2 EV），否则接缝处是一道台阶"},"out_dir":{"type":"string","description":"输出目录，不能是序列根或其上级；省略用序列根下 时间合成/"},"confirm":{"type":"boolean","description":"批量写操作必须为 true"}},"required":["confirm"]}"#,
+        },
+        CommandSpec {
             id: "merge.status",
-            summary: "HDR / 全景合并的进度与最近一次成片：busy、kind、done/total、result（含 path、width、height）、error。",
+            summary: "多帧合并（HDR / 全景 / 星空堆栈 / 时间合成）的进度与最近一次成片：busy、kind、done/total、result（含 path、width、height）、error。",
             params: "无参数",
             schema: r#"{"type":"object","additionalProperties":false,"properties":{}}"#,
         },
         CommandSpec {
             id: "merge.cancel",
-            summary: "请求取消正在进行的 HDR / 全景合并；核心算法是一整块，取消在两帧之间生效，已读进来的帧不会留下半成品。",
+            summary: "请求取消正在进行的多帧合并（HDR / 全景 / 星空堆栈 / 时间合成）；核心算法是一整块，取消在两帧之间生效，已读进来的帧不会留下半成品。",
             params: "无参数",
             schema: r#"{"type":"object","additionalProperties":false,"properties":{}}"#,
         },

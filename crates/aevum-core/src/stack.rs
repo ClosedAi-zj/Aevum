@@ -20,6 +20,14 @@
 //! the result systematically (`mean(γ(x)) < γ(mean(x))`), and stars and shadows are the first to
 //! smear -- exactly the usual source of "the result looks wrong".
 
+/// 一次堆栈最多吃多少帧。中值是 O(N log N) 排序，64 帧已经是很深的栈了；
+/// 再深就该先分段再合，而不是把一张 45MP 的帧乘上三位数的内存。
+///
+/// The most frames one stack accepts. Median sorts at O(N log N), and 64 is already a deep
+/// stack; beyond that, stack in passes rather than multiply a 45MP frame by three digits of
+/// memory.
+pub const MAX_FRAMES: usize = 64;
+
 /// 合成方式。
 ///
 /// How the stack is combined.

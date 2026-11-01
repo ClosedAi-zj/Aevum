@@ -258,12 +258,20 @@ const FALLBACK_TOOLS: &[(&str, &str)] = &[
         "把相邻几张有重叠的照片拼成一张宽幅全景（特征点匹配 + RANSAC 单应 + 羽化融合，批量写，必须 confirm: true；长任务，立即返回，进度用 merge.status）。参数：frames?（帧下标数组，0 开始，按接片顺序）或 start?+around?（默认当前帧起向后 1 张，around 1..11）/ out_dir?（默认序列根下 全景/）/ confirm: true。",
     ),
     (
+        "stack.merge",
+        "把同机位的一段帧按统计量合成一张（星轨 lighten / 降噪 average / 去卫星 median / σ 截尾 sigma-clip，批量写，必须 confirm: true；长任务，立即返回，进度用 merge.status）。参数：frames?（帧下标数组，0 开始）或 center?+around?（默认当前帧±4，around 1..32）/ mode? / clip_sigma? / fill_gaps? / out_dir?（默认序列根下 堆栈/）/ confirm: true。",
+    ),
+    (
+        "timeblend.merge",
+        "把不同时刻的帧合成为一张（sky-ground 天取末帧地取首帧，bands 横向分带一带一帧；批量写，必须 confirm: true；长任务，立即返回，进度用 merge.status）。参数：frames?（帧下标数组，0 开始，升序=时间顺序）或 start?+around?（默认当前帧起 8 帧）/ layout?（sky-ground|bands）/ bands? / feather? / horizon? / match_exposure? / out_dir?（默认序列根下 时间合成/）/ confirm: true。",
+    ),
+    (
         "merge.status",
-        "查询 HDR / 全景合并的进度与最近一次成片（busy / kind / done / total / result / error）。无参数。",
+        "查询多帧合并（HDR / 全景 / 星空堆栈 / 时间合成）的进度与最近一次成片（busy / kind / done / total / result / error）。无参数。",
     ),
     (
         "merge.cancel",
-        "请求取消正在进行的 HDR / 全景合并；在两帧之间生效。无参数。",
+        "请求取消正在进行的多帧合并（HDR / 全景 / 星空堆栈 / 时间合成）；在两帧之间生效。无参数。",
     ),
     ("project.save", "写入 <序列>/.aevum/project.json。无参数。"),
     ("project.get", "读取工程快照与路径。无参数。"),
@@ -561,7 +569,7 @@ fn tool_list(target: &ControlTarget, warned: &mut bool) -> Vec<Value> {
     }
 }
 
-/// GUI 离线时的工具清单：由命令目录派生，与在线时同为 72 条。
+/// GUI 离线时的工具清单：由命令目录派生，与在线时同为 74 条。
 ///
 /// 清单本体不再单独维护。从前这里直接遍历 [`FALLBACK_TOOLS`]，于是「描述表」与
 /// 「清单」是同一份东西：加一条命令时必须记得同时补一条描述，否则它就从离线清单里
@@ -591,7 +599,7 @@ fn fallback_tools() -> Vec<Value> {
 
 /// 描述表没覆盖到的命令共用这一句。
 ///
-/// 眼下 72 条命令的描述都在 [`FALLBACK_TOOLS`] 里，所以这段文案还走不到。
+/// 眼下 74 条命令的描述都在 [`FALLBACK_TOOLS`] 里，所以这段文案还走不到。
 /// 留着是因为清单来自命令目录、描述靠人工补：将来新增命令时，
 /// 中间那段「清单已有、文案未写」的空窗不该让 agent 读到空字符串。
 const GUI_OFFLINE_DESCRIPTION: &str =
@@ -651,7 +659,7 @@ pub fn mcp_name(command: &str) -> String {
 ///
 /// 两条查表路径合起来覆盖两个命名空间：
 /// 1. 服务模式的 34 个工具名（`aevum_xmp_read` 这种与命令 ID 对不齐的历史拼法也在此）；
-/// 2. GUI 命令目录的 72 个名字（`aevum_library_add`、`aevum_history_undo` 等）。
+/// 2. GUI 命令目录的 74 个名字（`aevum_library_add`、`aevum_history_undo` 等）。
 ///
 /// 旧前缀 `lumen_*` 先规范化，于是新旧名走**同一条**路，行为逐字节相同。
 ///
@@ -663,7 +671,7 @@ pub fn mcp_name(command: &str) -> String {
 /// Two lookup paths together cover two namespaces:
 /// 1. the 34 tool names of server mode (`aevum_xmp_read` and other historical
 ///    spellings that do not line up with a command ID are in here too);
-/// 2. the 72 names in the GUI command catalogue (`aevum_library_add`,
+/// 2. the 74 names in the GUI command catalogue (`aevum_library_add`,
 ///    `aevum_history_undo` and so on).
 ///
 /// The old `lumen_*` prefix is canonicalised first, so old and new names take
@@ -708,7 +716,7 @@ fn unknown_tool_message(name: &str) -> String {
     if is_known_tool(name) {
         format!(
             "{name} 只在服务模式可用：GUI 控制通道没有对应命令，--attach 附着跑不了它。\
-             改用 aevum --mcp 直连，或 tools/list 查看附着模式支持的 72 条命令"
+             改用 aevum --mcp 直连，或 tools/list 查看附着模式支持的 74 条命令"
         )
     } else {
         format!("未知工具：{name}（附着模式只暴露 GUI 命令，用 tools/list 查看）")
@@ -913,10 +921,10 @@ mod tests {
         assert_eq!(resolve_command("aevum_nope"), None);
     }
 
-    /// 附着模式的工具清单是从 GUI 命令目录现生成的（72 条），所以**每一个**名字
+    /// 附着模式的工具清单是从 GUI 命令目录现生成的（74 条），所以**每一个**名字
     /// 都必须能路由回去。少一条就是「列在 tools/list 里、一调就报未知工具」。
     ///
-    /// 这是守卫而非回归：修复前那条兜底表恰好也是 72 条完整覆盖，所以本测试在旧代码上
+    /// 这是守卫而非回归：修复前那条兜底表恰好也是 74 条完整覆盖，所以本测试在旧代码上
     /// 同样会绿。它防的是将来——清单与路由表分家之后，谁也别想靠"我记得补了"过关。
     #[test]
     fn every_catalog_command_is_routable_in_attach_mode() {
@@ -951,7 +959,7 @@ mod tests {
         }
     }
 
-    /// 离线清单必须和在线清单一样长（72 条），只允许描述详细度不同。
+    /// 离线清单必须和在线清单一样长（74 条），只允许描述详细度不同。
     /// 同一个客户端换台机器（GUI 开没开）不该看到两套工具集。
     #[test]
     fn offline_list_covers_the_whole_catalog() {
@@ -1377,7 +1385,7 @@ mod qa_acceptance {
         assert_eq!(resolve_command("aevum_open_sequence_run"), None);
     }
 
-    /// 旧前缀与新前缀：72 条命令 + 34 个工具，逐个比对必须逐字节相同。
+    /// 旧前缀与新前缀：74 条命令 + 34 个工具，逐个比对必须逐字节相同。
     #[test]
     fn qa_legacy_prefix_agrees_with_new_prefix_everywhere() {
         for id in catalog() {
@@ -1547,10 +1555,10 @@ mod qa_acceptance {
         let clashes: BTreeMap<&String, &Vec<&str>> =
             by_name.iter().filter(|(_, ids)| ids.len() > 1).collect();
         assert!(clashes.is_empty(), "工具名重名：{clashes:?}");
-        assert_eq!(by_name.len(), 72, "72 条命令应当正好生成 72 个工具名");
+        assert_eq!(by_name.len(), 74, "74 条命令应当正好生成 74 个工具名");
     }
 
-    /// 离线兜底清单：72 条、不重名、描述不空、每条都能路由。
+    /// 离线兜底清单：74 条、不重名、描述不空、每条都能路由。
     /// 走 `serve` 的 `tools/list` 而不是直接调私有函数——这样验的是客户端真正看到的报文。
     #[test]
     fn qa_offline_tool_list_is_well_formed() {
@@ -1560,7 +1568,7 @@ mod qa_acceptance {
             .as_array()
             .expect("tools 数组")
             .clone();
-        assert_eq!(tools.len(), 72, "离线清单不是 72 条");
+        assert_eq!(tools.len(), 74, "离线清单不是 74 条");
 
         let mut names = Vec::new();
         let mut described = 0usize;
@@ -1582,9 +1590,9 @@ mod qa_acceptance {
             names.push(name);
         }
         let unique: BTreeSet<&String> = names.iter().collect();
-        assert_eq!(unique.len(), 72, "离线清单里有重名工具");
+        assert_eq!(unique.len(), 74, "离线清单里有重名工具");
 
-        // 期望集合：72 条命令的机械名，逐个比对（顺序无关）
+        // 期望集合：74 条命令的机械名，逐个比对（顺序无关）
         let expected: BTreeSet<String> = catalog().iter().map(|id| mcp_name(id)).collect();
         let got: BTreeSet<String> = names.iter().cloned().collect();
         assert_eq!(got, expected, "离线清单与命令目录不是同一套名字");
@@ -1629,7 +1637,7 @@ mod qa_acceptance {
                 "{name} 应当报「只在服务模式可用」，实际：{text}"
             );
             assert!(!text.contains("未知工具"), "{name} 被误判成拼错了：{text}");
-            assert!(text.contains("72"), "{name} 的提示没给出核对办法：{text}");
+            assert!(text.contains("74"), "{name} 的提示没给出核对办法：{text}");
         }
 
         // 旧名要归到「GUI 没能力」，不是「拼错」
@@ -1763,7 +1771,7 @@ mod qa_acceptance {
     /// 在线：`tools/list` 列出的每一条都必须调得动，而且要落到**它自己**那条命令。
     #[test]
     fn qa_online_list_entries_are_all_callable_and_land_on_the_right_command() {
-        let gui = spawn_fake_gui(full_catalog(), 1 + 72);
+        let gui = spawn_fake_gui(full_catalog(), 1 + 74);
         let mut requests = vec![list(0)];
         for (index, id) in catalog().iter().enumerate() {
             requests.push(call(index as u64 + 1, &mcp_name(id)));
@@ -1774,7 +1782,7 @@ mod qa_acceptance {
         let tools = responses[0]["result"]["tools"]
             .as_array()
             .expect("tools 数组");
-        assert_eq!(tools.len(), 72, "在线清单不是 72 条");
+        assert_eq!(tools.len(), 74, "在线清单不是 74 条");
 
         let listed: BTreeSet<String> = tools
             .iter()
@@ -1799,18 +1807,18 @@ mod qa_acceptance {
         let forwarded: BTreeSet<String> = seen[1..].iter().cloned().collect();
         let expected_ids: BTreeSet<String> = catalog().iter().map(|id| (*id).to_owned()).collect();
         assert_eq!(forwarded, expected_ids, "转给 GUI 的命令集合不对");
-        assert_eq!(seen.len(), 73);
+        assert_eq!(seen.len(), 75);
     }
 
-    /// 跨版本推演之一：**旧 GUI（60 条）+ 新 MCP（72 条）**。
+    /// 跨版本推演之一：**旧 GUI（60 条）+ 新 MCP（74 条）**。
     /// `tools/list` 从 GUI 取，于是只列 60 条，而这 60 条都能路由——
-    /// 不会产生新的「列出来调不动」。本地多出来的 12 条没被列出，但若被硬调，
+    /// 不会产生新的「列出来调不动」。本地多出来的 14 条没被列出，但若被硬调，
     /// 会被 GUI 以 -32601 拒掉，落到 isError:true 的业务错误（不挂、不报「未知工具」）。
     #[test]
     fn qa_older_gui_subset_is_listed_and_callable() {
         let older = full_catalog().into_iter().take(60).collect::<Vec<_>>();
         let absent: Vec<&str> = catalog().iter().skip(60).copied().collect();
-        assert_eq!(absent.len(), 12, "跨版本场景按 60/72 推演");
+        assert_eq!(absent.len(), 14, "跨版本场景按 60/74 推演");
 
         let gui = spawn_fake_gui(older, 1 + 60 + 1);
         let mut requests = vec![list(0)];
@@ -1851,7 +1859,7 @@ mod qa_acceptance {
         );
     }
 
-    /// 跨版本推演之二：**新 GUI（72+）+ 旧命令行**。
+    /// 跨版本推演之二：**新 GUI（74+）+ 旧命令行**。
     ///
     /// `tools/list` 从 GUI 取、路由表在本地，这个组合本来会制造出「列出来、永远调不通」
     /// 的工具。现在改成不列：agent 拿到一条看着合法的工具名只会反复试错，而人从启动时
@@ -1868,14 +1876,14 @@ mod qa_acceptance {
         let tools = responses[0]["result"]["tools"]
             .as_array()
             .expect("tools 数组");
-        assert_eq!(tools.len(), 72, "本机不认识的新命令不该出现在列表里");
+        assert_eq!(tools.len(), 74, "本机不认识的新命令不该出现在列表里");
         assert!(
             !tools
                 .iter()
                 .any(|tool| tool["name"] == json!("aevum_library_tags")),
             "新命令被列出来了 —— 它调不通，列出来只会让 agent 反复试错"
         );
-        // 原有 72 条一条不能少：过滤只该去掉「不认识」，不该误伤
+        // 原有 74 条一条不能少：过滤只该去掉「不认识」，不该误伤
         for id in aevum_core::mcp_routes::COMMANDS {
             let name = mcp_name(id);
             assert!(

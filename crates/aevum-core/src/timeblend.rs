@@ -39,6 +39,13 @@
 
 use crate::stack::StackError;
 
+/// 一次时间合成最多吃多少帧：带数上限是 32，再多每条带就只有几行像素，
+/// 接缝会密到看不出「时间」而只剩条纹。
+///
+/// The most frames one time blend accepts: bands cap at 32, and beyond that each band is only a
+/// few rows tall -- the seams crowd out the sense of time and leave stripes.
+pub const MAX_FRAMES: usize = 32;
+
 /// 合成的布局。
 ///
 /// How the composite is laid out.
