@@ -30,18 +30,19 @@
 //! | `black_soft` | `blacks < 0` | 它软的是 0 那一侧的硬钳，像素没被压到 0 以下就无处可软 |
 //! | `dehaze_contrast` | `dehaze_dark ≠ 0` | 对比项叠在暗通道去雾之后，没去雾就没有可对比的东西 |
 //!
-//! # 一个真缺陷：`curve_hdr_tail` 目前完全无效
+//! # `curve_hdr_tail` 的边界：它靠曝光段产生的 > 1，不靠外部输入
 //!
-//! `spatial::lens` 在**每次渲染的起点**无条件 `clamp01`，而 Python 侧 `_lens` 也是
-//! 同样一句 `np.clip(x, 0, 1)`。于是进入影调链的值永远 ≤1，而曲线尾部的整个前提
-//! 就是 `x > 1`——这条代码路径在两端都走不到。实测：`tone_curve` 直接喂 1.5，
-//! `tail=0` 得 0.902、`tail=100` 得 1.0（数学是对的）；但走完整条 `render`，两者
-//! 都是 0.902。
+//! 写这份文件时我先写下过一个错结论——「曲线尾部在整条链里完全无效」，理由是
+//! `spatial::lens` 在渲染起点无条件 `clamp01`（Python `_lens` 同样
+//! `np.clip(x, 0, 1)`）。**这个结论是错的**：真实管线里 > 1 是**曝光段**造出来的
+//! （`lin_to_srgb(lin·gain)` 可以越过 1），而镜头钳位在曝光**之前**，所以钳位碰
+//! 不到它。实测 +2EV 时 `tail=0` 与 `tail=100` 的最大差 0.098，滑杆是有效的。
 //!
-//! 修它等于把「镜头之后向上不封顶」这条契约改掉，而现有金标 case 里有加曝光的，
-//! 那些像素当前正是被这个钳位压成 1.0 的——改完要重冻结。所以先用
-//! `curve_hdr_tail_is_inert_behind_the_lens_clamp` 把这个事实钉住：将来真修了，
-//! 这条测试会红，提醒改注释、改文档、重冻结。
+//! 钳位真正挡住的是「从外部直接喂进 > 1 的输入」——解码器输出的编码值本来就是
+//! ≤ 1，所以今天没有可见影响；但将来要做 HDR 解码 / 16-bit 线性输入时，这一句
+//! 会在第一步就把动态范围削平。两条各一个测试：
+//! [`curve_hdr_tail_works_on_exposure_headroom`]（有效）与
+//! [`external_hdr_input_is_clamped_at_the_lens_stage`]（边界在哪）。
 
 mod support;
 
@@ -582,13 +583,42 @@ fn curve_hdr_tail_math_extends_above_one() {
     assert_eq!(a, b, "tail 不该影响 x ≤ 1 的主路径");
 }
 
-/// 现状：整条 `render` 里 `curve_hdr_tail` 完全无效——镜头校正那一步无条件钳到 [0,1]。
+/// 真实路径：`curve_hdr_tail` 对**曝光段造出来的** > 1 有效。
 ///
-/// 将来如果真把「镜头之后向上不封顶」改了，这条会红：那是**故意的**，它提醒你
-/// 同步改本文件头、CHANGELOG 与金标（现有 case 里加曝光的像素正是被这个钳位
-/// 压成 1.0 的，解钳就要重冻结）。
+/// +2EV 把高光推到 1 以上，尾部按 PCHIP 末端斜率继续延伸，所以 `tail` 越大、
+/// 出来的高光越亮。这条是「滑杆确实有用」的正证。
 #[test]
-fn curve_hdr_tail_is_inert_behind_the_lens_clamp() {
+fn curve_hdr_tail_works_on_exposure_headroom() {
+    let src = ramp(W, H, 0.55, 0.95);
+    let mut p = GradeParams::default();
+    p.exposure = 2.0;
+    p.curve_rgb = s_curve(230.0);
+    let mut prev = 0.0f32;
+    for k in [0.0f64, 25.0, 50.0, 75.0, 100.0] {
+        let mut q = p.clone();
+        q.curve_hdr_tail = k;
+        let out = render(&src, &q, W, H);
+        let mx = max_of(&out, W, H);
+        assert!(
+            mx >= prev - 1e-6,
+            "curve_hdr_tail={k} 的高光 {mx:.4} 比上一档 {prev:.4} 还低"
+        );
+        assert!(mx <= 1.0 + 1e-6);
+        prev = mx;
+    }
+    assert!(
+        prev > 0.93,
+        "tail=100 应当把过曝区继续推高，实测最高 {prev:.4}"
+    );
+}
+
+/// 边界：从外部直接喂 > 1 的输入，会被 `spatial::lens` 的 `clamp01` 削平。
+///
+/// 解码器输出的编码值本来 ≤1，所以今天没有可见影响；但这是「管线装不了 HDR」
+/// 的落点——将来做 16-bit 线性输入或 HDR 解码，第一件事就是改这里。
+/// 这条测试红了说明钳位被去掉/放宽了，那时应当同步删掉本条并把契约写进文档。
+#[test]
+fn external_hdr_input_is_clamped_at_the_lens_stage() {
     let src = ramp(W, H, 0.5, 1.9);
     let mut off = GradeParams::default();
     off.curve_rgb = s_curve(230.0);
@@ -598,7 +628,7 @@ fn curve_hdr_tail_is_inert_behind_the_lens_clamp() {
     let b = render(&src, &on, W, H);
     assert_eq!(
         a, b,
-        "镜头阶段的 clamp01 已经吃掉 >1 的输入；这条测试红了说明那处钳位被改了"
+        "镜头阶段的 clamp01 吃掉 >1 的输入；这条红了说明那处钳位被改了"
     );
     assert!(
         (max_of(&a, W, H) - 230.0 / 255.0).abs() < 1e-3,

@@ -177,19 +177,20 @@ pub struct GradeParams {
     /// 曲线 HDR 尾部（0–100）：x>1 的输入按 PCHIP 末端斜率延伸而非硬截断，
     /// 输出仍 ≤1。0 = 旧 clamp(0,1) 逐位一致。
     ///
-    /// **当前在整条链里无效**：`spatial::lens` 在渲染起点无条件 `clamp01`
-    /// （Python 侧 `_lens` 同样 `np.clip(x, 0, 1)`），进影调链的值永远 ≤1，
-    /// 这条路径走不到。修它要改「镜头之后向上不封顶」的契约并重冻结金标，
-    /// 实测见 `tests/fit_sliders.rs` 的 `curve_hdr_tail_is_inert_behind_the_lens_clamp`。
+    /// **它靠的是曝光段产生的 >1，不是外部输入**：真实管线里 >1 由
+    /// `lin_to_srgb(lin·gain)` 造出，镜头阶段的 `clamp01` 在曝光之前、
+    /// 碰不到它，所以这条滑杆照常生效（+2EV 实测 tail=0 与 100 差 0.098）。
+    /// 被钳位挡住的是「从外部直接喂 >1」，解码器输出的编码值本来就 ≤1，
+    /// 今天无可见影响，但 HDR 解码 / 16-bit 线性输入会在这里被削平。
+    /// 边界见 `tests/fit_sliders.rs` 的两条测试。
     ///
-    /// Curve HDR tail (0–100): inputs with x>1 extend along the PCHIP end slope instead of being
-    /// hard clipped, and the output stays ≤1. 0 reproduces the old clamp(0,1) bit for bit.
-    ///
-    /// **It currently does nothing in the full chain**: `spatial::lens` clamps to [0,1]
-    /// unconditionally at the start of every render (Python's `_lens` does the same
-    /// `np.clip(x, 0, 1)`), so nothing above 1 ever reaches the tone curve. Fixing that means
-    /// changing the "no upper clamp after lens" contract and refreezing the golden data; see
-    /// `curve_hdr_tail_is_inert_behind_the_lens_clamp` in `tests/fit_sliders.rs`.
+    /// **It feeds on headroom created by the exposure stage, not on external input**: in the
+    /// real chain, values above 1 come from `lin_to_srgb(lin·gain)`, and the `clamp01` in the
+    /// lens stage runs before exposure, so it never sees them — the slider works (+2EV measures
+    /// a 0.098 difference between tail=0 and tail=100). What the clamp does block is a caller
+    /// handing in >1 directly; decoder output is already <=1 in encoded units, so nothing is
+    /// visible today, but an HDR decode or 16-bit linear input would be flattened right there.
+    /// See the two boundary tests in `tests/fit_sliders.rs`.
     pub curve_hdr_tail: f64,
 
     /// 外部 .cube「外观」：主链之前先套一层三维查表，空串表示没有。
