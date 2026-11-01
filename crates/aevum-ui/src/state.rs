@@ -11624,6 +11624,39 @@ mod frame_tests {
         assert!(state.settings_dirty);
     }
 
+    /// 选了 HDR 之后，色域与容器必须被补齐到唯一成立的组合。
+    ///
+    /// 这条挡的是「面板让用户选一个必然失败的组合」：HDR 配 PNG 会在按下导出之后
+    /// 才被 core 的守卫拒绝，用户已经在等结果了才挨一句错误。`apply_dynamic` 把
+    /// 组合补齐（可见地改，不许偷偷改），所以这里逐项断言补齐后的三个值。
+    ///
+    /// Choosing HDR must fill in the only valid combination. This stops the panel from
+    /// letting the user pick something that can only fail: HDR with PNG is rejected by core's
+    /// guard only after the export button is pressed, when the user is already waiting for a
+    /// result. `apply_dynamic` fills the combination in (visibly, never silently), so all
+    /// three values are asserted after the call.
+    #[test]
+    fn hdr_forces_rec2020_and_avif() {
+        let mut state = AppState::new();
+        state.render_dynamic = OutputDynamic::Sdr;
+        state.render_color_space = ColorSpace::Srgb;
+        state.render_format = StillFormat::Png8;
+
+        state.render_dynamic = OutputDynamic::HdrPq;
+        state.apply_dynamic();
+        assert_eq!(state.render_color_space, ColorSpace::Rec2020);
+        assert_eq!(
+            state.render_format,
+            StillFormat::Avif,
+            "HDR 配 PNG 会被 core 拒绝，面板必须当场改掉"
+        );
+
+        // 回到 SDR 不许把用户的容器选择一起翻掉（只补不成立的组合）。
+        state.render_dynamic = OutputDynamic::Sdr;
+        state.apply_dynamic();
+        assert_eq!(state.render_format, StillFormat::Avif, "SDR 不需要改容器");
+    }
+
     /// 预设栏三节：拖动换序 → 进 settings 载荷 → 读回来还是那个次序。
     ///
     /// 顺序判据用**字面值**，不用「和默认一样」这种相对说法：一起改了默认次序的话，

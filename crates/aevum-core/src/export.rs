@@ -425,7 +425,46 @@ impl OutputDynamic {
 
     /// 只有 10bit 容器装得下 PQ；8bit 会让 PQ 的暗部只剩几十级。
     ///
+    /// **TIFF / PNG 的 16bit HDR 是明确不做的**（台账 B3），理由三条，都不是"懒得做"：
+    ///
+    /// 1. **没有哪条路能让消费级软件读对。** TIFF/PNG 里声明「这段数据是 PQ」只能靠
+    ///    ICC：`parametricCurveType` 装不下 PQ 这种形状，只能塞 `curveType` 的 4096 点
+    ///    采样表。Photoshop、Windows 照片、各类看图器都不解析它，读出来是一片灰——比
+    ///    直接拒绝更糟，因为文件"看起来"成功了。
+    /// 2. **16bit 线性也不成立。** 去掉传递函数当线性 16bit 交出去，确实能被 Nuke /
+    ///    DaVinci 读对，但同样一批软件（以及 Photoshop）默认按 gamma 解释 16bit TIFF，
+    ///    结果同样错，而且错得更隐蔽（看着像过曝而不是像灰）。
+    /// 3. **专业链条本来就不用这两个容器。** HDR 静帧交付走 EXR / DNG；TIFF 在专业
+    ///    链条里的角色是**已经过完色的 SDR 底片**，不是 HDR 母版。为它造一套只有本程序
+    ///    认的 PQ 约定，只会产出一堆到别处就坏的文件。
+    ///
+    /// 所以这里的做法是**拒绝 + 说清**，而不是悄悄退回 SDR（那是最坏的失败方式：
+    /// 界面写 HDR、文件是 SDR）。面板侧由 `AppState::apply_dynamic` 当场把组合补齐到
+    /// AVIF + Rec.2020，用户不会先按导出再挨一句错误。
+    ///
     /// Only a 10bit container can hold PQ; 8bit leaves the shadows with a few dozen levels.
+    ///
+    /// **16-bit HDR in TIFF/PNG is deliberately not implemented** (backlog B3), for three
+    /// reasons, none of them laziness:
+    ///
+    /// 1. **Nothing consumer-grade would read it correctly.** Declaring "this TIFF/PNG is PQ"
+    ///    can only go through ICC, and `parametricCurveType` cannot express PQ — it would take
+    ///    a 4096-entry `curveType` sample table. Photoshop, Windows Photos and every image
+    ///    viewer ignore it and show flat grey, which is worse than refusing: the file *looks*
+    ///    like it worked.
+    /// 2. **16-bit linear does not work either.** Dropping the transfer function and handing
+    ///    out linear 16-bit is read correctly by Nuke/DaVinci, but the same set of tools (and
+    ///    Photoshop) default to treating 16-bit TIFF as gamma-encoded — equally wrong and more
+    ///    deceptive, since it looks overexposed rather than grey.
+    /// 3. **The professional chain does not use these containers for HDR anyway.** HDR stills
+    ///    ship as EXR/DNG; TIFF's role there is the *already graded SDR* plate, not the HDR
+    ///    master. Inventing a PQ convention only this program understands would just produce
+    ///    files that break elsewhere.
+    ///
+    /// So the choice is **refuse and explain**, never quietly fall back to SDR (the worst
+    /// failure mode: the UI says HDR, the file is SDR). The panel side fixes the combination
+    /// through `AppState::apply_dynamic`, so the user never presses export first and gets an
+    /// error afterwards.
     pub fn fits(self, format: StillFormat) -> bool {
         match self {
             Self::Sdr => true,
