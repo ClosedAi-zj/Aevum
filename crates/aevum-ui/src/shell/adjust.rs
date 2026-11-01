@@ -1580,6 +1580,28 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                     .size(SIZE_SMALL)
                     .color(theme::muted()),
                 );
+                // 面板只能显示到白，所以 HDR 高光在预览里始终和 SDR 一样被削平——
+                // 「导出后拿别的软件看」正是这条缺口。这个开关把白以上折进最后一段
+                // 码值，让高光层次在面板里可见（白以下逐位不动）。
+                //
+                // The panel can only reach white, so HDR highlights look clipped in the
+                // preview exactly as in SDR — "export it and check elsewhere" was the gap.
+                // This toggle folds above-white into the last slice of the code range so the
+                // highlight layers are visible here (below white: bit-identical).
+                if ui
+                    .checkbox(
+                        &mut state.hdr_preview,
+                        RichText::new(crate::i18n::t!("预览白以上（SDR 屏上检视高光）"))
+                            .size(SIZE_SMALL),
+                    )
+                    .on_hover_text(crate::i18n::t!(
+                        "屏幕显示不到白：打开后把白以上折进最后约 25 级，高光里的层次就看得见；中间调与暗部一位不动。这不是模拟 HDR 屏亮度，只是让你确认白以上还有没有东西。"
+                    ))
+                    .changed()
+                {
+                    state.preview_dirty = true;
+                    state.settings_dirty = true;
+                }
             }
         }
         if state.render_format.lossy() {

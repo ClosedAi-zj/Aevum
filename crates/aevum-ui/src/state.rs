@@ -894,6 +894,13 @@ pub struct AppState {
     /// your arrangement is half of "reduce the information load", and the other half is
     /// not unrolling everything on the first screen.
     pub collapsed: HashSet<&'static str>,
+    /// 预览里打开「白以上检视」：把白以上的亮度折进最后一段码值，让 SDR 面板能看见
+    /// HDR 高光里还有没有细节。落 `settings.json`（观看方式，不是一次性动作）。
+    ///
+    /// Preview shows "above white" inspection: fold above-white brightness into the last
+    /// slice of the code range so an SDR panel can show whether HDR highlights still carry
+    /// detail. Persisted in `settings.json` (a way of looking, not a one-off action).
+    pub hdr_preview: bool,
     /// 预设栏三节的次序（`PRESET_SECTIONS` 的一个排列）。拖节头换序，落
     /// `settings.json`；读回时由 [`normalise_preset_order`] 补全成完整排列。
     ///
@@ -1912,6 +1919,7 @@ impl AppState {
             font_level: self.font_level,
             lang: self.lang,
             collapsed: Some(collapsed),
+            hdr_preview: Some(self.hdr_preview),
             preset_order: Some(self.preset_order.iter().map(|k| (*k).to_owned()).collect()),
             win_pos: (!self.win_pos.is_empty()).then(|| self.win_pos.clone()),
         }
@@ -1936,6 +1944,7 @@ impl AppState {
             None => default_collapsed(),
         };
         self.win_pos = s.win_pos.unwrap_or_default();
+        self.hdr_preview = s.hdr_preview.unwrap_or(false);
         self.preset_order = normalise_preset_order(&s.preset_order.unwrap_or_default());
     }
 
@@ -1997,6 +2006,7 @@ impl AppState {
             tool: Tool::Hand,
             dock_tab: DockTab::Adjust,
             collapsed: default_collapsed(),
+            hdr_preview: false,
             preset_order: default_preset_order(),
             drag_section: None,
             win_pos: std::collections::BTreeMap::new(),
@@ -7564,6 +7574,13 @@ impl AppState {
         };
         let tx = self.tx.clone();
         let ctx2 = ctx.clone();
+        // 检视开关在**发任务那一刻**定下来：拖动中途切开关，这一帧仍按旧值渲染完，
+        // 下一帧才换——比中途换链导致画面跳一半要稳。
+        //
+        // The inspection flag is fixed **when the job is posted**: toggling mid-drag lets
+        // this frame finish on the old value and switches on the next one, which is steadier
+        // than changing chains halfway through a frame.
+        let hdr_fold = self.hdr_preview;
         thread::spawn(move || {
             match render_preview_file(
                 &path,
@@ -7575,6 +7592,7 @@ impl AppState {
                 view,
                 sketch,
                 want_original,
+                hdr_fold,
             ) {
                 Ok((graded, original, size, hist)) => {
                     let _ = tx.send(Msg::Preview(Box::new(PreviewMsg {
@@ -10398,6 +10416,7 @@ fn render_preview_file(
     view: Option<Viewfinder>,
     sketch: bool,
     want_original: bool,
+    hdr_fold: bool,
 ) -> Result<PreviewParts, String> {
     let stamp = source_stamp(path);
     let (mut buf, w, h, full) = decoded_preview_source(path, stamp, sketch, &params.dcp_profile)?;
@@ -10445,10 +10464,25 @@ fn render_preview_file(
         (crop, framing)
     };
 
+    // HDR 检视：渲染保留白以上，再折进可见段。两条都做——只渲不折会被成图那一步
+    // 钳成 1.0（和 SDR 一模一样），只折不渲则根本没有白以上可折。
+    //
+    // HDR inspection: render keeping above-white, then fold it into the visible range. Both
+    // steps are needed -- rendering alone gets clamped when the texture is made (identical to
+    // SDR), and folding alone has nothing above white to fold.
     if sketch {
-        aevum_core::render_sketch(&mut buf, w, h, params, gain);
+        if hdr_fold {
+            aevum_core::render_preview_hdr_sketch(&mut buf, w, h, params, gain);
+        } else {
+            aevum_core::render_sketch(&mut buf, w, h, params, gain);
+        }
+    } else if hdr_fold {
+        aevum_core::render_preview_hdr(&mut buf, w, h, params, gain);
     } else {
         aevum_core::render_preview(&mut buf, w, h, params, gain);
+    }
+    if hdr_fold {
+        aevum_core::fold_above_white_in_place(&mut buf);
     }
     let (graded, gw, gh) = shift_crop(&buf, w, h, framing, crop);
     // 取景框作用在「拉直 + 裁切之后」的那一幅上，走的是导出同一条采样路
@@ -11657,6 +11691,33 @@ mod frame_tests {
         assert_eq!(state.render_format, StillFormat::Avif, "SDR 不需要改容器");
     }
 
+    /// 「预览白以上」是观看方式，必须跟着用户走：进 settings 载荷、读回来还开着。
+    ///
+    /// 老文件没有这一项时按**关**处理——不能默认开，否则所有人第一次打开都会看到
+    /// 略微压暗的白，还以为调色坏了。
+    ///
+    /// "Preview above white" is a way of looking and must travel with the user: into the
+    /// settings payload, back on after relaunch. An old file without the field means **off** —
+    /// defaulting to on would dim everyone's whites on first launch and read as a broken grade.
+    #[test]
+    fn hdr_preview_toggle_persists_and_defaults_to_off() {
+        let mut state = AppState::new();
+        assert!(!state.hdr_preview, "默认必须是关的");
+
+        state.hdr_preview = true;
+        let saved = state.settings();
+        assert_eq!(saved.hdr_preview, Some(true), "没进 settings 载荷");
+
+        let mut fresh = AppState::new();
+        fresh.adopt_settings(saved);
+        assert!(fresh.hdr_preview, "读回来关了");
+
+        let mut old_file = AppState::new();
+        old_file.hdr_preview = true;
+        old_file.adopt_settings(crate::settings::Settings::default());
+        assert!(!old_file.hdr_preview, "老文件缺这一项时应当是关");
+    }
+
     /// 预设栏三节：拖动换序 → 进 settings 载荷 → 读回来还是那个次序。
     ///
     /// 顺序判据用**字面值**，不用「和默认一样」这种相对说法：一起改了默认次序的话，
@@ -12198,6 +12259,7 @@ mod preview_tests {
             None,
             sketch,
             false,
+            false,
         )
         .expect("渲染预览")
     }
@@ -12223,6 +12285,58 @@ mod preview_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 打开「白以上检视」后，**穿过整条预览路径**的高光真的没被削到白。
+    ///
+    /// 这条和 `aevum-core` 里那三条不是一回事：那三条量的是折线，这条量的是
+    /// `render_preview_file` 交出来的那张贴图——渲染、折线、成图（`ColorImage`）全走完。
+    /// 中间任何一步（比如成图时又钳一次）把白以上压掉，这里就会看到 255。
+    ///
+    /// With the inspection on, highlights that went **through the whole preview path** are
+    /// really not clipped to white. Not the same as the three tests in `aevum-core` — those
+    /// measure the curve, this measures the texture `render_preview_file` hands back: render,
+    /// fold and `ColorImage` conversion all done. Any step in between clamping again (for
+    /// instance at texture creation) shows up here as 255.
+    #[test]
+    fn hdr_inspection_survives_the_whole_preview_path() {
+        let dir = temp_dir("hdrfold");
+        let path = dir.join("frame.png");
+        image::RgbImage::from_pixel(24, 16, image::Rgb([200, 180, 160]))
+            .save(&path)
+            .expect("写测试图");
+
+        // +3EV 把 0.78 编码推到 1.8 上下：SDR 路径必然削到白，HDR 路径有东西可折。
+        let params = GradeParams {
+            exposure: 3.0,
+            ..Default::default()
+        };
+        let one = |fold: bool| {
+            render_preview_file(
+                &path,
+                &params,
+                Ev::NONE,
+                None,
+                None,
+                Framing::default(),
+                None,
+                false,
+                false,
+                fold,
+            )
+            .expect("渲染预览")
+            .0
+        };
+        let max = |img: &egui::ColorImage| img.pixels.iter().map(|p| p.r()).max().unwrap_or(0);
+
+        let sdr = max(&one(false));
+        let hdr = max(&one(true));
+        assert_eq!(sdr, 255, "SDR 路径都不到白，这条靶子没有判别力");
+        assert!(
+            (231..255).contains(&hdr),
+            "打开检视后峰值 {hdr}，不在 (231, 255) 里——白以上要么没折进来，要么被削平"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 画布上那张图和导出走的是同一趟取景几何：转过 90°，白点就该出现在画面上方。
     #[test]
     fn preview_straighten_rotates_the_pixels_it_shows() {
@@ -12243,6 +12357,7 @@ mod preview_tests {
                 off: [0.0, 0.0],
             },
             None,
+            false,
             false,
             false,
         )
@@ -12278,6 +12393,7 @@ mod preview_tests {
                 w: 0.5,
                 h: 0.5,
             }),
+            false,
             false,
             false,
         )

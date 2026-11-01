@@ -23,17 +23,22 @@ pub fn render(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev) {
 /// HDR 导出的渲染：全量，且**不把白以上的部分截断**。
 ///
 /// 与 [`render`] 的唯一差别就是这一条：`render` 在终点把结果钳到 [0,1]（SDR 的语义，
-/// 下游按 8bit 写盘），这里只压负值，好让 PQ 编码器接住参考白以上的亮度。预览永远
-/// 走 [`render`]——屏幕显示不到白以上，钳不钳都一样，但钳了才能保证参数面板里看到
-/// 的就是 SDR 交付的样子。
+/// 下游按 8bit 写盘），这里只压负值，好让 PQ 编码器接住参考白以上的亮度。预览默认走
+/// [`render`]（面板显示不到白以上，看到的就是 SDR 交付的样子）；想要在面板里检视白以上
+/// 有没有细节时，走这里再接 [`fold_above_white_in_place`]。
 ///
 /// HDR export render: full set, and **values above white are not clamped**.
 ///
 /// The only difference from [`render`]: that one pins the result to [0,1] at the end (SDR
 /// semantics — it is written as 8bit), while this one only floors negatives so the PQ encoder
-/// can receive everything above reference white. Preview always uses [`render`]: a display
-/// cannot show above white, and keeping the clamp is what makes the panel show exactly what the
-/// SDR delivery looks like.
+/// can receive everything above reference white.
+///
+/// 预览也可以走这里，但**必须**紧跟 [`fold_above_white_in_place`]：面板只能显示 0..1，
+/// 不折的话白以上的部分在成图时会被那个环节钳掉，看起来就和 SDR 一样。
+///
+/// Preview may use this too, but **must** follow it with [`fold_above_white_in_place`]: the
+/// panel can only show 0..1, and without folding the above-white part gets clamped by whatever
+/// converts to the texture, looking exactly like SDR.
 pub fn render_hdr(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev) {
     develop::render(rgb, w, h, p, gain, Opts::HDR);
 }
@@ -46,6 +51,99 @@ pub fn render_hdr(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev
 /// exactly what the sketch omits.
 pub fn render_sketch(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev) {
     develop::render(rgb, w, h, p, gain, Opts::SKETCH);
+}
+
+/// 草图的 HDR 版：拖动中也保留白以上（否则一松手 HDR 检视会突然变样）。
+///
+/// The sketch version with HDR: above-white survives mid-drag too, otherwise releasing the
+/// slider makes the HDR inspection view jump.
+pub fn render_hdr_sketch(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev) {
+    develop::render(
+        rgb,
+        w,
+        h,
+        p,
+        gain,
+        Opts {
+            hdr: true,
+            ..Opts::SKETCH
+        },
+    );
+}
+
+/// 预览里「白以上」的折点：这一段码值留给超过参考白的部分。
+///
+/// 为什么是 0.90：留 10% 的码值给白以上，8bit 下约 25 级——少于 25 级时这个渐变在面板上
+/// 看不出来（相邻两级的差别已到底噪），多于 30 级则会让纯白明显发灰、用户以为调色变了。
+///
+/// The fold knee for "above white" in the preview: this slice of the code range is reserved
+/// for content past reference white.
+///
+/// Why 0.90: 10% of the code range is about 25 levels at 8bit. Fewer than 25 and the gradient
+/// is invisible on screen (neighbouring levels are already at the noise floor); more than 30
+/// and pure white visibly greys out, which reads as "the grade changed".
+pub const FOLD_KNEE: f32 = 0.90;
+
+/// 折线在折点之后的软度（线性光单位）。
+///
+/// 1.0 这个值由**输出端的分辨力**定：白以上要能分出档。实测 `x=2` 落在 0.9667、
+/// `x=4` 落在 0.9955（8bit 差 7 级）；软度压到 0.25 时 `x=2` 已经 0.9988，`x=4` 贴住
+/// 1.0，等于白以上又变成一片白。
+///
+/// Softness of the curve past the knee, in linear light.
+///
+/// 1.0 is set by **what the output can resolve**: content above white must come out in
+/// distinguishable steps. Measured: `x=2` lands on 0.9667 and `x=4` on 0.9955 (7 levels apart
+/// at 8bit); at a softness of 0.25, `x=2` is already 0.9988 and `x=4` hugs 1.0 — above white
+/// collapses into flat white again.
+pub const FOLD_SOFTNESS: f32 = 1.0;
+
+/// 预览映射：把「白以上」折进可见的最后一小段码值，让 SDR 面板能看见高光里有没有细节。
+///
+/// **这不是 HDR 屏模拟，也不假装是。** 一块 100 nit 的 SDR 面板显示不了 203 nit 参考白
+/// 与 1000 nit 峰值之间的差别——那是显示器亮度的事，软件改不了。预览能回答的只有一个
+/// 问题：白以上到底还有没有东西（HDR 保住了高光层次，还是和 SDR 一样被削平）。
+///
+/// 所以这条映射的语义是：
+///
+/// - `x ≤ FOLD_KNEE`：**逐位不动**。也就是说中间调、阴影、以及大多数亮部与关闭开关时
+///   完全一致，开关只影响白以上——用户不会因为打开检视就怀疑自己调色变了。
+/// - `x > FOLD_KNEE`：`K + (1−K)·(1 − e^{−(x−K)/S})`，连续、单调、恒小于 1。折点之后
+///   斜率是 `(1−K)/S`，越往右越平——这正是「白以上还有层次但挤在一起」的样子。
+///
+/// 逐通道做，不做色度保持：过曝区去饱和本来就是胶片与传感器在高光处的行为。
+///
+/// Preview mapping: fold "above white" into the last visible slice of the code range so an
+/// SDR panel can show whether the highlights still carry detail.
+///
+/// **This is not an HDR display simulation and does not pretend to be one.** A 100-nit SDR
+/// panel cannot show the difference between a 203-nit reference white and a 1000-nit peak —
+/// that is display hardware, and software cannot fix it. The one question a preview *can*
+/// answer is whether anything exists above white at all (did HDR keep the highlight layers, or
+/// was it flattened the same way SDR would be).
+///
+/// So the semantics are:
+///
+/// - `x ≤ FOLD_KNEE`: **bit-identical**. Midtones, shadows and most of the bright range are
+///   exactly what they are with the toggle off; only above-white is affected, so nobody
+///   suspects their grade changed when they turn the inspection on.
+/// - `x > FOLD_KNEE`: `K + (1−K)·(1 − e^{−(x−K)/S})`, continuous, monotonic, always below 1.
+///   The slope past the knee is `(1−K)/S` and flattens to the right — which is exactly what
+///   "detail still there but squeezed" looks like.
+///
+/// Per channel, with no chroma preservation: overexposed regions desaturating is what film and
+/// sensors do at the top end anyway.
+pub fn fold_above_white_in_place(rgb: &mut [f32]) {
+    let k = FOLD_KNEE;
+    let room = 1.0 - k;
+    for v in rgb.iter_mut() {
+        let x = *v;
+        if x > k {
+            *v = k + room * (1.0 - (-(x - k) / FOLD_SOFTNESS).exp());
+        } else if x < 0.0 {
+            *v = 0.0;
+        }
+    }
 }
 
 /// 只留逐点运算的一条链，用来生成 .cube LUT。
@@ -231,5 +329,111 @@ mod tests {
                 "草图没跳过{name}：两条链只差 {diff}，等于什么都没省"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // B1：预览里「白以上」的折线
+    // -----------------------------------------------------------------------
+
+    /// 折线在折点以下必须**逐位不动**——这是「打开检视不等于改了我的调色」的唯一保证。
+    ///
+    /// 判据取折点本身与它左边几个典型值：0.05（暗部）、0.45（中灰）、0.895（刚好在折点
+    /// 左侧）。`assert_eq!` 而不是容差比较：任何一位不同都说明折线漏到了白以下。
+    ///
+    /// Below the knee the fold must be **bit-identical** — that is the only guarantee behind
+    /// "turning the inspection on did not change my grade". The values are the knee itself and
+    /// three typical points to its left; `assert_eq!` rather than a tolerance, because a single
+    /// differing bit means the fold leaked below white.
+    #[test]
+    fn fold_leaves_everything_below_the_knee_alone() {
+        let src = [0.0f32, 0.05, 0.45, 0.895, FOLD_KNEE];
+        let mut px: Vec<f32> = src.to_vec();
+        fold_above_white_in_place(&mut px);
+        assert_eq!(px, src, "折线动了白以下的像素");
+    }
+
+    /// 白以上必须**看得出层次**：连续、单调、恒小于 1，且 x=2 与 x=4 分得开。
+    ///
+    /// 四条缺一不可，因为这条曲线唯一的用途就是「代替硬削平」：
+    /// - 恒小于 1：面板没有白以上，映射一旦到 1.0 就等于又在硬削；
+    /// - 单调：不单调会让高光里出现反转的灰带，比削平更假；
+    /// - x=1 落进 (0.90, 0.96)：纯白要**离开**顶端才显得出后面还有东西，但不能离开太多
+    ///   （超过 0.96 用户会觉得画面发灰）；
+    /// - x=2 与 x=4 差 ≥ 5/255：两级之内分不开的话，这条映射在 8bit 上等于没做。
+    ///
+    /// Above white must show **layering**: continuous, monotonic, always below 1, and x=2 must
+    /// separate from x=4. All four matter because replacing a hard clip is the curve's only
+    /// job: always below 1 (the panel has no above-white, so reaching 1.0 is just clipping
+    /// again); monotonic (otherwise highlights grow a reversed grey band, faker than a clip);
+    /// x=1 inside (0.90, 0.96) (pure white must leave the top end to leave room, but not by
+    /// so much that the picture looks washed out); x=2 vs x=4 at least 5/255 apart (anything
+    /// tighter is invisible in 8bit and the mapping does nothing).
+    #[test]
+    fn fold_keeps_layering_above_white() {
+        let map = |x: f32| {
+            let mut v = [x];
+            fold_above_white_in_place(&mut v);
+            v[0]
+        };
+        let white = map(1.0);
+        assert!(
+            (FOLD_KNEE..0.96).contains(&white),
+            "纯白折到了 {white:.4}，不在 ({FOLD_KNEE}, 0.96) 里"
+        );
+
+        let mut prev = FOLD_KNEE;
+        for i in 0..=400 {
+            let x = FOLD_KNEE + i as f32 * 0.02;
+            let y = map(x);
+            assert!(
+                y >= prev - 1e-7,
+                "折线在 x={x:.2} 处回退：{y:.6} < {prev:.6}"
+            );
+            assert!(y < 1.0, "折线在 x={x:.2} 处到了 {y:.6}，白以上又被削平了");
+            prev = y;
+        }
+
+        let gap = (map(4.0) - map(2.0)) * 255.0;
+        assert!(gap >= 5.0, "x=2 与 x=4 只差 {gap:.1} 级，8bit 上看不出层次");
+    }
+
+    /// 打开检视之后的整幅预览：亮部真的留在白以上（而不是被成图那一步钳掉）。
+    ///
+    /// 这条和上面两条不是一回事：上面量的是折线本身，这里量的是**接到渲染之后**的
+    /// 结果——`render_hdr` 造出 >1 的亮度、折线把它折进 (0.9, 1.0)，全程没有一步把
+    /// 它压成 1.0。
+    ///
+    /// The full preview with the inspection on: the highlights really do sit above white
+    /// (instead of being clamped when the texture is made). Not the same as the two tests
+    /// above — those measure the curve itself, this measures it **after a render**: `render_hdr`
+    /// produces >1 and the fold squeezes it into (0.9, 1.0) without any step pinning it to 1.0.
+    #[test]
+    fn hdr_preview_shows_highlights_that_sdr_pins_to_white() {
+        let p = GradeParams {
+            exposure: 3.0,
+            ..Default::default()
+        };
+        let mut sdr = flat(0.55, 16 * 12 * 3);
+        let mut hdr = sdr.clone();
+        render(&mut sdr, 16, 12, &p, Ev::NONE);
+        render_hdr(&mut hdr, 16, 12, &p, Ev::NONE);
+
+        let sdr_max = sdr.iter().fold(0.0f32, |m, v| m.max(*v));
+        let hdr_max = hdr.iter().fold(0.0f32, |m, v| m.max(*v));
+        assert!(
+            (sdr_max - 1.0).abs() < 1e-6,
+            "SDR 预览的峰值是 {sdr_max:.4}，还没到白，这条靶子没有判别力"
+        );
+        assert!(
+            hdr_max > 1.2,
+            "HDR 渲染的峰值只有 {hdr_max:.4}，白以上没东西可折"
+        );
+
+        fold_above_white_in_place(&mut hdr);
+        let folded = hdr.iter().fold(0.0f32, |m, v| m.max(*v));
+        assert!(
+            folded < 1.0 && folded > FOLD_KNEE,
+            "折完峰值 {folded:.4}，不在 ({FOLD_KNEE}, 1.0) 里——要么没折，要么折没了"
+        );
     }
 }

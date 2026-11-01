@@ -65,6 +65,10 @@ pub use deflicker::{Analysis, FrameMeans, Stats};
 pub use develop::Ev;
 pub use export::{OutputMode, RenderOptions};
 pub use metrics::FrameMetrics;
-pub use preview::{render as render_preview, render_sketch};
+pub use preview::{
+    FOLD_KNEE, fold_above_white_in_place, render as render_preview,
+    render_hdr as render_preview_hdr, render_hdr_sketch as render_preview_hdr_sketch,
+    render_sketch,
+};
 pub use project::ProjectFile;
 pub use sequence::{Frame, Sequence};

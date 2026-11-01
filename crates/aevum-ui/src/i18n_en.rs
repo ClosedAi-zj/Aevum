@@ -846,6 +846,11 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("状态栏", "Status bar"),
     ("电视色域，SDR 写法（γ2.4），不是 HDR", "TV gamut in SDR (γ2.4), not HDR"),
     ("画布显示对齐后", "Canvas shows the aligned result"),
+    ("预览白以上（SDR 屏上检视高光）", "Preview above white (inspect highlights on SDR)"),
+    (
+        "屏幕显示不到白：打开后把白以上折进最后约 25 级，高光里的层次就看得见；中间调与暗部一位不动。这不是模拟 HDR 屏亮度，只是让你确认白以上还有没有东西。",
+        "A screen cannot go past white: with this on, above-white content is folded into the last ~25 levels so highlight layering becomes visible; midtones and shadows stay bit-identical. This does not simulate HDR brightness — it only shows whether anything exists above white.",
+    ),
     ("画幅", "Frame size"),
     ("画幅 {}", "Aspect {}"),
     ("画幅、旋转与拉直。拉直后安全框自动内切，框外空白不进导出；裁剪里可拖框、拉把手或按方向键微调，所见即所得。", "Aspect, rotation, and straightening. Straightening insets the safe frame automatically and the empty corners never reach the export; drag the box, pull a handle, or nudge with the arrow keys — what you see is what you get."),

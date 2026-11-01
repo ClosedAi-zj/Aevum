@@ -101,6 +101,20 @@ pub struct Settings {
     /// all normalised into a full permutation on load, so old and hand-edited files both
     /// open fine.
     pub preset_order: Option<Vec<String>>,
+    /// 预览里是否打开「白以上检视」（见 `aevum_core::fold_above_white_in_place`）。
+    ///
+    /// 存下来是因为它是**观看方式**而不是一次性动作：用户为了看 HDR 高光打开它，关掉
+    /// 软件再打开还在看同一张图，期望它还是开着。`None` = 老文件没有这一项，按关处理
+    /// （默认关，否则所有人第一次打开都会看到略微压暗的白）。
+    ///
+    /// Whether the preview shows "above white" inspection (see
+    /// `aevum_core::fold_above_white_in_place`).
+    ///
+    /// Persisted because it is a **way of looking** rather than a one-off action: a user who
+    /// turned it on to inspect HDR highlights reopens the app on the same picture and expects
+    /// it still on. `None` = older file without the field, treated as off (the default, or
+    /// everyone would see slightly dimmed whites on first launch).
+    pub hdr_preview: Option<bool>,
 }
 
 /// 把落盘的窗口坐标夹回当前视口，保证整窗可见。
