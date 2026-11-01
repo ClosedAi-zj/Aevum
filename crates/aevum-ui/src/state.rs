@@ -2,6 +2,13 @@
 //!
 //! 所有重活（测光、缩略图、预览渲染、导出）都在线程里做，界面线程只收消息、
 //! 传纹理。消息带令牌：换序列或换帧后，晚到的旧结果直接丢弃。
+//!
+//! Application state and background jobs.
+//!
+//! Every heavy job (metering, thumbnails, preview rendering, export) runs on a
+//! thread; the UI thread only receives messages and uploads textures. Messages carry
+//! a token: after switching sequence or frame, late results from the old one are
+//! dropped outright.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
@@ -53,6 +60,9 @@ pub const PLAY_FPS: f32 = 24.0;
 /// 解码加纹理上传的往返；再长就只是把内存花在还没播到的帧上。
 const PLAY_THUMB_AHEAD: usize = 48;
 /// 色标序号对应的名字：0 是没打，1…4 跟 `shell::label_color` 同序。
+///
+/// Names for the colour label indices: 0 means unlabelled, 1..4 follow the same order
+/// as `shell::label_color`.
 pub const LABEL_NAMES: [&str; 5] = ["无", "红", "黄", "绿", "蓝"];
 /// 状态栏常驻告警最多留几条。护带目录、override 这类问题一句话就说完，
 /// 留 8 条够覆盖「一个工程上同时坏了几处」，再多就把状态栏挤没了。
@@ -112,6 +122,8 @@ impl Module {
     }
 
     /// 模块序号（0-5），控制通道与 AI 面板共用。
+    ///
+    /// Module index (0-5), shared by the control channel and the AI panel.
     pub fn index(self) -> usize {
         Module::ALL
             .iter()
@@ -120,6 +132,9 @@ impl Module {
     }
 
     /// 认中文名、英文名和 0-5 序号；入口参数与控制命令共用同一套写法。
+    ///
+    /// Accepts the Chinese name, the English name, or the 0-5 index; the CLI argument and
+    /// the control commands use the same set of spellings.
     pub fn from_name(name: &str) -> Option<Module> {
         match name.trim() {
             "序列" | "sequence" | "seq" | "0" => Some(Module::Sequence),
@@ -148,15 +163,49 @@ impl Module {
 /// 按需打开的抽屉，不是一屏到底的清单。
 ///
 /// 漏登记、重复登记、或者登记了却没人调用，都会在 `tests/ui_tokens.rs` 里变红。
+///
+/// Registry of panel groups: key, owning module, and whether it opens on the first
+/// screen.
+///
+/// One table serves three purposes, so it must correspond one-to-one with the
+/// `group_header(...)` call sites:
+///
+/// * **first-screen folding** -- [`AppState::new`] seeds `collapsed` from
+///   `open == false`;
+/// * **right-click "show only this group"** -- folds the other groups of the same
+///   module, matched by `module`;
+/// * **persistence round-trip** -- `settings.json` stores key names only, and they
+///   must be looked up here to become `&'static str` again (`collapsed` holds
+///   `&'static str`, which cannot come back from JSON without a table).
+///
+/// There is exactly one criterion for "frequent / infrequent": **the groups touched
+/// on every photo and every export stay open**, the ones set once and never touched
+/// again (camera and lens profiles, watermark, HDR / panorama merge ...) are folded.
+/// This follows Lightroom's default state -- open one image and only Basic is
+/// expanded, everything else is a folded header bar; panels are drawers you open as
+/// needed, not one long list end to end.
+///
+/// A missing registration, a duplicate, or a registration nobody calls turns red in
+/// `tests/ui_tokens.rs`.
 pub struct GroupSpec {
     pub key: &'static str,
     /// 挂在哪个模块下面。`None` = 挂在 dock 标签页（信息 / 代理 / 图库）而不是模块：
     /// 这几个面板不随模块切换，右键「只看这一组」只该收同页的组。
+    ///
+    /// Which module this group belongs to. `None` = it lives in a dock tab (info / agent
+    /// / library) rather than under a module: those panels do not follow the module
+    /// switch, so "show only this group" should only fold groups on the same page.
     pub module: Option<Module>,
     /// dock 页的归属页名（`module` 为 `None` 时才有意义）。不带页名的话，
     /// 「只看这一组」会把快捷键页、代理页一起收掉——切过去就是一屏折着的面板。
+    ///
+    /// The dock page this group belongs to (only meaningful when `module` is `None`).
+    /// Without the page name, "show only this group" would fold the shortcuts page and
+    /// the agent page too -- switching there shows a screen full of folded panels.
     pub page: &'static str,
     /// 首屏展开（`false` = 首屏折叠，点标题条展开）。
+    ///
+    /// Open on the first screen (`false` = folded, expand by clicking the header bar).
     pub open: bool,
 }
 
@@ -252,6 +301,9 @@ pub const GROUP_SPECS: &[GroupSpec] = &[
 ];
 
 /// 首屏折叠的分组键集合。用户没表过态时用它，之后以他点出来的为准。
+///
+/// The set of group keys folded on the first screen. Used when the user has expressed
+/// no preference; afterwards his own clicks win.
 pub fn default_collapsed() -> HashSet<&'static str> {
     GROUP_SPECS
         .iter()
@@ -261,6 +313,9 @@ pub fn default_collapsed() -> HashSet<&'static str> {
 }
 
 /// 按 `collapsed` 里的键名查表：查不到就是历史遗留键（旧版本有、这一版删了），丢掉。
+///
+/// Look up a key from `collapsed`: a miss means a legacy key (present in an older
+/// version, removed in this one) and it is dropped.
 pub fn group_spec(key: &str) -> Option<&'static GroupSpec> {
     GROUP_SPECS.iter().find(|s| s.key == key)
 }
@@ -269,6 +324,8 @@ pub fn group_spec(key: &str) -> Option<&'static GroupSpec> {
 /// 「作用域」这件事得能单测：只看这一组只该收**同模块/同 dock 页**的组。
 impl AppState {
     /// 只看这一组：同作用域的兄弟组全折起来，自己展开。
+    ///
+    /// Show only this group: fold every sibling in the same scope, keep this one open.
     pub fn solo_group(&mut self, key: &str) {
         let Some(me) = group_spec(key) else { return };
         self.collapsed = GROUP_SPECS
@@ -280,12 +337,17 @@ impl AppState {
     }
 
     /// 全部收起（只影响当前作用域之外的组也一起收：这是「清屏」的语义）。
+    ///
+    /// Collapse everything (groups outside the current scope are folded too: this is the
+    /// "clear the screen" meaning).
     pub fn collapse_all_groups(&mut self) {
         self.collapsed = GROUP_SPECS.iter().map(|s| s.key).collect();
         self.settings_dirty = true;
     }
 
     /// 全部展开。
+    ///
+    /// Expand everything.
     pub fn expand_all_groups(&mut self) {
         self.collapsed.clear();
         self.settings_dirty = true;
@@ -309,6 +371,11 @@ impl Aspect {
     /// 预设比例的排布照 Photoshop 裁剪工具的惯例：横构图一排、方一档、
     /// 竖构图一排，最前面是「原生」（不约束）。3:2 与 4:3 是相机传感器的
     /// 两个原生形状，5:4 / 4:5 是八大打印幅面最常用的两档，竖版给镜像。
+    ///
+    /// The preset order follows Photoshop's crop tool: one row of landscape, one square,
+    /// one row of portrait, with the unconstrained one first. 3:2 and 4:3 are the two
+    /// native sensor shapes; 5:4 / 4:5 are the two most used of the eight print sizes,
+    /// mirrored for portrait.
     pub const ALL: [Aspect; 9] = [
         Aspect::Native,
         Aspect::Wide,
@@ -350,6 +417,9 @@ impl Aspect {
     }
 
     /// 整数分子分母：定比例的推进步长要按它成对走（见 `aevum_core::crop`）。
+    ///
+    /// Integer numerator and denominator: the step of a fixed-ratio crop advances by pairs
+    /// of these (see `aevum_core::crop`).
     pub fn pair(self) -> Option<(u32, u32)> {
         match self {
             Aspect::Native => None,
@@ -365,6 +435,9 @@ impl Aspect {
     }
 
     /// 从存档标签找回比例；空串或认不出的都按「原生」，旧工程文件照样能开。
+    ///
+    /// Recover the ratio from its stored label; an empty or unrecognised label means
+    /// "unconstrained", so older project files still open.
     pub fn from_label(label: &str) -> Aspect {
         Aspect::ALL
             .into_iter()
@@ -530,9 +603,13 @@ impl DockTab {
 #[derive(Clone, Debug)]
 pub struct AiLogEntry {
     /// 用户输入的原始命令 + 参数。
+    ///
+    /// The raw command plus its arguments as the user typed them.
     pub input: String,
     pub ok: bool,
     /// 成功是返回 JSON，失败是中文错误。
+    ///
+    /// A JSON result on success, an error message on failure.
     pub detail: String,
 }
 
@@ -665,12 +742,25 @@ enum PluginMsg {
 ///
 /// 取消只立旗，子进程由工作线程自己收尸 —— 界面线程绝不 join：
 /// 插件卡死时 join 会把整个界面一起冻住，收尸的活归干活的人。
+///
+/// A plugin job in flight: completion receiver, cancel flag and metadata.
+///
+/// Cancel only raises the flag; the worker thread reaps the child process itself --
+/// the UI thread never joins. A hung plugin would freeze the whole UI under `join`,
+/// and reaping belongs to whoever does the work.
 pub struct PluginJob {
     /// 插件 id（清单里的那份），崩溃计数按它记。
+    ///
+    /// The plugin id (the one in its manifest); crash counts are keyed on it.
     pub id: String,
     /// 插件显示名，状态栏与消息里露脸的是它。
+    ///
+    /// The plugin display name -- this is what appears in the status bar and messages.
     pub name: String,
     /// 起任务的时刻，超时兜底与"跑了多久"都用它。
+    ///
+    /// When the job started; used by the timeout fallback and by "how long has it been
+    /// running".
     pub started: Instant,
     rx: Receiver<PluginMsg>,
     cancel: Arc<AtomicBool>,
@@ -723,13 +813,26 @@ pub struct AppState {
     pub issues: Vec<(usize, String)>,
     pub analysis: Option<Analysis>,
     /// 逐帧去闪曝光偏移（整帧亮度项），分析后缓存，画曲线与预览共用。
+    ///
+    /// Per-frame deflicker exposure offset (the whole-frame luminance term), cached after
+    /// analysis and shared by the curve and the preview.
     pub corr: Vec<f32>,
     /// 逐帧分通道残差：各通道偏移 − 三通道均值，只在开「分通道」时非零。
+    ///
+    /// Per-frame per-channel residual: each channel's offset minus the three-channel mean;
+    /// non-zero only when per-channel mode is on.
     pub corr_rgb: Vec<[f32; 3]>,
     /// 线性光测光结果，分通道去闪的输入；随导入那趟解码一起算，不重复读图。
+    ///
+    /// Linear-light metering results, the input for per-channel deflicker; computed during
+    /// the import decode pass so the images are not read twice.
     pub def_means: Vec<Option<FrameMeans>>,
     /// 逐帧 EXIF，跟导入那趟一起读（只定位读 IFD，不整读文件）。方向已经应用在解码
     /// 里，这份缓存是给「信息」面板和曝光台阶检测看的。
+    ///
+    /// Per-frame EXIF, read during the import pass (locates and reads the IFD only, never
+    /// the whole file). Orientation has already been applied during decode; this cache
+    /// feeds the info panel and the exposure-step detection.
     pub exif: Vec<Exif>,
 
     pub selected: usize,
@@ -739,9 +842,20 @@ pub struct AppState {
     /// 折叠中的面板分组。初值来自 [`default_collapsed`]（低频组首屏折起来），
     /// 之后以用户点出来的为准，并随 `settings.json` 落盘——面板记得住你的摆法是
     /// 「减少信息负担」的一半，另一半是首屏别全摊开。
+    ///
+    /// Panel groups currently folded. The initial value comes from
+    /// [`default_collapsed`] (low-frequency groups start folded); afterwards the user's
+    /// clicks win and the set is persisted to `settings.json` -- a panel that remembers
+    /// your arrangement is half of "reduce the information load", and the other half is
+    /// not unrolling everything on the first screen.
     pub collapsed: HashSet<&'static str>,
     /// 偏好（折叠态等）改动过、等帧尾统一落盘。界面代码只置位，不直接写文件：
     /// 一次拖动折叠会连着改几处，逐处写会把 `settings.json` 反复搓。
+    ///
+    /// A preference (folding state and the like) changed and is waiting for the end-of-frame
+    /// single write. UI code only sets the flag and never writes the file itself: one fold
+    /// drag changes several entries, and writing per entry would grind `settings.json`
+    /// over and over.
     pub settings_dirty: bool,
     pub status: String,
     pub error: Option<String>,
@@ -750,9 +864,22 @@ pub struct AppState {
     /// 与 `error` 语义不同——那是要用户当下处理的弹窗式错误，一出就盖住画面；
     /// 这里是「一直挂在状态栏、点一下才消一条」的背景事实。来源是 core 的
     /// `env::note` 队列，每帧开头 [`AppState::drain_notices`] 搬进来。
+    ///
+    /// Persistent status-bar warnings: the guard directory is not writable, an override
+    /// path went stale, and so on.
+    ///
+    /// Semantically different from `error` -- that one is a modal error the user must deal
+    /// with right now, and it covers the screen the moment it appears; these are standing
+    /// background facts that sit in the status bar and are dismissed one at a time. The
+    /// source is core's `env::note` queue, drained into here at the start of every frame
+    /// by [`AppState::drain_notices`].
     pub notices: Vec<String>,
     /// 打开序列时检测到的同目录 XMP 边车（第一帧）。只提示不自动套用；
     /// 状态栏给一枚「应用边车」，点了才进参数（见 `apply_sidecar_hint`）。
+    ///
+    /// An XMP sidecar found next to the sequence (checked on the first frame). Only hinted,
+    /// never applied automatically; the status bar offers an "apply sidecar" button, and the
+    /// parameters change only once it is clicked (see `apply_sidecar_hint`).
     pub sidecar_hint: Option<PathBuf>,
     pub measuring: bool,
 
@@ -766,6 +893,9 @@ pub struct AppState {
     pub def_strength: f64,
     pub def_multi: bool,
     /// 分通道（RGB）去闪烁：压彩色场景的色闪，代价是可能引入轻微色偏漂移。
+    ///
+    /// Per-channel (RGB) deflicker: suppresses the colour flicker of colourful scenes at the
+    /// cost of possible slight hue drift.
     pub def_channels: bool,
 
     pub aspect: Aspect,
@@ -774,12 +904,24 @@ pub struct AppState {
     pub split: bool,
     /// 前后对比分割线的位置（0..1，图宽比例）。视图状态：不进历史快照、
     /// 不落盘——LR 也不记录你把分割线拉到了哪儿。双击手柄回到居中。
+    ///
+    /// Position of the before/after split line (0..1, as a fraction of image width). View
+    /// state: not part of the history snapshot and not persisted -- Lightroom does not
+    /// remember where you dragged the split either. Double-clicking the handle re-centres
+    /// it.
     pub split_pos: f32,
     /// 胶片条的用户高度。None = 自动（按缩略图比例适配图片）；Some(h) =
     /// 拖过之后钉住的高度。拖动条在胶片条上边缘，双击回到自动。
+    ///
+    /// The user's filmstrip height. None = automatic (fit to the thumbnail aspect); Some(h)
+    /// = pinned after a drag. The drag handle is the filmstrip's top edge; double-click
+    /// returns to automatic.
     pub film_h: Option<f32>,
     pub zoom: f32,
     /// 画布这一帧算出的「适应窗口」倍率，供缩放读数与 1:1 使用。
+    ///
+    /// The "fit to window" scale computed for this frame's canvas, used by the zoom readout
+    /// and by 1:1.
     pub fit_scale: f32,
     pub pan: Vec2,
 
@@ -788,6 +930,10 @@ pub struct AppState {
     pub font_level: usize,
     /// 界面语言偏好。**只存在 settings.json 里，不进工程文件** —— 工程是跨机器
     /// 打开的东西，语言该跟随打开它的那台机器，不该被作者的语言钉住。
+    ///
+    /// UI language preference. **Lives only in settings.json, never in the project file** --
+    /// a project is opened across machines, and the language should follow the machine
+    /// opening it rather than being pinned by the author's.
     pub lang: crate::i18n::LangPref,
 
     pub texture: Option<TextureHandle>,
@@ -811,64 +957,126 @@ pub struct AppState {
     pub flags: HashMap<usize, i8>,
     pub labels: HashMap<usize, u8>,
     /// 打开中的序列自己的关键词；工程保存时原样写回，图库改词也不丢。
+    ///
+    /// Keywords belonging to the open sequence; written back unchanged when the project is
+    /// saved, so keyword edits made in the library are not lost.
     pub keywords: HashMap<usize, Vec<String>>,
     /// 打开中的序列所属目录的堆叠（已归一化）；工程保存时原样写回。
+    ///
+    /// Stacks of the folder the open sequence belongs to (already normalised); written back
+    /// unchanged when the project is saved.
     pub stacks: Vec<Vec<usize>>,
     /// 打开中的序列所属目录的说明与版权信息；随工程文件落盘，导出静帧与成片都按它写。
+    ///
+    /// Description and copyright of the folder the open sequence belongs to; persisted with
+    /// the project file and applied to both still and video exports.
     pub meta: project::Metadata,
 
     /// 图库：跨目录的根目录清单（galleries.json）与当前浏览的编目缓存。
     /// 缩略图按路径键，换序列不清——图库浏览的是没打开的目录。
+    ///
+    /// Library: the cross-folder root list (galleries.json) and the catalogue cache for the
+    /// folder being browsed. Thumbnails are keyed by path and survive a sequence switch --
+    /// the library browses folders that are not open.
     pub lib_roots: Vec<PathBuf>,
     pub lib_sel: Option<usize>,
     /// 编目里选中的行（键盘 0~5/P/X/6~9 作用在这一行）。
+    ///
+    /// The selected row in the catalogue (the keyboard's 0-5 / P / X / 6-9 act on this
+    /// row).
     pub lib_sel_file: Option<usize>,
     /// 编目筛选：星级下限、只看选用、色标。
+    ///
+    /// Catalogue filter: minimum star rating, picks only, colour label.
     pub lib_filter: aevum_core::library::Filter,
     /// 编目里勾选的行（Ctrl 多选 / Shift 连选）；键盘和右键作用在它们身上。
+    ///
+    /// Checked rows in the catalogue (Ctrl multi-select / Shift range); the keyboard and the
+    /// context menu act on these.
     pub lib_checked: std::collections::BTreeSet<usize>,
     /// Shift 连选的锚点。
+    ///
+    /// Anchor for Shift range selection.
     pub lib_anchor: Option<usize>,
     /// 编目里展开的叠（目录序号, 叠号）；纯视图状态，不进工程、不进历史。
+    ///
+    /// Expanded stacks in the catalogue (folder index, stack index); pure view state, not
+    /// part of the project and not part of the history.
     pub lib_stack_open: HashSet<(usize, usize)>,
     pub lib_entries: Vec<Vec<aevum_core::library::LibFile>>,
     /// 手动集合与当前打开的集合视图；新建集合的名字输入框也住这儿。
+    ///
+    /// Manual collections and the currently open collection view; the name input for a new
+    /// collection lives here too.
     pub lib_cols: Vec<aevum_core::library::Collection>,
     pub lib_col: Option<usize>,
     pub lib_col_name: String,
     /// 编目里给选中/勾选行加词的输入框。
+    ///
+    /// The input box for adding keywords to the selected or checked rows in the catalogue.
     pub lib_keyword: String,
     /// 图库信息面板的编辑缓冲，以及它当前是哪个目录的（换目录要重新读，
     /// 否则会把上一个目录的四项写到这个目录头上）。
+    ///
+    /// Editing buffer for the library info panel, plus which folder it currently belongs to
+    /// (switching folders must re-read, otherwise the previous folder's four fields get
+    /// written onto this one's header).
     pub lib_meta: project::Metadata,
     pub lib_meta_root: Option<PathBuf>,
     /// 信息面板开没开（编目视图右上角的「信息」）。
+    ///
+    /// Whether the info panel is open (the "info" toggle at the top-right of the catalogue
+    /// view).
     pub lib_meta_open: bool,
     pub lib_thumbs: HashMap<PathBuf, Thumb>,
     lib_thumb_pending: HashSet<PathBuf>,
     /// 撤销 / 重做历史；只收参数类写入，见 [`history`]。
+    ///
+    /// Undo / redo history; accepts parameter-class writes only, see [`history`].
     pub history: History,
     pub hist: Option<[[u32; 256]; 3]>,
 
     pub show_dock: bool,
     /// 左侧预设栏（预设 / 快照 / 历史）开没开。
+    ///
+    /// Whether the left preset column (presets / snapshots / history) is open.
     pub show_left: bool,
     /// 最外那条 28px 竖条（网格 / 胶片 / 曲线）开没开。
+    ///
+    /// Whether the outermost 28px rail (grid / filmstrip / curve) is open.
     pub show_strip: bool,
     /// 手动存的快照：界面稿左栏「快照」那一节的内容。
     ///
     /// 和撤销历史是两回事：历史每动一次参数就记一步，几天后翻不到"那天满意的版本"；
     /// 快照是用户自己按下去钉住的一版，只有手动删。存的是整份 [`Snapshot`]，
     /// 点一下就把参数整组换回去（同样进历史，可以再撤）。
+    ///
+    /// Manually saved snapshots: the content of the "snapshots" section in the left column.
+    ///
+    /// A different thing from the undo history: the history records a step per parameter
+    /// change, and a few days later you cannot find "the version I liked that day"; a
+    /// snapshot is a version the user pinned deliberately and only he deletes. It stores a
+    /// whole [`Snapshot`], and one click swaps the entire parameter set back (which itself
+    /// enters the history and can be undone).
     pub snapshots: Vec<(String, history::Snapshot)>,
     /// 外观参数（明暗 / 皮肤 / 主色 / 圆角）。改动后要同步给 `theme::set_appearance`
     /// 并重刷一次 `theme::apply`，再落盘。
+    ///
+    /// Appearance parameters (light/dark, skin, accent, radius). After a change, hand them to
+    /// `theme::set_appearance`, re-run `theme::apply`, then persist.
     pub appearance: crate::theme::Appearance,
     /// 布局：状态栏 / 工具轨 / 调整面板 的位置，以及底部胶片条显隐。
+    ///
+    /// Layout: positions of the status bar, tool rail and adjustment panel, plus whether the
+    /// bottom filmstrip shows.
     pub layout: crate::layout::Layout,
     /// 外观窗是否打开。
+    ///
+    /// Whether the appearance window is open.
     pub look_open: bool,
     /// 插件注册表：内置清单 + `plugins/` 下扫到的清单。
+    ///
+    /// Plugin registry: the built-in list plus the manifests scanned under `plugins/`.
     pub registry: aevum_core::plugin::Registry,
     /// 插件市场窗口是否打开。
     pub market_open: bool,

@@ -1171,6 +1171,9 @@ pub fn soft_rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32) {
 }
 
 /// Lightroom 的数值写法：有符号量带正号，零显示占位。
+///
+/// Lightroom's number style: signed quantities carry a plus sign, and zero shows a
+/// placeholder.
 pub fn number(value: f64, decimals: usize, signed: bool) -> String {
     let zero = 0.5 * 10f64.powi(-(decimals as i32));
     let v = if value.abs() < zero { 0.0 } else { value };
