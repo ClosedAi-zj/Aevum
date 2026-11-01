@@ -860,6 +860,115 @@ mod tests {
         out
     }
 
+    /// 45° 斜边的误差**上限由采样决定**，不是算法没调好。
+    ///
+    /// 事实链（全部可测）：
+    /// 1. 在 R/B 位，绿的四个邻居只有上、下、左、右。45° 线上的邻居是**同色**的
+    ///    R 或 B（`(x+1,y+1)` 与 `(x,y)` 同奇偶），不是 G —— 所以 45° 方向上没有 G
+    ///    样本可用，任何估计都只能从四个轴向邻居里挑。
+    /// 2. 于是只有「落在边上那一圈」的 R/B 位会错，且错法是整步（挑了错的一侧）；
+    ///    带内的点四个邻居同侧，误差为 0。
+    /// 3. 靶子的边步长 13000（22000−9000），带子 6 px 宽 → 边界占比 1/6。实测
+    ///    R/B 位平均误差 2190 = 0.168 × 步长，与 1/6 = 0.167 对得上：**除边界外一个
+    ///    像素都没错**。
+    /// 4. 这条上限**与用哪种方法无关**：单元平均在同一张靶上是 2167，方向法是 2190，
+    ///    都在 1/6 上。方向法的 +3 dB 不在绿上，而在 R/B 通道（色差恒定那一段）。
+    ///
+    /// 判据就按这几条事实写：两种方法的绿误差都不得超过「边界占比 × 整步」（留 8%
+    /// 余量）。它不是「现在的数字」，而是「边界必错、带内必对」这个结构的上界——实现
+    /// 要是把带内的点也搞错，均值立刻冲过这条线。
+    ///
+    /// 顺带否掉了一个看起来合理的改法：把硬选替换成按分数加权的软判决。实测（同一张
+    /// 靶）45° 从 24.55 掉到 23.85 dB、彩色边从 19.81 掉到 17.23 dB——软判决在真边界
+    /// 上把两个候选混成中间值，等于把边缘抹平，比挑错一侧更糟。
+    ///
+    /// The 45° error **ceil is set by the sampling pattern**, not by tuning.
+    ///
+    /// The chain of facts (all measurable): (1) at an R/B site the four green neighbours are
+    /// only up/down/left/right — the diagonal neighbours on a 45° line are the **same colour**
+    /// (R or B, since `(x+1,y+1)` shares parity with `(x,y)`), never green, so no green sample
+    /// exists along the diagonal and every estimator must pick among the four axis neighbours;
+    /// (2) therefore only the R/B sites *on the edge line* can be wrong, and they are wrong by
+    /// a full step (the wrong side was chosen), while sites inside a band see the same value on
+    /// all four sides and are exact; (3) the target's step is 13000 (22000−9000) and the bands
+    /// are 6 px wide, so the boundary fraction is 1/6 — measured R/B-site mean error 2190 is
+    /// 0.168 × step against 1/6 = 0.167, i.e. **nothing is wrong except the boundary**;
+    /// (4) that ceil is **independent of the method**: cell averaging measures 2167 on the same
+    /// target, directional 2190, both at 1/6, so the directional method's +3 dB does not come
+    /// from green but from the R/B channels.
+    ///
+    /// The criterion follows those facts: both methods' green error may not exceed "boundary
+    /// fraction × step" (8% margin). It is not today's number but the structural bound of "the
+    /// boundary must be wrong, the interior must be right" — an implementation that also broke
+    /// interior sites would blow through it immediately.
+    ///
+    /// It also rules out a plausible-looking change: replacing the hard pick with a
+    /// score-weighted soft decision. On the same target, 45° dropped from 24.55 to 23.85 dB and
+    /// the colour edge from 19.81 to 17.23 dB — blending the two candidates smears the edge,
+    /// which is worse than picking the wrong side.
+    #[test]
+    fn diagonal_edges_are_bounded_by_the_sampling_pattern() {
+        let (w, h) = (96, 96);
+        const STEP: f64 = 22000.0 - 9000.0;
+
+        // 按位分：绿被直接采到的位（x%2 != y%2）与需要插值的 R/B 位。
+        let split = |out: &[u16], truth: &[[f32; 3]]| -> (f64, f64) {
+            let (mut gs, mut gn, mut rs, mut rn) = (0.0f64, 0u32, 0.0f64, 0u32);
+            for y in 0..h {
+                for x in 0..w {
+                    let i = y * w + x;
+                    let e = (out[i * 3 + 1] as f64 - truth[i][1] as f64).abs();
+                    if x % 2 == y % 2 {
+                        rs += e;
+                        rn += 1;
+                    } else {
+                        gs += e;
+                        gn += 1;
+                    }
+                }
+            }
+            (gs / gn as f64, rs / rn as f64)
+        };
+
+        let diag = scene_diagonal(w, h);
+        let mos = bayer_sample(&diag, w, h, RGGB);
+        let dir = demosaic_with("directional", &mos, w, h, Some(RGGB));
+        let cell = demosaic_with("cell_average", &mos, w, h, Some(RGGB));
+        let (g_site, rb_site) = split(&dir, &diag);
+        let (_, rb_cell) = split(&cell, &diag);
+
+        // ① G 位是直接采的，误差必须是 0（这条同时确认按位切分没把通道搞错）。
+        assert_eq!(g_site, 0.0, "G 位被改动了：{g_site}");
+
+        // ② 两种方法的 R/B 位都不得超过「边界占比 × 整步」，余量 8%。都卡在这条线上
+        //    说明限制来自采样；只有一种方法超了，才说明实现真有问题。
+        let bound = STEP / 6.0 * 1.08;
+        for (name, v) in [("方向法", rb_site), ("单元平均", rb_cell)] {
+            assert!(
+                v <= bound,
+                "{name}在 45° 的 R/B 位平均误差 {v:.0} 超过采样上限 {bound:.0}（边界占比 1/6 × 步长 {STEP:.0}）——带内的点也被搞错了"
+            );
+        }
+
+        // ③ 方向法在 45° 上仍要赢 2 dB 以上——赢在 R/B 通道，不在绿上（见第 4 条）。
+        assert!(
+            psnr(&dir, &diag) > psnr(&cell, &diag) + 2.0,
+            "45° 的 PSNR 差距不足 2 dB：{:.2} vs {:.2}",
+            psnr(&dir, &diag),
+            psnr(&cell, &diag)
+        );
+
+        // ④ 对照组：轴向边（同一步长）上同一个量必须小一个量级——差的是采样，不是实现。
+        let stripes = scene_stripes(w, h);
+        let mos = bayer_sample(&stripes, w, h, RGGB);
+        let dir = demosaic_with("directional", &mos, w, h, Some(RGGB));
+        let (_, rb_stripes) = split(&dir, &stripes);
+        assert!(
+            rb_stripes <= STEP / 6.0 * 0.1,
+            "轴向边的 R/B 位误差 {rb_stripes:.0} 不该比 45° 的 {rb_site:.0} 小一个量级"
+        );
+    }
+
     /// 扫参出表：`GRAD_T` 取哪一档由这张表定。
     ///
     /// ```text
