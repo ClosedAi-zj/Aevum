@@ -1079,86 +1079,181 @@ pub struct AppState {
     /// Plugin registry: the built-in list plus the manifests scanned under `plugins/`.
     pub registry: aevum_core::plugin::Registry,
     /// 插件市场窗口是否打开。
+    ///
+    /// Whether the plugin marketplace window is open.
     pub market_open: bool,
     /// 最近一次全量预览的 CPU 像素（RGB8 + 尺寸）。
     ///
     /// 插件跑在别的进程里，拿不到 GPU 纹理，只能给它字节。只存全量帧：
     /// 拖动中的草图帧每帧都会来，每帧转一份 8 MB 不值得。
+    ///
+    /// CPU pixels of the most recent full preview (RGB8 plus dimensions).
+    ///
+    /// Plugins run in another process and cannot see GPU textures, so they get bytes.
+    /// Only full frames are stored: drag-time sketch frames arrive every frame, and
+    /// converting 8 MB per frame is not worth it.
     pub preview_rgb: Option<(Vec<u8>, [u32; 2])>,
     /// 剪切警告（PS/LR 的黑白场检查）：高光遮罩开关。开着时画布上把
     /// r、g、b 全部顶满的像素盖成红色——过曝一眼见底。
+    ///
+    /// Clipping warning (the black/white point check from PS / LR): highlight mask toggle.
+    /// When on, pixels where r, g and b are all maxed are painted red on the canvas --
+    /// overexposure becomes obvious at a glance.
     pub clip_highlights: bool,
     /// 剪切警告：阴影遮罩开关。r、g、b 全部压到底的像素盖成蓝色。
+    ///
+    /// Clipping warning: shadow mask toggle. Pixels where r, g and b are all bottomed out
+    /// are painted blue.
     pub clip_shadows: bool,
     /// 剪切遮罩纹理：随最近一次全量预览生成（红=高光裁切、蓝=阴影裁切、
     /// 其余透明）。草图帧不重算——遮罩不需要跟手，等全量帧补上。
+    ///
+    /// Clipping mask texture, generated with the most recent full preview (red = highlight
+    /// clipping, blue = shadow clipping, everything else transparent). Sketch frames do not
+    /// recompute it -- the mask does not need to keep up with the drag, it waits for the
+    /// full frame.
     pub clip_mask: Option<TextureHandle>,
     /// 生成遮罩时对应的预览版本；预览一换就作废重算。
+    ///
+    /// The preview version this mask was generated for; a new preview invalidates it and
+    /// it is recomputed.
     pub clip_mask_stamp: u64,
     /// 插件算完的结果纹理。有它时画布显示它，参数一变就作废。
+    ///
+    /// The result texture the plugin produced. While it exists the canvas shows it; any
+    /// parameter change invalidates it.
     pub plugin_result: Option<TextureHandle>,
     /// 结果对应的预览版本。拿它判断"底图到底变没变"——
     /// 只看"又收到一张预览"是不够的：同一张图重传一次会把结果白扔。
+    ///
+    /// The preview version this result corresponds to. This is what decides "did the
+    /// underlying image actually change" -- merely seeing "another preview arrived" is not
+    /// enough: re-sending the same image would throw the result away for nothing.
     pub plugin_stamp: u64,
     /// 在飞的插件后台任务；`None` = 空闲。见 [`PluginJob`]。
+    ///
+    /// The plugin background job in flight; `None` = idle. See [`PluginJob`].
     pub plugin_job: Option<PluginJob>,
     /// 插件进度 (done, total)，每帧从任务通道拉最新；空闲时是 (0, 0)。
+    ///
+    /// Plugin progress (done, total), pulled from the job channel each frame; (0, 0) when
+    /// idle.
     pub plugin_progress: (u32, u32),
     /// 每个插件 id 的失败/崩溃次数（用户取消不计）。连续 3 次就在错误里
     /// 提示去插件市场停用 —— 只提示，不自动禁用，别替用户做决定。
+    ///
+    /// Failure / crash count per plugin id (user cancellation is not counted). After three
+    /// in a row the error suggests disabling it in the marketplace -- suggest only, never
+    /// disable automatically; that decision is not ours to make.
     pub plugin_crashes: HashMap<String, u32>,
     /// 市场左栏的类别筛选；`None` = 全部。
+    ///
+    /// Category filter in the marketplace's left column; `None` = all.
     pub market_filter: Option<aevum_core::plugin::Kind>,
     /// 市场搜索框。
+    ///
+    /// The marketplace search box.
     pub market_query: String,
     /// 截图演示：让停靠面板直接滚到最底部。
+    ///
+    /// Screenshot demo: make the dock panel scroll straight to the bottom.
     pub dock_scroll_end: bool,
     /// 截图演示：把某个分组（`group_header` 的 key）滚到面板顶部。
+    ///
+    /// Screenshot demo: scroll one group (a `group_header` key) to the top of the panel.
     pub dock_focus: Option<String>,
     pub show_film: bool,
     pub show_curves: bool,
     /// 画布标尺。界面稿的画布是净图，没有那两条 24px 的刻度槽，
     /// 所以默认关；要量像素时从「视图」打开。
+    ///
+    /// Canvas rulers. The design's canvas is a clean image without those two 24px scale
+    /// troughs, so this is off by default; open it from the View menu when you need to
+    /// measure pixels.
     pub rulers: bool,
     pub about_open: bool,
 
     pub keyframes: BTreeMap<usize, GradeParams>,
     /// 命名调色副本（当前序列工程文件里的那一份）；存/删/改名都进撤销栈。
+    ///
+    /// Named grading copies (the ones in the current sequence's project file); saving,
+    /// deleting and renaming all enter the undo stack.
     pub copies: Vec<GradeCopy>,
     /// 导出时改用某套副本的调色（`export.stills` / `export.video` 的 copy 参数）；
     /// 界面上点「导出」走当前调色，这个字段只在命令通道指定过之后非空，用完即清。
+    ///
+    /// Use one copy's grade for the export (the `copy` argument of `export.stills` /
+    /// `export.video`); clicking Export in the UI uses the current grade, so this is
+    /// non-empty only after the command channel specified it, and it is cleared after
+    /// use.
     pub export_copy: Option<String>,
     /// 「调色副本」分组里的名字输入框；纯视图缓冲，不进工程也不进历史。
+    ///
+    /// The name input in the grading copies group; a pure view buffer, not part of the
+    /// project or the history.
     pub copy_name: String,
     /// 「HDR 合并」分组的包围半径：当前帧前后各取几帧；纯视图缓冲。
+    ///
+    /// Bracket radius of the HDR merge group: how many frames to take on each side of the
+    /// current one; a pure view buffer.
     pub hdr_around: u32,
     /// 最近一次 HDR 合并写出的路径 / 报错，分组里回显一行；纯视图缓冲。
+    ///
+    /// Path or error of the most recent HDR merge, echoed as one line inside the group; a
+    /// pure view buffer.
     pub hdr_last: Option<String>,
     pub hdr_error: Option<String>,
     /// 「全景合并」分组的相邻半径：从当前帧起向后取几张接片；纯视图缓冲。
+    ///
+    /// Neighbour radius of the panorama merge group: how many frames to stitch forward from
+    /// the current one; a pure view buffer.
     pub pano_around: u32,
     /// 最近一次全景合并写出的路径 / 报错，分组里回显一行；纯视图缓冲。
+    ///
+    /// Path or error of the most recent panorama merge, echoed as one line inside the group;
+    /// a pure view buffer.
     pub pano_last: Option<String>,
     pub pano_error: Option<String>,
     pub resolution: Option<(u32, u32)>,
     /// 首帧读出来的保真度口径，只有 RAW 才有；「信息」面板用它标注预览/传感器两条路。
+    ///
+    /// The fidelity setting read from the first frame, present only for RAW; the info panel
+    /// uses it to label the preview and sensor paths.
     pub source_note: Option<String>,
 
     /// 当前选中的局部蒙版；画布手柄与右侧面板共用。
+    ///
+    /// The local mask currently selected; shared by the canvas handles and the right panel.
     pub mask_sel: Option<usize>,
     /// 选中蒙版组里当前编辑的形状（0 基）；换组时回到第一个。
+    ///
+    /// The shape being edited inside the selected mask group (0-based); returns to the first
+    /// when the group changes.
     pub mask_comp: usize,
     /// 正在拖动的 (蒙版序号, 手柄 0/1)。
+    ///
+    /// The (mask index, handle 0/1) currently being dragged.
     pub mask_drag: Option<(usize, u8)>,
     /// 正在涂抹的画笔笔画：(蒙版序号, 形状序号)。松手结束，一笔进一步历史。
+    ///
+    /// The brush stroke being painted: (mask index, shape index). Ends on mouse release;
+    /// one stroke, one history step.
     pub mask_paint: Option<(usize, usize)>,
     /// 下一笔的画笔设定：半径按短边百分比（0.2~50），硬度 / 流量 0~100。
     /// 只影响新笔画，不回写已画的；这是画笔的「当前工具状态」，不进撤销历史。
+    ///
+    /// Brush settings for the next stroke: radius as a percentage of the short edge
+    /// (0.2-50), hardness / flow 0-100.
+    /// Affects new strokes only and never rewrites strokes already painted; this is the
+    /// brush's current tool state and does not enter the undo history.
     pub brush_radius: f64,
     pub brush_hardness: f64,
     pub brush_flow: f64,
     pub brush_erase: bool,
     /// 吸管取色态：下一次画布单击把像素色相写进选中蒙版的颜色范围。
+    ///
+    /// Eyedropper state: the next canvas click writes the pixel hue into the selected mask's
+    /// colour range.
     pub mask_pick: bool,
     /// 取色期间留一份当前预览像素供点击读色，取完或退出即清。
     pub(crate) mask_pick_img: Option<ColorImage>,
@@ -1181,42 +1276,86 @@ pub struct AppState {
     pub(crate) defl_curve_cache: Option<crate::shell::DeflCurveCache>,
 
     /// 镜头配置文件匹配说明（面板与 `lens.set` 都显示这一行）。
+    ///
+    /// The lens profile match description (shown both in the panel and by `lens.set`).
     pub lens_profile_note: String,
     /// 用户关掉自动匹配时暂存的命中校正，再开时原样恢复。
+    ///
+    /// The matched correction stashed when the user turns automatic matching off, so that
+    /// turning it back on restores it verbatim.
     pub lens_profile_saved: Option<aevum_core::lensdb::Correction>,
 
     /// DCP 相机配置的显示名与说明；路径本身在 `params.dcp_profile`。
+    ///
+    /// Display name and description of the DCP camera profile; the path itself is in
+    /// `params.dcp_profile`.
     pub dcp_name: String,
     pub dcp_note: String,
     /// LCP 镜头配置的说明；校正系数本身在 `params.lcp_profile`。
+    ///
+    /// Description of the LCP lens profile; the correction coefficients themselves are in
+    /// `params.lcp_profile`.
     pub lcp_note: String,
 
     /// 用户拖出来的裁剪框（对齐后坐标，原图像素）。`None` = 没手动裁，
     /// 取景框退化成「画幅比例在安全框里居中内接」。
+    ///
+    /// The crop box the user dragged out (post-align coordinates, original image pixels).
+    /// `None` = no manual crop, and the viewfinder degrades to "the aspect ratio inscribed
+    /// and centred in the safe frame".
     pub user_crop: Option<CropRect>,
     /// 拉直角度（度，正角=画面逆时针）。取景框量的是转过之后的那一帧，
     /// 所以角度一变安全框就跟着缩，框伸到空白角里的部分导出时会被削掉。
+    ///
+    /// Straightening angle (degrees, positive = image counter-clockwise). The box is
+    /// measured on the frame after rotation, so changing the angle shrinks the safe frame
+    /// with it, and the parts of the box reaching into the blank corners get cut on
+    /// export.
     pub rotate: f64,
     /// 画布上正在进行的裁剪拖拽。拖框只动这个矢量覆盖层，不重画预览：
     /// 裁剪态下预览本来就是整幅画面，取景框松手后离开裁剪态才落到像素上。
+    ///
+    /// The crop drag in progress on the canvas. Dragging the box moves only this vector
+    /// overlay and does not re-render the preview: in crop mode the preview is the whole
+    /// frame anyway, and the box lands on pixels only once the mouse is released and crop
+    /// mode is left.
     pub crop_drag: Option<CropDrag>,
     /// 画布上正在拖的运镜框（与裁剪拖框互斥：同一时刻只有一个人拿鼠标）。
     /// 几何与裁剪同构，所以直接复用 `CropDrag` 的三种定性。
+    ///
+    /// The motion box being dragged on the canvas (mutually exclusive with the crop drag:
+    /// only one of them holds the mouse at a time). The geometry is isomorphic to cropping,
+    /// so the three variants of `CropDrag` are reused directly.
     pub motion_drag: Option<CropDrag>,
     /// 画布交给运镜取景框编辑：构图面板的「拖取景框」开关。开着时画布上的把手
     /// 拉的是起点/终点框（由 `motion_box` 定），裁剪框只画不拖。
+    ///
+    /// The canvas is handed over to editing the motion viewfinder: the "drag viewfinder"
+    /// toggle in the composition panel. While on, canvas handles pull the start / end box
+    /// (chosen by `motion_box`) and the crop box is drawn but not draggable.
     pub motion_picking: bool,
     /// 现在拖的是起点框还是终点框。
+    ///
+    /// Whether the start box or the end box is being dragged right now.
     pub motion_box: MotionBox,
 
     /// HSL 面板当前编辑的色相带（0..7，与 `lut::HSL_CENTERS` 同序）。
+    ///
+    /// The hue band the HSL panel is editing (0..7, same order as `lut::HSL_CENTERS`).
     pub hsl_band: usize,
     /// 曲线面板当前编辑的通道：0=RGB、1=红、2=绿、3=蓝。
+    ///
+    /// The channel the curve panel is editing: 0=RGB, 1=red, 2=green, 3=blue.
     pub curve_chan: usize,
     /// 曲线 / 色阶正在拖动的控制点或把手序号。
+    ///
+    /// Index of the control point or handle being dragged on the curve / levels.
     pub curve_grab: Option<usize>,
     pub levels_grab: Option<usize>,
     /// 速度曲线正在拖动的键序号（视图状态，不进历史也不进工程）。
+    ///
+    /// Index of the key being dragged on the speed curve (view state; not part of the
+    /// history or the project).
     pub retime_grab: Option<usize>,
 
     pub output_w: u32,
@@ -1226,9 +1365,14 @@ pub struct AppState {
     pub export_busy: bool,
     pub last_saved: Option<String>,
     /// 无显示环境（selftest）下不启动任何读盘线程。
+    ///
+    /// Under a display-less environment (selftest) start no disk threads at all.
     pub headless: bool,
     /// 是否允许开回环控制服务。`--shot` 这类一次性模式关掉，避免和常驻 GUI
     /// 抢同一份 control.json。
+    ///
+    /// Whether the loopback control server may start. One-shot modes such as `--shot` turn
+    /// it off so they do not fight the resident GUI over the same control.json.
     pub control_enabled: bool,
 
     pub align_report: Option<AlignReport>,
@@ -1242,35 +1386,65 @@ pub struct AppState {
     pub render_mode: OutputMode,
     pub render_format: StillFormat,
     /// JPEG 的压缩质量（1~100）；无损容器忽略它。
+    ///
+    /// JPEG compression quality (1-100); lossless containers ignore it.
     pub render_quality: u8,
     /// 把源 JPEG 的 EXIF 块搬进静帧输出（版权、机身、曝光跟着走）。
+    ///
+    /// Carry the source JPEG's EXIF block into still exports (copyright, camera body and
+    /// exposure travel with it).
     pub render_keep_exif: bool,
     /// 每张导出的静帧旁边写一个同名 `.xmp` 旁车（说明版权四项 + 这一张的调色）。
+    ///
+    /// Write a same-named `.xmp` sidecar next to every exported still (the four copyright
+    /// fields plus this image's grade).
     pub render_xmp_sidecar: bool,
     /// 输出锐化：按用途分档，只在缩放之后的成片上生效。
+    ///
+    /// Output sharpening: graded by use, applied only to the resized result.
     pub render_sharpen_for: OutputSharpen,
     pub render_sharpen_strength: SharpenStrength,
     /// 输出色域：静态图嵌 ICC，视频写 VUI。跟 render_format 一样是成片级设置。
+    ///
+    /// Output colour space: stills embed an ICC profile, video writes the VUI. Like
+    /// render_format, this is a per-export setting.
     pub render_color_space: ColorSpace,
     /// 水印：整块设定跟着工程文件与 `render.set` 走；默认关，导出像素一个不动。
+    ///
+    /// Watermark: the whole block travels with the project file and `render.set`; off by
+    /// default, and while it is off not a single exported pixel changes.
     pub render_watermark: Watermark,
     /// 时间重映射（变速 + 运动模糊）：跟着 `retime.set` 与工程文件走；默认关，
     /// 导出走原来那条 1:1 快路，一个像素都不重采样。
+    ///
+    /// Time remapping (speed plus motion blur): travels with `retime.set` and the project
+    /// file; off by default, and while it is off the export takes the original 1:1 fast path
+    /// and resamples nothing.
     pub retime: Retime,
     /// 运镜（Ken Burns）：取景框从起点走到终点，跟着 `motion.set` 与工程文件走；
     /// 默认关，且两个框重合时也当作没开。
+    ///
+    /// Motion (Ken Burns): the viewfinder travels from the start box to the end box, driven
+    /// by `motion.set` and the project file; off by default, and treated as off when the two
+    /// boxes coincide.
     pub motion: Motion,
     pub render_crf: u8,
     pub render_preset: String,
     pub render_audio: Option<PathBuf>,
     pub render_audio_opts: AudioOptions,
     /// 配乐探针结果；文件换了才重新读，避免每帧都起进程。
+    ///
+    /// Soundtrack probe result; re-read only when the file changes, so no process is spawned
+    /// every frame.
     pub audio_info: Option<AudioProbe>,
     pub audio_probe_err: Option<String>,
     pub render_out_dir: PathBuf,
     pub render_video_out: PathBuf,
     pub render_keep_frames: bool,
     /// 断点续跑：输出目录里已经写完的帧原样留着，这一趟只补没写出来的那些。
+    ///
+    /// Resume: frames already written in the output directory are left as they are, and this
+    /// pass only fills in the missing ones.
     pub render_resume: bool,
     /// 上一次导出按续跑跳过了几帧，只为状态栏那句「跳过 N」服务，不参与任何判定。
     /// 数帧的活与帧数成正比，所以它在导出线程里跑、这儿只放一个读数。
@@ -1283,9 +1457,16 @@ pub struct AppState {
 
     /// HDR / 全景合并的长任务。9 张 6K 帧融一遍要 6 秒，全在界面线程上就是
     /// 一整段没有重绘的死窗口，所以与导出同构：后台跑，界面只读计数。
+    ///
+    /// Long-running HDR / panorama merge. Fusing nine 6K frames takes about six seconds,
+    /// which as a blocking UI-thread operation is a dead window with no repaint, so it is
+    /// shaped like an export: runs in the background, the UI only reads counters.
     pub merge_busy: bool,
     pub merge_kind: Option<MergeKind>,
     /// 最近一次成功的成片 JSON（路径、帧号、尺寸），`merge.status` 与面板都读它。
+    ///
+    /// The most recent successful merge JSON (paths, frame count, dimensions); read by
+    /// `merge.status` and by the panel.
     pub merge_result: Option<Value>,
     pub merge_error: Option<String>,
     merge_done: Arc<AtomicUsize>,
@@ -1380,11 +1561,6 @@ fn clip_mask_image(
 }
 
 impl AppState {
-    /// 把一个滤镜插件作用到当前预览上（看板 B06：后台任务版）。
-    ///
-    /// 起一条工作线程：真进程 → 握手 → 按 512 的块往返。每块之间向界面报进度，
-    /// 用户随时可以取消。结果由 [`AppState::plugin_poll`] 每帧收：成功换一张纹理
-    /// 盖在画布上（并等着下一次全量预览把它冲掉），失败进错误横幅并按 id 记一笔。
     /// 重算剪切遮罩：从最近一次全量预览的 CPU 像素里挑出高光/阴影裁切的
     /// 像素，生成一张与预览同尺寸的 RGBA 遮罩（红=高光、蓝=阴影、其余透明）。
     ///
@@ -1432,6 +1608,11 @@ impl AppState {
         self.clip_mask_stamp = u64::MAX;
     }
 
+    /// 把一个滤镜插件作用到当前预览上（看板 B06：后台任务版）。
+    ///
+    /// 起一条工作线程：真进程 → 握手 → 按 512 的块往返。每块之间向界面报进度，
+    /// 用户随时可以取消。结果由 [`AppState::plugin_poll`] 每帧收：成功换一张纹理
+    /// 盖在画布上（并等着下一次全量预览把它冲掉），失败进错误横幅并按 id 记一笔。
     pub fn plugin_start(&mut self, ctx: &Context, id: &str) -> Result<String, String> {
         use aevum_core::plugin_host::Host;
         // 一次只跑一个：画布上盖着的插件结果只有一个，两个任务抢同一张纹理
