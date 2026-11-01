@@ -8,7 +8,7 @@ window: **align → composite → crop (with camera motion) → color grade → 
 (speed ramps & motion blur)**. Each step feeds the next automatically; drop a file or
 folder onto the window and it switches to the right module.
 
-> **Current version**: `1.1.0` (stable): core features work and are pinned by numeric golden
+> **Current version**: `1.2.0` (feature release): core features work and are pinned by numeric golden
 > tests, and the four compatibility promises under "Versioning" (project format / presets and
 > parameters / command line / MCP tools) take effect from this release. Per-version changes and
 > known limitations live in `docs/发布说明-v1.0.0.en.md` and `CHANGELOG.en.md`.
@@ -25,7 +25,8 @@ folder onto the window and it switches to the right module.
   (exposure / curves / HSL / split tone / sharpening / denoise / grain / dark-channel dehaze),
   masks (linear / radial / brush) with local adjustments
 - **Output**: stills & video export, render queue, exact output size, watermark,
-  retime with motion blur (frames are piped straight into ffmpeg's stdin — no temporary frame files)
+  retime with motion blur (frames are piped straight into ffmpeg's stdin — no temporary frame files);
+  HDR stills go out as AVIF 10bit + PQ (203-nit reference white, BT.2020, full range)
 - **AI Agent control plane**: a built-in MCP stdio server (34 `aevum_*` tools), plus a
   loopback HTTP proxy that forwards headless MCP calls to a running GUI with live UI updates
 - **Numeric goldens**: the Python reference (`acceptance/reference/grade.py`) mirrors the Rust pipeline
@@ -122,7 +123,7 @@ two consecutive freezes must be byte-identical.
 ## Versioning
 
 `Cargo.toml` is the single source of truth for the version; the current release is
-`1.1.0`. That is the first stable release; from here every fix or feature bump gets a tag,
+`1.2.0`. That is the first stable release; from here every fix or feature bump gets a tag,
 and there is nothing to migrate from the `0.x` tags.
 
 **Compatibility promises start with `1.0.0`** and hold for the whole 1.x series — the

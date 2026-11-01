@@ -15,6 +15,103 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.2.0 — 2026-11-01
+
+Feature release. **One thing up front: this version starts changing pictures in existing
+projects.** Two of the fixes correct behaviour that was wrong — half of the `masking` range was
+inert, and `contrast_linear` pivoted a stop and a half off. If you need the old look back, the
+roll-back is at the end.
+
+All four public contracts (project format / presets and parameters / command line / MCP tool set)
+are add-only: a new `dynamic` field and argument, which old projects read as SDR with
+byte-identical output.
+
+### HDR export: AVIF 10bit + PQ
+
+"HDR export (PQ / AVIF 10-bit)" used to be a reserved entry point with a `todo!()` behind it. It
+now writes real files.
+
+Choosing **HDR (PQ)** exports through the PQ transfer function (SMPTE ST 2084), BT.2020 wide
+gamut, and 10bit coding, in an AVIF container. Three decisions are pinned, each with its own
+criterion:
+
+- **Reference white 203 cd/m²** (BT.2408 HDR reference white). The panel's "white" lands on 203
+  nits in an HDR file, not 100 — mapped to 100, the same picture reads one stop darker than the
+  SDR window next to it on an HDR display.
+- **No highlight compression.** Anything above white keeps climbing along the curve tail, all the
+  way to PQ's 10000-nit ceiling. Which means the "HDR tail" slider finally has a destination in
+  HDR export.
+- **Full-range coding**, not video's 16–235.
+
+Only AVIF can hold HDR, and it must pair with Rec.2020: picking HDR switches the colour space and
+container over by itself (the selections move — you can see it), and exporting any other
+combination is refused with a reason instead of quietly falling back to SDR. A quiet fallback is
+the worst case here: the interface says HDR, the file is SDR, and it looks flat grey on an HDR
+display.
+
+Final renders (video) still come out SDR only, so the switch is not shown in video mode.
+
+### Fixed: half of the `masking` range was inert
+
+The sharpening "masking" slider did **nothing at all** to flat areas anywhere from 0 to 50:
+measured noise gain at 0 / 10 / 25 / 50 was 1.944 across the board, identical to no masking. The
+slider moved and not one pixel changed; it only started working past 75.
+
+The threshold was a squared term, which flattened the low end. Switching to a square root makes it
+respond from 25 on: 25 → 1.816, 50 → 1.385, 75 → 1.174. Both ends are unchanged, so `masking=100`
+renders exactly as before.
+
+**What changes:** existing projects with masking between 25 and 100. The RAW import default is 20,
+which sits in that range — those pictures will show slightly cleaner flat areas.
+
+### Fixed: contrast (linear) no longer darkens mid-gray on the side
+
+`contrast_linear` means "compute the contrast increment in linear light", but its pivot sat at
+linear 0.5, which is encoded 0.735 (73% gray). Fully turned up, mid-gray 0.5 was pushed down to
+0.4487 — 14 levels (8-bit) gone for free. The pivot now sits on mid-gray: mid-gray does not move at
+any strength, and shadows and highlights pull apart in opposite directions.
+
+One uncomfortable conclusion that comes with it: **with the pivot fixed, this slider's visible
+effect is down to about 1 level** (max 0.0041 measured). Almost all of its former "effect" came
+from the misplaced pivot, not from linear light. So do not expect much from pulling it — its value
+is in computing contrast in linear light at all, not in how far it moves.
+
+**What changes:** existing projects where contrast is non-zero and contrast_linear is non-zero.
+
+### Fixed: AVIF export never actually worked with a real ffmpeg
+
+Stills are written to a `<name>.part` temporary file and renamed atomically; the extension is
+`part`, so ffmpeg cannot infer the container and reports `Unable to choose an output format`. Both
+paths now pass the container explicitly.
+
+The bug has been there since AVIF shipped and went unnoticed because every AVIF test is "skip when
+no ffmpeg is found" — neither this machine nor CI had one, so it stayed green all along.
+
+### Known issues
+
+- **HDR applies to stills + AVIF only.** Video (x264/x265) is still 8bit SDR, and 16bit HDR in
+  TIFF/PNG is not done either — that needs a PQ curve inside the ICC profile, not a one-liner. Any
+  combination that cannot hold it is refused.
+- How an HDR file looks on an SDR screen is up to the player's tone mapping; there is no built-in
+  SDR preview mapping. The panel keeps showing the SDR preview — check HDR on an HDR display or in
+  a player.
+- Directional demosaicing is still well below ideal on 45° edges and coloured boundaries: the
+  direction test only considers horizontal and vertical, and diagonal detail falls back to the
+  colour-difference constancy assumption.
+- There are no real camera RAW samples on this machine, so that demosaicing data all comes from
+  synthetic targets; behaviour on real photographs remains unverified.
+
+### Roll-back
+
+Install `v1.1.0`. Project files, presets and `settings.json` are forward compatible — this version
+only adds the `render.dynamic` field, which the older version ignores. What you cannot get back is
+the rendering: `1.1.0` keeps the old masking mapping and the old pivot.
+
+To keep the old look without downgrading: set masking to 100 (the two ends agree there) and set
+`contrast_linear` to zero.
+
+---
+
 ## v1.1.0 — 2026-11-01
 
 A feature release. The four public contracts (project format / presets and parameters / command

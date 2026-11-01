@@ -75,12 +75,17 @@ pub enum StillFormat {
     /// 8bit lossless (the `image` WebP encoder only offers VP8L, with no lossy mode, so
     /// quality has no effect on it).
     WebP,
-    /// 8bit 有损（AV1 静帧），走外部 ffmpeg 的 libaom-av1；质量映射到 crf。
+    /// 有损（AV1 静帧），走外部 ffmpeg 的 libaom-av1；质量映射到 crf。
     /// 色域用容器里的 nclx 标记，不嵌 ICC 块，也不带 EXIF。
     ///
-    /// 8bit lossy (AV1 still), encoded by libaom-av1 in the external ffmpeg; quality maps to
-    /// crf.
+    /// 位深跟着 [`OutputDynamic`] 走：SDR 是 8bit `yuv444p`，`HdrPq` 是 10bit
+    /// `yuv444p10le` + full range。它是唯一装得下 HDR（PQ）的容器。
+    ///
+    /// Lossy (AV1 still), encoded by libaom-av1 in the external ffmpeg; quality maps to crf.
     /// Color space is marked by nclx in the container: no ICC block, no EXIF.
+    ///
+    /// Bit depth follows [`OutputDynamic`]: 8bit `yuv444p` for SDR, 10bit `yuv444p10le` at
+    /// full range for `HdrPq`. It is the only container that can hold HDR (PQ).
     Avif,
 }
 
@@ -116,7 +121,9 @@ impl StillFormat {
             Self::Tiff16 => "16bit 无损，交给 Photoshop/达芬奇接着调",
             Self::Jpeg => "有损，质量滑块控压缩率；交付与分享体积最小",
             Self::WebP => "无损但比 PNG 小一到两成；`image` 只提供无损档",
-            Self::Avif => "AV1 有损，同画质比 JPEG 小一半；色域写 nclx 标记，不带 ICC/EXIF",
+            Self::Avif => {
+                "AV1 有损，同画质比 JPEG 小一半；HDR 时出 10bit；色域写 nclx 标记，不带 ICC/EXIF"
+            }
         }
     }
 

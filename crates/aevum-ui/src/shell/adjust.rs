@@ -1524,6 +1524,11 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         if state.render_mode == OutputMode::Video && !state.render_format.frames_ok() {
             state.render_format = StillFormat::Png8;
         }
+        // 成片只会出 SDR：切到视频模式时把动态范围收回 SDR，别留一个点导出就报错的
+        // 组合。与上面那条容器回退同一口径。
+        if state.render_mode == OutputMode::Video && state.render_dynamic != OutputDynamic::Sdr {
+            state.render_dynamic = OutputDynamic::Sdr;
+        }
         let formats: &[StillFormat] = if state.render_mode == OutputMode::Video {
             &[StillFormat::Png8, StillFormat::Tiff16]
         } else {
