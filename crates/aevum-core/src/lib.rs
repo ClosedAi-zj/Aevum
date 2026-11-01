@@ -32,6 +32,7 @@ pub mod export;
 pub mod fonts;
 pub mod grade;
 pub mod hdr;
+pub mod hdr_output;
 pub mod interp;
 pub mod journal;
 pub mod lcp;
