@@ -32,8 +32,8 @@ use aevum_core::deflicker;
 use aevum_core::develop::Ev;
 use aevum_core::exif;
 use aevum_core::export::{
-    self, Codec, JobProgress, OutputMode, OutputSharpen, RenderOptions, SharpenStrength, Stage,
-    StillFormat,
+    self, Codec, JobProgress, OutputDynamic, OutputMode, OutputSharpen, RenderOptions,
+    SharpenStrength, Stage, StillFormat,
 };
 use aevum_core::grade::{self, GradeParams, PRESET_NAMES};
 use aevum_core::interp;
@@ -820,9 +820,11 @@ fn export_stills(session: &mut Session, args: &Value) -> Result<Value, String> {
     let gains = session.gains(n);
     // 有对齐结果就自动套用统一裁切 + 逐帧位移，与 GUI 导出路径一致。
     let (crop, offsets) = session.alignment(n);
+    let dynamic = opt_dynamic(args)?;
     let options = RenderOptions {
         mode: OutputMode::Stills,
         format,
+        dynamic,
         quality: opt_quality(args)?,
         keep_exif: opt_bool(args, "keep_exif")?.unwrap_or(false),
         xmp_sidecar: opt_bool(args, "xmp_sidecar")?.unwrap_or(false),
@@ -960,13 +962,15 @@ fn hdr_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
 
     let format = parse_format(opt_str(args, "format")?.unwrap_or("png8"))?;
     let (sharpen_for, sharpen_strength) = opt_sharpen(args)?;
+    let dynamic = opt_dynamic(args)?;
     let options = RenderOptions {
         quality: opt_quality(args)?,
         keep_exif: opt_bool(args, "keep_exif")?.unwrap_or(false),
         xmp_sidecar: opt_bool(args, "xmp_sidecar")?.unwrap_or(false),
         sharpen_for,
         sharpen_strength,
-        color_space: opt_color_space(args)?,
+        color_space: color_space_for(dynamic, opt_color_space(args)?),
+        dynamic,
         watermark: opt_watermark(args)?,
         out_dir: out_dir.clone(),
         metadata: session.metadata(),
@@ -1054,13 +1058,15 @@ fn pano_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
 
     let format = parse_format(opt_str(args, "format")?.unwrap_or("png8"))?;
     let (sharpen_for, sharpen_strength) = opt_sharpen(args)?;
+    let dynamic = opt_dynamic(args)?;
     let options = RenderOptions {
         quality: opt_quality(args)?,
         keep_exif: opt_bool(args, "keep_exif")?.unwrap_or(false),
         xmp_sidecar: opt_bool(args, "xmp_sidecar")?.unwrap_or(false),
         sharpen_for,
         sharpen_strength,
-        color_space: opt_color_space(args)?,
+        color_space: color_space_for(dynamic, opt_color_space(args)?),
+        dynamic,
         watermark: opt_watermark(args)?,
         out_dir: out_dir.clone(),
         metadata: session.metadata(),
@@ -1165,6 +1171,7 @@ fn export_video(session: &mut Session, args: &Value) -> Result<Value, String> {
     let params = session.frame_params_of(n, copy)?;
     let gains = session.gains(n);
     let (crop, offsets) = session.alignment(n);
+    let dynamic = opt_dynamic(args)?;
     let options = RenderOptions {
         mode: OutputMode::Video,
         format,
@@ -1189,6 +1196,7 @@ fn export_video(session: &mut Session, args: &Value) -> Result<Value, String> {
         keep_frames,
         resume,
         color_space,
+        dynamic,
         watermark: opt_watermark(args)?,
         // 运镜跟着这次导出走：没传 motion 就沿用会话工程里那份，与队列同口径。
         motion: motion_arg(session, args)?,
@@ -2546,6 +2554,34 @@ fn opt_color_space(args: &Value) -> Result<ColorSpace, String> {
     }
 }
 
+/// `dynamic` 参数：省略即 SDR。给了 `hdr-pq` 就顺手把色域补成 Rec.2020——那是
+/// 唯一的合法组合，让调用方为这件事多写一个参数只是制造一次必然的报错。
+///
+/// 补完之后仍然走 `check_dynamic`：容器装不下（PNG/TIFF/JPEG/WebP）照样报错，
+/// 别在这里悄悄退回 SDR。
+///
+/// The `dynamic` argument: SDR when omitted. Passing `hdr-pq` also fills in Rec.2020 — that
+/// is the only legal combination, and making callers spell it out only creates a guaranteed
+/// error. `check_dynamic` still runs afterwards: a container that cannot hold it
+/// (PNG/TIFF/JPEG/WebP) errors out rather than quietly falling back to SDR.
+fn opt_dynamic(args: &Value) -> Result<OutputDynamic, String> {
+    match opt_str(args, "dynamic")? {
+        Some(raw) => OutputDynamic::parse(raw)
+            .ok_or_else(|| format!("未知动态范围 {raw}；可用 sdr / hdr-pq")),
+        None => Ok(OutputDynamic::default()),
+    }
+}
+
+/// 按动态范围把色域补成合法组合。
+///
+/// Fills in a legal color space for the given dynamic range.
+fn color_space_for(dynamic: OutputDynamic, chosen: ColorSpace) -> ColorSpace {
+    match dynamic {
+        OutputDynamic::Sdr => chosen,
+        OutputDynamic::HdrPq => ColorSpace::Rec2020,
+    }
+}
+
 fn format_name(format: StillFormat) -> &'static str {
     format.key()
 }
@@ -2804,6 +2840,7 @@ fn build_commands() -> Vec<Command> {
                     "xmp_sidecar": {"type": "boolean", "default": false, "description": "每张静帧旁边写一个同名 .xmp 旁车：dc: 的说明与版权四项（取自会话工程的元数据）+ crs: 的这一张调色参数"},
                     "resume": {"type": "boolean", "default": false, "description": "断点续跑：输出目录里已经写完的帧（连带该带的 .xmp）原样留着，这一趟只补没写出来的那些；上次跑到一半断了、这次接着导就用它，改了调色想重导就别开"},
                     "copy": {"type": "string", "description": "改用某套命名调色副本的调色导出；省略用会话当前调色"},
+                    "dynamic": {"type": "string", "enum": ["sdr", "hdr-pq"], "default": "sdr", "description": "输出动态范围：sdr=标准，hdr-pq=PQ（SMPTE ST 2084）+ BT.2020 + 10bit，参考白按 203 nits 落地、>1 的高光沿曲线尾部继续上升；hdr-pq 目前只有 avif 装得下，色域固定 rec2020（传别的会报错）"},
                     "color_space": {"type": "string", "enum": ["srgb", "p3", "rec2020"], "default": "srgb", "description": "输出色域；非 sRGB 时像素真转换并嵌对应 ICC（p3=Display P3，rec2020=BT.2020 SDR）"},
                     "long_side": {"type": "integer", "minimum": 1, "description": "按长边缩放；与 width/height 二选一"},
                     "width": {"type": "integer", "minimum": 2, "description": "精确输出宽（偶数，需与 height 同时给；cover 放大后居中裁切）"},
@@ -2844,6 +2881,7 @@ fn build_commands() -> Vec<Command> {
                     "format": {"type": "string", "enum": ["png8", "tiff16"], "default": "png8"},
                     "retime": retime_schema(),
                     "motion": motion_schema(),
+                    "dynamic": {"type": "string", "enum": ["sdr", "hdr-pq"], "default": "sdr", "description": "输出动态范围；成片目前只出 SDR，传 hdr-pq 会直接报错（HDR 视频编码还没做），静帧的 HDR 走 export_stills + avif"},
                     "color_space": {"type": "string", "enum": ["srgb", "p3", "rec2020"], "default": "srgb", "description": "输出色域；决定 VUI 的 primaries/transfer/matrix 与中间帧的 ICC，rec2020 的传递函数在 VUI 里只能标 bt709"},
                     "confirm": {"type": "boolean", "description": "批量写操作必须为 true"},
                     "background": {"type": "boolean", "default": false, "description": "true 时后台导出并立即返回，用 aevum_align_status 查进度"}
@@ -2862,6 +2900,7 @@ fn build_commands() -> Vec<Command> {
                     "out_dir": {"type": "string", "description": "输出目录（不能是序列根或其上级）；省略用序列根下 HDR/"},
                     "format": {"type": "string", "enum": ["png8", "tiff16", "jpeg", "webp", "avif"], "default": "png8"},
                     "quality": {"type": "integer", "minimum": 1, "maximum": 100, "description": "压缩质量，只对 jpeg / avif 生效"},
+                    "dynamic": {"type": "string", "enum": ["sdr", "hdr-pq"], "default": "sdr", "description": "输出动态范围：sdr=标准，hdr-pq=PQ（SMPTE ST 2084）+ BT.2020 + 10bit，参考白按 203 nits 落地、>1 的高光沿曲线尾部继续上升；hdr-pq 目前只有 avif 装得下，色域固定 rec2020（传别的会报错）"},
                     "color_space": {"type": "string", "enum": ["srgb", "p3", "rec2020"], "default": "srgb", "description": "输出色域；非 sRGB 时嵌对应 ICC"},
                     "xmp_sidecar": {"type": "boolean", "default": false, "description": "在成片旁写同名 .xmp（dc 四项 + crs 调色）"},
                     "keep_exif": {"type": "boolean", "default": false, "description": "把首帧的 EXIF 块搬进成片"},
@@ -2881,6 +2920,7 @@ fn build_commands() -> Vec<Command> {
                     "out_dir": {"type": "string", "description": "输出目录（不能是序列根或其上级）；省略用序列根下 全景/"},
                     "format": {"type": "string", "enum": ["png8", "tiff16", "jpeg", "webp", "avif"], "default": "png8"},
                     "quality": {"type": "integer", "minimum": 1, "maximum": 100, "description": "压缩质量，只对 jpeg / avif 生效"},
+                    "dynamic": {"type": "string", "enum": ["sdr", "hdr-pq"], "default": "sdr", "description": "输出动态范围：sdr=标准，hdr-pq=PQ（SMPTE ST 2084）+ BT.2020 + 10bit，参考白按 203 nits 落地、>1 的高光沿曲线尾部继续上升；hdr-pq 目前只有 avif 装得下，色域固定 rec2020（传别的会报错）"},
                     "color_space": {"type": "string", "enum": ["srgb", "p3", "rec2020"], "default": "srgb", "description": "输出色域；非 sRGB 时嵌对应 ICC"},
                     "xmp_sidecar": {"type": "boolean", "default": false, "description": "在成片旁写同名 .xmp（dc 四项 + crs 调色）"},
                     "keep_exif": {"type": "boolean", "default": false, "description": "把首帧的 EXIF 块搬进成片"},

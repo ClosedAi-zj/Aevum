@@ -896,23 +896,28 @@ pub fn sharpen(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams) {
 // 输出锐化（专用 USM + 阈值，atlas §21 DoUSMWithThreshold 口径）
 // ---------------------------------------------------------------------------
 
-/// 输出编码预留（E2：`UniformsOutputSharpenEncodeSDR/HDR` 单 pass 合并结构）。
-/// 当前导出管线上限是 sRGB f32 [0,1]，本轮只有 SDR 落地；HDR（PQ）留给
-/// atlas §36 里程碑。
-///
-/// Output encoding placeholder (E2: the single-pass `UniformsOutputSharpenEncodeSDR/HDR`
-/// structure).
-/// The current export pipeline tops out at sRGB f32 [0,1], so only SDR lands in this round;
-/// HDR (PQ) is left to the atlas §36 milestone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OutputEncoding {
-    Sdr,
-    /// HDR（PQ）输出：decode_pq → USM → encode_pq，当前不可达占位。
-    ///
-    /// HDR (PQ) output: decode_pq → USM → encode_pq, currently an unreachable placeholder.
-    #[allow(dead_code)]
-    HdrPq,
-}
+// 这里原本有一个 `OutputEncoding::{Sdr, HdrPq}` 枚举，HdrPq 分支是 `todo!()`。
+// 它已经删掉了，理由记在这里免得有人再加回来：
+//
+// 导出的顺序是「锐化 → 换传递函数」，不是「换传递函数 → 锐化」。锐化永远作用在
+// sRGB 编码值上（>1 的部分按幂段连续延伸，见 `hdr_output::srgb_to_linear_ext`），
+// PQ 只是写盘前的最后一步。所以 HDR 输出不需要另一条锐化路径——同一份像素、
+// 同一组参数，差别只在最后那次传输函数。
+//
+// 反过来说，「对 PQ 码值做 USM」只在「打开一张 HDR 图再编辑」时才成立，那条路
+// 现在没有。届时真要加，也是新增一个显式的「输入已经是 PQ」参数，而不是把一个
+// 会 panic 的分支挂在导出路径的必由之路上。
+//
+// A `todo!()` is a panic sitting on the export path's main road, and this one guarded a
+// case that cannot occur: export sharpens first and swaps the transfer function last.
+// Sharpening always acts on sRGB-encoded values (above 1 the power segment extends
+// continuously, see `hdr_output::srgb_to_linear_ext`), and PQ is only the final step
+// before writing. HDR output therefore needs no second sharpening path — same pixels,
+// same parameters, differing only in that last transfer function.
+//
+// Conversely, "USM on PQ codes" only makes sense when opening an HDR image for editing,
+// a path that does not exist yet. When it does, it should be an explicit "input is
+// already PQ" parameter rather than a panicking branch hung on the export road.
 
 /// 一次输出锐化的三个用户可见参数（用途档 × 强度档合成后的结果）。
 ///
@@ -960,14 +965,8 @@ impl UsmSettings {
 /// It stays adjustable in [`UsmTuning`], to be fitted once multi-resolution references exist.
 /// It is called only from `apply_output_finish` (after scaling, before the watermark); the
 /// preview never passes through it.
-pub fn output_sharpen_usm(
-    rgb: &mut [f32],
-    w: usize,
-    h: usize,
-    s: UsmSettings,
-    enc: OutputEncoding,
-) {
-    output_sharpen_usm_tuned(rgb, w, h, s, enc, UsmTuning::default())
+pub fn output_sharpen_usm(rgb: &mut [f32], w: usize, h: usize, s: UsmSettings) {
+    output_sharpen_usm_tuned(rgb, w, h, s, UsmTuning::default())
 }
 
 /// 同 [`output_sharpen_usm`]，但接受一组显式的拟合参数。
@@ -987,15 +986,9 @@ pub fn output_sharpen_usm_tuned(
     w: usize,
     h: usize,
     s: UsmSettings,
-    enc: OutputEncoding,
     tuning: UsmTuning,
 ) {
-    match enc {
-        OutputEncoding::Sdr => output_sharpen_usm_sdr(rgb, w, h, s, tuning),
-        OutputEncoding::HdrPq => {
-            todo!("HDR（PQ）输出编码接入后实现：decode_pq → USM → encode_pq（atlas §36）")
-        }
-    }
+    output_sharpen_usm_sdr(rgb, w, h, s, tuning)
 }
 
 /// 输出尺寸感知增益：`size_gain = clamp(max(w,h)/1600, 1, 3).sqrt()`，
@@ -1819,13 +1812,7 @@ mod tests {
         // 1) 平坦图：高通恒 0 → 任何 amount/threshold 下逐位不动。
         let flat = vec![0.5f32; w * h * 3];
         let mut a = flat.clone();
-        output_sharpen_usm(
-            &mut a,
-            w,
-            h,
-            UsmSettings::new(0.9, 0.8, 0.004),
-            OutputEncoding::Sdr,
-        );
+        output_sharpen_usm(&mut a, w, h, UsmSettings::new(0.9, 0.8, 0.004));
         for (i, (x, y)) in a.iter().zip(flat.iter()).enumerate() {
             assert_eq!(x.to_bits(), y.to_bits(), "平坦图第 {i} 位被 USM 改动");
         }
@@ -1841,13 +1828,7 @@ mod tests {
             }
         }
         let mut b = small.clone();
-        output_sharpen_usm(
-            &mut b,
-            w,
-            h,
-            UsmSettings::new(0.8, 0.8, 0.05),
-            OutputEncoding::Sdr,
-        );
+        output_sharpen_usm(&mut b, w, h, UsmSettings::new(0.8, 0.8, 0.05));
         for (i, (x, y)) in b.iter().zip(small.iter()).enumerate() {
             assert_eq!(
                 x.to_bits(),
@@ -1867,13 +1848,7 @@ mod tests {
             }
         }
         let mut c = step.clone();
-        output_sharpen_usm(
-            &mut c,
-            w,
-            h,
-            UsmSettings::new(1.4, 1.0, 0.0),
-            OutputEncoding::Sdr,
-        );
+        output_sharpen_usm(&mut c, w, h, UsmSettings::new(1.4, 1.0, 0.0));
         // 阶跃两侧的过冲/下冲存在（锐化真的发生了）。
         let overshoot = (c[(h / 2) * w * 3 + (w / 2) * 3] - 0.7).abs();
         assert!(overshoot > 1e-4, "阶跃边缘没有过冲，USM 没起作用");

@@ -30,7 +30,7 @@ use aevum_core::align::Estimator;
 use aevum_core::audio::AudioCodec;
 use aevum_core::colorspace::ColorSpace;
 use aevum_core::crop;
-use aevum_core::export::{OutputMode, OutputSharpen, SharpenStrength, StillFormat};
+use aevum_core::export::{OutputDynamic, OutputMode, OutputSharpen, SharpenStrength, StillFormat};
 use aevum_core::grade::GradeParams;
 use aevum_core::qa::{self, Finding};
 use aevum_core::queue::QueueStatus;
@@ -1550,6 +1550,33 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                 }
             }
         });
+        // 动态范围只对静帧开放：成片那条路目前只出 SDR（x264/x265 的 8bit VUI 流），
+        // 摆一个点了会报错的开关比不摆更糟。
+        if state.render_mode == OutputMode::Stills {
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for dyn_range in OutputDynamic::ALL {
+                    let picked = bar_chip(ui, dyn_range.cn(), state.render_dynamic == dyn_range)
+                        .on_hover_text(crate::i18n::tr(dyn_range.hint()))
+                        .clicked();
+                    if picked {
+                        state.render_dynamic = dyn_range;
+                        // HDR 需要 Rec.2020 + AVIF，补齐摆在明面上（chips 会跳）。
+                        state.apply_dynamic();
+                    }
+                }
+            });
+            if state.render_dynamic == OutputDynamic::HdrPq {
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new(crate::i18n::t!(
+                        "HDR：参考白 203 nits，超过白的部分沿曲线尾部继续上升；只有 AVIF 装得下"
+                    ))
+                    .size(SIZE_SMALL)
+                    .color(theme::muted()),
+                );
+            }
+        }
         if state.render_format.lossy() {
             ui.add_space(4.0);
             let mut q = f64::from(state.render_quality);

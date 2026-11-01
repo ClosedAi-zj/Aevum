@@ -36,7 +36,7 @@ use thiserror::Error;
 use crate::audio::AudioOptions;
 use crate::colorspace::ColorSpace;
 use crate::export::{
-    self, Codec, ExportError, JobProgress, OutputMode, OutputSharpen, RenderOptions,
+    self, Codec, ExportError, JobProgress, OutputDynamic, OutputMode, OutputSharpen, RenderOptions,
     SharpenStrength, StillFormat,
 };
 use crate::grade::GradeParams;
@@ -469,6 +469,10 @@ pub fn render_item(
         color_space: ColorSpace::parse(&item.color_space)
             .or_else(|| ColorSpace::parse(&project.render.color_space))
             .unwrap_or_default(),
+        // 队列跑的是成片（x264/x265 的 8bit VUI 流），HDR（PQ）目前只对 AVIF 静帧
+        // 开放。这里固定 SDR 而不是从工程读：读进来也没人消费，反而会让「排队的
+        // 片子是 HDR」变成一句空话。
+        dynamic: OutputDynamic::Sdr,
         // 水印跟输出锐化同理：排队之后不该悄悄丢掉。
         watermark: project.render.watermark.clone(),
     };

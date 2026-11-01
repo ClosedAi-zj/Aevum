@@ -39,6 +39,11 @@ pub struct AlignState {
 pub struct RenderState {
     pub mode: String,
     pub format: String,
+    /// 输出动态范围键（`sdr`/`hdr-pq`）。旧工程没有这个字段时按 SDR 走，行为不变。
+    ///
+    /// Output dynamic range key (`sdr`/`hdr-pq`). An old project without this field uses
+    /// SDR, so the behavior is unchanged.
+    pub dynamic: String,
     /// 有损容器（JPEG）的压缩质量 1~100；无损档忽略。
     ///
     /// Compression quality for the lossy container (JPEG), 1~100; ignored by lossless formats.
@@ -102,6 +107,7 @@ impl Default for RenderState {
         Self {
             mode: "video".to_owned(),
             format: "png8".to_owned(),
+            dynamic: crate::export::OutputDynamic::default().key().to_owned(),
             quality: 90,
             keep_exif: false,
             xmp_sidecar: false,

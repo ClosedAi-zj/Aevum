@@ -21,7 +21,7 @@
 mod support;
 
 use aevum_core::develop::spatial::{
-    OutputEncoding, UsmSettings, UsmTuning, output_sharpen_usm_tuned, usm_size_gain,
+    UsmSettings, UsmTuning, output_sharpen_usm_tuned, usm_size_gain,
 };
 use support::{
     gaussian_blur as blur, halo_ratio, mtf_freqs, mtf_through, mtf50, mtf50_gain, sine_target,
@@ -201,7 +201,6 @@ fn measure_tuned(amount: f32, radius: f32, threshold: f32, tuning: UsmTuning) ->
             W,
             H,
             UsmSettings::new(amount, radius, threshold),
-            OutputEncoding::Sdr,
             tuning,
         );
     });
@@ -213,7 +212,6 @@ fn measure_tuned(amount: f32, radius: f32, threshold: f32, tuning: UsmTuning) ->
         W,
         H,
         UsmSettings::new(amount, radius, threshold),
-        OutputEncoding::Sdr,
         tuning,
     );
     let halo = halo_ratio(&step, W, H, 0.75, 0.25);

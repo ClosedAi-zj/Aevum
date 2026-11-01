@@ -204,6 +204,42 @@ impl ColorSpace {
         }
     }
 
+    /// HDR（PQ）输出的 VUI 三元组：**只对 Rec.2020 成立**。
+    ///
+    /// PQ 是「绝对亮度」的传递函数，只有配 BT.2020 的宽色域才谈得上 HDR 母版；
+    /// sRGB / P3 原色配 PQ 出来的东西没人认，所以这里返回 `None`，让调用方报错而
+    /// 不是悄悄给一个能播但语义错的标记。
+    ///
+    /// 返回值与 [`Self::vui`] 同序：原色、传递函数、矩阵。
+    ///
+    /// The VUI triple for HDR (PQ) output: **only valid for Rec.2020**.
+    ///
+    /// PQ is an absolute-luminance transfer function, and HDR masters only make sense on
+    /// BT.2020's wide gamut; PQ on sRGB or P3 primaries produces something nobody
+    /// recognizes, so this returns `None` and lets the caller report an error instead of
+    /// silently tagging a playable-but-wrong file.
+    ///
+    /// The fields are ordered like [`Self::vui`]: primaries, transfer, matrix.
+    pub fn vui_pq(self) -> Option<(&'static str, &'static str, &'static str)> {
+        match self {
+            Self::Rec2020 => Some(("bt2020", "smpte2084", "bt2020nc")),
+            Self::Srgb | Self::DisplayP3 => None,
+        }
+    }
+
+    /// [`Self::vui_pq`] 的数值版（ISO/IEC 23091-2 的 transfer 16 = SMPTE ST 2084）。
+    ///
+    /// 只对 Rec.2020 返回，理由同 [`Self::vui_pq`]。
+    ///
+    /// The numeric version of [`Self::vui_pq`] (transfer 16 = SMPTE ST 2084 in
+    /// ISO/IEC 23091-2). Rec.2020 only, for the same reason.
+    pub fn nclx_pq(self) -> Option<[u16; 3]> {
+        match self {
+            Self::Rec2020 => Some([9, 16, 9]),
+            Self::Srgb | Self::DisplayP3 => None,
+        }
+    }
+
     /// 原色色度坐标（R, G, B），配 D65 白。
     fn primaries(self) -> [(f64, f64); 3] {
         match self {

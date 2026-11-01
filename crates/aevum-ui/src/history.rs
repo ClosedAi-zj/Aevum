@@ -54,7 +54,7 @@ use aevum_core::align::CropRect;
 use aevum_core::audio::AudioOptions;
 use aevum_core::colorspace::ColorSpace;
 use aevum_core::crop::Motion;
-use aevum_core::export::{OutputMode, OutputSharpen, SharpenStrength, StillFormat};
+use aevum_core::export::{OutputDynamic, OutputMode, OutputSharpen, SharpenStrength, StillFormat};
 use aevum_core::grade::GradeParams;
 use aevum_core::project::GradeCopy;
 use aevum_core::retime::Retime;
@@ -133,6 +133,11 @@ pub struct Snapshot {
     pub render_sharpen_for: OutputSharpen,
     pub render_sharpen_strength: SharpenStrength,
     pub render_color_space: ColorSpace,
+    /// 输出动态范围（SDR / HDR PQ）。跟色域一样是成片级设置，一起进撤销栈。
+    ///
+    /// Output dynamic range (SDR / HDR PQ). A per-export setting like the colour space, so it
+    /// goes into the undo stack with it.
+    pub render_dynamic: OutputDynamic,
     /// 水印整块：开关、内容、位置、不透明度一起进同一步，撤销不许只回一半。
     ///
     /// The watermark as one block: enable, content, position and opacity go into the same
@@ -546,6 +551,7 @@ impl History {
         changed!(render_sharpen_for, "输出锐化");
         changed!(render_sharpen_strength, "输出锐化强度");
         changed!(render_color_space, "输出色域");
+        changed!(render_dynamic, "输出动态范围");
         changed!(render_watermark, "水印");
         changed!(retime, "变速");
         changed!(render_crf, "编码速度");

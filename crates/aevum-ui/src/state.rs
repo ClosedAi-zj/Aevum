@@ -29,8 +29,8 @@ use aevum_core::deflicker::{self, Analysis, FrameMeans};
 use aevum_core::develop::Ev;
 use aevum_core::exif::Exif;
 use aevum_core::export::{
-    self, Codec, JobProgress, OutputMode, OutputSharpen, RenderOptions, SharpenStrength, Stage,
-    StillFormat,
+    self, Codec, JobProgress, OutputDynamic, OutputMode, OutputSharpen, RenderOptions,
+    SharpenStrength, Stage, StillFormat,
 };
 use aevum_core::grade::{self, GradeParams, PRESET_NAMES};
 use aevum_core::interp;
@@ -1409,6 +1409,17 @@ pub struct AppState {
     /// Output colour space: stills embed an ICC profile, video writes the VUI. Like
     /// render_format, this is a per-export setting.
     pub render_color_space: ColorSpace,
+    /// 输出动态范围：SDR 或 HDR（PQ）。跟色域一样是成片级设置。
+    ///
+    /// `HdrPq` 会改最后一步的传递函数（参考白 203 nits）并切到 10bit，只允许配
+    /// AVIF + Rec.2020——[`Self::apply_dynamic`] 负责把不成立的组合补齐。
+    ///
+    /// Output dynamic range: SDR or HDR (PQ). A per-export setting like the colour space.
+    ///
+    /// `HdrPq` swaps the final transfer function (203-nit reference white) and switches to
+    /// 10bit, allowed only with AVIF + Rec.2020; [`Self::apply_dynamic`] fills in an illegal
+    /// combination.
+    pub render_dynamic: OutputDynamic,
     /// 水印：整块设定跟着工程文件与 `render.set` 走；默认关，导出像素一个不动。
     ///
     /// Watermark: the whole block travels with the project file and `render.set`; off by
@@ -2047,6 +2058,7 @@ impl AppState {
             render_sharpen_for: OutputSharpen::default(),
             render_sharpen_strength: SharpenStrength::default(),
             render_color_space: ColorSpace::default(),
+            render_dynamic: OutputDynamic::default(),
             render_watermark: Watermark::default(),
             retime: Retime::default(),
             motion: Motion::default(),
@@ -3140,6 +3152,7 @@ impl AppState {
             render_sharpen_for: self.render_sharpen_for,
             render_sharpen_strength: self.render_sharpen_strength,
             render_color_space: self.render_color_space,
+            render_dynamic: self.render_dynamic,
             render_watermark: self.render_watermark.clone(),
             retime: self.retime.clone(),
             motion: self.motion,
@@ -3194,6 +3207,7 @@ impl AppState {
         self.render_sharpen_for = snap.render_sharpen_for;
         self.render_sharpen_strength = snap.render_sharpen_strength;
         self.render_color_space = snap.render_color_space;
+        self.render_dynamic = snap.render_dynamic;
         self.render_watermark = snap.render_watermark;
         self.retime = snap.retime;
         self.motion = snap.motion;
@@ -4233,6 +4247,9 @@ impl AppState {
             // 旁车是静帧的事：视频模式导出的中间帧不发旁车。
             "sidecar_applies": self.render_mode == OutputMode::Stills,
             "color_space": self.render_color_space.key(),
+            "dynamic": self.render_dynamic.key(),
+            // HDR 只对 AVIF 成立，容器装不下时面板该让人看出「这个组合不成立」。
+            "dynamic_fits": self.render_dynamic.fits(self.render_format),
             "width": self.output_w,
             "height": self.output_h,
             "sharpen_for": self.render_sharpen_for.key(),
@@ -4391,6 +4408,13 @@ impl AppState {
             self.render_color_space = ColorSpace::parse(raw).ok_or_else(|| {
                 crate::i18n::tr_fmt("未知色域 {}；可用 srgb / p3 / rec2020", &[&raw])
             })?;
+        }
+        if let Some(raw) = opt_str(args, "dynamic")? {
+            self.render_dynamic = OutputDynamic::parse(raw).ok_or_else(|| {
+                crate::i18n::tr_fmt("未知动态范围 {}；可用 sdr / hdr-pq", &[&raw])
+            })?;
+            // 命令行给 HDR 时同样补齐：色域自动 rec2020、容器自动 avif。
+            self.apply_dynamic();
         }
         if let Some(v) = args.get("watermark") {
             self.patch_watermark(v)?;
@@ -6269,6 +6293,14 @@ impl AppState {
                 })
             })
             .transpose()?;
+        // 动态范围与色域同理：省略就保持面板当前选择。
+        let dynamic = opt_str(args, "dynamic")?
+            .map(|raw| {
+                OutputDynamic::parse(raw).ok_or_else(|| {
+                    crate::i18n::tr_fmt("未知动态范围 {}；可用 sdr / hdr-pq", &[&raw])
+                })
+            })
+            .transpose()?;
         // 容器与质量只在静帧那一路有意义：视频模式撞上有损档现在就拦，别等 core。
         let format = opt_str(args, "format")?
             .map(|raw| {
@@ -6338,6 +6370,10 @@ impl AppState {
         if let Some(space) = color_space {
             self.render_color_space = space;
         }
+        if let Some(dyn_range) = dynamic {
+            self.render_dynamic = dyn_range;
+            self.apply_dynamic();
+        }
         // 模式先落，容器才知道自己是不是要当 ffmpeg 的中间帧。
         self.render_mode = if video {
             OutputMode::Video
@@ -6374,6 +6410,9 @@ impl AppState {
             "format": self.render_format.key(),
             "quality": self.render_quality,
             "color_space": self.render_color_space.key(),
+            "dynamic": self.render_dynamic.key(),
+            // HDR 只对 AVIF 成立，容器装不下时面板该让人看出「这个组合不成立」。
+            "dynamic_fits": self.render_dynamic.fits(self.render_format),
             "copy": copy,
             "frames": n,
             "out_dir": self.render_out_dir.display().to_string(),
@@ -8948,6 +8987,7 @@ impl AppState {
             keep_frames: self.render_keep_frames,
             resume: self.render_resume,
             color_space: self.render_color_space,
+            dynamic: self.render_dynamic,
             watermark: self.render_watermark.clone(),
             // 运镜跟着这一次导出走：面板上定好的取景框，成片里就该照着走。
             motion: self.motion,
@@ -9612,6 +9652,7 @@ impl AppState {
                 long_side,
                 keep_frames: self.render_keep_frames,
                 color_space: self.render_color_space.key().to_owned(),
+                dynamic: self.render_dynamic.key().to_owned(),
                 watermark: self.render_watermark.clone(),
                 retime: self.retime.clone(),
                 motion: self.motion,
@@ -9684,6 +9725,8 @@ impl AppState {
             SharpenStrength::parse(&p.render.sharpen_strength).unwrap_or_default();
         // 工程里的色域认不出来就当 sRGB：旧工程没这个字段，手改错了也不能让面板显示空值。
         self.render_color_space = ColorSpace::parse(&p.render.color_space).unwrap_or_default();
+        // 动态范围同理：旧工程没这个字段就是 SDR，认不出来的手改值也回落到 SDR。
+        self.render_dynamic = OutputDynamic::parse(&p.render.dynamic).unwrap_or_default();
         // 水印是一整块：旧工程没这一段，读进来就是 `Watermark::default()`，也就是没开。
         self.render_watermark = p.render.watermark.clone();
         // 变速同理：旧工程读到的是关着的重映射，导出与以前逐字节一致。
@@ -9882,8 +9925,29 @@ impl AppState {
             sharpen_for: self.render_sharpen_for,
             sharpen_strength: self.render_sharpen_strength,
             color_space: self.render_color_space,
+            dynamic: self.render_dynamic,
             watermark: self.render_watermark.clone(),
             ..RenderOptions::still(self.render_format)
+        }
+    }
+
+    /// 动态范围与环境不匹配时把组合补齐：HDR 强制 Rec.2020 + AVIF。
+    ///
+    /// 三个开关互相约束，与其让人点完导出才被 core 的守卫撞回来，不如让选择本身一致。
+    /// 补齐是**可见的**（色域与容器的选中态会跳过去），不是静默改值。
+    ///
+    /// Fills in a legal combination when the dynamic range does not fit: HDR forces
+    /// Rec.2020 + AVIF.
+    ///
+    /// The three switches constrain each other; better to keep the selection consistent than
+    /// to let the user hit core's guard after pressing export. The adjustment is **visible**
+    /// (the colour space and container selections move), not a silent rewrite.
+    pub fn apply_dynamic(&mut self) {
+        if self.render_dynamic == OutputDynamic::HdrPq {
+            self.render_color_space = ColorSpace::Rec2020;
+            if !self.render_dynamic.fits(self.render_format) {
+                self.render_format = StillFormat::Avif;
+            }
         }
     }
 

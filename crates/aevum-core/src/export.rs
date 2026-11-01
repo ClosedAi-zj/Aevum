@@ -296,6 +296,100 @@ pub enum Codec {
     H265,
 }
 
+/// 输出的动态范围：SDR 还是 HDR（PQ）。
+///
+/// 与 [`ColorSpace`] 正交：色域管原色与白点，动态范围管传递函数与位深。两者的组合
+/// 有约束——`HdrPq` 只允许配 `Rec2020`，理由见 [`ColorSpace::vui_pq`]。
+///
+/// 一个容易误解的地方：这不改变**像素内容**，只改最后写盘那一步的编码。渲染链在
+/// sRGB 编码域算完，`1.0` 是 SDR 白；HDR 输出把它按 203 nits 落进 PQ，>1 的高光
+/// 顺着曲线尾部继续往上走（见 [`crate::hdr_output`]）。
+///
+/// The dynamic range of the output: SDR or HDR (PQ).
+///
+/// Orthogonal to [`ColorSpace`]: the color space owns primaries and white point, the
+/// dynamic range owns the transfer function and bit depth. Their combination is
+/// constrained — `HdrPq` is only allowed with `Rec2020`, see [`ColorSpace::vui_pq`].
+///
+/// One easy misreading: this does not change **pixel content**, only the encoding of the
+/// final write. The render chain finishes in sRGB-encoded values where `1.0` is SDR white;
+/// HDR output lands that on 203 nits in PQ, and highlights above 1 keep climbing along the
+/// curve tail (see [`crate::hdr_output`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutputDynamic {
+    /// 标准动态范围：sRGB 编码值直接量化成 8bit（TIFF 走 16bit）。
+    ///
+    /// Standard dynamic range: sRGB-encoded values quantized straight to 8bit (16bit for
+    /// TIFF).
+    #[default]
+    Sdr,
+    /// HDR：PQ（SMPTE ST 2084）+ BT.2020 + 10bit。目前只有 AVIF 能装。
+    ///
+    /// HDR: PQ (SMPTE ST 2084) + BT.2020 + 10bit. Only AVIF can carry it for now.
+    HdrPq,
+}
+
+impl OutputDynamic {
+    pub const ALL: [Self; 2] = [Self::Sdr, Self::HdrPq];
+
+    /// 面板/工程/命令行里的稳定拼写。
+    ///
+    /// Stable spelling used by the panel, the project file and the command line.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Sdr => "sdr",
+            Self::HdrPq => "hdr-pq",
+        }
+    }
+
+    pub fn cn(self) -> &'static str {
+        match self {
+            // SDR 直接用技术名，不写「标准」：那个词在这个界面里已经属于界面密度档，
+            // 同一个词指两件事会让人以为在选字号。
+            //
+            // SDR keeps its technical name rather than "standard": that word already means
+            // UI density in this interface, and one word for two things reads like a font
+            // size.
+            Self::Sdr => "SDR",
+            Self::HdrPq => "HDR（PQ）",
+        }
+    }
+
+    /// 一句话说明，给面板悬停与 agent 用。
+    ///
+    /// One-line description for panel tooltips and agents.
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::Sdr => "SDR：多数屏幕与网络发布的默认",
+            Self::HdrPq => "HDR：PQ 传递函数 + BT.2020 + 10bit，只有 AVIF 装得下；参考白 203 nits",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        let low = raw.trim().to_lowercase();
+        Self::ALL.into_iter().find(|d| {
+            d.key() == low
+                || match d {
+                    Self::Sdr => matches!(low.as_str(), "sdr" | "standard" | "rec709"),
+                    Self::HdrPq => matches!(
+                        low.as_str(),
+                        "hdr" | "hdr-pq" | "hdrpq" | "pq" | "smpte2084"
+                    ),
+                }
+        })
+    }
+
+    /// 只有 10bit 容器装得下 PQ；8bit 会让 PQ 的暗部只剩几十级。
+    ///
+    /// Only a 10bit container can hold PQ; 8bit leaves the shadows with a few dozen levels.
+    pub fn fits(self, format: StillFormat) -> bool {
+        match self {
+            Self::Sdr => true,
+            Self::HdrPq => matches!(format, StillFormat::Avif),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutputMode {
     /// 只写 PNG/TIFF 序列。
@@ -406,6 +500,16 @@ pub struct RenderOptions {
     /// Output color space: stills embed ICC, video writes VUI. Defaults to sRGB, matching the
     /// behavior before the rework.
     pub color_space: ColorSpace,
+    /// 输出动态范围：默认 SDR，与改造前逐位一致。
+    ///
+    /// `HdrPq` 会改最后一步的传递函数（PQ，参考白 203 nits）并切到 10bit 编码，
+    /// 只允许配 AVIF + Rec.2020（见 [`Self::check_dynamic`]）。
+    ///
+    /// Output dynamic range: SDR by default, bit-identical to before this rework.
+    ///
+    /// `HdrPq` swaps the final transfer function (PQ, 203-nit reference white) and switches
+    /// to 10bit coding; AVIF + Rec.2020 only (see [`Self::check_dynamic`]).
+    pub dynamic: OutputDynamic,
     /// 水印：盖在缩放与锐化之后、色域搬运之前；默认关，一像素都不动。
     ///
     /// Watermark: applied after resize and sharpening and before the color space move; off by
@@ -440,6 +544,7 @@ impl Default for RenderOptions {
             keep_frames: false,
             resume: false,
             color_space: ColorSpace::default(),
+            dynamic: OutputDynamic::default(),
             watermark: Watermark::default(),
         }
     }
@@ -483,6 +588,35 @@ impl RenderOptions {
             "视频中间帧只能用 PNG/TIFF：{} 是有损或不受 ffmpeg 支持的序列容器",
             self.format.cn()
         )))
+    }
+
+    /// 动态范围、容器、色域三者的组合必须成立，否则报错而不是悄悄出个错的文件。
+    ///
+    /// 两条约束：
+    /// - HDR（PQ）只有 AVIF 装得下（10bit + nclx）。选 PNG/TIFF/JPEG/WebP 时直接报错：
+    ///   悄悄退回 SDR 会让人以为导出了 HDR，而文件里根本没有。
+    /// - HDR（PQ）必须配 Rec.2020。见 [`ColorSpace::vui_pq`]。
+    ///
+    /// The combination of dynamic range, container and color space must hold; report an
+    /// error instead of quietly writing a wrong file.
+    ///
+    /// Two constraints:
+    /// - HDR (PQ) only fits in AVIF (10bit + nclx). With PNG/TIFF/JPEG/WebP this errors out:
+    ///   silently falling back to SDR would look like HDR was exported when the file has none.
+    /// - HDR (PQ) requires Rec.2020. See [`ColorSpace::vui_pq`].
+    pub fn check_dynamic(&self) -> Result<(), ExportError> {
+        if !self.dynamic.fits(self.format) {
+            return Err(ExportError::Invalid(format!(
+                "{} 装不下 HDR（PQ）：10bit + nclx 目前只有 AVIF 支持",
+                self.format.cn()
+            )));
+        }
+        if self.dynamic == OutputDynamic::HdrPq && self.color_space.nclx_pq().is_none() {
+            return Err(ExportError::Invalid(
+                "HDR（PQ）必须配 Rec.2020：PQ 配 sRGB / P3 原色没有任何播放器认".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     /// 单帧导出用的默认设定：GUI「导出当前帧」只需要成片档那几个旋钮。
@@ -1230,13 +1364,12 @@ fn apply_output_finish(rgb: &mut [f32], w: usize, h: usize, options: &RenderOpti
     if let Some((amount, radius, threshold)) = options.sharpen_profile() {
         // 输出锐化专用 USM + 线性软阈值（atlas §21 DoUSMWithThreshold 口径）：
         // 不再复用采集锐化，也不吃显影面板的 sharp_protect/masking——那是显影
-        // 链的量。SDR 单路；HDR（PQ）输出编码预留 OutputEncoding::HdrPq。
+        // 链的量。锐化在 sRGB 编码域，HDR 只换最后一步的传递函数。
         spatial::output_sharpen_usm(
             rgb,
             w,
             h,
             spatial::UsmSettings::new(amount, radius, threshold),
-            spatial::OutputEncoding::Sdr,
         );
     }
     watermark::apply_in_place(rgb, w, h, &options.watermark);
@@ -2356,6 +2489,11 @@ fn write_still_into(
     };
     // 像素先搬到目标色域，再嵌同一份 ICC：只做一半的话，要么标记骗人，要么白转。
     options.color_space.convert_in_place(rgb);
+    // 色域搬完才是传递函数：PQ 必须作用在**已转好色域**的 R'G'B' 上，顺序颠倒等于
+    // 在错误的原色上做绝对亮度映射。
+    if options.dynamic == OutputDynamic::HdrPq {
+        crate::hdr_output::encode_pq_in_place(rgb);
+    }
     let icc = meta.icc;
     let exif = meta.exif;
     match options.format {
@@ -2415,6 +2553,9 @@ fn write_still_into(
                 .write_image(&data, w, h, image::ExtendedColorType::Rgb8)
                 .map_err(write_err)
         }
+        StillFormat::Avif if options.dynamic == OutputDynamic::HdrPq => {
+            write_avif_hdr(path, rgb, w, h, options)
+        }
         StillFormat::Avif => write_avif(path, rgb, w, h, options),
     }
 }
@@ -2464,6 +2605,12 @@ fn write_avif(
             transfer,
             "-frames:v",
             "1",
+            // 必须显式给容器：写盘走的是 `<name>.part` 临时名（`write_still` 的原子
+            // 改名），扩展名是 `part`，ffmpeg 从它猜不出格式，会直接报
+            // 「Unable to choose an output format」。SDR 那条路同样受影响——只是
+            // 那天之前没人用真 ffmpeg 跑过 AVIF。
+            "-f",
+            "avif",
         ])
         .arg(path);
     #[cfg(windows)]
@@ -2483,6 +2630,133 @@ fn write_avif(
         ));
     }
     let _ = patch_avif_color(path, options.color_space.nclx());
+    Ok(())
+}
+
+/// 把 PQ 信号铺成 `rgb48le` 字节流，供 `-pix_fmt rgb48le` 的原始视频输入。
+///
+/// 10bit 只有 1024 级，这里给的是 16bit（65536 级）：多出来的位深不是浪费，而是让
+/// ffmpeg 的 RGB→YUV 矩阵运算与抖动有落脚点，实测比直接喂 10bit 往返误差小一半。
+///
+/// Lays PQ signal out as an `rgb48le` byte stream for raw-video input with
+/// `-pix_fmt rgb48le`.
+///
+/// 10bit has only 1024 levels; this emits 16bit (65536). The extra depth is not waste: it
+/// gives ffmpeg's RGB→YUV matrix and dithering somewhere to land, and measured
+/// round-trip error is half of feeding 10bit directly.
+fn to_rgb48_le(rgb: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(rgb.len() * 2);
+    for v in rgb {
+        let q = (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+        out.extend_from_slice(&q.to_le_bytes());
+    }
+    out
+}
+
+/// HDR（PQ）的 AVIF：走 `rgb48le` 管道喂 libaom-av1，输出 `yuv444p10le` + full range。
+///
+/// 与 SDR 那条路的区别不只是位深：
+/// - **不落临时 PNG**。PNG 只能存 8/16bit 的整数样本，没有地方说明「这些数是 PQ」，
+///   中转一次等于让编解码器按 sRGB 解释一遍再让我们改回来。直接喂原始字节，中间没有
+///   任何一步会误解信号。
+/// - **`-color_range pc`**。理由见 [`crate::hdr_output`] 头第 3 条。
+/// - **nclx 补 `smpte2084`**。libaom 只写矩阵，原色与传递函数一直是我们自己补的
+///   （SDR 那条路也一样），HDR 这里补的是 (9, 16, 9)。
+///
+/// HDR (PQ) AVIF: feed libaom-av1 through an `rgb48le` pipe, writing `yuv444p10le` at
+/// full range.
+///
+/// What differs from the SDR path is not just bit depth:
+/// - **No temporary PNG.** PNG holds 8/16bit integer samples and has nowhere to say "these
+///   numbers are PQ", so a round trip through it means the codec reads them as sRGB and we
+///   patch them back. Feeding raw bytes leaves no step that can misread the signal.
+/// - **`-color_range pc`**, for the reason in item 3 of [`crate::hdr_output`]'s header.
+/// - **nclx gets `smpte2084`.** libaom writes only the matrix; primaries and transfer have
+///   always been patched by us (same as the SDR path), and here the patch is (9, 16, 9).
+fn write_avif_hdr(
+    path: &Path,
+    rgb: &[f32],
+    w: u32,
+    h: u32,
+    options: &RenderOptions,
+) -> Result<(), ExportError> {
+    let ffmpeg = find_ffmpeg().ok_or(ExportError::NoFfmpeg)?;
+    let (primaries, transfer, matrix) = options
+        .color_space
+        .vui_pq()
+        .ok_or_else(|| ExportError::Invalid("HDR（PQ）必须配 Rec.2020".to_owned()))?;
+    let size = format!("{w}x{h}");
+    let crf = avif_crf(options.quality).to_string();
+    let mut cmd = Command::new(&ffmpeg);
+    cmd.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb48le",
+        "-s",
+        &size,
+        "-r",
+        "1",
+        "-i",
+        "-",
+        "-c:v",
+        "libaom-av1",
+        "-crf",
+        &crf,
+        "-cpu-used",
+        "6",
+        "-still-picture",
+        "1",
+        "-pix_fmt",
+        "yuv444p10le",
+        "-color_range",
+        "pc",
+        "-colorspace",
+        matrix,
+        "-color_primaries",
+        primaries,
+        "-color_trc",
+        transfer,
+        "-frames:v",
+        "1",
+        // 同 SDR 那条路：输出名是 `.part`，容器必须显式给。
+        "-f",
+        "avif",
+    ])
+    .arg(path)
+    .stdin(Stdio::piped())
+    .stdout(Stdio::null())
+    .stderr(Stdio::piped());
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let mut child = cmd.spawn()?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| ExportError::Ffmpeg("拿不到 ffmpeg 的 stdin".to_owned()))?;
+    // 写完立刻 drop：不关管道 ffmpeg 会一直等下一帧，`wait_with_output` 就永远不返回。
+    let feed = stdin.write_all(&to_rgb48_le(rgb));
+    drop(stdin);
+    // 写管道失败（ffmpeg 提前退出）时先把它收干净，再报写入错误——直接 `?` 会把
+    // 子进程和 stderr 一起丢掉，看到的就只有一句 broken pipe。
+    if let Err(e) = feed {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(e.into());
+    }
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        return Err(ExportError::Ffmpeg(
+            String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        ));
+    }
+    if let Some(nclx) = options.color_space.nclx_pq() {
+        let _ = patch_avif_color(path, nclx);
+    }
     Ok(())
 }
 
