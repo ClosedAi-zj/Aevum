@@ -1792,7 +1792,10 @@ impl AppState {
         } else {
             self.ratings.insert(i, stars);
         }
-        history::note("rating", format!("帧 {i:04} 评 {stars} 星", i = i + 1));
+        history::note(
+            "rating",
+            crate::i18n::tr_fmt("帧 {} 评 {} 星", &[&format!("{:04}", i + 1), &stars]),
+        );
     }
 
     pub fn selected_rating(&self) -> u8 {
@@ -1813,16 +1816,16 @@ impl AppState {
         } else {
             self.flags.insert(i, flag.signum());
         }
+        let mark = match flag {
+            1 => "选用",
+            -1 => "排除",
+            _ => "取消标记",
+        };
         history::note(
             "flag",
-            format!(
-                "帧 {i:04} {}",
-                match flag {
-                    1 => "选用",
-                    -1 => "排除",
-                    _ => "取消标记",
-                },
-                i = i + 1
+            crate::i18n::tr_fmt(
+                "帧 {} {}",
+                &[&format!("{:04}", i + 1), &crate::i18n::tr(mark)],
             ),
         );
     }
@@ -1848,10 +1851,12 @@ impl AppState {
         }
         history::note(
             "label",
-            format!(
-                "帧 {i:04} 色标「{name}」",
-                i = i + 1,
-                name = LABEL_NAMES[label.min(4) as usize]
+            crate::i18n::tr_fmt(
+                "帧 {} 色标「{}」",
+                &[
+                    &format!("{:04}", i + 1),
+                    &crate::i18n::tr(LABEL_NAMES[label.min(4) as usize]),
+                ],
             ),
         );
     }
@@ -5946,7 +5951,10 @@ impl AppState {
         self.auto_note = None;
         self.reset_mask_state();
         self.preview_dirty = true;
-        history::note("preset", format!("预设 {name}"));
+        history::note(
+            "preset",
+            crate::i18n::tr_fmt("预设 {}", &[&crate::i18n::tr(name)]),
+        );
     }
 
     pub fn reset_params(&mut self) {
@@ -6334,9 +6342,12 @@ impl AppState {
         self.preview_dirty = true;
         history::note(
             "auto-exposure",
-            format!(
-                "自动校正 {:+.2} EV · 色温 {:+.0}",
-                q.exposure, q.temperature
+            crate::i18n::tr_fmt(
+                "自动校正 {} EV · 色温 {}",
+                &[
+                    &format!("{:+.2}", q.exposure),
+                    &format!("{:+.0}", q.temperature),
+                ],
             ),
         );
     }
@@ -6998,13 +7009,16 @@ impl AppState {
         self.keyframes.insert(self.selected, self.params.clone());
         history::note(
             "keyframe-add",
-            format!("记录关键帧 帧{:04}", self.selected + 1),
+            crate::i18n::tr_fmt("记录关键帧 帧{}", &[&format!("{:04}", self.selected + 1)]),
         );
     }
 
     pub fn remove_keyframe(&mut self, i: usize) {
         if self.keyframes.remove(&i).is_some() {
-            history::note("keyframe-del", format!("删除关键帧 帧{i:04}", i = i + 1));
+            history::note(
+                "keyframe-del",
+                crate::i18n::tr_fmt("删除关键帧 帧{}", &[&format!("{:04}", i + 1)]),
+            );
         }
     }
 
@@ -7015,7 +7029,10 @@ impl AppState {
             self.preset = "关键帧".to_owned();
             self.preview_dirty = true;
             self.scroll_to_selected = true;
-            history::note("keyframe-goto", format!("套用关键帧 帧{i:04}", i = i + 1));
+            history::note(
+                "keyframe-goto",
+                crate::i18n::tr_fmt("套用关键帧 帧{}", &[&format!("{:04}", i + 1)]),
+            );
         }
     }
 
@@ -7040,7 +7057,7 @@ impl AppState {
             Some(i) => {
                 self.copies[i].params = self.params.clone();
                 self.copies[i].keyframes = self.keyframes.clone();
-                history::note("copy-save", format!("覆盖副本 {name}"));
+                history::note("copy-save", crate::i18n::tr_fmt("覆盖副本 {}", &[&name]));
                 Ok(i)
             }
             None => {
@@ -7049,7 +7066,7 @@ impl AppState {
                     params: self.params.clone(),
                     keyframes: self.keyframes.clone(),
                 });
-                history::note("copy-save", format!("存副本 {name}"));
+                history::note("copy-save", crate::i18n::tr_fmt("存副本 {}", &[&name]));
                 Ok(self.copies.len() - 1)
             }
         }
@@ -7063,7 +7080,10 @@ impl AppState {
         self.keyframes = copy.keyframes;
         self.preset = format!("副本 {}", copy.name);
         self.preview_dirty = true;
-        history::note("copy-apply", format!("套用副本 {}", copy.name));
+        history::note(
+            "copy-apply",
+            crate::i18n::tr_fmt("套用副本 {}", &[&copy.name]),
+        );
         Ok(())
     }
 
@@ -7072,7 +7092,7 @@ impl AppState {
             return Err(format!("没有叫 {name} 的副本"));
         };
         self.copies.remove(i);
-        history::note("copy-del", format!("删副本 {name}"));
+        history::note("copy-del", crate::i18n::tr_fmt("删副本 {}", &[&name]));
         Ok(())
     }
 
@@ -7085,7 +7105,10 @@ impl AppState {
             return Err(format!("副本「{to}」已存在"));
         }
         self.copies[i].name = to.clone();
-        history::note("copy-rename", format!("副本 {from} 改名 {to}"));
+        history::note(
+            "copy-rename",
+            crate::i18n::tr_fmt("副本 {} 改名 {}", &[&from, &to]),
+        );
         Ok(())
     }
 
@@ -7232,7 +7255,7 @@ impl AppState {
         // 每帧都记一次同一个键：连续拖动合成一步，文案跟着框的尺寸走。
         history::note(
             "crop-drag",
-            format!("裁剪 {w} × {h}", w = next.w, h = next.h),
+            crate::i18n::tr_fmt("裁剪 {} × {}", &[&next.w, &next.h]),
         );
     }
 
@@ -7254,7 +7277,10 @@ impl AppState {
         };
         let cur = self.crop_box();
         self.user_crop = Some(self.clamp_to_view(crop::nudge_rect(cur, dx, dy, step, w, h)));
-        history::note("crop-nudge", format!("裁剪微调 {dx:+} {dy:+}"));
+        history::note(
+            "crop-nudge",
+            crate::i18n::tr_fmt("裁剪微调 {} {}", &[&format!("{dx:+}"), &format!("{dy:+}")]),
+        );
     }
 
     /// 取消手动裁剪，回到「按比例内接」的默认取景。
@@ -7458,11 +7484,9 @@ impl AppState {
         });
         history::note(
             "motion-drag",
-            format!(
-                "运镜{} {w} × {h}",
-                self.motion_box.cn(),
-                w = next.w,
-                h = next.h
+            crate::i18n::tr_fmt(
+                "运镜{} {} × {}",
+                &[&crate::i18n::tr(self.motion_box.cn()), &next.w, &next.h],
             ),
         );
     }
@@ -7494,7 +7518,14 @@ impl AppState {
         });
         history::note(
             "motion-nudge",
-            format!("运镜{}微调 {dx:+} {dy:+}", self.motion_box.cn()),
+            crate::i18n::tr_fmt(
+                "运镜{}微调 {} {}",
+                &[
+                    &crate::i18n::tr(self.motion_box.cn()),
+                    &format!("{dx:+}"),
+                    &format!("{dy:+}"),
+                ],
+            ),
         );
     }
 
@@ -7514,7 +7545,10 @@ impl AppState {
         }
         self.motion.ease = e;
         self.preview_dirty = true;
-        history::note("motion-ease", format!("运动曲线 {}", e.cn()));
+        history::note(
+            "motion-ease",
+            crate::i18n::tr_fmt("运动曲线 {}", &[&crate::i18n::tr(e.cn())]),
+        );
     }
 
     /// 起点终点互换：倒放同一条运动，框不用重拖。
@@ -7532,7 +7566,10 @@ impl AppState {
         }
         self.motion.enabled = true;
         self.preview_dirty = true;
-        history::note("motion-fill", format!("运镜{}铺满", self.motion_box.cn()));
+        history::note(
+            "motion-fill",
+            crate::i18n::tr_fmt("运镜{}铺满", &[&crate::i18n::tr(self.motion_box.cn())]),
+        );
     }
 
     /// 清除运镜：整块回到默认（关着、起点整幅、终点往里收一档）。
@@ -8598,7 +8635,10 @@ impl AppState {
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.display().to_string());
                 self.status = crate::i18n::tr_fmt("已应用 XMP 边车 {}", &[&name]);
-                history::note("xmp-sidecar", format!("应用 XMP 边车 {}", path.display()));
+                history::note(
+                    "xmp-sidecar",
+                    crate::i18n::tr_fmt("应用 XMP 边车 {}", &[&path.display()]),
+                );
             }
             Err(e) => {
                 self.error = Some(e);

@@ -154,9 +154,13 @@ impl History {
     }
 
     /// 换序列 / 关序列：历史重新开始，第 0 步就是当前状态。
+    ///
+    /// 文案在这里落账时翻成当前语言：历史行是 `p.text(...)` 直接画的，没有
+    /// 显示期再翻一次的机会。**键不翻**——键只用来合并相邻的同类改动，
+    /// 翻了会让「切语言」凭空拆出新的一步。
     pub fn reset(&mut self, snap: Snapshot, label: &str) {
         self.steps = vec![Step {
-            label: label.to_owned(),
+            label: crate::i18n::tr(label).to_owned(),
             key: String::new(),
             frame: -1,
             revertible: true,
@@ -210,6 +214,10 @@ impl History {
         revertible: bool,
         frame: i64,
     ) {
+        // 先把文案翻成当前语言再落账：历史行是直接画的，显示期没有第二次机会。
+        // `tr` 对已经是英文的串是恒等（查不到就返回原值，且不含汉字时不记缺译），
+        // 所以上层用 `tr_fmt` 拼好的句子再流经这里也安全。
+        let label = crate::i18n::tr(&label).to_owned();
         if self.steps.is_empty() {
             // 没 reset 过（无头模式直接下命令）：第一次改动就是这条时间线的起点，
             // 前面没有可回的状态，所以只留一步，不凭空造一个「初始状态」。
@@ -374,8 +382,12 @@ thread_local! {
 /// `state.params`，再传 `&mut state` 就编译不过。界面帧是单线程顺序执行，登记与取用都在
 /// 同一帧内，没有并发问题。
 pub fn note(key: &str, label: impl Into<String>) {
+    // 同上：文案在这里就翻掉。纯文案（`"水印正文"`）靠这一层就够，不需要
+    // 每个调用点都包 `t!`；带数值的句子仍要在调用点用 `tr_fmt` 拼，
+    // 因为 `tr` 认的是整条模板，替换过占位符的串查不到。
+    let label = crate::i18n::tr(&label.into()).to_owned();
     PENDING.with(|p| {
-        *p.borrow_mut() = Some((key.to_owned(), label.into()));
+        *p.borrow_mut() = Some((key.to_owned(), label));
     });
 }
 

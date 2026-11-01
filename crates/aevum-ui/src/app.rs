@@ -170,7 +170,10 @@ fn seed_history(state: &mut AppState, ctx: &Context) {
     for v in [12.0, 20.0, 26.0] {
         state.history.begin_frame();
         state.params.contrast = v;
-        crate::history::note("对比度", format!("对比度 {v:+.0}"));
+        crate::history::note(
+            "对比度",
+            crate::i18n::tr_fmt("对比度 {}", &[&format!("{v:+.0}")]),
+        );
         state.history_commit();
     }
     let _ = state.run_ui_command(ctx, "mask.add", &serde_json::json!({"kind": "radial"}));

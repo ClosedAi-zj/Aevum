@@ -132,17 +132,13 @@ pub(super) fn handle_input(state: &mut AppState, ctx: &Context) {
         }
         if ctx.input(|i| i.key_pressed(Key::G)) {
             state.grid = !state.grid;
-            history::note(
-                "grid",
-                format!("网格 {}", if state.grid { "开" } else { "关" }),
-            );
+            let on = crate::i18n::tr(if state.grid { "开" } else { "关" });
+            history::note("grid", crate::i18n::tr_fmt("网格 {}", &[&on]));
         }
         if ctx.input(|i| i.key_pressed(Key::Backslash)) {
             state.split = !state.split;
-            history::note(
-                "split",
-                format!("前后对比 {}", if state.split { "开" } else { "关" }),
-            );
+            let on = crate::i18n::tr(if state.split { "开" } else { "关" });
+            history::note("split", crate::i18n::tr_fmt("前后对比 {}", &[&on]));
         }
         // J：剪切警告循环（LR 同键同义）：关 → 高光 → 两开 → 阴影 → 关。
         if ctx.input(|i| i.key_pressed(Key::J)) {

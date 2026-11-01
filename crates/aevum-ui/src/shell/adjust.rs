@@ -1660,10 +1660,8 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             .changed()
         {
             state.render_watermark.enabled = enabled;
-            history::note(
-                "render.watermark",
-                format!("水印 {}", if enabled { "开" } else { "关" }),
-            );
+            let on = crate::i18n::tr(if enabled { "开" } else { "关" });
+            history::note("render.watermark", crate::i18n::tr_fmt("水印 {}", &[&on]));
         }
         if state.render_watermark.enabled {
             ui.add_space(4.0);
@@ -1677,7 +1675,10 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                 for &kind in &WatermarkKind::ALL {
                     if bar_chip(ui, kind.cn(), state.render_watermark.kind == kind).clicked() {
                         state.render_watermark.kind = kind;
-                        history::note("render.watermark.kind", format!("水印内容 {}", kind.cn()));
+                        history::note(
+                            "render.watermark.kind",
+                            crate::i18n::tr_fmt("水印内容 {}", &[&crate::i18n::tr(kind.cn())]),
+                        );
                     }
                 }
             });
@@ -1729,7 +1730,10 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                 for &spot in &Spot::ALL {
                     if bar_chip(ui, spot.cn(), state.render_watermark.spot == spot).clicked() {
                         state.render_watermark.spot = spot;
-                        history::note("render.watermark.spot", format!("水印位置 {}", spot.cn()));
+                        history::note(
+                            "render.watermark.spot",
+                            crate::i18n::tr_fmt("水印位置 {}", &[&crate::i18n::tr(spot.cn())]),
+                        );
                     }
                 }
             });
@@ -1789,7 +1793,10 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                     ] {
                         if bar_chip(ui, name, state.render_watermark.color == rgb).clicked() {
                             state.render_watermark.color = rgb;
-                            history::note("render.watermark.color", format!("水印颜色 {name}"));
+                            history::note(
+                                "render.watermark.color",
+                                crate::i18n::tr_fmt("水印颜色 {}", &[&crate::i18n::tr(name)]),
+                            );
                         }
                     }
                 });
@@ -1854,7 +1861,7 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                     let label = format!("{speed}×");
                     if bar_chip(ui, &label, flat == Some(speed)).clicked() {
                         state.retime = Retime::uniform(speed, state.retime.shutter);
-                        history::note("retime.speed", format!("倍速 {label}"));
+                        history::note("retime.speed", crate::i18n::tr_fmt("倍速 {}", &[&label]));
                     }
                 }
                 // 曲线不平时就是画过形状（缓入缓出）：芯片按「平不平」亮，不去猜具体几个键。
