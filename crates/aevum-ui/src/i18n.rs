@@ -256,6 +256,21 @@ pub fn tr_fmt(template: &str, args: &[&dyn std::fmt::Display]) -> String {
     out
 }
 
+/// 预设名的**显示**文案。
+///
+/// `AppState::preset` 存的是标识而不是文案：`原始` / `胶片 · 富士` / `自定义` /
+/// `副本 我的调色`。它会写进 `.aevum/project.json`，还要和 `PRESET_NAMES` 逐字
+/// 比较——存译文的话，中文会话在读过一次英文工程之后，下拉里会冒出 "Copy x"。
+///
+/// 所以翻译放在这里：整串命中表就直翻（`原始`、各个胶片名），命中不了再认
+/// 「副本 」这个已知前缀。副本名是用户起的，原样带过来不翻。
+pub fn tr_preset(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix("副本 ") {
+        return format!("{} {}", tr("副本"), rest);
+    }
+    tr(s).to_owned()
+}
+
 /// 这条文案是不是「中文原文」——只有中文才需要译文。
 ///
 /// `Windows`、`macOS`、`sRGB`、`Display P3`、`H.264`、`16:9`、`4K`、`1` 这些本来

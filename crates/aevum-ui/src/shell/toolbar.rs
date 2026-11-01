@@ -345,9 +345,10 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 let current = state.preset.clone();
                 let mut chosen: Option<&'static str> = None;
                 egui::ComboBox::from_id_salt("preset-opt")
-                    // 预设名可能是「自定义」（不再是内置名），一样要过翻译。
+                    // 预设名可能是「自定义」或者「副本 xxx」——后者是存下来的标识，
+                    // 交给 `tr_preset` 认前缀再翻。
                     .selected_text(
-                        RichText::new(crate::i18n::tr(&current))
+                        RichText::new(crate::i18n::tr_preset(&current))
                             .size(SIZE_CHROME_LABEL)
                             .color(text()),
                     )

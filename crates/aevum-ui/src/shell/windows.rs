@@ -116,12 +116,22 @@ pub(super) fn plugin_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     state.error = Some(format!("{label} 没能执行：{e}"));
                 }
             }
-            None => match state.plugin_start(ctx, &id) {
-                // 起任务就回：进度与结果由后台任务自己走状态栏那条线。
-                Ok(name) => state.status = format!("{name} 运行中…"),
-                Err(e) if e.contains("已有插件在运行") => state.status = e,
-                Err(e) => state.error = Some(format!("{label}：{e}")),
-            },
+            None => {
+                // 「已经在跑」按状态判断，不按错误文案判断：那句话会随语言变，
+                // 用 `contains` 认它，切到英文就认不出来了——本该只是一句提示，
+                // 会变成弹个错误横幅。
+                if state.plugin_running() {
+                    state.status = crate::i18n::tr("已有插件在运行").to_owned();
+                } else {
+                    match state.plugin_start(ctx, &id) {
+                        // 起任务就回：进度与结果由后台任务自己走状态栏那条线。
+                        Ok(name) => {
+                            state.status = crate::i18n::tr_fmt("{} 运行中…", &[&name]);
+                        }
+                        Err(e) => state.error = Some(format!("{label}：{e}")),
+                    }
+                }
+            }
         }
     }
     if open_market {

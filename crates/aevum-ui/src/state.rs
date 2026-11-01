@@ -1048,7 +1048,7 @@ impl AppState {
             let p = self
                 .registry
                 .get(id)
-                .ok_or_else(|| format!("找不到插件：{id}"))?;
+                .ok_or_else(|| crate::i18n::tr_fmt("找不到插件：{}", &[&id]))?;
             let params: BTreeMap<String, f64> = p
                 .manifest
                 .params
@@ -1063,7 +1063,8 @@ impl AppState {
                 params,
             )
         };
-        let entry = entry.ok_or_else(|| format!("{name} 由宿主内部实现，还没接上"))?;
+        let entry =
+            entry.ok_or_else(|| crate::i18n::tr_fmt("{} 由宿主内部实现，还没接上", &[&name]))?;
         // 512 分块只读，整份克隆最省心：别让工作线程借用 self，
         // 也不跟预览缓冲复用那条路抢同一块内存。
         let (rgb, size) = self
@@ -1599,7 +1600,7 @@ impl AppState {
         self.status = if single {
             "正在读取这张照片…".to_owned()
         } else {
-            format!("正在测量 {n} 帧…")
+            crate::i18n::tr_fmt("正在测量 {} 帧…", &[&n])
         };
         self.module = Module::Develop;
         self.load_project(&root);
@@ -1635,14 +1636,17 @@ impl AppState {
                 Some(p) if aevum_core::raw::is_raw_name(p) => match aevum_core::raw::info(p) {
                     Ok(i) => (
                         Some(rotated((i.width, i.height))),
-                        Some(format!("{} · {} 位", i.path.short(), i.bits)),
+                        Some(crate::i18n::tr_fmt(
+                            "{} · {} 位",
+                            &[&i.path.short(), &i.bits],
+                        )),
                     ),
                     Err(_) => (None, None),
                 },
                 Some(p) if aevum_core::dng::is_named_dng(p) => match aevum_core::dng::info(p) {
                     Ok(i) => (
                         Some(rotated((i.width, i.height))),
-                        Some(format!("DNG · 传感器直解 · {} 位", i.bits)),
+                        Some(crate::i18n::tr_fmt("DNG · 传感器直解 · {} 位", &[&i.bits])),
                     ),
                     Err(_) => (None, None),
                 },
@@ -1662,9 +1666,9 @@ impl AppState {
             ctx2.request_repaint();
         });
         self.status = if single {
-            format!("单张 · {first}")
+            crate::i18n::tr_fmt("单张 · {}", &[&first])
         } else {
-            format!("{n} 帧 · 首帧 {first}")
+            crate::i18n::tr_fmt("{} 帧 · 首帧 {}", &[&n, &first])
         };
     }
 
@@ -2113,13 +2117,15 @@ impl AppState {
                         continue;
                     }
                     self.align_busy = false;
-                    self.align_msg = Some(format!(
-                        "对齐完成 · {} 帧 · 裁切 {}×{} · {:.1}s · 异常 {}",
-                        report.offsets.len(),
-                        report.crop.w,
-                        report.crop.h,
-                        report.elapsed_secs,
-                        report.issues.len()
+                    self.align_msg = Some(crate::i18n::tr_fmt(
+                        "对齐完成 · {} 帧 · 裁切 {}×{} · {}s · 异常 {}",
+                        &[
+                            &report.offsets.len(),
+                            &report.crop.w,
+                            &report.crop.h,
+                            &format!("{:.1}", report.elapsed_secs),
+                            &report.issues.len(),
+                        ],
                     ));
                     self.status = self.align_msg.clone().unwrap_or_default();
                     self.align_report = Some(report);
@@ -2127,8 +2133,8 @@ impl AppState {
                 }
                 Msg::AlignFailed(e) => {
                     self.align_busy = false;
-                    self.align_msg = Some(format!("对齐失败：{e}"));
-                    self.error = Some(format!("对齐失败：{e}"));
+                    self.align_msg = Some(crate::i18n::tr_fmt("对齐失败：{}", &[&e]));
+                    self.error = Some(crate::i18n::tr_fmt("对齐失败：{}", &[&e]));
                 }
                 Msg::Exported { token, path } => {
                     if token != self.reload_token {
@@ -2139,9 +2145,12 @@ impl AppState {
                     self.last_saved = Some(path.display().to_string());
                     let skipped = self.export_skipped();
                     self.status = if skipped > 0 {
-                        format!("已导出 {}（续跑跳过 {skipped} 帧）", path.display())
+                        crate::i18n::tr_fmt(
+                            "已导出 {}（续跑跳过 {} 帧）",
+                            &[&path.display(), &skipped],
+                        )
                     } else {
-                        format!("已导出 {}", path.display())
+                        crate::i18n::tr_fmt("已导出 {}", &[&path.display()])
                     };
                 }
                 Msg::ExportFailed(e) => {
@@ -2150,7 +2159,7 @@ impl AppState {
                     if e.contains("已取消") {
                         self.status = "导出已取消".to_owned();
                     } else {
-                        self.error = Some(format!("导出失败：{e}"));
+                        self.error = Some(crate::i18n::tr_fmt("导出失败：{}", &[&e]));
                     }
                 }
                 Msg::Merged {
@@ -2191,7 +2200,10 @@ impl AppState {
                             } else {
                                 self.status =
                                     crate::i18n::tr_fmt("{}失败", &[&crate::i18n::tr(kind.cn())]);
-                                self.error = Some(format!("{}失败：{e}", kind.cn()));
+                                self.error = Some(crate::i18n::tr_fmt(
+                                    "{}失败：{}",
+                                    &[&crate::i18n::tr(kind.cn()), &e],
+                                ));
                             }
                         }
                     }
@@ -2210,7 +2222,7 @@ impl AppState {
                             self.status = if bad == 0 {
                                 "体检完成：没发现问题".to_owned()
                             } else {
-                                format!("体检完成：发现 {bad} 处")
+                                crate::i18n::tr_fmt("体检完成：发现 {} 处", &[&bad])
                             };
                         }
                         Err(e) => {
@@ -2218,7 +2230,7 @@ impl AppState {
                             if e.contains("已取消") {
                                 self.status = "体检已取消".to_owned();
                             } else {
-                                self.error = Some(format!("体检失败：{e}"));
+                                self.error = Some(crate::i18n::tr_fmt("体检失败：{}", &[&e]));
                             }
                         }
                     }
@@ -2252,14 +2264,17 @@ impl AppState {
                     self.queue_current = None;
                     self.queue_stage.store(0, Ordering::Relaxed);
                     self.status = if cancelled {
-                        format!("队列已取消：完成 {ok} 段，失败 {failed} 段")
+                        crate::i18n::tr_fmt("队列已取消：完成 {} 段，失败 {} 段", &[&ok, &failed])
                     } else if failed > 0 {
-                        format!("队列完成：成功 {ok} 段，失败 {failed} 段")
+                        crate::i18n::tr_fmt("队列完成：成功 {} 段，失败 {} 段", &[&ok, &failed])
                     } else {
-                        format!("队列完成：{ok} 段")
+                        crate::i18n::tr_fmt("队列完成：{} 段", &[&ok])
                     };
                     if failed > 0 && !cancelled {
-                        self.error = Some(format!("队列有 {failed} 段没渲成，逐行查看原因"));
+                        self.error = Some(crate::i18n::tr_fmt(
+                            "队列有 {} 段没渲成，逐行查看原因",
+                            &[&failed],
+                        ));
                     }
                     self.save_queue();
                 }
@@ -2309,11 +2324,13 @@ impl AppState {
             };
             let waited = event.queued_at.elapsed();
             if waited > control::UI_TIMEOUT {
-                let _ = event.reply.send(Err(format!(
-                    "命令 {} 排队 {:.0} 秒才轮到执行，超过 {:.0} 秒等待上限：为避免与客户端超时重试撞车，已放弃执行",
-                    event.id,
-                    waited.as_secs_f64(),
-                    control::UI_TIMEOUT.as_secs_f64()
+                let _ = event.reply.send(Err(crate::i18n::tr_fmt(
+                    "命令 {} 排队 {} 秒才轮到执行，超过 {} 秒等待上限：为避免与客户端超时重试撞车，已放弃执行",
+                    &[
+                        &event.id,
+                        &format!("{:.0}", waited.as_secs_f64()),
+                        &format!("{:.0}", control::UI_TIMEOUT.as_secs_f64()),
+                    ],
                 )));
                 continue;
             }
@@ -2367,15 +2384,15 @@ impl AppState {
             // 立刻唤醒界面：空闲的 egui 不会自己重绘，请求会一直排队。
             ctx.request_repaint();
             wait.recv_timeout(control::UI_TIMEOUT).map_err(|_| {
-                format!(
-                    "命令 {id} 超时：界面 {:.0} 秒内没有响应",
-                    control::UI_TIMEOUT.as_secs_f64()
+                crate::i18n::tr_fmt(
+                    "命令 {} 超时：界面 {} 秒内没有响应",
+                    &[&id, &format!("{:.0}", control::UI_TIMEOUT.as_secs_f64())],
                 )
             })?
         };
         match ControlServer::start(&root, Arc::new(executor)) {
             Ok(server) => self.control = Some(server),
-            Err(e) => self.error = Some(format!("控制服务启动失败：{e}")),
+            Err(e) => self.error = Some(crate::i18n::tr_fmt("控制服务启动失败：{}", &[&e])),
         }
     }
 
@@ -2647,22 +2664,22 @@ impl AppState {
                 };
                 (
                     "grade.set".to_owned(),
-                    format!("改 {}", [fields.join("、"), more.to_owned()].join("")),
+                    crate::i18n::tr_fmt("改 {}", &[&[fields.join("、"), more.to_owned()].join("")]),
                     true,
                 )
             }
             "grade.preset" => (
                 "grade.preset".to_owned(),
-                format!("预设 {}", named("name")),
+                crate::i18n::tr_fmt("预设 {}", &[&named("name")]),
                 true,
             ),
             "grade.reset" => ("grade.reset".to_owned(), "复位全部参数".to_owned(), true),
             "grade.copy" => {
                 let label = match args.get("op").and_then(Value::as_str).unwrap_or("list") {
-                    "save" => format!("存副本 {}", named("name")),
-                    "apply" => format!("套用副本 {}", named("name")),
-                    "delete" => format!("删副本 {}", named("name")),
-                    "rename" => format!("副本改名 {}", named("to")),
+                    "save" => crate::i18n::tr_fmt("存副本 {}", &[&named("name")]),
+                    "apply" => crate::i18n::tr_fmt("套用副本 {}", &[&named("name")]),
+                    "delete" => crate::i18n::tr_fmt("删副本 {}", &[&named("name")]),
+                    "rename" => crate::i18n::tr_fmt("副本改名 {}", &[&named("to")]),
                     _ => "调色副本".to_owned(),
                 };
                 ("grade.copy".to_owned(), label, true)
@@ -2676,7 +2693,7 @@ impl AppState {
                 };
                 (
                     "mask.add".to_owned(),
-                    format!("加{}蒙版", Self::cn_mask_kind(kind)),
+                    crate::i18n::tr_fmt("加{}蒙版", &[&Self::cn_mask_kind(kind)]),
                     true,
                 )
             }
@@ -2698,15 +2715,17 @@ impl AppState {
                 let label = if args.get("reset").and_then(Value::as_bool).unwrap_or(false) {
                     "取消取景".to_owned()
                 } else if args.get("x").is_some() {
-                    format!(
+                    crate::i18n::tr_fmt(
                         "取景框 {} × {}",
-                        args["width"].as_u64().unwrap_or(0),
-                        args["height"].as_u64().unwrap_or(0)
+                        &[
+                            &args["width"].as_u64().unwrap_or(0),
+                            &args["height"].as_u64().unwrap_or(0),
+                        ],
                     )
                 } else if let Some(deg) = args.get("rotate").and_then(Value::as_f64) {
-                    format!("拉直 {deg:+.1}°")
+                    crate::i18n::tr_fmt("拉直 {}°", &[&format!("{deg:+.1}")])
                 } else {
-                    format!("画幅 {}", named("aspect"))
+                    crate::i18n::tr_fmt("画幅 {}", &[&named("aspect")])
                 };
                 ("crop.set".to_owned(), label, true)
             }
@@ -2714,11 +2733,11 @@ impl AppState {
             "render.set" => {
                 // 一行点出这次动的是哪个设置；纯查询没有改动，dirty 判定会吞掉这步。
                 let label = if args.get("format").is_some() {
-                    format!("输出容器 {}", named("format"))
+                    crate::i18n::tr_fmt("输出容器 {}", &[&named("format")])
                 } else if args.get("quality").is_some() {
-                    format!("输出质量 {}", args["quality"].as_u64().unwrap_or(0))
+                    crate::i18n::tr_fmt("输出质量 {}", &[&args["quality"].as_u64().unwrap_or(0)])
                 } else if args.get("sharpen_for").is_some() {
-                    format!("输出锐化 {}", named("sharpen_for"))
+                    crate::i18n::tr_fmt("输出锐化 {}", &[&named("sharpen_for")])
                 } else if args.get("keep_exif").is_some() {
                     "EXIF 搬运".to_owned()
                 } else if args.get("xmp_sidecar").is_some() {
@@ -2740,13 +2759,13 @@ impl AppState {
                 let label = if args.get("reset").is_some() {
                     "清除变速".to_owned()
                 } else if args.get("speed").is_some() {
-                    format!("倍速 {}×", num(args.get("speed")))
+                    crate::i18n::tr_fmt("倍速 {}×", &[&num(args.get("speed"))])
                 } else if let Some(ease) = args.get("ease") {
-                    format!("缓入缓出到 {}×", num(ease.get("peak")))
+                    crate::i18n::tr_fmt("缓入缓出到 {}×", &[&num(ease.get("peak"))])
                 } else if args.get("keys").is_some() {
                     "速度曲线".to_owned()
                 } else if args.get("shutter").is_some() {
-                    format!("运动模糊 {}", num(args.get("shutter")))
+                    crate::i18n::tr_fmt("运动模糊 {}", &[&num(args.get("shutter"))])
                 } else {
                     "变速开关".to_owned()
                 };
@@ -2759,7 +2778,7 @@ impl AppState {
                 } else if args.get("swap").is_some() {
                     "运镜反向".to_owned()
                 } else if args.get("ease").is_some() {
-                    format!("运动曲线 {}", named("ease"))
+                    crate::i18n::tr_fmt("运动曲线 {}", &[&named("ease")])
                 } else if args.get("refit").is_some() {
                     "运镜换比例".to_owned()
                 } else if args.get("to").is_some() {
@@ -2859,9 +2878,9 @@ impl AppState {
             .and_then(Value::as_u64)
             .ok_or_else(|| "缺少 index：跳到第几步（1 开始）".to_owned())?;
         if raw == 0 || raw as usize > self.history.steps().len() {
-            return Err(format!(
+            return Err(crate::i18n::tr_fmt(
                 "index 超出范围：1..={}",
-                self.history.steps().len().max(1)
+                &[&self.history.steps().len().max(1)],
             ));
         }
         let m = self
@@ -3002,7 +3021,7 @@ impl AppState {
                 Ok(json!({
                     "cancelling": busy,
                     "note": match (busy, kind) {
-                        (true, Some(k)) => format!("已请求取消{k}；在两帧之间生效，已写下的帧不会删除"),
+                        (true, Some(k)) => crate::i18n::tr_fmt("已请求取消{}；在两帧之间生效，已写下的帧不会删除", &[&k]),
                         (true, None) => "已请求取消；在两帧之间生效".to_owned(),
                         (false, _) => "当前没有进行中的合并".to_owned(),
                     },
@@ -3062,8 +3081,9 @@ impl AppState {
                 }))
             }
             "ui.screenshot" => self.cmd_screenshot(ctx, args),
-            other => Err(format!(
-                "未知命令：{other}（用 system.commands 或 AI 面板的命令清单查看可用命令）"
+            other => Err(crate::i18n::tr_fmt(
+                "未知命令：{}（用 system.commands 或 AI 面板的命令清单查看可用命令）",
+                &[&other],
             )),
         }
     }
@@ -3168,17 +3188,19 @@ impl AppState {
         }
         match aevum_core::lensdb::match_correction(&db, make, model, lens, focal, aperture) {
             Some(corr) => {
-                self.lens_profile_note = format!(
-                    "已匹配 {}（{}mm · 裁切 {:.1}）",
-                    corr.lens, corr.focal_mm, corr.crop
+                self.lens_profile_note = crate::i18n::tr_fmt(
+                    "已匹配 {}（{}mm · 裁切 {}）",
+                    &[&corr.lens, &corr.focal_mm, &format!("{:.1}", corr.crop)],
                 );
                 self.lens_profile_saved = Some(corr.clone());
                 self.params.lens_profile = Some(corr);
                 self.preview_dirty = true;
             }
             None => {
-                self.lens_profile_note =
-                    format!("数据库里没有 {make} {lens} 的标定，畸变与暗角仍走手动三项");
+                self.lens_profile_note = crate::i18n::tr_fmt(
+                    "数据库里没有 {} {} 的标定，畸变与暗角仍走手动三项",
+                    &[&make, &lens],
+                );
             }
         }
     }
@@ -3252,7 +3274,7 @@ impl AppState {
         let model = ex.model().unwrap_or("").to_owned();
         match aevum_core::dcp::auto_match(&make, &model) {
             Ok(p) => {
-                self.dcp_note = format!("已套用「{}」（{}）", p.name, p.camera);
+                self.dcp_note = crate::i18n::tr_fmt("已套用「{}」（{}）", &[&p.name, &p.camera]);
                 self.dcp_name = p.name.clone();
                 self.params.dcp_profile = p.path;
                 self.preview_dirty = true;
@@ -3268,14 +3290,14 @@ impl AppState {
             let make = ex.make().unwrap_or("");
             let model = ex.model().unwrap_or("");
             if !model.is_empty() && !p.matches(make, model) {
-                return Err(format!(
+                return Err(crate::i18n::tr_fmt(
                     "配置是给「{}」的，当前机型是「{} {}」",
-                    p.camera, make, model
+                    &[&p.camera, &make, &model],
                 ));
             }
         }
         self.dcp_name = p.name.clone();
-        self.dcp_note = format!("已套用「{}」（{}）", p.name, p.camera);
+        self.dcp_note = crate::i18n::tr_fmt("已套用「{}」（{}）", &[&p.name, &p.camera]);
         self.params.dcp_profile = p.path.clone();
         self.preview_dirty = true;
         Ok(())
@@ -3304,9 +3326,9 @@ impl AppState {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.display().to_string());
-                self.lcp_note = format!(
-                    "已套用 {}（{} · {:.0}mm）",
-                    file, corr.lens, corr.focal35_mm
+                self.lcp_note = crate::i18n::tr_fmt(
+                    "已套用 {}（{} · {}mm）",
+                    &[&file, &corr.lens, &format!("{:.0}", corr.focal35_mm)],
                 );
                 self.params.lcp_profile = Some(corr);
                 self.preview_dirty = true;
@@ -3320,9 +3342,13 @@ impl AppState {
         let file = aevum_core::lcp::load(path)?;
         let req = self.exif_lens_request()?;
         let corr = aevum_core::lcp::match_correction(&file, &req)?;
-        self.lcp_note = format!(
-            "已套用 {}（{} · {:.0}mm）",
-            file.profile, corr.lens, corr.focal35_mm
+        self.lcp_note = crate::i18n::tr_fmt(
+            "已套用 {}（{} · {}mm）",
+            &[
+                &file.profile,
+                &corr.lens,
+                &format!("{:.0}", corr.focal35_mm),
+            ],
         );
         self.params.lcp_profile = Some(corr);
         self.preview_dirty = true;
@@ -3341,7 +3367,12 @@ impl AppState {
         let kind = match args.get("kind").and_then(Value::as_str) {
             Some("dcp") => "dcp",
             Some("lcp") => "lcp",
-            Some(other) => return Err(format!("未知的配置类型：{other}（dcp 或 lcp）")),
+            Some(other) => {
+                return Err(crate::i18n::tr_fmt(
+                    "未知的配置类型：{}（dcp 或 lcp）",
+                    &[&other],
+                ));
+            }
             None => return Err("缺少 kind（dcp 或 lcp）".to_owned()),
         };
         if args.get("clear").and_then(Value::as_bool).unwrap_or(false) {
@@ -3421,9 +3452,12 @@ impl AppState {
             for (i, k) in keys.iter().enumerate() {
                 let x = args[*k]
                     .as_f64()
-                    .ok_or_else(|| format!("{k} 必须是数字（源像素）"))?;
+                    .ok_or_else(|| crate::i18n::tr_fmt("{} 必须是数字（源像素）", &[&k]))?;
                 if !x.is_finite() || x < 0.0 || x > f64::from(fw.max(fh)) {
-                    return Err(format!("{k} 超出画面范围（0..{}）", fw.max(fh)));
+                    return Err(crate::i18n::tr_fmt(
+                        "{} 超出画面范围（0..{}）",
+                        &[&k, &fw.max(fh)],
+                    ));
                 }
                 v[i] = x.round() as u32;
             }
@@ -3476,9 +3510,9 @@ impl AppState {
     /// 守卫等到导出那一步才说话。
     fn set_render_format(&mut self, format: StillFormat) -> Result<(), String> {
         if self.render_mode == OutputMode::Video && !format.frames_ok() {
-            return Err(format!(
+            return Err(crate::i18n::tr_fmt(
                 "{} 只能出静帧；视频的中间帧要 PNG 或 TIFF（先把 mode 改成 stills）",
-                format.cn()
+                &[&crate::i18n::tr(format.cn())],
             ));
         }
         self.render_format = format;
@@ -3506,18 +3540,24 @@ impl AppState {
                     .map(|k| k.as_str())
                     .collect::<Vec<_>>()
                     .join(" / ");
-                return Err(format!("未知的水印参数 {key}；可用 {keys}"));
+                return Err(crate::i18n::tr_fmt(
+                    "未知的水印参数 {}；可用 {}",
+                    &[&key, &keys],
+                ));
             }
             merged.insert(key.clone(), v.clone());
         }
         let next: Watermark = serde_json::from_value(Value::Object(merged))
-            .map_err(|e| format!("水印参数不对：{e}"))?;
+            .map_err(|e| crate::i18n::tr_fmt("水印参数不对：{}", &[&e]))?;
         if incoming.contains_key("image")
             && !next.image.as_os_str().is_empty()
             && !next.image.is_file()
         {
             let shown = next.image.display();
-            return Err(format!("水印图片不存在：{shown}（传空串表示不换/清空）"));
+            return Err(crate::i18n::tr_fmt(
+                "水印图片不存在：{}（传空串表示不换/清空）",
+                &[&shown],
+            ));
         }
         for (key, slot, max) in [
             ("opacity", i32::from(next.opacity), 100),
@@ -3525,7 +3565,10 @@ impl AppState {
             ("margin", i32::from(next.margin), 40),
         ] {
             if incoming.contains_key(key) && slot > max {
-                return Err(format!("{key} 要在 0..{max}（相对输出尺寸的百分比）"));
+                return Err(crate::i18n::tr_fmt(
+                    "{} 要在 0..{}（相对输出尺寸的百分比）",
+                    &[&key, &max],
+                ));
             }
         }
         self.render_watermark = next;
@@ -3542,7 +3585,12 @@ impl AppState {
                 match raw.trim().to_ascii_lowercase().as_str() {
                     "stills" | "still" | "images" => OutputMode::Stills,
                     "video" | "mp4" => OutputMode::Video,
-                    other => return Err(format!("未知输出模式 {other}；可用 stills / video")),
+                    other => {
+                        return Err(crate::i18n::tr_fmt(
+                            "未知输出模式 {}；可用 stills / video",
+                            &[&other],
+                        ));
+                    }
                 }
             }
             None => self.render_mode,
@@ -3551,15 +3599,18 @@ impl AppState {
             Some(v) => {
                 let raw = v.as_str().ok_or("format 必须是字符串")?;
                 StillFormat::parse(raw).ok_or_else(|| {
-                    format!("未知容器 {raw}；可用 png8 / tiff16 / jpeg / webp / avif")
+                    crate::i18n::tr_fmt(
+                        "未知容器 {}；可用 png8 / tiff16 / jpeg / webp / avif",
+                        &[&raw],
+                    )
                 })?
             }
             None => self.render_format,
         };
         if mode == OutputMode::Video && !format.frames_ok() {
-            return Err(format!(
+            return Err(crate::i18n::tr_fmt(
                 "{} 只能出静帧；视频的中间帧要 PNG 或 TIFF（同一条命令里把 format 一起改掉）",
-                format.cn()
+                &[&crate::i18n::tr(format.cn())],
             ));
         }
         self.render_mode = mode;
@@ -3581,17 +3632,23 @@ impl AppState {
         }
         if let Some(v) = args.get("sharpen_for") {
             let raw = v.as_str().ok_or("sharpen_for 必须是字符串")?;
-            self.render_sharpen_for = OutputSharpen::parse(raw)
-                .ok_or_else(|| format!("未知锐化用途 {raw}；可用 off / screen / glossy / matte"))?;
+            self.render_sharpen_for = OutputSharpen::parse(raw).ok_or_else(|| {
+                crate::i18n::tr_fmt(
+                    "未知锐化用途 {}；可用 off / screen / glossy / matte",
+                    &[&raw],
+                )
+            })?;
         }
         if let Some(v) = args.get("sharpen_strength") {
             let raw = v.as_str().ok_or("sharpen_strength 必须是字符串")?;
-            self.render_sharpen_strength = SharpenStrength::parse(raw)
-                .ok_or_else(|| format!("未知锐化强度 {raw}；可用 low / standard / high"))?;
+            self.render_sharpen_strength = SharpenStrength::parse(raw).ok_or_else(|| {
+                crate::i18n::tr_fmt("未知锐化强度 {}；可用 low / standard / high", &[&raw])
+            })?;
         }
         if let Some(raw) = opt_str(args, "color_space")? {
-            self.render_color_space = ColorSpace::parse(raw)
-                .ok_or_else(|| format!("未知色域 {raw}；可用 srgb / p3 / rec2020"))?;
+            self.render_color_space = ColorSpace::parse(raw).ok_or_else(|| {
+                crate::i18n::tr_fmt("未知色域 {}；可用 srgb / p3 / rec2020", &[&raw])
+            })?;
         }
         if let Some(v) = args.get("watermark") {
             self.patch_watermark(v)?;
@@ -3599,8 +3656,9 @@ impl AppState {
         match (opt_u32(args, "width")?, opt_u32(args, "height")?) {
             (Some(width), Some(height)) => {
                 if width < 2 || height < 2 || width % 2 == 1 || height % 2 == 1 {
-                    return Err(format!(
-                        "width/height 必须是偶数且不小于 2：{width}×{height}"
+                    return Err(crate::i18n::tr_fmt(
+                        "width/height 必须是偶数且不小于 2：{}×{}",
+                        &[&width, &height],
                     ));
                 }
                 self.output_w = width;
@@ -3714,7 +3772,7 @@ impl AppState {
         let raw = arg_str(args, "root")?;
         let path = PathBuf::from(raw);
         if !path.is_dir() && !path.is_file() {
-            return Err(format!("路径不存在：{}", path.display()));
+            return Err(crate::i18n::tr_fmt("路径不存在：{}", &[&path.display()]));
         }
         // open 只在真正换成新序列时才递增 reload_token；用它判断是否打开成功，
         // 否则失败时会误把旧序列当成新打开的序列返回给 agent。
@@ -3739,7 +3797,7 @@ impl AppState {
         let raw = arg_str(args, "path")?;
         let path = PathBuf::from(raw);
         if !path.is_dir() {
-            return Err(format!("不是目录：{}", path.display()));
+            return Err(crate::i18n::tr_fmt("不是目录：{}", &[&path.display()]));
         }
         let index = self.lib_add(&path);
         let summary = self
@@ -3759,7 +3817,10 @@ impl AppState {
         let index =
             opt_u32(args, "index")?.ok_or_else(|| "缺少整数参数 index（从 1 开始）".to_owned())?;
         if index == 0 || index as usize > self.lib_roots.len() {
-            return Err(format!("index 超出范围：1..={}", self.lib_roots.len()));
+            return Err(crate::i18n::tr_fmt(
+                "index 超出范围：1..={}",
+                &[&self.lib_roots.len()],
+            ));
         }
         let path = self.lib_roots[index as usize - 1].display().to_string();
         self.lib_remove(index as usize - 1);
@@ -3771,7 +3832,10 @@ impl AppState {
         let scan = opt_u32(args, "index")?;
         if let Some(n) = scan {
             if n == 0 || n as usize > self.lib_roots.len() {
-                return Err(format!("index 超出范围：1..={}", self.lib_roots.len()));
+                return Err(crate::i18n::tr_fmt(
+                    "index 超出范围：1..={}",
+                    &[&self.lib_roots.len()],
+                ));
             }
             self.lib_scan(n as usize - 1);
         }
@@ -3834,7 +3898,10 @@ impl AppState {
         let index =
             opt_u32(args, "index")?.ok_or_else(|| "缺少整数参数 index（从 1 开始）".to_owned())?;
         if index == 0 || index as usize > self.lib_roots.len() {
-            return Err(format!("index 超出范围：1..={}", self.lib_roots.len()));
+            return Err(crate::i18n::tr_fmt(
+                "index 超出范围：1..={}",
+                &[&self.lib_roots.len()],
+            ));
         }
         let dir = self.lib_roots[index as usize - 1].clone();
         // 与 sequence.open 同一套口径：reload_token 没动说明打开失败，
@@ -3858,9 +3925,10 @@ impl AppState {
     fn lib_root_arg(&self, args: &Value) -> Result<usize, String> {
         match opt_u32(args, "root")? {
             Some(0) => Err("root 从 1 开始".to_owned()),
-            Some(n) if n as usize > self.lib_roots.len() => {
-                Err(format!("root 超出范围：1..={}", self.lib_roots.len()))
-            }
+            Some(n) if n as usize > self.lib_roots.len() => Err(crate::i18n::tr_fmt(
+                "root 超出范围：1..={}",
+                &[&self.lib_roots.len()],
+            )),
             Some(n) => Ok(n as usize - 1),
             None => self
                 .lib_sel
@@ -3877,7 +3945,7 @@ impl AppState {
             return Err("这个目录还没编目：先 library.list 带 index".to_owned());
         }
         if frame == 0 || frame as usize > count {
-            return Err(format!("frame 超出范围：1..={count}"));
+            return Err(crate::i18n::tr_fmt("frame 超出范围：1..={}", &[&count]));
         }
         Ok((root, frame as usize - 1))
     }
@@ -3905,7 +3973,9 @@ impl AppState {
                         v.as_u64()
                             .filter(|&n| n >= 1 && n as usize <= count)
                             .map(|n| n as usize - 1)
-                            .ok_or_else(|| format!("frames 里的帧号超出范围：1..={count}"))
+                            .ok_or_else(|| {
+                                crate::i18n::tr_fmt("frames 里的帧号超出范围：1..={}", &[&count])
+                            })
                     })
                     .collect()
             }
@@ -3965,7 +4035,7 @@ impl AppState {
         let changed = apply_metadata_args(&mut meta, args)?;
         if changed {
             meta = aevum_core::library::set_metadata(&dir, &meta)
-                .map_err(|e| format!("写元数据失败：{e}"))?;
+                .map_err(|e| crate::i18n::tr_fmt("写元数据失败：{}", &[&e]))?;
             if open_here {
                 self.meta = meta.clone();
             }
@@ -4017,8 +4087,9 @@ impl AppState {
             }
             "auto" => self.lib_stack_auto(root)?,
             other => {
-                return Err(format!(
-                    "认不出来的 op：{other}（要 list / create / dissolve / auto）"
+                return Err(crate::i18n::tr_fmt(
+                    "认不出来的 op：{}（要 list / create / dissolve / auto）",
+                    &[&other],
                 ));
             }
         };
@@ -4145,7 +4216,10 @@ impl AppState {
     fn collection_at(&self, args: &Value) -> Result<usize, String> {
         if let Some(n) = opt_u32(args, "index")? {
             if n == 0 || n as usize > self.lib_cols.len() {
-                return Err(format!("index 超出范围：1..={}", self.lib_cols.len()));
+                return Err(crate::i18n::tr_fmt(
+                    "index 超出范围：1..={}",
+                    &[&self.lib_cols.len()],
+                ));
             }
             return Ok(n as usize - 1);
         }
@@ -4156,7 +4230,9 @@ impl AppState {
         self.lib_cols
             .iter()
             .position(|c| c.name == name)
-            .ok_or_else(|| format!("没有叫「{name}」的集合：先 collection.create"))
+            .ok_or_else(|| {
+                crate::i18n::tr_fmt("没有叫「{}」的集合：先 collection.create", &[&name])
+            })
     }
 
     fn cmd_collection_create(&mut self, args: &Value) -> Result<Value, String> {
@@ -4179,9 +4255,9 @@ impl AppState {
         let added = self.lib_collection_put(col, &path)?;
         let c = &self.lib_cols[col];
         self.status = if added {
-            format!("「{}」加入集合「{}」", path.display(), c.name)
+            crate::i18n::tr_fmt("「{}」加入集合「{}」", &[&path.display(), &c.name])
         } else {
-            format!("「{}」已经在集合「{}」里", path.display(), c.name)
+            crate::i18n::tr_fmt("「{}」已经在集合「{}」里", &[&path.display(), &c.name])
         };
         Ok(json!({
             "index": col + 1,
@@ -4259,7 +4335,7 @@ impl AppState {
         let index =
             opt_u32(args, "index")?.ok_or_else(|| "缺少整数参数 index（从 1 开始）".to_owned())?;
         if index == 0 || index as usize > n {
-            return Err(format!("index 超出范围：1..={n}"));
+            return Err(crate::i18n::tr_fmt("index 超出范围：1..={}", &[&n]));
         }
         self.set_frame(index as usize - 1);
         self.preview_dirty = true;
@@ -4279,8 +4355,12 @@ impl AppState {
 
     fn cmd_ui_module(&mut self, args: &Value) -> Result<Value, String> {
         let name = arg_str(args, "name")?;
-        let module = Module::from_name(name)
-            .ok_or_else(|| format!("未知模块 {name}；可用 序列/去闪/显影/构图/成片/声音 或 0-5"))?;
+        let module = Module::from_name(name).ok_or_else(|| {
+            crate::i18n::tr_fmt(
+                "未知模块 {}；可用 序列/去闪/显影/构图/成片/声音 或 0-5",
+                &[&name],
+            )
+        })?;
         self.set_module(module);
         self.status = crate::i18n::tr_fmt("模块：{}", &[&crate::i18n::tr(module.cn())]);
         Ok(json!({"module": module.cn(), "index": module.index()}))
@@ -4288,8 +4368,9 @@ impl AppState {
 
     fn cmd_ui_dock(&mut self, args: &Value) -> Result<Value, String> {
         let name = arg_str(args, "name")?;
-        let tab = DockTab::from_name(name)
-            .ok_or_else(|| format!("未知面板 {name}；可用 调整/信息/关键帧/AI 或 0-3"))?;
+        let tab = DockTab::from_name(name).ok_or_else(|| {
+            crate::i18n::tr_fmt("未知面板 {}；可用 调整/信息/关键帧/AI 或 0-3", &[&name])
+        })?;
         self.dock_tab = tab;
         self.show_dock = true;
         self.status = crate::i18n::tr_fmt("面板：{}", &[&crate::i18n::tr(tab.cn())]);
@@ -4344,8 +4425,9 @@ impl AppState {
                 self.rename_copy(name, to)?;
                 Ok(json!({"renamed": to, "copies": self.copies.len()}))
             }
-            other => Err(format!(
-                "未知 op {other}；可用 list / save / apply / delete / rename"
+            other => Err(crate::i18n::tr_fmt(
+                "未知 op {}；可用 list / save / apply / delete / rename",
+                &[&other],
             )),
         }
     }
@@ -4363,9 +4445,9 @@ impl AppState {
             return Err("序列里没有帧".to_owned());
         }
         if self.merge_busy {
-            return Err(format!(
+            return Err(crate::i18n::tr_fmt(
                 "已有一项{}在进行中；用 merge.status 查询进度，merge.cancel 取消",
-                self.merge_kind.map(MergeKind::cn).unwrap_or("合并")
+                &[&self.merge_kind.map(MergeKind::cn).unwrap_or("合并")],
             ));
         }
         if !confirm(args) {
@@ -4379,7 +4461,9 @@ impl AppState {
                 .map(|v| {
                     v.as_u64()
                         .and_then(|i| ((i as usize) < n).then_some(i as usize))
-                        .ok_or_else(|| format!("帧号越界：{v}（序列共 {n} 帧）"))
+                        .ok_or_else(|| {
+                            crate::i18n::tr_fmt("帧号越界：{}（序列共 {} 帧）", &[&v, &n])
+                        })
                 })
                 .collect::<Result<_, _>>()?,
             None => {
@@ -4388,7 +4472,10 @@ impl AppState {
                     .map(|v| v as usize)
                     .unwrap_or(self.selected.min(n - 1));
                 if center >= n {
-                    return Err(format!("center 越界：{center}（序列共 {n} 帧）"));
+                    return Err(crate::i18n::tr_fmt(
+                        "center 越界：{}（序列共 {} 帧）",
+                        &[&center, &n],
+                    ));
                 }
                 (center.saturating_sub(around)..=center.saturating_add(around).min(n - 1)).collect()
             }
@@ -4398,16 +4485,16 @@ impl AppState {
             return Err("HDR 合并至少要 2 帧：给 frames 数组，或把 around 调大".to_owned());
         }
         if indices.len() > kind.max_frames() {
-            return Err(format!(
+            return Err(crate::i18n::tr_fmt(
                 "HDR 合并一次最多 {} 张，实得 {} 张：把 around 调小，或用 frames 只挑关键几帧",
-                kind.max_frames(),
-                indices.len()
+                &[&kind.max_frames(), &indices.len()],
             ));
         }
         let root = seq.root.clone();
         let out_dir = self.merge_out_dir(args, &root, kind)?;
         ensure_out_dir_safe(&root, &out_dir)?;
-        std::fs::create_dir_all(&out_dir).map_err(|e| format!("建输出目录失败：{e}"))?;
+        std::fs::create_dir_all(&out_dir)
+            .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
 
         let job = self.build_merge_job(kind, indices, &out_dir)?;
         Ok(self.start_merge(ctx, job))
@@ -4671,9 +4758,9 @@ impl AppState {
             return Err("序列里没有帧".to_owned());
         }
         if self.merge_busy {
-            return Err(format!(
+            return Err(crate::i18n::tr_fmt(
                 "已有一项{}在进行中；用 merge.status 查询进度，merge.cancel 取消",
-                self.merge_kind.map(MergeKind::cn).unwrap_or("合并")
+                &[&self.merge_kind.map(MergeKind::cn).unwrap_or("合并")],
             ));
         }
         if !confirm(args) {
@@ -4687,7 +4774,9 @@ impl AppState {
                 .map(|v| {
                     v.as_u64()
                         .and_then(|i| ((i as usize) < n).then_some(i as usize))
-                        .ok_or_else(|| format!("帧号越界：{v}（序列共 {n} 帧）"))
+                        .ok_or_else(|| {
+                            crate::i18n::tr_fmt("帧号越界：{}（序列共 {} 帧）", &[&v, &n])
+                        })
                 })
                 .collect::<Result<_, _>>()?,
             None => {
@@ -4696,7 +4785,10 @@ impl AppState {
                     .map(|v| v as usize)
                     .unwrap_or(self.selected.min(n - 1));
                 if start >= n {
-                    return Err(format!("start 越界：{start}（序列共 {n} 帧）"));
+                    return Err(crate::i18n::tr_fmt(
+                        "start 越界：{}（序列共 {} 帧）",
+                        &[&start, &n],
+                    ));
                 }
                 (start..=start.saturating_add(around).min(n - 1)).collect()
             }
@@ -4706,16 +4798,16 @@ impl AppState {
             return Err("全景合并至少要 2 帧：给 frames 数组，或把 around 调大".to_owned());
         }
         if indices.len() > kind.max_frames() {
-            return Err(format!(
+            return Err(crate::i18n::tr_fmt(
                 "全景合并一次最多 {} 张，实得 {} 张：把 around 调小，或用 frames 只挑相邻几张",
-                kind.max_frames(),
-                indices.len()
+                &[&kind.max_frames(), &indices.len()],
             ));
         }
         let root = seq.root.clone();
         let out_dir = self.merge_out_dir(args, &root, kind)?;
         ensure_out_dir_safe(&root, &out_dir)?;
-        std::fs::create_dir_all(&out_dir).map_err(|e| format!("建输出目录失败：{e}"))?;
+        std::fs::create_dir_all(&out_dir)
+            .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
 
         let job = self.build_merge_job(kind, indices, &out_dir)?;
         Ok(self.start_merge(ctx, job))
@@ -4733,8 +4825,8 @@ impl AppState {
         if object.is_empty() {
             return Err("没有要设置的调色字段（例如 {\"exposure\":0.5}）".to_owned());
         }
-        let mut current =
-            serde_json::to_value(&self.params).map_err(|e| format!("序列化参数失败：{e}"))?;
+        let mut current = serde_json::to_value(&self.params)
+            .map_err(|e| crate::i18n::tr_fmt("序列化参数失败：{}", &[&e]))?;
         let current_object = current
             .as_object_mut()
             .ok_or_else(|| "内部错误：GradeParams 不是对象".to_owned())?;
@@ -4748,14 +4840,18 @@ impl AppState {
         }
         if !unknown.is_empty() {
             unknown.sort();
-            return Err(format!("未知调色字段：{}", unknown.join("、")));
+            return Err(crate::i18n::tr_fmt(
+                "未知调色字段：{}",
+                &[&unknown.join("、")],
+            ));
         }
-        let params: GradeParams =
-            serde_json::from_value(current).map_err(|e| format!("参数格式不对：{e}"))?;
+        let params: GradeParams = serde_json::from_value(current)
+            .map_err(|e| crate::i18n::tr_fmt("参数格式不对：{}", &[&e]))?;
         // 换了外观路径就当场验一遍：渲染热路径读不出来时只会按"没挂"处理，
         // 报错必须在这里发生，否则界面表现为"改了没反应"。
         if object.contains_key("look_cube") && !params.look_cube.is_empty() {
-            cube::refresh(&params.look_cube).map_err(|e| format!("外观 .cube 读不出来：{e}"))?;
+            cube::refresh(&params.look_cube)
+                .map_err(|e| crate::i18n::tr_fmt("外观 .cube 读不出来：{}", &[&e]))?;
         }
         self.params = params;
         self.preset = "自定义".to_owned();
@@ -4768,9 +4864,9 @@ impl AppState {
     fn cmd_grade_preset(&mut self, args: &Value) -> Result<Value, String> {
         let name = arg_str(args, "name")?;
         if !PRESET_NAMES.contains(&name) {
-            return Err(format!(
-                "未知预设 {name}；可用：{}",
-                PRESET_NAMES.join("、")
+            return Err(crate::i18n::tr_fmt(
+                "未知预设 {}；可用：{}",
+                &[&name, &PRESET_NAMES.join("、")],
             ));
         }
         self.apply_preset(name);
@@ -4847,7 +4943,10 @@ impl AppState {
         let kind = opt_str(args, "kind")?.unwrap_or("linear");
         let kind = kind.trim().to_ascii_lowercase();
         if kind != "linear" && kind != "radial" && kind != "brush" {
-            return Err(format!("未知蒙版形状 {kind}；可用 linear / radial / brush"));
+            return Err(crate::i18n::tr_fmt(
+                "未知蒙版形状 {}；可用 linear / radial / brush",
+                &[&kind],
+            ));
         }
         let index = self.add_mask(&kind);
         let shape = match kind.as_str() {
@@ -4871,7 +4970,10 @@ impl AppState {
         let index =
             opt_u32(args, "index")?.ok_or_else(|| "缺少整数参数 index（从 1 开始）".to_owned())?;
         if index == 0 || index as usize > self.params.masks.len() {
-            return Err(format!("index 超出范围：1..={}", self.params.masks.len()));
+            return Err(crate::i18n::tr_fmt(
+                "index 超出范围：1..={}",
+                &[&self.params.masks.len()],
+            ));
         }
         self.remove_mask(index as usize - 1);
         self.status = crate::i18n::tr_fmt("已删除第 {} 张蒙版", &[&index]);
@@ -4888,7 +4990,10 @@ impl AppState {
             opt_u32(args, "index")?.ok_or_else(|| "缺少整数参数 index（从 1 开始）".to_owned())?;
         let slot = index as usize;
         if slot == 0 || slot > self.params.masks.len() {
-            return Err(format!("index 超出范围：1..={}", self.params.masks.len()));
+            return Err(crate::i18n::tr_fmt(
+                "index 超出范围：1..={}",
+                &[&self.params.masks.len()],
+            ));
         }
         let component = opt_u32(args, "component")?.unwrap_or(0) as usize;
         let mut raw = self.params.masks[slot - 1].clone();
@@ -4900,7 +5005,10 @@ impl AppState {
             .unwrap_or(0)
             .max(1);
         if component >= shapes {
-            return Err(format!("component 超出范围：0..{}", shapes - 1));
+            return Err(crate::i18n::tr_fmt(
+                "component 超出范围：0..{}",
+                &[&(shapes - 1)],
+            ));
         }
 
         if let Some(amount) = opt_f64(args, "amount")? {
@@ -4943,16 +5051,18 @@ impl AppState {
                 if value.is_null() {
                     target.remove(key);
                 } else {
-                    let number = value
-                        .as_f64()
-                        .filter(|v| v.is_finite())
-                        .ok_or_else(|| format!("局部参数 {key} 必须是有限数值或 null"))?;
+                    let number = value.as_f64().filter(|v| v.is_finite()).ok_or_else(|| {
+                        crate::i18n::tr_fmt("局部参数 {} 必须是有限数值或 null", &[&key])
+                    })?;
                     target.insert(key.clone(), json!(number));
                 }
             }
             if !unknown.is_empty() {
                 unknown.sort();
-                return Err(format!("未知局部参数：{}", unknown.join("、")));
+                return Err(crate::i18n::tr_fmt(
+                    "未知局部参数：{}",
+                    &[&unknown.join("、")],
+                ));
             }
         }
         if let Some(geometry) = args.get("geometry") {
@@ -4991,7 +5101,7 @@ impl AppState {
             opt_u32(args, "index")?.ok_or_else(|| "缺少整数参数 index（从 1 开始）".to_owned())?;
         let masks = self.params.masks.len();
         if index == 0 || index as usize > masks {
-            return Err(format!("index 超出范围：1..={masks}"));
+            return Err(crate::i18n::tr_fmt("index 超出范围：1..={}", &[&masks]));
         }
         let slot = index as usize - 1;
         let action = opt_str(args, "action")?
@@ -5005,21 +5115,24 @@ impl AppState {
                     .trim()
                     .to_ascii_lowercase();
                 if kind != "linear" && kind != "radial" && kind != "brush" {
-                    return Err(format!("未知蒙版形状 {kind}；可用 linear / radial / brush"));
+                    return Err(crate::i18n::tr_fmt(
+                        "未知蒙版形状 {}；可用 linear / radial / brush",
+                        &[&kind],
+                    ));
                 }
                 let added = self
                     .add_mask_component(slot, &kind)
                     .ok_or_else(|| "这一组蒙版格式不对，加不了形状".to_owned())?;
+                let shape = match kind.as_str() {
+                    "radial" => "径向",
+                    "brush" => "画笔",
+                    _ => "线性",
+                };
                 (
                     json!(added + 1),
-                    format!(
-                        "已在第 {index} 张蒙版里加了第 {} 个{}形状",
-                        added + 1,
-                        match kind.as_str() {
-                            "radial" => "径向",
-                            "brush" => "画笔",
-                            _ => "线性",
-                        }
+                    crate::i18n::tr_fmt(
+                        "已在第 {} 张蒙版里加了第 {} 个{}形状",
+                        &[&index, &(added + 1), &crate::i18n::tr(shape)],
                     ),
                 )
             }
@@ -5035,10 +5148,18 @@ impl AppState {
                 }
                 (
                     json!(comp + 1),
-                    format!("已删掉第 {index} 张蒙版里的第 {} 个形状", comp + 1),
+                    crate::i18n::tr_fmt(
+                        "已删掉第 {} 张蒙版里的第 {} 个形状",
+                        &[&index, &(comp + 1)],
+                    ),
                 )
             }
-            other => return Err(format!("未知动作 {other}；可用 add / remove")),
+            other => {
+                return Err(crate::i18n::tr_fmt(
+                    "未知动作 {}；可用 add / remove",
+                    &[&other],
+                ));
+            }
         };
         self.status = message;
         let mut out = self.mask_list_json();
@@ -5063,13 +5184,18 @@ impl AppState {
         if let Some(reference) = reference
             && (reference == 0 || reference as usize > n)
         {
-            return Err(format!("reference 超出范围：1..={n}"));
+            return Err(crate::i18n::tr_fmt("reference 超出范围：1..={}", &[&n]));
         }
         let estimator = match opt_str(args, "estimator")? {
             Some(name) => Some(match name.trim().to_ascii_lowercase().as_str() {
                 "template" | "模板" => Estimator::Template,
                 "phase" | "相位" => Estimator::Phase,
-                other => return Err(format!("未知估计器 {other}；可用 template / phase")),
+                other => {
+                    return Err(crate::i18n::tr_fmt(
+                        "未知估计器 {}；可用 template / phase",
+                        &[&other],
+                    ));
+                }
             }),
             None => None,
         };
@@ -5181,9 +5307,9 @@ impl AppState {
             .copied()
             .collect::<Vec<_>>();
         if curve_given.len() > 1 {
-            return Err(format!(
+            return Err(crate::i18n::tr_fmt(
                 "{} 同时给了：变速曲线只能选一种写法（speed 全程一个倍速 / keys 多点曲线 / ease 缓入缓出）",
-                curve_given.join("、")
+                &[&curve_given.join("、")],
             ));
         }
         if !curve_given.is_empty() {
@@ -5209,8 +5335,9 @@ impl AppState {
         }
         if let Some(shutter) = opt_f64(args, "shutter")? {
             if !(0.0..=1.0).contains(&shutter) {
-                return Err(format!(
-                    "shutter 是曝光区间占本帧源跨度的比例，要在 0..1（0 锐利、1 全平均），实得 {shutter}"
+                return Err(crate::i18n::tr_fmt(
+                    "shutter 是曝光区间占本帧源跨度的比例，要在 0..1（0 锐利、1 全平均），实得 {}",
+                    &[&shutter],
                 ));
             }
             next.shutter = shutter;
@@ -5300,14 +5427,18 @@ impl AppState {
         }
         // 批量写操作的硬要求：覆盖已有输出、整段导出都必须显式确认。
         if !confirm(args) {
-            return Err(format!("{id} 是批量写操作，需参数 confirm: true"));
+            return Err(crate::i18n::tr_fmt(
+                "{} 是批量写操作，需参数 confirm: true",
+                &[&id],
+            ));
         }
         // 先把所有参数校验完，再一次性落到状态里，失败时不留半套设置。
         let size = match (opt_u32(args, "width")?, opt_u32(args, "height")?) {
             (Some(width), Some(height)) => {
                 if width < 2 || height < 2 || width % 2 == 1 || height % 2 == 1 {
-                    return Err(format!(
-                        "width/height 必须是偶数且不小于 2：{width}×{height}"
+                    return Err(crate::i18n::tr_fmt(
+                        "width/height 必须是偶数且不小于 2：{}×{}",
+                        &[&width, &height],
                     ));
                 }
                 Some((width, height))
@@ -5345,22 +5476,31 @@ impl AppState {
             Some(codec) => Some(match codec.trim().to_ascii_lowercase().as_str() {
                 "h264" | "264" | "avc" => "H.264".to_owned(),
                 "h265" | "265" | "hevc" => "HEVC".to_owned(),
-                other => return Err(format!("未知编码 {other}；可用 h264 / h265")),
+                other => {
+                    return Err(crate::i18n::tr_fmt(
+                        "未知编码 {}；可用 h264 / h265",
+                        &[&other],
+                    ));
+                }
             }),
             None => None,
         };
         // 色域静帧和成片都用同一条参数：省略就保持面板当前选择。
         let color_space = opt_str(args, "color_space")?
             .map(|raw| {
-                ColorSpace::parse(raw)
-                    .ok_or_else(|| format!("未知色域 {raw}；可用 srgb / p3 / rec2020"))
+                ColorSpace::parse(raw).ok_or_else(|| {
+                    crate::i18n::tr_fmt("未知色域 {}；可用 srgb / p3 / rec2020", &[&raw])
+                })
             })
             .transpose()?;
         // 容器与质量只在静帧那一路有意义：视频模式撞上有损档现在就拦，别等 core。
         let format = opt_str(args, "format")?
             .map(|raw| {
                 StillFormat::parse(raw).ok_or_else(|| {
-                    format!("未知容器 {raw}；可用 png8 / tiff16 / jpeg / webp / avif")
+                    crate::i18n::tr_fmt(
+                        "未知容器 {}；可用 png8 / tiff16 / jpeg / webp / avif",
+                        &[&raw],
+                    )
                 })
             })
             .transpose()?;
@@ -5376,13 +5516,14 @@ impl AppState {
                 let name = raw.trim().to_owned();
                 if self.copy_index(&name).is_none() {
                     let have: Vec<&str> = self.copies.iter().map(|c| c.name.as_str()).collect();
-                    return Err(format!(
-                        "没有叫 {name} 的副本；现有：{}",
-                        if have.is_empty() {
-                            "（还没有副本）".to_owned()
-                        } else {
-                            have.join("、")
-                        }
+                    let have_text = if have.is_empty() {
+                        crate::i18n::tr("（还没有副本）").to_owned()
+                    } else {
+                        have.join(crate::i18n::tr("、"))
+                    };
+                    return Err(crate::i18n::tr_fmt(
+                        "没有叫 {} 的副本；现有：{}",
+                        &[&name, &have_text],
                     ));
                 }
                 Some(name)
@@ -5400,7 +5541,10 @@ impl AppState {
         };
         // 工程文件里的 video_out 可能被手改过；绝不允许它指向源帧。
         if video && sources.iter().any(|source| path_eq(source, &video_out)) {
-            return Err(format!("拒绝覆盖素材：{}", video_out.display()));
+            return Err(crate::i18n::tr_fmt(
+                "拒绝覆盖素材：{}",
+                &[&video_out.display()],
+            ));
         }
         if video {
             // 缺 ffmpeg 就别先渲染一整段帧；提前失败，消息更直接。
@@ -5498,7 +5642,8 @@ impl AppState {
         // 直接写一份快照，失败就把原因带回去；不走 quiet 自动保存，
         // 免得被更早的无关错误干扰判断。
         let snapshot = self.project_snapshot();
-        project::save(&path, &snapshot).map_err(|e| format!("保存工程失败：{e}"))?;
+        project::save(&path, &snapshot)
+            .map_err(|e| crate::i18n::tr_fmt("保存工程失败：{}", &[&e]))?;
         self.last_auto_save = Instant::now();
         self.status = crate::i18n::tr_fmt("工程已保存 {}", &[&path.display()]);
         Ok(json!({"path": path.display().to_string(), "saved": true}))
@@ -5640,9 +5785,11 @@ impl AppState {
             ("fade_out", &mut opts.fade_out),
         ] {
             if let Some(v) = args.get(key) {
-                let f = v.as_f64().ok_or(format!("{key} 必须是数字（秒）"))?;
+                let f = v
+                    .as_f64()
+                    .ok_or(crate::i18n::tr_fmt("{} 必须是数字（秒）", &[&key]))?;
                 if !(f.is_finite() && (0.0..=3600.0).contains(&f)) {
-                    return Err(format!("{key} 必须在 0..3600 秒"));
+                    return Err(crate::i18n::tr_fmt("{} 必须在 0..3600 秒", &[&key]));
                 }
                 *slot = f;
             }
@@ -5656,7 +5803,10 @@ impl AppState {
         if let Some(v) = args.get("acodec") {
             let text = v.as_str().ok_or("acodec 必须是字符串")?;
             opts.acodec = AudioCodec::parse(text).ok_or_else(|| {
-                format!("未知 acodec {text}；可用 auto / copy / aac128 / aac192 / aac256 / aac320")
+                crate::i18n::tr_fmt(
+                    "未知 acodec {}；可用 auto / copy / aac128 / aac192 / aac256 / aac320",
+                    &[&text],
+                )
             })?;
         }
         let mut audio = self.render_audio.clone();
@@ -5669,12 +5819,15 @@ impl AppState {
                 Value::String(s) => {
                     let path = PathBuf::from(s);
                     if !path.is_file() {
-                        return Err(format!("配乐文件不存在：{}", path.display()));
+                        return Err(crate::i18n::tr_fmt(
+                            "配乐文件不存在：{}",
+                            &[&path.display()],
+                        ));
                     }
                     if !aevum_core::audio::is_audio_path(&path) {
-                        return Err(format!(
+                        return Err(crate::i18n::tr_fmt(
                             "不支持这个扩展名：{}；可用 mp3 / wav / aac / m4a / flac / ogg / opus / wma / aif(m4b)",
-                            path.display()
+                            &[&path.display()],
                         ));
                     }
                     audio = Some(path);
@@ -5699,7 +5852,8 @@ impl AppState {
     /// 与 Python `read_xmp` + `merge` 同口径：预设没写的键回到默认值，
     /// 局部蒙版也随默认值清空（Lightroom 预设不含本工程的蒙版模型）。
     pub fn import_xmp_preset(&mut self, path: &Path) -> Result<Value, String> {
-        let params = xmp::read(path).map_err(|e| format!("读不进这个预设：{e}"))?;
+        let params =
+            xmp::read(path).map_err(|e| crate::i18n::tr_fmt("读不进这个预设：{}", &[&e]))?;
         let name = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -5729,14 +5883,19 @@ impl AppState {
             return Err("path 必须以 .xmp 结尾".to_owned());
         }
         if path.exists() && !confirm {
-            return Err(format!("目标已存在，需 confirm: true：{}", path.display()));
+            return Err(crate::i18n::tr_fmt(
+                "目标已存在，需 confirm: true：{}",
+                &[&path.display()],
+            ));
         }
         if let Some(dir) = path.parent()
             && !dir.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(dir).map_err(|e| format!("创建目录失败：{e}"))?;
+            std::fs::create_dir_all(dir)
+                .map_err(|e| crate::i18n::tr_fmt("创建目录失败：{}", &[&e]))?;
         }
-        xmp::write(path, &self.params).map_err(|e| format!("写 XMP 失败：{e}"))?;
+        xmp::write(path, &self.params)
+            .map_err(|e| crate::i18n::tr_fmt("写 XMP 失败：{}", &[&e]))?;
         self.status = crate::i18n::tr_fmt("已导出 XMP 预设 {}", &[&path.display()]);
         Ok(json!({
             "path": path.display().to_string(),
@@ -5747,7 +5906,7 @@ impl AppState {
     fn cmd_xmp_import(&mut self, args: &Value) -> Result<Value, String> {
         let path = PathBuf::from(arg_str(args, "path")?);
         if !path.is_file() {
-            return Err(format!("文件不存在：{}", path.display()));
+            return Err(crate::i18n::tr_fmt("文件不存在：{}", &[&path.display()]));
         }
         self.import_xmp_preset(&path)
     }
@@ -5763,11 +5922,12 @@ impl AppState {
     fn cmd_cube_import(&mut self, args: &Value) -> Result<Value, String> {
         let path = PathBuf::from(arg_str(args, "path")?);
         if !path.is_file() {
-            return Err(format!("文件不存在：{}", path.display()));
+            return Err(crate::i18n::tr_fmt("文件不存在：{}", &[&path.display()]));
         }
         let apply = args.get("apply").and_then(Value::as_bool).unwrap_or(true);
         let key = path.display().to_string();
-        let lut = cube::refresh(&key).map_err(|e| format!("读 .cube 失败：{e}"))?;
+        let lut =
+            cube::refresh(&key).map_err(|e| crate::i18n::tr_fmt("读 .cube 失败：{}", &[&e]))?;
         let info = cube::describe(&lut);
         let mut result = json!({
             "path": key,
@@ -5801,23 +5961,27 @@ impl AppState {
         }
         let size = opt_u32(args, "size")?.unwrap_or(cube::DEFAULT_SIZE as u32);
         if !(cube::MIN_SIZE as u32..=cube::MAX_SIZE as u32).contains(&size) {
-            return Err(format!(
+            return Err(crate::i18n::tr_fmt(
                 "size 必须在 {}..={}",
-                cube::MIN_SIZE,
-                cube::MAX_SIZE
+                &[&cube::MIN_SIZE, &cube::MAX_SIZE],
             ));
         }
         if path.exists() && !confirm(args) {
-            return Err(format!("目标已存在，需 confirm: true：{}", path.display()));
+            return Err(crate::i18n::tr_fmt(
+                "目标已存在，需 confirm: true：{}",
+                &[&path.display()],
+            ));
         }
         if let Some(dir) = path.parent()
             && !dir.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(dir).map_err(|e| format!("创建目录失败：{e}"))?;
+            std::fs::create_dir_all(dir)
+                .map_err(|e| crate::i18n::tr_fmt("创建目录失败：{}", &[&e]))?;
         }
         let params = self.params.clone();
         let size = size as usize;
-        cube::export(&path, &params, size).map_err(|e| format!("写 .cube 失败：{e}"))?;
+        cube::export(&path, &params, size)
+            .map_err(|e| crate::i18n::tr_fmt("写 .cube 失败：{}", &[&e]))?;
         let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         self.status = crate::i18n::tr_fmt("已导出外观 {}", &[&path.display()]);
         Ok(json!({
@@ -5842,15 +6006,19 @@ impl AppState {
         if let Ok(seq) = self.require_sequence()
             && seq.frames.iter().any(|frame| path_eq(&frame.path, &path))
         {
-            return Err(format!("拒绝覆盖素材：{}", path.display()));
+            return Err(crate::i18n::tr_fmt("拒绝覆盖素材：{}", &[&path.display()]));
         }
         if path.exists() && !confirm(args) {
-            return Err(format!("目标已存在，需 confirm: true：{}", path.display()));
+            return Err(crate::i18n::tr_fmt(
+                "目标已存在，需 confirm: true：{}",
+                &[&path.display()],
+            ));
         }
         if let Some(dir) = path.parent()
             && !dir.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(dir).map_err(|e| format!("创建目录失败：{e}"))?;
+            std::fs::create_dir_all(dir)
+                .map_err(|e| crate::i18n::tr_fmt("创建目录失败：{}", &[&e]))?;
         }
         let out = path.clone();
         ctx.request_screenshot(move |image| {
@@ -5879,7 +6047,8 @@ impl AppState {
         let args = if rest.is_empty() {
             json!({})
         } else {
-            serde_json::from_str::<Value>(rest).map_err(|e| format!("参数不是合法 JSON：{e}"))?
+            serde_json::from_str::<Value>(rest)
+                .map_err(|e| crate::i18n::tr_fmt("参数不是合法 JSON：{}", &[&e]))?
         };
         if !args.is_object() {
             return Err("参数必须是 JSON 对象，例如 {\"exposure\":0.5}".to_owned());
@@ -6307,7 +6476,7 @@ impl AppState {
                     (px, w, h)
                 }
                 Err(e) => {
-                    self.auto_note = Some(format!("自动校正失败：{e}"));
+                    self.auto_note = Some(crate::i18n::tr_fmt("自动校正失败：{}", &[&e]));
                     return;
                 }
             },
@@ -6322,21 +6491,26 @@ impl AppState {
         self.params.temperature = q.temperature;
         self.params.tint = q.tint;
         self.auto_note = Some(if q.touches_tone() {
-            format!(
-                "自动：{:+.2} EV · 对比 {:+.0} · 高光 {:+.0} · 阴影 {:+.0} · 白 {:+.0} · 黑 {:+.0} · 色温 {:+.0} · 色调 {:+.0}",
-                q.exposure,
-                q.contrast,
-                q.highlights,
-                q.shadows,
-                q.whites,
-                q.blacks,
-                q.temperature,
-                q.tint
+            crate::i18n::tr_fmt(
+                "自动：{} EV · 对比 {} · 高光 {} · 阴影 {} · 白 {} · 黑 {} · 色温 {} · 色调 {}",
+                &[
+                    &format!("{:+.2}", q.exposure),
+                    &format!("{:+.0}", q.contrast),
+                    &format!("{:+.0}", q.highlights),
+                    &format!("{:+.0}", q.shadows),
+                    &format!("{:+.0}", q.whites),
+                    &format!("{:+.0}", q.blacks),
+                    &format!("{:+.0}", q.temperature),
+                    &format!("{:+.0}", q.tint),
+                ],
             )
         } else {
-            format!(
-                "影调已在安全范围，只校白平衡（色温 {:+.0} · 色调 {:+.0}）",
-                q.temperature, q.tint
+            crate::i18n::tr_fmt(
+                "影调已在安全范围，只校白平衡（色温 {} · 色调 {}）",
+                &[
+                    &format!("{:+.0}", q.temperature),
+                    &format!("{:+.0}", q.tint),
+                ],
             )
         });
         self.preview_dirty = true;
@@ -6435,7 +6609,7 @@ impl AppState {
                     })));
                 }
                 Err(e) => {
-                    let _ = tx.send(Msg::Error(format!("预览失败：{e}")));
+                    let _ = tx.send(Msg::Error(crate::i18n::tr_fmt("预览失败：{}", &[&e])));
                 }
             }
             ctx2.request_repaint();
@@ -6528,7 +6702,7 @@ impl AppState {
             .clone()
             .ok_or_else(|| "还没选定图库目录".to_owned())?;
         let saved = aevum_core::library::set_metadata(&dir, &self.lib_meta)
-            .map_err(|e| format!("写元数据失败：{e}"))?;
+            .map_err(|e| crate::i18n::tr_fmt("写元数据失败：{}", &[&e]))?;
         self.lib_meta = saved.clone();
         // 这个目录正好开着：内存那份也得跟上，否则自动保存会用旧值把它盖回去。
         if self.seq.as_ref().is_some_and(|s| s.root == dir) {
@@ -6577,7 +6751,10 @@ impl AppState {
         patch: aevum_core::library::Organize,
     ) -> Result<(), String> {
         let Some(dir) = self.lib_roots.get(root).cloned() else {
-            return Err(format!("目录序号超出范围：1..={}", self.lib_roots.len()));
+            return Err(crate::i18n::tr_fmt(
+                "目录序号超出范围：1..={}",
+                &[&self.lib_roots.len()],
+            ));
         };
         aevum_core::library::organize(&dir, frame, &patch).map_err(|e| e.to_string())?;
         if let Some(f) = self
@@ -6606,7 +6783,10 @@ impl AppState {
         patch: aevum_core::library::Organize,
     ) -> Result<(), String> {
         let Some(dir) = self.lib_roots.get(root).cloned() else {
-            return Err(format!("目录序号超出范围：1..={}", self.lib_roots.len()));
+            return Err(crate::i18n::tr_fmt(
+                "目录序号超出范围：1..={}",
+                &[&self.lib_roots.len()],
+            ));
         };
         if frames.is_empty() {
             return Err("没有选中的照片".to_owned());
@@ -6699,7 +6879,10 @@ impl AppState {
         remove: &[String],
     ) -> Result<usize, String> {
         let Some(dir) = self.lib_roots.get(root).cloned() else {
-            return Err(format!("目录序号超出范围：1..={}", self.lib_roots.len()));
+            return Err(crate::i18n::tr_fmt(
+                "目录序号超出范围：1..={}",
+                &[&self.lib_roots.len()],
+            ));
         };
         if frames.is_empty() {
             return Err("没有选中的照片".to_owned());
@@ -6738,10 +6921,9 @@ impl AppState {
     }
 
     fn lib_dir(&self, root: usize) -> Result<PathBuf, String> {
-        self.lib_roots
-            .get(root)
-            .cloned()
-            .ok_or_else(|| format!("目录序号超出范围：1..={}", self.lib_roots.len()))
+        self.lib_roots.get(root).cloned().ok_or_else(|| {
+            crate::i18n::tr_fmt("目录序号超出范围：1..={}", &[&self.lib_roots.len()])
+        })
     }
 
     /// 并成一叠：写一次盘，返回归一化后的全部堆叠。少于两张由调用方拦。
@@ -6874,7 +7056,10 @@ impl AppState {
     /// 把一张照片放进集合；已存在返回 `false`。
     pub fn lib_collection_put(&mut self, col: usize, path: &Path) -> Result<bool, String> {
         if col >= self.lib_cols.len() {
-            return Err(format!("集合序号超出范围：1..={}", self.lib_cols.len()));
+            return Err(crate::i18n::tr_fmt(
+                "集合序号超出范围：1..={}",
+                &[&self.lib_cols.len()],
+            ));
         }
         let added = aevum_core::library::collection_put(&mut self.lib_cols, col, path);
         if added {
@@ -7053,7 +7238,10 @@ impl AppState {
     pub fn save_copy(&mut self, name: &str, overwrite: bool) -> Result<usize, String> {
         let name = clean_copy_name(name)?;
         match self.copy_index(&name) {
-            Some(_) if !overwrite => Err(format!("副本「{name}」已存在；要覆盖给 overwrite: true")),
+            Some(_) if !overwrite => Err(crate::i18n::tr_fmt(
+                "副本「{}」已存在；要覆盖给 overwrite: true",
+                &[&name],
+            )),
             Some(i) => {
                 self.copies[i].params = self.params.clone();
                 self.copies[i].keyframes = self.keyframes.clone();
@@ -7074,10 +7262,13 @@ impl AppState {
 
     pub fn apply_copy(&mut self, name: &str) -> Result<(), String> {
         let Some(copy) = self.copies.iter().find(|c| c.name == name).cloned() else {
-            return Err(format!("没有叫 {name} 的副本"));
+            return Err(crate::i18n::tr_fmt("没有叫 {} 的副本", &[&name]));
         };
         self.params = copy.params;
         self.keyframes = copy.keyframes;
+        // 存中文标识而不是译文：`preset` 会写进工程文件，也要和 `PRESET_NAMES`
+        // 逐字比较，翻了之后中文会话里会看到上一次英文会话留下的 "Copy x"。
+        // 显示时由 `i18n::tr_preset` 认「副本 」前缀再翻。
         self.preset = format!("副本 {}", copy.name);
         self.preview_dirty = true;
         history::note(
@@ -7089,7 +7280,7 @@ impl AppState {
 
     pub fn delete_copy(&mut self, name: &str) -> Result<(), String> {
         let Some(i) = self.copy_index(name) else {
-            return Err(format!("没有叫 {name} 的副本"));
+            return Err(crate::i18n::tr_fmt("没有叫 {} 的副本", &[&name]));
         };
         self.copies.remove(i);
         history::note("copy-del", crate::i18n::tr_fmt("删副本 {}", &[&name]));
@@ -7099,10 +7290,10 @@ impl AppState {
     pub fn rename_copy(&mut self, from: &str, to: &str) -> Result<(), String> {
         let to = clean_copy_name(to)?;
         let Some(i) = self.copy_index(from) else {
-            return Err(format!("没有叫 {from} 的副本"));
+            return Err(crate::i18n::tr_fmt("没有叫 {} 的副本", &[&from]));
         };
         if self.copy_index(&to).is_some() {
-            return Err(format!("副本「{to}」已存在"));
+            return Err(crate::i18n::tr_fmt("副本「{}」已存在", &[&to]));
         }
         self.copies[i].name = to.clone();
         history::note(
@@ -7916,7 +8107,7 @@ impl AppState {
 
     fn save_queue(&mut self) {
         if let Err(e) = queue::save(&self.queue_path, &self.queue) {
-            self.error = Some(format!("队列保存失败：{e}"));
+            self.error = Some(crate::i18n::tr_fmt("队列保存失败：{}", &[&e]));
         }
     }
 
@@ -8197,8 +8388,9 @@ impl AppState {
             return Err("width 与 height 需同时为 0（保持原生）或同时给出".to_owned());
         }
         if width > 0 && (width < 2 || height < 2 || width % 2 == 1 || height % 2 == 1) {
-            return Err(format!(
-                "width/height 必须是偶数且不小于 2：{width}×{height}"
+            return Err(crate::i18n::tr_fmt(
+                "width/height 必须是偶数且不小于 2：{}×{}",
+                &[&width, &height],
             ));
         }
         let fps = opt_f64(args, "fps")?.unwrap_or(self.output_fps as f64);
@@ -8213,7 +8405,12 @@ impl AppState {
             Some(codec) => match codec.trim().to_ascii_lowercase().as_str() {
                 "h264" | "264" | "avc" => "h264",
                 "h265" | "265" | "hevc" => "h265",
-                other => return Err(format!("未知编码 {other}；可用 h264 / h265")),
+                other => {
+                    return Err(crate::i18n::tr_fmt(
+                        "未知编码 {}；可用 h264 / h265",
+                        &[&other],
+                    ));
+                }
             },
             None if self.codec.contains("264") => "h264",
             None => "h265",
@@ -8222,7 +8419,7 @@ impl AppState {
             Some(preset) => {
                 let preset = preset.trim();
                 if !queue::PRESETS.contains(&preset) {
-                    return Err(format!("未知编码预设 {preset}"));
+                    return Err(crate::i18n::tr_fmt("未知编码预设 {}", &[&preset]));
                 }
                 preset.to_owned()
             }
@@ -8291,7 +8488,10 @@ impl AppState {
         let index =
             opt_u32(args, "index")?.ok_or_else(|| "缺少 index（从 1 开始）".to_owned())? as usize;
         if index == 0 || index > self.queue.len() {
-            return Err(format!("index 超出范围：1..={}", self.queue.len()));
+            return Err(crate::i18n::tr_fmt(
+                "index 超出范围：1..={}",
+                &[&self.queue.len()],
+            ));
         }
         self.queue.remove(index - 1);
         self.save_queue();
@@ -8539,7 +8739,7 @@ impl AppState {
             }
             Err(e) => {
                 if !quiet {
-                    self.error = Some(format!("工程保存失败：{e}"));
+                    self.error = Some(crate::i18n::tr_fmt("工程保存失败：{}", &[&e]));
                 }
             }
         }
@@ -8579,7 +8779,7 @@ impl AppState {
         match project::load(&path) {
             Ok(p) => self.apply_project(p),
             Err(e) => {
-                self.error = Some(format!("读取工程失败：{e}"));
+                self.error = Some(crate::i18n::tr_fmt("读取工程失败：{}", &[&e]));
             }
         }
     }
@@ -8714,7 +8914,7 @@ impl AppState {
                     let _ = tx.send(Msg::Saved(path.display().to_string()));
                 }
                 Err(e) => {
-                    let _ = tx.send(Msg::Error(format!("导出失败：{e}")));
+                    let _ = tx.send(Msg::Error(crate::i18n::tr_fmt("导出失败：{}", &[&e])));
                 }
             }
             ctx2.request_repaint();
@@ -9478,13 +9678,14 @@ fn aspect_arg(text: &str) -> Result<Aspect, String> {
         "1:1" | "square" | "3" => Aspect::Square,
         "9:16" | "vertical" | "4" => Aspect::Vertical,
         other => {
-            return Err(format!(
-                "画幅比例不认：{other}（可用：{}）",
-                Aspect::ALL
-                    .iter()
-                    .map(|a| a.label())
-                    .collect::<Vec<_>>()
-                    .join(" / ")
+            let known = Aspect::ALL
+                .iter()
+                .map(|a| a.label())
+                .collect::<Vec<_>>()
+                .join(" / ");
+            return Err(crate::i18n::tr_fmt(
+                "画幅比例不认：{}（可用：{}）",
+                &[&other, &known],
             ));
         }
     })
@@ -9552,9 +9753,9 @@ fn apply_mask_geometry(
         1
     };
     if component >= count {
-        return Err(format!(
+        return Err(crate::i18n::tr_fmt(
             "component 超出范围：0..{}",
-            count.saturating_sub(1)
+            &[&count.saturating_sub(1)],
         ));
     }
     let target: &mut Value = if grouped {
@@ -9578,7 +9779,10 @@ fn apply_mask_geometry(
                     .map(str::to_ascii_lowercase)
                     .ok_or_else(|| "kind 必须是 linear / radial / brush".to_owned())?;
                 if kind != "linear" && kind != "radial" && kind != "brush" {
-                    return Err(format!("未知蒙版形状 {kind}；可用 linear / radial / brush"));
+                    return Err(crate::i18n::tr_fmt(
+                        "未知蒙版形状 {}；可用 linear / radial / brush",
+                        &[&kind],
+                    ));
                 }
                 object.insert("kind".to_owned(), json!(kind));
                 if kind == "brush" {
@@ -9594,8 +9798,9 @@ fn apply_mask_geometry(
                     .map(str::to_ascii_lowercase)
                     .ok_or_else(|| "blend 必须是 add / subtract / intersect".to_owned())?;
                 if !matches!(blend.as_str(), "add" | "subtract" | "intersect") {
-                    return Err(format!(
-                        "未知叠加方式 {blend}；可用 add / subtract / intersect"
+                    return Err(crate::i18n::tr_fmt(
+                        "未知叠加方式 {}；可用 add / subtract / intersect",
+                        &[&blend],
                     ));
                 }
                 object.insert("blend".to_owned(), json!(blend));
@@ -9628,28 +9833,36 @@ fn apply_mask_geometry(
                     .as_array()
                     .ok_or_else(|| "geometry.strokes 必须是数组（每项一条笔画）".to_owned())?;
                 if list.len() > mask::MAX_STROKES {
-                    return Err(format!("strokes 最多 {} 条笔画", mask::MAX_STROKES));
+                    return Err(crate::i18n::tr_fmt(
+                        "strokes 最多 {} 条笔画",
+                        &[&mask::MAX_STROKES],
+                    ));
                 }
                 let mut out = Vec::with_capacity(list.len());
                 for (i, s) in list.iter().enumerate() {
-                    let obj = s
-                        .as_object()
-                        .ok_or_else(|| format!("第 {} 条笔画必须是对象", i + 1))?;
+                    let obj = s.as_object().ok_or_else(|| {
+                        crate::i18n::tr_fmt("第 {} 条笔画必须是对象", &[&(i + 1)])
+                    })?;
                     for key in obj.keys() {
                         if !matches!(
                             key.as_str(),
                             "points" | "radius" | "hardness" | "flow" | "erase"
                         ) {
-                            return Err(format!("未知笔画字段 {key}"));
+                            return Err(crate::i18n::tr_fmt("未知笔画字段 {}", &[&key]));
                         }
                     }
                     let points = obj
                         .get("points")
-                        .ok_or_else(|| format!("第 {} 条笔画缺 points", i + 1))?
+                        .ok_or_else(|| crate::i18n::tr_fmt("第 {} 条笔画缺 points", &[&(i + 1)]))?
                         .as_array()
-                        .ok_or_else(|| format!("第 {} 条笔画的 points 必须是数组", i + 1))?;
+                        .ok_or_else(|| {
+                            crate::i18n::tr_fmt("第 {} 条笔画的 points 必须是数组", &[&(i + 1)])
+                        })?;
                     if points.len() > mask::MAX_STROKE_POINTS {
-                        return Err(format!("一条笔画最多 {} 个点", mask::MAX_STROKE_POINTS));
+                        return Err(crate::i18n::tr_fmt(
+                            "一条笔画最多 {} 个点",
+                            &[&mask::MAX_STROKE_POINTS],
+                        ));
                     }
                     let mut pts = Vec::with_capacity(points.len());
                     for p in points {
@@ -9668,7 +9881,7 @@ fn apply_mask_geometry(
                         pts.push(json!([x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)]));
                     }
                     if pts.is_empty() {
-                        return Err(format!("第 {} 条笔画至少要一个点", i + 1));
+                        return Err(crate::i18n::tr_fmt("第 {} 条笔画至少要一个点", &[&(i + 1)]));
                     }
                     let mut stroke = serde_json::Map::new();
                     stroke.insert("points".to_owned(), Value::Array(pts));
@@ -9698,7 +9911,7 @@ fn apply_mask_geometry(
                 }
                 object.insert("strokes".to_owned(), Value::Array(out));
             }
-            other => return Err(format!("未知几何字段 {other}")),
+            other => return Err(crate::i18n::tr_fmt("未知几何字段 {}", &[&other])),
         }
     }
     Ok(())
@@ -9708,7 +9921,7 @@ fn geometry_number(key: &str, value: &Value) -> Result<f64, String> {
     value
         .as_f64()
         .filter(|v| v.is_finite())
-        .ok_or_else(|| format!("geometry.{key} 必须是有限数值"))
+        .ok_or_else(|| crate::i18n::tr_fmt("geometry.{} 必须是有限数值", &[&key]))
 }
 
 /// 组级亮度范围的存盘形状：0~1 的区间 + 开关。
@@ -9772,7 +9985,7 @@ fn apply_mask_range(raw: &mut Value, range: &serde_json::Map<String, Value>) -> 
         let number = |v: &Value| {
             v.as_f64()
                 .filter(|v| v.is_finite())
-                .ok_or_else(|| format!("range.{key} 必须是有限数值"))
+                .ok_or_else(|| crate::i18n::tr_fmt("range.{} 必须是有限数值", &[&key]))
         };
         match key.as_str() {
             "lum_on" | "hue_on" => continue,
@@ -9796,8 +10009,9 @@ fn apply_mask_range(raw: &mut Value, range: &serde_json::Map<String, Value>) -> 
                 hue_touched = true;
             }
             other => {
-                return Err(format!(
-                    "未知范围字段 {other}（亮度用 lum_*，颜色用 hue_*）"
+                return Err(crate::i18n::tr_fmt(
+                    "未知范围字段 {}（亮度用 lum_*，颜色用 hue_*）",
+                    &[&other],
                 ));
             }
         }
@@ -9836,7 +10050,7 @@ fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("缺少字符串参数 {key}"))
+        .ok_or_else(|| crate::i18n::tr_fmt("缺少字符串参数 {}", &[&key]))
 }
 
 fn opt_str<'a>(args: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
@@ -9845,7 +10059,7 @@ fn opt_str<'a>(args: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
         Some(value) => value
             .as_str()
             .map(Some)
-            .ok_or_else(|| format!("{key} 必须是字符串")),
+            .ok_or_else(|| crate::i18n::tr_fmt("{} 必须是字符串", &[&key])),
     }
 }
 
@@ -9861,7 +10075,8 @@ fn opt_u32(args: &Value, key: &str) -> Result<Option<u32>, String> {
                     })
                 })
                 .and_then(|n| u32::try_from(n).ok());
-            n.map(Some).ok_or_else(|| format!("{key} 必须是非负整数"))
+            n.map(Some)
+                .ok_or_else(|| crate::i18n::tr_fmt("{} 必须是非负整数", &[&key]))
         }
     }
 }
@@ -9873,7 +10088,7 @@ fn opt_f64(args: &Value, key: &str) -> Result<Option<f64>, String> {
             .as_f64()
             .filter(|v| v.is_finite())
             .map(Some)
-            .ok_or_else(|| format!("{key} 必须是有限数值")),
+            .ok_or_else(|| crate::i18n::tr_fmt("{} 必须是有限数值", &[&key])),
     }
 }
 
@@ -9889,7 +10104,7 @@ fn parse_speed_keys(raw: &Value) -> Result<Vec<SpeedKey>, String> {
         .iter()
         .map(|item| {
             if !item.is_object() {
-                return Err(format!("速度键要写成对象，实得 {item}"));
+                return Err(crate::i18n::tr_fmt("速度键要写成对象，实得 {}", &[&item]));
             }
             let at = opt_f64(item, "at")?
                 .ok_or_else(|| "每个速度键都要有 at（源进度 0..1）".to_owned())?;
@@ -9912,10 +10127,10 @@ fn words_arg(args: &Value, key: &str) -> Result<Vec<String>, String> {
             .iter()
             .map(|v| {
                 v.as_str()
-                    .ok_or_else(|| format!("{key} 里的元素必须是字符串"))
+                    .ok_or_else(|| crate::i18n::tr_fmt("{} 里的元素必须是字符串", &[&key]))
             })
             .collect::<Result<_, _>>()?,
-        Some(_) => return Err(format!("{key} 必须是字符串或字符串数组")),
+        Some(_) => return Err(crate::i18n::tr_fmt("{} 必须是字符串或字符串数组", &[&key])),
     };
     Ok(raw
         .into_iter()
@@ -9938,7 +10153,12 @@ fn apply_metadata_args(meta: &mut project::Metadata, args: &Value) -> Result<boo
         *slot = match v {
             Value::Null => String::new(),
             Value::String(s) => s.clone(),
-            other => return Err(format!("{key} 必须是字符串，收到 {other}")),
+            other => {
+                return Err(crate::i18n::tr_fmt(
+                    "{} 必须是字符串，收到 {}",
+                    &[&key, &other],
+                ));
+            }
         };
     }
     Ok(any)
@@ -10031,7 +10251,8 @@ fn run_merge_job(
         if cancel.load(Ordering::SeqCst) {
             return Err("已取消：还在读帧，没写成片".to_owned());
         }
-        let (rgb, w, h) = export::load_rgb_f32(src).map_err(|e| format!("读帧失败：{e}"))?;
+        let (rgb, w, h) =
+            export::load_rgb_f32(src).map_err(|e| crate::i18n::tr_fmt("读帧失败：{}", &[&e]))?;
         let rect = crop.map(|c| (c.x as usize, c.y as usize, c.w as usize, c.h as usize));
         let framing = Framing {
             angle_deg: 0.0,
@@ -10049,9 +10270,9 @@ fn run_merge_job(
             match dims {
                 None => dims = Some(got),
                 Some(prev) if prev != got => {
-                    return Err(format!(
-                        "第 {} 帧与第 {k} 帧对齐后尺寸不一致（{}×{} vs {}×{}）：先跑对齐或裁成同尺寸",
-                        job.indices[0], prev.0, prev.1, got.0, got.1
+                    return Err(crate::i18n::tr_fmt(
+                        "第 {} 帧与第 {} 帧对齐后尺寸不一致（{}×{} vs {}×{}）：先跑对齐或裁成同尺寸",
+                        &[&job.indices[0], &k, &prev.0, &prev.1, &got.0, &got.1],
                     ));
                 }
                 Some(_) => {}
@@ -10076,13 +10297,16 @@ fn run_merge_job(
                 .iter()
                 .map(|(b, w, h)| (b.as_slice(), *w as u32, *h as u32))
                 .collect();
-            let (pano, cw, ch) =
-                aevum_core::pano::stitch(&refs).map_err(|e| format!("拼接失败：{e}"))?;
+            let (pano, cw, ch) = aevum_core::pano::stitch(&refs)
+                .map_err(|e| crate::i18n::tr_fmt("拼接失败：{}", &[&e]))?;
             (pano, cw as usize, ch as usize)
         }
     };
     if pixels.is_empty() {
-        return Err(format!("{}算出来是空图：检查帧是否可读", job.kind.noun()));
+        return Err(crate::i18n::tr_fmt(
+            "{}算出来是空图：检查帧是否可读",
+            &[&job.kind.noun()],
+        ));
     }
 
     let deep = job.options.format == StillFormat::Tiff16;
@@ -10095,7 +10319,7 @@ fn run_merge_job(
         deep,
         &job.options,
     )
-    .map_err(|e| format!("写{}成片失败：{e}", job.kind.noun()))?;
+    .map_err(|e| crate::i18n::tr_fmt("写{}成片失败：{}", &[&job.kind.noun(), &e]))?;
     done.store(total.load(Ordering::Relaxed), Ordering::Relaxed);
     Ok(json!({
         "path": job.dst.display().to_string(),
@@ -14103,7 +14327,7 @@ mod history_tests {
         let ctx = Context::default();
         let mut state = AppState::new();
         for k in 1..=5i32 {
-            let label = format!("曝光 {k}");
+            let label = crate::i18n::tr_fmt("曝光 {}", &[&k]);
             edit_in_frame(&mut state, "曝光", &label, |s| {
                 s.params.exposure = k as f64
             });
