@@ -158,11 +158,11 @@ fn neutralise_demo_data(state: &mut AppState) {
 #[test]
 fn english_ui_has_no_untranslated_text() {
     let _guard = probe_guard();
-    let (missing, _) = sweep(Lang::En);
+    let (missing, _) = sweep(Lang::EN);
     // 探针必须在每台机器上都能真的记到东西，否则这条测试会「静默通过」。
     // 用一个肯定不在表里的键自检一次。
     assert!(
-        i18n::has("曝光"),
+        i18n::has_in(Lang::EN, "曝光"),
         "英文表被清空过？连「曝光」都查不到，探针的可靠性无从谈起"
     );
     assert!(
@@ -177,7 +177,7 @@ fn english_ui_has_no_untranslated_text() {
 #[test]
 fn no_chinese_is_painted_in_english_mode() {
     let _guard = probe_guard();
-    let (_, painted) = sweep(Lang::En);
+    let (_, painted) = sweep(Lang::EN);
     // 语言选择器上「中文」那一项按惯例用该语言自己的写法，不翻译。
     // · 「中文」：语言选择器上那一项按惯例用该语言自己的写法。
     // · 「演示序列」：`AppState::demo()` 自造的目录名，属于演示数据而不是界面文案。
@@ -206,27 +206,39 @@ fn report(items: &[String]) -> String {
 #[test]
 fn the_miss_recorder_actually_records() {
     let _guard = probe_guard();
-    i18n::set(Lang::En);
+    i18n::set(Lang::EN);
     let _ = i18n::take_untranslated();
     let probe = "__i18n_probe__不该出现的键";
     assert_eq!(i18n::tr(probe), probe, "落空时必须原样返回，不能变成空串");
     assert_eq!(i18n::take_untranslated(), vec![probe.to_owned()]);
     // 取走即清空，不该重复计数。
     assert!(i18n::take_untranslated().is_empty());
-    i18n::set(Lang::Zh);
+    i18n::set(Lang::ZH);
 }
 
-/// 数据表里的标签逐条核对。
+/// 数据表里的标签逐条核对，**每一种翻译语言各查一遍**。
 ///
-/// 这一条不画界面，所以快；它拦的是「新加了一条推子/预设，忘了补英文」，
-/// 那时候 `SPECS` 里多一行，这里立刻点名。
+/// 这一条不画界面，所以快；它拦的是「新加了一条推子/预设，忘了补某张表」，
+/// 那时候 `SPECS` 里多一行，这里立刻点名，并指出缺的是哪种语言。
+///
+/// 判据遍历 `Lang::all()` 而不是写死英文：加一种语言时它自动把新表也管上，不需要
+/// 改这条测试。查表也**不看当前语言**——测试是并行的，`current()` 是全局状态，
+/// 依赖它会让结果随时机漂移（这次改造正是被这一点先照出来的）。
 #[test]
 fn data_table_labels_are_all_translated() {
-    let mut missing: Vec<&str> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
     // `AI`、`Windows`、`macOS` 这类本来两边写法相同，没有译文是正常的。
-    let want = |text: &'static str, missing: &mut Vec<&'static str>| {
-        if !text.is_empty() && i18n::needs_translation(text) && !i18n::has(text) {
-            missing.push(text);
+    let want = |text: &'static str, missing: &mut Vec<String>| {
+        if text.is_empty() || !i18n::needs_translation(text) {
+            return;
+        }
+        for l in Lang::all() {
+            if l.catalog().is_source() {
+                continue;
+            }
+            if !i18n::has_in(l, text) {
+                missing.push(format!("{} · {text}", l.code()));
+            }
         }
     };
 
@@ -275,11 +287,11 @@ fn data_table_labels_are_all_translated() {
     missing.dedup();
     assert!(
         missing.is_empty(),
-        "数据表里还有 {} 条标签没译文：\n{}",
+        "数据表里还有 {} 条标签没译文（格式是「语言 · 中文原文」）：\n{}",
         missing.len(),
         missing
             .iter()
-            .map(|k| format!("    ({k:?}, \"\"),"))
+            .map(|k| format!("    {k}"))
             .collect::<Vec<_>>()
             .join("\n")
     );

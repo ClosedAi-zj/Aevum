@@ -548,17 +548,18 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
 
             look_section(ui, "语言 / Language");
             ui.horizontal_wrapped(|ui| {
-                for p in [
-                    crate::i18n::LangPref::System,
-                    crate::i18n::LangPref::Zh,
-                    crate::i18n::LangPref::En,
-                ] {
-                    // 「跟随系统」是唯一需要翻译的一项；中文与 English 用各自语言
-                    // 自己的写法，不翻 —— 只会英文的人要能认出那一项。
+                // 选项来自注册表，不逐个列语言：「加一种语言只改 CATALOGS 一行」这条
+                // 承诺在这里兑现——下面是它唯一的使用者，写法对语言数量一无所知。
+                //
+                // Options come from the registry rather than an explicit list, so the
+                // promise "adding a language means one line in CATALOGS" holds here:
+                // this is its only consumer, and it knows nothing about the count.
+                for p in crate::i18n::LangPref::all() {
+                    // 「跟随系统」是唯一需要翻译的一项；其余用各自语言自己的写法，
+                    // 不翻 —— 只会英文的人要能认出那一项。
                     let name = match p {
                         crate::i18n::LangPref::System => crate::i18n::t!("跟随系统"),
-                        crate::i18n::LangPref::Zh => crate::i18n::Lang::Zh.label(),
-                        crate::i18n::LangPref::En => crate::i18n::Lang::En.label(),
+                        crate::i18n::LangPref::Fixed(l) => l.label(),
                     };
                     if ui.selectable_label(state.lang == p, name).clicked() && state.lang != p {
                         state.lang = p;

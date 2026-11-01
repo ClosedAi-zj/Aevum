@@ -717,17 +717,12 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         // 宁可少两个字，也不让标签爬进推子的地盘。
         // 截断长度按语言分档：中文 6 字约 78px 恰好贴住 LABEL_W，英文同宽只放得
         // 下 ~11 个半角字符，仍按 6 截会把 "Highlights" 截成 "Highli…"。
+        // 档位存在语言表里（`Catalog::ellipsis_chars`），加语言时由那张表自己声明，
+        // 这里不再出现具体语言的名字。
         p.text(
             Pos2::new(rect.left() + 2.0, rect.center().y),
             Align2::LEFT_CENTER,
-            theme::ellipsis(
-                label,
-                if crate::i18n::current() == crate::i18n::Lang::En {
-                    12
-                } else {
-                    6
-                },
-            ),
+            theme::ellipsis(label, crate::i18n::current().ellipsis_chars()),
             font(SIZE_LABEL),
             if changed_now { text() } else { muted() },
         );

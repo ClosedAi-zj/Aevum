@@ -44,7 +44,7 @@ pub fn selftest() -> Result<String, String> {
     // 自检**固定中文**，不读用户的 settings.json：形状计数是回归基线，
     // 同一个提交在「用户设了英文」的机器上数出另一组数字，门槛就成了看心情。
     // 语言切换本身由 `--selftest` 之外的道路覆盖（见 i18n 的单元测试）。
-    crate::i18n::set(crate::i18n::Lang::Zh);
+    crate::i18n::set(crate::i18n::Lang::ZH);
     let ctx = egui::Context::default();
     theme::apply(&ctx, 1.0);
 

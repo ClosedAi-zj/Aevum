@@ -18,7 +18,23 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET = ROOT / "crates" / "aevum-ui" / "src" / "i18n_en.rs"
+SRC = ROOT / "crates" / "aevum-ui" / "src"
+
+#: 默认语言。加一种语言时不必改这里：`--lang ja` 会指向 `i18n_ja.rs`，
+#: 只要那张表的骨架与本文件约定一致（`ENTRIES` 标记 + 一条一行）就能读写。
+#:
+#: Default language. Adding a language does not touch this: `--lang ja` points at
+#: `i18n_ja.rs`, and any table following the same convention (the `ENTRIES` marker,
+#: one entry per line) can be read and rewritten.
+DEFAULT_LANG = "en"
+
+
+def target(lang: str = DEFAULT_LANG) -> Path:
+    """某种语言的表文件。语言代码直接拼进文件名，没有白名单。"""
+    return SRC / f"i18n_{lang}.rs"
+
+
+TARGET = target()
 
 MARKER = "pub(crate) static ENTRIES: &[(&str, &str)] = &["
 
@@ -49,18 +65,24 @@ def escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\t", "\\t")
 
 
-def parse(text: str) -> tuple[str, dict[str, str]]:
+def parse(text: str, path: Path = TARGET) -> tuple[str, dict[str, str]]:
     """返回 (文件头含 MARKER 的前缀, 键值表)。解析不到 MARKER 视为文件被手改。"""
     at = text.find(MARKER)
     if at < 0:
-        raise SystemExit(f"i18n_table: {TARGET} 里找不到 ENTRIES 标记，文件被改动过？")
+        raise SystemExit(f"i18n_table: {path} 里找不到 ENTRIES 标记，文件被改动过？")
     head = text[: at + len(MARKER)]
     table = {unescape(m.group(1)): unescape(m.group(2)) for m in ENTRY.finditer(text[at:])}
     return head, table
 
 
-def load() -> tuple[str, dict[str, str]]:
-    return parse(TARGET.read_text(encoding="utf-8"))
+def load(lang: str = DEFAULT_LANG) -> tuple[str, dict[str, str]]:
+    path = target(lang)
+    if not path.exists():
+        raise SystemExit(
+            f"i18n_table: {path} 不存在。新增语言先建表骨架（复制 i18n_en.rs 的文件头 + "
+            f"空 ENTRIES 数组），再用 --lang {lang} 填值。"
+        )
+    return parse(path.read_text(encoding="utf-8"), path)
 
 
 def render(head: str, table: dict[str, str]) -> str:
@@ -69,7 +91,7 @@ def render(head: str, table: dict[str, str]) -> str:
     return f"{head}\n{body}];\n"
 
 
-def write(table: dict[str, str]) -> None:
+def write(table: dict[str, str], lang: str = DEFAULT_LANG) -> None:
     """整表重写。文件头（含 `#[rustfmt::skip]`）原样保留。"""
-    head, _ = load()
-    TARGET.write_text(render(head, table), encoding="utf-8", newline="\n")
+    head, _ = load(lang)
+    target(lang).write_text(render(head, table), encoding="utf-8", newline="\n")

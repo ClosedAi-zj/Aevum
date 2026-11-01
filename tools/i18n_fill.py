@@ -9,6 +9,7 @@
 
     python tools/i18n_fill.py pairs.json            # 预演，只报会改什么
     python tools/i18n_fill.py pairs.json --write    # 落盘
+    python tools/i18n_fill.py pairs.json --write --lang ja   # 写进日语表
 
 `pairs.json` 是 `[["中文原文", "English"], ...]`。重复键取最后一次出现；若同一个
 键给了两个不同译文，直接报错——那说明这批数据本身有矛盾，不该由脚本静默挑一个。
@@ -28,9 +29,22 @@ import i18n_table
 
 
 def main() -> int:
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    write = "--write" in sys.argv[1:]
-    if len(args) != 1:
+    argv = sys.argv[1:]
+    write = "--write" in argv
+    lang = i18n_table.DEFAULT_LANG
+    rest: list[str] = []
+    it = iter(argv)
+    for a in it:
+        if a == "--write":
+            continue
+        if a == "--lang":
+            lang = next(it, lang)
+            continue
+        if a.startswith("--lang="):
+            lang = a.split("=", 1)[1]
+            continue
+        rest.append(a)
+    if len(rest) != 1:
         print(__doc__)
         return 2
 
@@ -57,7 +71,7 @@ def main() -> int:
             raise SystemExit(f"i18n_fill: {zh!r} 给了两个不同译文：\n  {incoming[zh]!r}\n  {en!r}")
         incoming[zh] = en
 
-    _head, existing = i18n_table.load()
+    _head, existing = i18n_table.load(lang)
 
     added = [k for k in incoming if k not in existing]
     updated = [k for k in incoming if k in existing and existing[k] != incoming[k]]
@@ -81,8 +95,8 @@ def main() -> int:
         print("（预演。加 --write 落盘。）")
         return 0
 
-    i18n_table.write(merged)
-    print(f"i18n_fill: 已写入 {i18n_table.TARGET}（{len(merged)} 条）")
+    i18n_table.write(merged, lang)
+    print(f"i18n_fill: 已写入 {i18n_table.target(lang)}（{len(merged)} 条）")
     return 0
 
 

@@ -21,6 +21,7 @@
     python tools/i18n_extract.py            # 报告缺译
     python tools/i18n_extract.py --write    # 把扫描到的新键并进英文表（只增不删）
     python tools/i18n_extract.py --skeleton # 另存一份待填写的条目骨架
+    python tools/i18n_extract.py --lang ja  # 换成日语表（i18n_ja.rs）
 """
 
 from __future__ import annotations
@@ -146,21 +147,24 @@ def collect() -> dict[str, set[str]]:
     return found
 
 
-def parse_en_table() -> dict[str, str]:
+def parse_table(lang: str) -> dict[str, str]:
     """整表读出来。解析规则只在 `i18n_table.py` 有一份，这里不许再抄。"""
-    import i18n_table
-
-    return i18n_table.load()[1]
+    return i18n_table.load(lang)[1]
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--lang",
+        default=i18n_table.DEFAULT_LANG,
+        help="对哪种语言的表做比对与写入（默认 en，对应 i18n_en.rs；加 `--lang ja` 就是 i18n_ja.rs）",
+    )
     ap.add_argument("--skeleton", action="store_true", help="把缺译条目写成待填骨架")
     ap.add_argument("--write", action="store_true", help="把扫描到的新键并进英文表（只增不删，按码点排序）")
     args = ap.parse_args()
 
     found = collect()
-    table = parse_en_table()
+    table = parse_table(args.lang)
     missing = sorted(k for k in found if k not in table)
     outside = sorted(k for k in table if k not in found)
 
@@ -172,11 +176,10 @@ def main() -> int:
     )
 
     if args.write:
-        import i18n_table
-
         merged = {**table, **{k: table.get(k, "") for k in missing}}
-        i18n_table.write(merged)
-        print(f"已重写 {i18n_table.TARGET.relative_to(ROOT)}：{len(merged)} 条", file=sys.stderr)
+        i18n_table.write(merged, args.lang)
+        rel = i18n_table.target(args.lang).relative_to(ROOT)
+        print(f"已重写 {rel}：{len(merged)} 条", file=sys.stderr)
 
     if missing:
         print("\n缺译（按出现位置）：", file=sys.stderr)

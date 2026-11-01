@@ -1,4 +1,28 @@
-//! 界面语言：中文 / English，运行时切换。
+//! 界面语言：可注册的多语言，运行时切换。
+//!
+//! # 语言不是写死的
+//!
+//! 已注册的语言放在 [`CATALOGS`] 里，每张表自带代码、自称、别名、译文、标签截断档位。
+//! **加一种语言只做两件事**：写一张表（复制 `i18n_en.rs` 的骨架，用
+//! `tools/i18n_extract.py --lang xx --write` 填），再往 [`CATALOGS`] 加一行。
+//!
+//! 语言选择器、`Lang::from_code` 的别名匹配、系统语言探测、缺译探针、覆盖率测试
+//! 全部遍历注册表，没有任何一处列具体语言；`i18n_table.py` / `i18n_extract.py` /
+//! `i18n_fill.py` 也都认 `--lang`，表文件路径按语言代码拼。
+//!
+//! UI language: a registry of languages, switchable at runtime.
+//!
+//! # Languages are not hard-wired
+//!
+//! Registered languages live in [`CATALOGS`]; each table carries its own code,
+//! self-name, aliases, translations, and label-truncation width. **Adding a language
+//! takes two steps**: write a table (copy the `i18n_en.rs` skeleton, fill it with
+//! `tools/i18n_extract.py --lang xx --write`), then add one line to [`CATALOGS`].
+//!
+//! The language picker, `Lang::from_code` alias matching, system-language detection,
+//! the missing-translation probe, and the coverage tests all iterate the registry and
+//! none of them names a specific language; `i18n_table.py` / `i18n_extract.py` /
+//! `i18n_fill.py` all accept `--lang` and build the table path from the code.
 //!
 //! # 为什么以中文原文作键
 //!
@@ -50,34 +74,249 @@
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// 运行时语言。只有这两种；「跟随系统」是设置里的偏好，解析后才落到这里。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum Lang {
-    #[default]
-    Zh,
-    En,
+/// 一种语言的全部资料：稳定代码、自称、别名、译文表、标签截断档位。
+///
+/// # 加一种语言只做两件事
+///
+/// 1. 复制 `i18n_en.rs` 的骨架成 `i18n_ja.rs`（同样的文件头 + `ENTRIES` 数组），
+///    用脚本填表：`python tools/i18n_extract.py --lang ja --write`；
+/// 2. 在本文件底部 [`CATALOGS`] 里加一行 `&JA_CATALOG`。
+///
+/// 除此之外**没有第三处**要改：语言选择器、`from_code` 别名匹配、系统语言探测、
+/// 缺译探针、覆盖率测试全部遍历 [`CATALOGS`]，不认识具体有哪几种语言。
+///
+/// # 源语言是中文
+///
+/// 中文表是空表：键本身就是中文原文，查表等于原样返回。所有别的语言的表**以中文
+/// 原文为键**，所以新增语言不需要改任何调用点——这也是「键用原文」的代价与收益的
+/// 取舍点（见模块头）。
+///
+/// Everything one language needs: stable code, self-name, aliases, table, label
+/// truncation width.
+///
+/// # Adding a language takes two steps
+///
+/// 1. Copy the `i18n_en.rs` skeleton to `i18n_ja.rs` (same header plus an `ENTRIES`
+///    array) and fill it with `python tools/i18n_extract.py --lang ja --write`;
+/// 2. Add one line `&JA_CATALOG` to [`CATALOGS`] at the bottom of this file.
+///
+/// There is no third place to touch: the language picker, `from_code` alias
+/// matching, system-language detection, the missing-translation probe, and the
+/// coverage tests all iterate [`CATALOGS`] and never know which languages exist.
+///
+/// # The source language is Chinese
+///
+/// The Chinese table is empty: the key is the Chinese original, so a lookup returns
+/// it unchanged. Every other table is **keyed by that Chinese original**, which is
+/// why adding a language touches no call site -- the trade-off explained in the
+/// module header.
+pub struct Catalog {
+    /// 稳定代码，落进设置文件；改了等于破坏用户的设置。
+    ///
+    /// Stable code, stored in the settings file; changing it breaks user settings.
+    pub code: &'static str,
+    /// 该语言自己的写法（`中文` / `English` / `日本語`）。语言选择器直接用它。
+    ///
+    /// The language's own name, written in its own script (English, Japanese, and so
+    /// on); the picker shows it verbatim.
+    pub label: &'static str,
+    /// `from_code` 额外认的写法：`zh-cn`、`en-us`、`pt-br` 之类。比较前统一小写。
+    ///
+    /// Extra spellings `from_code` accepts (`zh-cn`, `en-us`, `pt-br`), lowercased first.
+    pub aliases: &'static [&'static str],
+    /// 键值表。中文源语言为空表。
+    ///
+    /// The key/value table; empty for the Chinese source language.
+    pub entries: &'static [(&'static str, &'static str)],
+    /// 推子标签按多少**字符**截断。同一块 `LABEL_W` 宽度里，中文放得下 6 个汉字，
+    /// 英文放得下约 12 个半角字符；写死一个数会把 `Highlights` 截成 `Highli…`。
+    ///
+    /// How many **characters** a slider label may keep. In the same `LABEL_W`, Chinese
+    /// fits 6 Han characters and English about 12 half-width ones; a single hard-coded
+    /// number would truncate `Highlights` to `Highli…`.
+    pub ellipsis_chars: usize,
+    /// 构建一次的表，`O(1)` 查询；`OnceLock` 让「第一次查」这一步线程安全。
+    ///
+    /// The table, built once for `O(1)` lookups; `OnceLock` makes the first build
+    /// thread-safe.
+    table: OnceLock<HashMap<&'static str, &'static str>>,
+}
+
+impl Catalog {
+    /// 源语言（中文）：表为空，查询恒落空，`tr` 直接返回入参。
+    ///
+    /// The source language (Chinese): empty table, lookups always miss, and `tr`
+    /// returns its argument unchanged.
+    pub const fn source(
+        code: &'static str,
+        label: &'static str,
+        aliases: &'static [&'static str],
+        ellipsis_chars: usize,
+    ) -> Catalog {
+        Catalog {
+            code,
+            label,
+            aliases,
+            entries: &[],
+            ellipsis_chars,
+            table: OnceLock::new(),
+        }
+    }
+
+    /// 翻译语言：键是中文字面量。
+    ///
+    /// A translation language; keys are Chinese literals.
+    pub const fn translated(
+        code: &'static str,
+        label: &'static str,
+        aliases: &'static [&'static str],
+        ellipsis_chars: usize,
+        entries: &'static [(&'static str, &'static str)],
+    ) -> Catalog {
+        Catalog {
+            code,
+            label,
+            aliases,
+            entries,
+            ellipsis_chars,
+            table: OnceLock::new(),
+        }
+    }
+
+    /// 这条语言是不是「原文即译文」的源语言。
+    ///
+    /// Whether this is the source language where the original is already the translation.
+    pub fn is_source(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// 必须是 `&'static self`：表挂在 `Catalog` 里，而所有 `Catalog` 都是静态
+    /// 常量。用 `&self` 只能拿到与借用同寿的引用，`get` 就没法返回 `&'static str`
+    /// ——那样 `tr` 的返回值会被绑到一次查表的生命周期上，几百个调用点全报废。
+    ///
+    /// `&'static self` is required: the table lives inside `Catalog`, and every
+    /// `Catalog` is a static. A plain `&self` would only yield a borrow-lived
+    /// reference, so `get` could not return `&'static str` -- and `tr`'s return value
+    /// would be tied to one lookup, breaking hundreds of call sites.
+    fn table(&'static self) -> &'static HashMap<&'static str, &'static str> {
+        self.table
+            .get_or_init(|| self.entries.iter().copied().collect())
+    }
+
+    /// 查一条译文；落空返回 `None`（调用方决定回退策略）。
+    ///
+    /// Look one entry up; `None` on a miss (the caller decides how to fall back).
+    pub fn get(&'static self, key: &str) -> Option<&'static str> {
+        self.table().get(key).copied()
+    }
+
+    /// 某个键在这张表里有没有译文。
+    ///
+    /// Whether the table has an entry for this key.
+    pub fn has(&'static self, key: &str) -> bool {
+        self.table().contains_key(key)
+    }
+}
+
+/// 中文：源语言。表为空是有意的，不是漏填。
+///
+/// Chinese: the source language. The empty table is intentional, not missing data.
+pub static ZH_CATALOG: Catalog = Catalog::source(
+    "zh",
+    "中文",
+    &["zh-cn", "zh-hans", "zh-hant", "cn", "chinese"],
+    6,
+);
+
+/// 英文。别名只收地区变体：`en` 与 `English` 已经由代码与自称覆盖，再列一遍就是
+/// 冗余——`registry_has_no_collisions` 会把它当冲突报出来。
+///
+/// English. Aliases are region variants only: `en` and `English` are already covered
+/// by the code and the self-name, and listing them again is redundant --
+/// `registry_has_no_collisions` reports it as a collision.
+pub static EN_CATALOG: Catalog = Catalog::translated(
+    "en",
+    "English",
+    &["en-us", "en-gb"],
+    12,
+    crate::i18n_en::ENTRIES,
+);
+
+/// 全部已注册语言。**加语言就在这里加一行**，顺序即语言选择器里的顺序。
+///
+/// Every registered language. **Adding a language means adding a line here**; the
+/// order is the order shown in the language picker.
+pub static CATALOGS: &[&Catalog] = &[&ZH_CATALOG, &EN_CATALOG];
+
+/// 运行时语言：一张已注册的语言资料。
+///
+/// 以前是个只有 `Zh | En` 两个变体的 enum——每加一种语言都要改 enum、`label`、
+/// `from_code`、`from_system`、`CURRENT` 的编码、`LangPref` 的 serde 六处。现在它
+/// 只是 [`CATALOGS`] 里的一个指针，编译期就知道有哪些语言。
+///
+/// The runtime language: one registered catalog.
+///
+/// It used to be an enum with just `Zh | En`, so every new language meant touching
+/// six places (the enum, `label`, `from_code`, `from_system`, the `CURRENT` encoding,
+/// and `LangPref`'s serde). Now it is just a pointer into [`CATALOGS`], and which
+/// languages exist is known at compile time.
+#[derive(Clone, Copy)]
+pub struct Lang(&'static Catalog);
+
+// 手写而不是 derive：`Catalog` 里挂着 `OnceLock` 表和一堆字符串，derive 会要求它
+// 也实现 `PartialEq`/`Debug`，而语言之间「相等」的语义只有一条——**是同一张表**。
+// 按指针比正是这个语义，也顺带让 `set` 的查找与 `contains` 走同一套判定。
+//
+// Hand-written rather than derived: `Catalog` holds a `OnceLock` table and a pile of
+// strings, and deriving would demand `PartialEq`/`Debug` on it too. The only meaning
+// equality has for a language is **being the same table**, which pointer equality
+// expresses exactly -- and it keeps `set`'s lookup and `contains` on one rule.
+impl PartialEq for Lang {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0)
+    }
+}
+
+impl Eq for Lang {}
+
+impl std::fmt::Debug for Lang {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Lang").field(&self.0.code).finish()
+    }
+}
+
+impl Default for Lang {
+    fn default() -> Self {
+        Lang::ZH
+    }
 }
 
 impl Lang {
+    /// 中文。名字里带 `_` 也让「这是哪一个」在调用点一眼可读。
+    ///
+    /// Chinese; the trailing style keeps call sites readable at a glance.
+    pub const ZH: Lang = Lang(&ZH_CATALOG);
+    /// 英文。
+    ///
+    /// English.
+    pub const EN: Lang = Lang(&EN_CATALOG);
+
+    pub const fn of(catalog: &'static Catalog) -> Lang {
+        Lang(catalog)
+    }
+
+    pub fn catalog(self) -> &'static Catalog {
+        self.0
+    }
+
     /// 设置文件里存的值（小写、稳定，改字面量等于破坏用户的设置文件）。
     ///
     /// The value stored in the settings file (lowercase, stable; changing the literal
     /// breaks existing settings files).
     pub fn code(self) -> &'static str {
-        match self {
-            Lang::Zh => "zh",
-            Lang::En => "en",
-        }
-    }
-
-    pub fn from_code(s: &str) -> Option<Lang> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "zh" | "zh-cn" | "zh-hans" | "cn" | "chinese" => Some(Lang::Zh),
-            "en" | "en-us" | "en-gb" | "english" => Some(Lang::En),
-            _ => None,
-        }
+        self.0.code
     }
 
     /// 语言切换控件上显示的名字（**用该语言自己的写法**，不翻译：让只会英文的人
@@ -87,50 +326,103 @@ impl Lang {
     /// script**, never translated: letting an English-only reader recognise the
     /// "English" entry is what every language picker does).
     pub fn label(self) -> &'static str {
-        match self {
-            Lang::Zh => "中文",
-            Lang::En => "English",
-        }
+        self.0.label
     }
 
-    /// 读取系统语言。Windows 上 `LANG` 常常不存在，所以再看 `LC_ALL` / `LC_MESSAGES`；
-    /// 都读不到时按英文处理——猜错成英文的用户至少能靠 "English" 那一项切回来。
+    /// 推子标签的截断档位（见 [`Catalog::ellipsis_chars`]）。
+    ///
+    /// The slider-label truncation width (see [`Catalog::ellipsis_chars`]).
+    pub fn ellipsis_chars(self) -> usize {
+        self.0.ellipsis_chars
+    }
+
+    /// 全部已注册语言，顺序同 [`CATALOGS`]。
+    ///
+    /// Every registered language, in [`CATALOGS`] order.
+    pub fn all() -> impl Iterator<Item = Lang> {
+        CATALOGS.iter().copied().map(Lang::of)
+    }
+
+    /// 按代码或别名还原。大小写不敏感，前后空白忽略。
+    ///
+    /// Resolve by code or alias; case-insensitive, surrounding whitespace ignored.
+    pub fn from_code(s: &str) -> Option<Lang> {
+        let want = s.trim().to_ascii_lowercase();
+        if want.is_empty() {
+            return None;
+        }
+        CATALOGS
+            .iter()
+            .find(|c| {
+                c.code == want
+                    // 自称也认：用户可能把 `LANG` 直接写成 `中文` 或 `日本語`。
+                    // 只降 ASCII 大小写，汉字不受影响，等于原样比较。
+                    || c.label.to_ascii_lowercase() == want
+                    || c.aliases.contains(&want.as_str())
+            })
+            .copied()
+            .map(Lang::of)
+    }
+
+    /// 读取系统语言。Windows 上 `LANG` 常常不存在，所以再看 `LC_ALL` / `LC_MESSAGES`。
+    ///
+    /// 三种写法都认：`ja`、`ja-JP`、`ja_JP.UTF-8`。都不认识时退到 [`Lang::default`]
+    /// （中文）——本项目的主要用户群在中文环境里，猜错的代价比反过来小。
     ///
     /// Read the system language. On Windows `LANG` is often absent, so `LC_ALL` /
-    /// `LC_MESSAGES` are checked too; if none is readable the answer is English -- a
-    /// user mis-guessed into English can still switch back via the "English" entry.
+    /// `LC_MESSAGES` are checked too.
+    ///
+    /// All three shapes are accepted: `ja`, `ja-JP`, `ja_JP.UTF-8`. When nothing is
+    /// recognised the answer is [`Lang::default`] (Chinese): the project's main
+    /// audience is in a Chinese environment and a wrong guess costs less that way.
     pub fn from_system() -> Lang {
         for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
-            if let Some(v) = std::env::var_os(key) {
-                let v = v.to_string_lossy().to_ascii_lowercase();
-                if v.starts_with("zh") {
-                    return Lang::Zh;
-                }
-                if v.starts_with("en") {
-                    return Lang::En;
-                }
+            let Some(v) = std::env::var_os(key) else {
+                continue;
+            };
+            let v = v.to_string_lossy().to_ascii_lowercase();
+            // 整串先试（`zh-cn` 这种别名带连字符，拆开会丢）；再拆主语言码
+            // （`ja_JP.UTF-8` → `ja`）。顺序不能反：反了 `zh-cn` 会先被拆成 `zh`，
+            // 虽然结果一样，但别名表就白建了。
+            if let Some(l) = Lang::from_code(&v) {
+                return l;
+            }
+            let primary = v.split(['.', '_', '-']).next().unwrap_or("");
+            if let Some(l) = Lang::from_code(primary) {
+                return l;
             }
         }
-        // Windows 的语言由 GetUserDefaultUILanguage 决定，标准库不暴露；查环境变量
-        // 之后退到「中文」而不是「英文」：本项目的主要用户群在中文环境里，猜错的
-        // 代价比反过来小。
-        Lang::Zh
+        Lang::default()
     }
 }
 
 /// 设置里存的偏好：跟随系统，或钉死某一种。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+///
+/// 以前是 `System | Zh | En` 三个变体，serde 靠 `#[serde(rename)]` 逐个写死。现在
+/// 只有「跟随系统」和「某一种已注册语言」两种状态，落盘仍是语言代码字符串——**旧
+/// 设置文件照样读得回来**（`"zh"` / `"en"` / `"system"` 三个值的语义没变）。
+///
+/// The preference stored in settings: follow the system, or pin one language.
+///
+/// It used to be `System | Zh | En` with one `#[serde(rename)]` per variant. Now it
+/// has just two states -- follow the system, or one registered language -- and it
+/// still serialises to a language-code string, so **existing settings files keep
+/// working** (`"zh"` / `"en"` / `"system"` mean exactly what they did).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LangPref {
     #[default]
-    #[serde(rename = "system")]
     System,
-    #[serde(rename = "zh")]
-    Zh,
-    #[serde(rename = "en")]
-    En,
+    Fixed(Lang),
 }
 
 impl LangPref {
+    /// 全部选项，顺序即语言选择器里的顺序：「跟随系统」打头，其余按注册表。
+    ///
+    /// Every option in picker order: "follow the system" first, then the registry.
+    pub fn all() -> impl Iterator<Item = LangPref> {
+        std::iter::once(LangPref::System).chain(Lang::all().map(LangPref::Fixed))
+    }
+
     /// 落到实际语言。「跟随系统」每次启动解析一次，之后不再变——运行中改系统语言
     /// 不重启就跟着变，会让人以为界面在抽风。
     ///
@@ -140,16 +432,14 @@ impl LangPref {
     pub fn resolve(self) -> Lang {
         match self {
             LangPref::System => Lang::from_system(),
-            LangPref::Zh => Lang::Zh,
-            LangPref::En => Lang::En,
+            LangPref::Fixed(l) => l,
         }
     }
 
     pub fn code(self) -> &'static str {
         match self {
             LangPref::System => "system",
-            LangPref::Zh => "zh",
-            LangPref::En => "en",
+            LangPref::Fixed(l) => l.code(),
         }
     }
 
@@ -158,33 +448,64 @@ impl LangPref {
     /// Restore from the value in the settings file; anything unrecognised means
     /// "follow the system" (a hand-edited file should not block startup).
     pub fn from_code(s: &str) -> LangPref {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "zh" => LangPref::Zh,
-            "en" => LangPref::En,
-            _ => LangPref::System,
+        if s.trim().eq_ignore_ascii_case("system") {
+            return LangPref::System;
         }
+        Lang::from_code(s).map_or(LangPref::System, LangPref::Fixed)
     }
 }
 
-/// 当前语言。用 `AtomicU8` 而不是 `OnceLock`：切换语言要能在运行中生效，
-/// 又不能为了一个字体设置引入锁。
-static CURRENT: AtomicU8 = AtomicU8::new(0);
+/// 序列化成语言代码字符串，与 `LangPref::code` / `from_code` 严格互逆。
+///
+/// 手写而不是 derive：`Fixed(Lang)` 里的 `Lang` 是个指针，derive 会把它序列化成
+/// 一个嵌套对象，把设置文件格式改坏。这里只认字符串——**落盘格式是兼容承诺**。
+///
+/// Serialise to a language-code string, exactly inverse to `code` / `from_code`.
+///
+/// Hand-written rather than derived: `Fixed(Lang)` holds a pointer, and deriving
+/// would turn it into a nested object and break the settings file format. Only a
+/// string is accepted here; **the on-disk shape is a compatibility promise**.
+impl serde::Serialize for LangPref {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.code())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for LangPref {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        Ok(LangPref::from_code(&raw))
+    }
+}
+
+/// 当前语言在 [`CATALOGS`] 里的下标。用 `AtomicUsize` 而不是 `OnceLock`：切换语言
+/// 要能在运行中生效，又不能为了一个语言设置引入锁。
+///
+/// 存下标而不是存指针：原子类型存不了 `&'static Catalog`，而下标正好能反查回同
+/// 一张表——注册表是编译期常量，下标永远有效。
+///
+/// The index of the current language in [`CATALOGS`]. An `AtomicUsize` rather than a
+/// `OnceLock`: switching language must take effect mid-run, and a lock is too much
+/// machinery for one setting.
+///
+/// The index, not the pointer: atomics cannot hold a `&'static Catalog`, and an index
+/// maps back to the same table -- the registry is a compile-time constant, so the
+/// index is always valid.
+static CURRENT: AtomicUsize = AtomicUsize::new(0);
 
 pub fn set(lang: Lang) {
-    CURRENT.store(
-        match lang {
-            Lang::Zh => 0,
-            Lang::En => 1,
-        },
-        Ordering::Relaxed,
-    );
+    // 找不到说明传进来的是「没注册的表」，那是编程错误；退回源语言比 panic 好——
+    // 语言设置出错不该让整个程序起不来。
+    let idx = CATALOGS
+        .iter()
+        .position(|c| std::ptr::eq(*c, lang.0))
+        .unwrap_or(0);
+    CURRENT.store(idx, Ordering::Relaxed);
 }
 
 pub fn current() -> Lang {
-    match CURRENT.load(Ordering::Relaxed) {
-        1 => Lang::En,
-        _ => Lang::Zh,
-    }
+    let i = CURRENT.load(Ordering::Relaxed);
+    Lang::of(CATALOGS.get(i).copied().unwrap_or(&ZH_CATALOG))
 }
 
 /// 缺译探针：英文模式下查表落空的键在这里排一份。
@@ -233,29 +554,42 @@ pub fn take_untranslated() -> Vec<String> {
     Vec::new()
 }
 
-/// 某个键在英文表里有没有译文。数据表的完整性测试用它——不必真的切到英文
-/// 再画一遍就能问「`controls::SPECS` 的每一条标签都有英文吗」。
+/// 某个键在**当前语言**里有没有译文。数据表的完整性测试用它——不必真的切到英文
+/// 再画一遍就能问「`controls::SPECS` 的每一条标签都有译文吗」。
 ///
-/// Whether the key has a translation in the English table. Used by the data table
-/// completeness tests -- it answers "does every label in `controls::SPECS` have
-/// English" without actually switching to English and drawing a frame.
+/// Whether the key has a translation in the **current** language. Used by the data
+/// table completeness tests -- it answers "does every label in `controls::SPECS` have
+/// a translation" without actually switching language and drawing a frame.
 pub fn has(key: &str) -> bool {
-    table().contains_key(key)
+    current().0.has(key)
 }
 
-/// 翻译一条界面文案。中文直接返回原文（零开销），英文查表，查不到回退中文。
+/// 某个键在**指定语言**里有没有译文。
+///
+/// 和 [`has`] 分开是因为覆盖率测试要一次问遍所有语言，而不是只问当前这种。
+///
+/// Whether the key has a translation in a **given** language.
+///
+/// Separate from [`has`] because the coverage tests ask about every language at once,
+/// not just the current one.
+pub fn has_in(lang: Lang, key: &str) -> bool {
+    lang.0.has(key)
+}
+
+/// 翻译一条界面文案。源语言（中文）直接返回原文（零开销），其余查表，查不到回退原文。
 ///
 /// 参数是 `&str` 而不是 `&'static str`：界面辅助函数（`bar_button` / `kv` / `note` …）
 /// 收的是借用字符串，翻译下沉到它们内部之后，几百个调用点一行都不用改。
-/// 返回值的生命周期跟着入参走，而英文值本身是 `'static`，可以安全地收窄。
+/// 返回值的生命周期跟着入参走，而译文本身是 `'static`，可以安全地收窄。
 ///
-/// Translate one piece of UI copy. Chinese returns the input unchanged (zero
-/// cost); English looks up the table and falls back to Chinese on a miss.
+/// Translate one piece of UI copy. The source language (Chinese) returns the input
+/// unchanged (zero cost); every other language looks it up and falls back to the
+/// original on a miss.
 ///
 /// Takes `&str` rather than `&'static str` on purpose: the UI helpers
 /// (`bar_button` / `kv` / `note` ...) take borrowed strings, and with the
 /// translation pushed down inside them, hundreds of call sites need no edit. The
-/// return lifetime follows the argument; the English values themselves are
+/// return lifetime follows the argument; the translations themselves are
 /// `'static`, so narrowing is safe.
 pub fn tr(s: &str) -> &str {
     // 空串是最常见的一个实参（`unit: ""` / `tip: ""` 表示「不挂」），先挡掉：
@@ -263,18 +597,20 @@ pub fn tr(s: &str) -> &str {
     if s.is_empty() {
         return s;
     }
-    match current() {
-        Lang::Zh => s,
-        Lang::En => match table().get(s).copied() {
-            Some(en) => en,
-            None => {
-                #[cfg(debug_assertions)]
-                if needs_translation(s) {
-                    miss::record(s);
-                }
-                s
+    let cat = current().0;
+    // 源语言没有表可查，直接走这条路：省一次哈希，也免得把每个键都记成缺译。
+    if cat.is_source() {
+        return s;
+    }
+    match cat.get(s) {
+        Some(hit) => hit,
+        None => {
+            #[cfg(debug_assertions)]
+            if needs_translation(s) {
+                miss::record(s);
             }
-        },
+            s
+        }
     }
 }
 
@@ -382,11 +718,6 @@ pub fn needs_translation(s: &str) -> bool {
     s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
 }
 
-fn table() -> &'static HashMap<&'static str, &'static str> {
-    static T: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
-    T.get_or_init(|| crate::i18n_en::ENTRIES.iter().copied().collect())
-}
-
 /// 包一层翻译。只接受字面量——动态拼出来的字符串没有稳定的键，翻不了，
 /// 那种情况应该拆成「模板 + 参数」再翻译模板。
 macro_rules! t {
@@ -400,61 +731,190 @@ pub(crate) use t;
 mod tests {
     use super::*;
 
+    /// 每张非源语言的表，逐条展开成 `(语言, 键, 译文)`。
+    ///
+    /// 所有「整表」判据都从这里取数据，没有一条写死 `i18n_en`——加一种语言时它们
+    /// 自动把新表也管上，不需要改测试。这是「不写死」的验收入口。
+    ///
+    /// Every non-source table, flattened to `(language, key, translation)`.
+    ///
+    /// All whole-table assertions take their data from here and none names `i18n_en`,
+    /// so a new language is covered automatically without touching the tests. This is
+    /// the acceptance hook for "nothing is hard-wired".
+    fn all_entries() -> impl Iterator<Item = (&'static Catalog, &'static str, &'static str)> {
+        CATALOGS
+            .iter()
+            .filter(|c| !c.is_source())
+            .flat_map(|c| c.entries.iter().map(move |(k, v)| (*c, *k, *v)))
+    }
+
     #[test]
     fn lang_codes_round_trip() {
-        for l in [Lang::Zh, Lang::En] {
-            assert_eq!(Lang::from_code(l.code()), Some(l));
+        for l in Lang::all() {
+            assert_eq!(
+                Lang::from_code(l.code()),
+                Some(l),
+                "{} 的代码认不回来",
+                l.code()
+            );
+            assert_eq!(
+                Lang::from_code(l.label()),
+                Some(l),
+                "{} 的自称认不回来",
+                l.label()
+            );
         }
-        assert_eq!(Lang::from_code("ZH-CN"), Some(Lang::Zh));
+        assert_eq!(Lang::from_code("ZH-CN"), Some(Lang::ZH));
+        assert_eq!(Lang::from_code("  EN-us  "), Some(Lang::EN));
         assert_eq!(Lang::from_code("klingon"), None);
+        // 空串与只有空白：不能当成任何语言。
+        assert_eq!(Lang::from_code(""), None);
+        assert_eq!(Lang::from_code("   "), None);
+    }
+
+    /// 注册表自身的完整性：代码唯一、自称唯一、别名不与任何代码或别的别名撞车。
+    ///
+    /// 这是加语言时最容易踩的坑，而且症状很隐蔽——`from_code` 会静默返回先匹配
+    /// 的那一种，用户选了日语却得到英文，界面上看不出哪里错了。所以在数据层先拦。
+    ///
+    /// Registry integrity: unique codes, unique labels, no alias colliding with any
+    /// code or another alias.
+    ///
+    /// This is the easy mistake when adding a language and its symptom is subtle --
+    /// `from_code` silently returns whichever matched first, so picking Japanese
+    /// yields English with nothing on screen looking wrong. Caught here at the data
+    /// layer instead.
+    #[test]
+    fn registry_has_no_collisions() {
+        let mut seen: HashMap<String, &'static str> = HashMap::new();
+        for c in CATALOGS {
+            for name in std::iter::once(c.code)
+                .chain(std::iter::once(c.label))
+                .chain(c.aliases.iter().copied())
+            {
+                let key = name.to_ascii_lowercase();
+                if let Some(prev) = seen.insert(key, c.code) {
+                    panic!(
+                        "{name:?} 被 {prev} 和 {} 同时占用，from_code 会静默取前者",
+                        c.code
+                    );
+                }
+            }
+        }
     }
 
     #[test]
     fn pref_codes_round_trip() {
-        for p in [LangPref::System, LangPref::Zh, LangPref::En] {
+        for p in LangPref::all() {
             assert_eq!(LangPref::from_code(p.code()), p);
         }
         // 手改坏的值不能拦住启动。
         assert_eq!(LangPref::from_code("??? "), LangPref::System);
     }
 
-    /// 英文表的占位符必须与中文一一对应：少一个 `{}`，`format!` 会 panic。
+    /// 设置文件的三个历史值语义不变：老用户的 `settings.json` 不能因为这次改造
+    /// 变成「跟随系统」。这是落盘兼容承诺，不是内部细节。
+    ///
+    /// The three historical settings values keep their meaning: an existing
+    /// `settings.json` must not silently become "follow the system". This is an
+    /// on-disk compatibility promise, not an internal detail.
+    #[test]
+    fn settings_codes_keep_their_meaning() {
+        assert_eq!(LangPref::from_code("system"), LangPref::System);
+        assert_eq!(LangPref::from_code("zh"), LangPref::Fixed(Lang::ZH));
+        assert_eq!(LangPref::from_code("en"), LangPref::Fixed(Lang::EN));
+        assert_eq!(LangPref::Fixed(Lang::ZH).code(), "zh");
+        assert_eq!(LangPref::Fixed(Lang::EN).code(), "en");
+        assert_eq!(LangPref::System.code(), "system");
+        // serde 走的是同一条路：存字符串，读字符串。
+        let json = serde_json::to_string(&LangPref::Fixed(Lang::EN)).unwrap();
+        assert_eq!(json, "\"en\"");
+        assert_eq!(
+            serde_json::from_str::<LangPref>("\"zh\"").unwrap(),
+            LangPref::Fixed(Lang::ZH)
+        );
+    }
+
+    /// 语言选择器的选项必须能落回每一种注册语言，且「跟随系统」排在第一个。
+    ///
+    /// The picker's options must map back to every registered language, with
+    /// "follow the system" first.
+    #[test]
+    fn every_language_is_selectable() {
+        let opts: Vec<LangPref> = LangPref::all().collect();
+        assert_eq!(
+            opts.first(),
+            Some(&LangPref::System),
+            "第一项必须是跟随系统"
+        );
+        assert_eq!(opts.len(), CATALOGS.len() + 1);
+        for l in Lang::all() {
+            assert!(
+                opts.contains(&LangPref::Fixed(l)),
+                "{} 在语言选择器里没有对应项",
+                l.code()
+            );
+        }
+    }
+
+    /// 占位符必须与源语言一一对应：少一个 `{}`，`format!` 会 panic。
     /// 这条测试的价值在于「翻译是外部录入的数据」，不是代码——录入错了只有这里能拦住。
     #[test]
     fn placeholders_match() {
-        for (zh, en) in crate::i18n_en::ENTRIES {
+        for (cat, zh, tr) in all_entries() {
             let a = zh.matches("{}").count();
-            let b = en.matches("{}").count();
-            assert_eq!(a, b, "占位符数量不一致：{zh:?} → {en:?}");
+            let b = tr.matches("{}").count();
+            assert_eq!(a, b, "{}：占位符数量不一致：{zh:?} → {tr:?}", cat.code);
         }
     }
 
-    /// 英文值里不能残留汉字。
+    /// 译文里不能残留汉字。
     ///
     /// 这是「译了一半」最典型的样子：`("队列第 {}/{} 段：{}", "Queue item {}/{}: 段：{}")`，
     /// 或者把一句中文照抄进去只换了个数字占位。`entries_are_translated` 只看
-    /// 中英是否**完全相同**，挡不住这种「半中半英」；而界面上真出现汉字时，
+    /// 译文与源文是否**完全相同**，挡不住这种「半中半英」；而界面上真出现汉字时，
     /// 只有 `i18n_coverage` 那条要画遍全界面才会红——那句文案如果只在某条命令
     /// 走完才上屏，就永远画不到。所以在数据这一层先拦一道。
+    ///
+    /// 例外是语言自称：日语表里 `("中文", "中文 (中国語)")` 这类是故意保留的原文形式，
+    /// 只允许出现在语言选择器用到的那几条上——这里不开口子，需要时改 `SAME_OK` 的口径
+    /// 而不是放宽整条判据。
     #[test]
     fn translations_have_no_chinese() {
-        for (zh, en) in crate::i18n_en::ENTRIES {
-            assert!(!needs_translation(en), "{zh:?} 的译文里还有汉字：{en:?}");
+        for (cat, zh, tr) in all_entries() {
+            assert!(
+                !needs_translation(tr),
+                "{}：{zh:?} 的译文里还有汉字：{tr:?}",
+                cat.code
+            );
         }
     }
 
-    /// 英文表里不能有重复键：`HashMap` 会静默取后者，等于悄悄丢一条翻译。
+    /// 每张表里不能有重复键：`HashMap` 会静默取后者，等于悄悄丢一条翻译。
     #[test]
     fn no_duplicate_keys() {
-        let mut seen = HashMap::new();
-        for (i, (zh, _)) in crate::i18n_en::ENTRIES.iter().enumerate() {
-            if let Some(prev) = seen.insert(*zh, i) {
-                panic!("英文表里 {zh:?} 出现两次（第 {prev} 与第 {i} 条）");
+        for cat in CATALOGS.iter().filter(|c| !c.is_source()) {
+            let mut seen = HashMap::new();
+            for (i, (zh, _)) in cat.entries.iter().enumerate() {
+                if let Some(prev) = seen.insert(*zh, i) {
+                    panic!("{} 表里 {zh:?} 出现两次（第 {prev} 与第 {i} 条）", cat.code);
+                }
             }
         }
     }
 
-    /// 英文条目不该原样等于中文（除非本来就是专有名词/符号），否则多半是漏译。
+    /// 表里每条键都得是非空的：空键会把「不挂 tip」这类合法用法当成一条待翻译。
+    ///
+    /// Every key must be non-empty: an empty key would turn legitimate "no tip"
+    /// usages into translation entries.
+    #[test]
+    fn keys_are_not_empty() {
+        for (cat, zh, _) in all_entries() {
+            assert!(!zh.is_empty(), "{} 表里有一条空键", cat.code);
+        }
+    }
+
+    /// 译文不该原样等于源文（除非本来就是专有名词/符号），否则多半是漏译。
     /// 白名单很小，只放确实两边写法相同的条目。
     #[test]
     fn entries_are_translated() {
@@ -493,11 +953,12 @@ mod tests {
             "GIF",
             "BMP",
         ];
-        for (zh, en) in crate::i18n_en::ENTRIES {
-            if zh == en {
+        for (cat, zh, tr) in all_entries() {
+            if zh == tr {
                 assert!(
-                    SAME_OK.contains(zh),
-                    "{zh:?} 的英文与中文完全相同，是漏译还是有意的？确认后加进 SAME_OK"
+                    SAME_OK.contains(&zh),
+                    "{}：{zh:?} 的译文与源文完全相同，是漏译还是有意的？确认后加进 SAME_OK",
+                    cat.code
                 );
             }
         }
