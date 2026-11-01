@@ -35,6 +35,7 @@ docs/*
 !docs/发布说明-*.md
 !docs/1.0.0-验收清单.md
 !docs/1.0.0-验收清单.en.md
+!docs/界面优化-*.md
 
 # 打包产物（onedir 是整个文件夹，不进版本库）
 dist/
