@@ -6,8 +6,10 @@
 //! `dehaze_downsample_matches_python` 显式覆盖（Python 对照级验证，非逐像素冻结）。
 //!
 //! 数值安全：大气光 A 下限 1e-3、`max(t, t0)` 防除零（对齐 E1「I+offset<1/256
-//! 单独分支」的意图）。`t0 / eps_t / w(0.95)` 全部是编译期常量起步并标注
-//! TODO(fit)，不做滑杆暴露（对齐 LR 单滑杆 UI）。
+//! 单独分支」的意图）。七个内部常量集中在 [`DehazeTune`]，各有出处：`t0 = 0.1` 与
+//! `ω = 0.95` 是 DCP 原文值，`ε = 1e-4` 是 Guided Filter 在 [0,1] 值域上的惯例
+//! （`0.01²`），其余四个由 `fit` 模块拿「已知真值的合成雾靶」实测选定。不做滑杆
+//! 暴露（对齐 LR 单滑杆 UI）。
 //!
 //! Dark channel prior dehaze (public He DCP 2010/2011 math plus E1 structural facts).
 //!
@@ -19,8 +21,11 @@
 //!
 //! Numerical safety: the atmospheric light A has a floor of 1e-3, and `max(t, t0)` guards
 //! against division by zero (matching the E1 intent of a dedicated branch for
-//! "I+offset<1/256"). `t0 / eps_t / w(0.95)` all start as compile-time constants and are
-//! marked TODO(fit), with no slider exposure (matching the LR single-slider UI).
+//! "I+offset<1/256"). The seven internal constants live in [`DehazeTune`] and each one has a
+//! source: `t0 = 0.1` and `ω = 0.95` are the values stated in the DCP paper, `ε = 1e-4` is the
+//! Guided Filter convention for [0,1] data (`0.01²`), and the remaining four were chosen by the
+//! measured sweep in `fit` over a synthetic haze target with known truth. No slider exposure
+//! (matching the LR single-slider UI).
 
 use rayon::prelude::*;
 
@@ -199,7 +204,7 @@ fn percentile(values: &[f32], q: f64) -> f32 {
 /// 4. 引导滤波精修（E1 线性模型 a·I+b，引导图 = 线性亮度）；
 /// 5. 合成 `J = (L − A)/max(t'', t0) + A`，按 amount 增量混合；
 /// 6. 对比微调（`contrast ∈ [-0.5, 0.5]`）：输出亮度 [p1,p99] 的黑位/白位
-///    小范围重映射，幅度 = contrast·0.15（TODO(fit)），contrast=0 时严格恒等。
+///    小范围重映射，幅度 = contrast·[`DehazeTune::contrast_amp`]，contrast=0 时严格恒等。
 ///
 /// `amount <= 0` 整段跳过 = 旧路径逐位一致。去雾在**线性域**做（E3 管线事实），
 /// 输入钳到 [0,1] 后转线性，返回 sRGB 编码并钳到 [0,1]。
@@ -322,7 +327,7 @@ pub(crate) fn dehaze_dcp_tuned(
         .collect();
 
     // 6) 对比微调：输出亮度 [p1,p99] 的黑位/白位重映射（contrast=0 时整段
-    //    跳过 = 严格恒等）。幅度 = contrast·0.15，TODO(fit)。
+    //    跳过 = 严格恒等）。幅度 = contrast·contrast_amp（0.15，判据见 fit 模块）。
     if contrast != 0.0 {
         let mm = contrast * tune.contrast_amp;
         let lum_out = lum_field(&l_out);
@@ -517,7 +522,7 @@ mod tests {
 /// 「把猜值变成测过的选择」的地方。
 ///
 /// 这一族的七个数字（`t0` / `ω` / `ε` / 半径规则 / 轮数规则 / 引导半径倍数 /
-/// 对比幅度）以前全是 `TODO(fit)`。金标对不出问题——金标只证明 Rust == Python，
+/// 对比幅度）以前都没有出处。金标对不出问题——金标只证明 Rust == Python，
 /// 两边写同一个猜值就永远绿。这里换成**不依赖参考实现**的判据：
 ///
 /// 1. 先按大气散射模型 `I = J·t + A·(1−t)` 从**已知的无雾场景 J** 造一张雾图，

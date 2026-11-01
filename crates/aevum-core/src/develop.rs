@@ -83,6 +83,21 @@ pub struct Opts {
     ///
     /// A chain inside a local mask: monochrome and global-only terms are skipped.
     pub local: bool,
+    /// HDR 输出：**不把 >1 截断**。
+    ///
+    /// 整条链在 sRGB 编码域上工作，各段默认把结果钳到 [0,1]——那是 SDR 的语义（显示
+    /// 器只能到白）。但 HDR 导出需要白以上的部分真的存在：曝光、`hl_rolloff`、曲线
+    /// 尾部都会造出 >1 的亮度，钳掉它们等于让 HDR 只剩到参考白为止，PQ 的上半段是
+    /// 空的。这一位只为 HDR 打开，SDR 路径逐位不变。
+    ///
+    /// HDR output: **do not clamp values above 1**.
+    ///
+    /// The whole chain works in sRGB-encoded space where each stage clamps to [0,1] — that is
+    /// SDR semantics (a display can only reach white). HDR export needs the region above white
+    /// to actually exist: exposure, `hl_rolloff` and the curve tail all produce values above 1,
+    /// and clamping them leaves HDR with nothing past reference white — the upper half of PQ
+    /// would be empty. Only HDR sets this; the SDR path is bit-identical.
+    pub hdr: bool,
 }
 
 impl Opts {
@@ -93,6 +108,7 @@ impl Opts {
         sketch: false,
         for_lut: false,
         local: false,
+        hdr: false,
     };
     /// 拖动中的草图。
     ///
@@ -101,6 +117,16 @@ impl Opts {
         sketch: true,
         for_lut: false,
         local: false,
+        hdr: false,
+    };
+    /// HDR 导出：全量 + 不截断 >1。
+    ///
+    /// HDR export: the full set plus "do not clamp above 1".
+    pub const HDR: Opts = Opts {
+        sketch: false,
+        for_lut: false,
+        local: false,
+        hdr: true,
     };
 
     fn detail(self) -> bool {
@@ -198,6 +224,7 @@ pub fn render(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, op
                 local: true,
                 sketch: opts.sketch,
                 for_lut: false,
+                hdr: opts.hdr,
             };
             let mut local = original.clone();
             core(&mut local, w, h, &q, gain, local_opts);
@@ -215,8 +242,10 @@ pub fn render(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, op
                     }
                 });
         }
+        // 蒙版混色后按模式收口：SDR 钳到白，HDR 只压负值。
+        let hdr = opts.hdr;
         rgb.par_iter_mut().for_each(|x| {
-            *x = x.clamp(0.0, 1.0);
+            *x = if hdr { x.max(0.0) } else { x.clamp(0.0, 1.0) };
         });
         // 蒙版内的锐化/降噪/清晰度/纹理：Python 在混色之后单独补一遍。
         if !opts.sketch {
@@ -247,8 +276,15 @@ pub fn render(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, op
         }
     }
 
+    // 终点收口：SDR 钳到白（下游按 8bit 写盘），HDR 只压负值 —— 白以上的部分要
+    // 留给 PQ 编码，那是 HDR 与 SDR 唯一的实质差别。
+    //
+    // Final clamp: SDR pins to white (it gets written as 8bit), HDR only floors negatives —
+    // whatever sits above white has to reach the PQ encoder, and that is the only real
+    // difference between HDR and SDR output.
+    let hdr = opts.hdr;
     rgb.par_iter_mut().for_each(|x| {
-        *x = x.clamp(0.0, 1.0);
+        *x = if hdr { x.max(0.0) } else { x.clamp(0.0, 1.0) };
     });
 }
 
@@ -303,7 +339,26 @@ pub(crate) fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
 }
 
 /// 白场软拐点（抛物线肩部）：f(1-s)=1-s、f'(1-s)=1、f(1+s)=1、f'(1+s)=0，
-/// C1 连续且恒 ≤1。宽 s = 0.08..0.25（black_soft/white_soft 参数映射，需拟合 TODO(fit)）。
+/// C1 连续且恒 ≤1、且单调不减（这三条是可证的，不是近似）。
+///
+/// 宽度 s 的取值范围 0.08…0.25 由两条边界定死：
+/// - **上界 0.25**：`f(x)=x` 在 `x ≤ 1-s` 成立，所以 s=0.25 时编码 0.75（75% 灰）
+///   以下**逐位不动**。再大就会开始压中间调，那就不是「软拐点」而是改对比度了。
+/// - **下界 0.08**：最小档也得有可见效果。s=0.08 时编码 0.95 处被压 0.0028
+///   （约 0.7 级 / 255）——再小就等于没开。
+///
+/// 见 `fit_sliders.rs::soft_clip_is_c1_and_width_bounds_are_meaningful`。
+///
+/// White soft knee (parabolic shoulder): f(1-s)=1-s, f'(1-s)=1, f(1+s)=1, f'(1+s)=0,
+/// C1-continuous, bounded by 1 and monotonically non-decreasing — all three are provable, not
+/// approximate.
+///
+/// The width range 0.08…0.25 is fixed by two boundaries: **the upper 0.25** because `f(x)=x`
+/// holds for `x ≤ 1-s`, so s=0.25 leaves encoded 0.75 (75% gray) and below **bit-identical** —
+/// any larger starts compressing midtones, which is a contrast change rather than a soft knee;
+/// **the lower 0.08** because the smallest setting must still do something — at s=0.08, encoded
+/// 0.95 is pulled down by 0.0028 (about 0.7 of a 255 level), and anything smaller is
+/// indistinguishable from off.
 pub(crate) fn soft_clip_high(x: f32, s: f32) -> f32 {
     if x <= 1.0 - s {
         x
@@ -348,10 +403,43 @@ fn core(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, opts: Op
         base + gain.chan[1],
         base + gain.chan[2],
     ];
-    // 曝光高光肩部（对齐 LR UniformsExposure 的 rolloff，E2；knee/len 需拟合
-    // TODO(fit)）：有理肩部 t=0 处斜率 1 → C1 连续；按亮度比值缩放保色相
-    // （atlas §9 明确警告逐通道曲线会偏色相）。k=0 且白平衡/曝光全 0 时整段
-    // 跳过 = 旧路径逐位一致。
+    // 曝光高光肩部（对齐 LR UniformsExposure 的 rolloff，E2）：按亮度比值缩放保色相
+    // （atlas §9 明确警告逐通道曲线会偏色相）。k=0 且白平衡/曝光全 0 时整段跳过 =
+    // 旧路径逐位一致。
+    //
+    // 形状是 `yy = y + krl·t/(1+t/len)`，t = max(0, y−knee)。
+    // **它不是 C1 连续**（这里以前写错了）：y ≤ knee 时斜率为 1，y 略高于 knee 时
+    // 斜率跳到 1+krl，再随 t 增大回落到 1。所以 knee 处是一个折点，不是平滑衔接。
+    // 保留这个折点是因为它符合「只把最亮的一小撮往上抬，中间调一根手指都不碰」的
+    // 意图 —— 折点正好落在 knee 上，而 knee 选在 0.75 线性（编码 0.881），也就是
+    // SDR 里最后一档高光的起点。
+    //
+    // knee / len 的取值依据：
+    // - **knee = 0.75 线性 = 编码 0.881**：低于它的像素逐位不动（实测编码 0.875 不动、
+    //   0.885 开始动，窗口只有 0.01 编码）。
+    // - **len = 0.40**：饱和抬升量就是 `krl·len`。拉满（krl=1）时最多抬 0.40 线性，
+    //   于是编码 1.0 的像素被推到线性 1.4（编码 1.06）—— 正好给 `curve_hdr_tail` 与
+    //   HDR 编码提供白以上的亮度。len 太小（0.05）几乎无感，太大（10）等于整体过曝。
+    //   实测窗口见 `fit_sliders.rs::hl_rolloff_knee_and_len_bounds`。
+    //
+    // Exposure highlight shoulder (matching LR's UniformsExposure rolloff, E2), scaled by the
+    // luminance ratio to preserve hue (atlas §9 warns explicitly that per-channel curves shift
+    // hue). With k=0 and no white balance or exposure this whole block is skipped, so old paths
+    // stay bit-identical.
+    //
+    // The shape is `yy = y + krl·t/(1+t/len)` with t = max(0, y−knee). **It is not
+    // C1-continuous** (this comment used to say it was): the slope is 1 below the knee, jumps to
+    // 1+krl just above it, then decays back to 1. So the knee is a corner, not a smooth join.
+    // That corner is kept because it matches the intent — lift only the brightest sliver and
+    // leave midtones alone — and it sits exactly at a knee chosen as linear 0.75 (encoded
+    // 0.881), the start of SDR's last highlight stop.
+    //
+    // Why those values: **knee = 0.75 linear = encoded 0.881** because everything below is
+    // bit-identical (measured: encoded 0.875 unmoved, 0.885 moved — a 0.01 window);
+    // **len = 0.40** because the saturated lift is `krl·len`, so a maxed slider lifts at most
+    // 0.40 in linear — encoded 1.0 goes to linear 1.4 (encoded 1.06), which is exactly the
+    // brightness above white that `curve_hdr_tail` and HDR encoding need. A tiny len (0.05) is
+    // imperceptible, a huge one (10) is global overexposure.
     let krl = (p.hl_rolloff / 100.0) as f32;
     let wb_active = t != 0.0 || u != 0.0 || shifts.iter().any(|s| *s != 0.0);
     if wb_active || krl != 0.0 {
@@ -457,9 +545,17 @@ fn core(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, opts: Op
 
     // 高光/阴影/白色/黑色：按亮度权重乘加，四段合成一次扫描。
     // black_soft/white_soft>0 时把段末的 [0,4] 硬钳换成抛物线软拐点（对齐
-    // LR plusWhite/BlackClip 的硬软分离，E2；宽度需拟合 TODO(fit)）：直方图
-    // 边缘不再堆尖，输出恒落 [0,1]、下游契约不变。两参数全 0 走原 clamp
-    // 语句逐位一致。
+    // LR plusWhite/BlackClip 的硬软分离，E2）：直方图边缘不再堆尖，输出恒落
+    // [0,1]、下游契约不变。两参数全 0 走原 clamp 语句逐位一致。
+    //
+    // 宽度映射 `s = 0.08 + 0.17·(v/100)` 的两端与 [`soft_clip_high`] 那条注释同一
+    // 依据：上端 0.25 保住 75% 灰以下不动，下端 0.08 保证最小档有约 0.7 级的可见
+    // 作用。中间线性插值只是因为滑杆手感要线性，没有别的含义。
+    //
+    // The width mapping `s = 0.08 + 0.17·(v/100)` shares its bounds with [`soft_clip_high`]:
+    // 0.25 keeps everything below 75% gray untouched, 0.08 keeps the smallest setting visible
+    // at about 0.7 of a level. The linear interpolation in between is only there so the slider
+    // feels linear; it carries no other meaning.
     let s_b = if p.black_soft != 0.0 {
         (0.08 + 0.17 * (p.black_soft / 100.0)) as f32
     } else {
@@ -563,8 +659,19 @@ fn core(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, opts: Op
         rgb.par_chunks_exact_mut(3)
             .with_min_len(MIN_PIXELS)
             .for_each(|px| {
-                for x in px.iter_mut() {
-                    *x = x.clamp(0.0, 1.0);
+                // 饱和度按「相对亮度放大」算，超白的部分也要参与 —— 否则 HDR 的
+                // 高光会被这一站先拍平，后面再怎么编码都是白的。
+                //
+                // Saturation scales around luminance, so the region above white must take part
+                // too; otherwise this stage flattens HDR highlights before they are ever encoded.
+                if opts.hdr {
+                    for x in px.iter_mut() {
+                        *x = x.max(0.0);
+                    }
+                } else {
+                    for x in px.iter_mut() {
+                        *x = x.clamp(0.0, 1.0);
+                    }
                 }
                 let lum = px[0] * LUMA[0] + px[1] * LUMA[1] + px[2] * LUMA[2];
                 let range = px.iter().copied().fold(f32::MIN, f32::max)
@@ -574,7 +681,12 @@ fn core(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, opts: Op
                     f *= 1.0 + vib * (1.0 - range) * 1.3;
                 }
                 for x in px.iter_mut() {
-                    *x = (lum + (*x - lum) * f).clamp(0.0, 1.0);
+                    let v = lum + (*x - lum) * f;
+                    *x = if opts.hdr {
+                        v.max(0.0)
+                    } else {
+                        v.clamp(0.0, 1.0)
+                    };
                 }
             });
     }
@@ -587,7 +699,11 @@ fn core(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, opts: Op
     }
 
     // 色阶 + 参数曲线 + 曲线：合成一张表，一次查完。
-    lut::tone_curve(rgb, p);
+    if opts.hdr {
+        lut::tone_curve_keep_over(rgb, p);
+    } else {
+        lut::tone_curve(rgb, p);
+    }
 }
 
 /// 清晰度半径：Python `max(2, int(min(H, W) / 60))`。

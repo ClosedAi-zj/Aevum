@@ -559,31 +559,52 @@ fn white_soft_pulls_highlights_back_into_range() {
     assert!(prev < 0.95, "white_soft=100 应当把高光明显压回：{prev:.4}");
 }
 
-/// `curve_hdr_tail` 的数学本身是对的——直接喂 `tone_curve` 能看到延伸。
+/// `curve_hdr_tail` 的两种出口：SDR 钳到 1，HDR 保留 > 1。
 ///
-/// 这半条保护的是「算法」；下半条
-/// [`curve_hdr_tail_is_inert_behind_the_lens_clamp`] 保护的是「现状」。
+/// 这条盯的是**两个函数的分工**，不是常数：`tone_curve` 必须把尾部延伸吃掉（8bit
+/// 没地方放），`tone_curve_keep_over` 必须原样留住。以前这条测试写的是「延伸了
+/// 0.05 以上」并且用 SDR 出口断言——那点差值其实来自钳位（0.902 → 钳到 1.0），
+/// 算法本身有没有延伸它看不出来，是假绿。
+///
+/// This pins the **division of labour between the two functions**, not a constant:
+/// `tone_curve` must eat the tail extension (nowhere to put it in 8bit),
+/// `tone_curve_keep_over` must keep it. The old version asserted "extends by more than 0.05"
+/// through the *SDR* exit — that delta was just the clamp (0.902 → 1.0), so a tail that did
+/// nothing at all would still have passed.
 #[test]
 fn curve_hdr_tail_math_extends_above_one() {
     let mut p = GradeParams::default();
     p.curve_rgb = s_curve(230.0);
-    let mut off = vec![1.5f32; 3];
-    lut::tone_curve(&mut off, &p);
+    let end = 230.0f32 / 255.0;
+
     let mut p_on = p.clone();
     p_on.curve_hdr_tail = 100.0;
+
+    // HDR 出口：真实的线性落点。
+    let mut off = vec![1.5f32; 3];
+    lut::tone_curve_keep_over(&mut off, &p);
     let mut on = vec![1.5f32; 3];
-    lut::tone_curve(&mut on, &p_on);
+    lut::tone_curve_keep_over(&mut on, &p_on);
     assert!(
-        (off[0] - 230.0 / 255.0).abs() < 1e-3,
+        (off[0] - end).abs() < 1e-3,
         "tail=0 时 x>1 应当停在曲线终点值，实测 {:.4}",
         off[0]
     );
     assert!(
-        on[0] > off[0] + 0.05,
-        "tail=100 应当向上延伸，实测 {:.4}",
+        (on[0] - 1.2020).abs() < 5e-3,
+        "tail=100 时 x=1.5 应落到 1.2020（端点 0.902 + 0.5·0.603），实测 {:.4}",
         on[0]
     );
-    assert!(on[0] <= 1.0 + 1e-6);
+
+    // SDR 出口：同一输入必须被钳到 1。
+    let mut sdr = vec![1.5f32; 3];
+    lut::tone_curve(&mut sdr, &p_on);
+    assert!(
+        (sdr[0] - 1.0).abs() < 1e-6,
+        "SDR 出口没有把尾部延伸钳回 1，实测 {:.4}",
+        sdr[0]
+    );
+
     // x ≤ 1 的主路径一个像素都不能动。
     let mut a = vec![0.4f32; 3];
     let mut b = vec![0.4f32; 3];
@@ -816,4 +837,297 @@ fn nr_ai_denoises_without_inventing_detail() {
     let out = render(&clean, &p, W, H);
     let q = psnr(&out, &clean, 1.0);
     assert!(q > 40.0, "干净图上 nr_ai 不该改变画面：{q:.2} dB");
+}
+
+// ---------------------------------------------------------------------------
+// HDR 渲染：白以上的亮度必须活到导出
+// ---------------------------------------------------------------------------
+
+/// HDR 渲染保留白以上，SDR 渲染不保留——这是两者唯一实质差别。
+///
+/// 修这条之前，`render` 在终点无条件 `clamp(0,1)`：曝光 +2EV 造出的线性 4.0（编码
+/// 1.75）被削成 1.0，于是「HDR 导出」只能到参考白 203 nits，PQ 的上半段是空的——
+/// 发布说明里那句「超过白的高光顺着曲线尾部继续爬」当时是假的。`spatial::lens`
+/// 早前解除的向上钳位也白解了。
+///
+/// 现在按 `Opts::HDR` 分流：SDR 逐位不变（金标不动），HDR 只压负值。
+///
+/// HDR rendering keeps brightness above white; SDR rendering does not — that is the only
+/// substantive difference. Before this fix `render` clamped unconditionally at the end, so
+/// +2EV (linear 4.0, encoded 1.75) was flattened to 1.0 and "HDR export" stopped at the
+/// 203-nit reference white with an empty upper half of PQ. The decoupling done earlier in
+/// `spatial::lens` was being undone right here.
+#[test]
+fn hdr_render_keeps_brightness_above_white() {
+    let src = ramp(W, H, 0.5, 1.0);
+    let mut p = GradeParams::default();
+    p.exposure = 2.0;
+
+    let sdr = render(&src, &p, W, H);
+    assert!(
+        (max_of(&sdr, W, H) - 1.0).abs() < 1e-4,
+        "SDR 渲染的最大输出应当正好是 1.0，实测 {:.4}",
+        max_of(&sdr, W, H)
+    );
+
+    let mut hdr = src.clone();
+    develop::render(&mut hdr, W, H, &p, Ev::NONE, Opts::HDR);
+    let mx = max_of(&hdr, W, H);
+    assert!(
+        mx > 1.2,
+        "+2EV 的 HDR 输出最大值只有 {mx:.4}，白以上的部分被削掉了"
+    );
+    // 负值仍然要压掉：下游 PQ 编码对负数做幂运算，会出 NaN。
+    assert!(
+        hdr.iter().all(|v| *v >= 0.0),
+        "HDR 渲染出现了负值，PQ 编码会得到 NaN"
+    );
+}
+
+/// 曲线尾部在 HDR 下也要保留 >1：`tone_curve_keep_over` 与 `tone_curve` 的唯一差别。
+///
+/// SDR 的尾部延伸必须钳到 1（下游按 8bit 写盘），HDR 不能钳——那一段正是 PQ 上半段。
+#[test]
+fn hdr_curve_tail_does_not_clamp() {
+    let mut p = GradeParams::default();
+    p.curve_rgb = s_curve(200.0);
+    p.curve_hdr_tail = 100.0;
+
+    // 输入同一条曲线，一个喂 >1 的编码值，看两边怎么处理。
+    let mut over = vec![0.0f32; 3 * 4];
+    for i in 0..4 {
+        over[i * 3] = 1.6;
+        over[i * 3 + 1] = 1.6;
+        over[i * 3 + 2] = 1.6;
+    }
+    let mut a = over.clone();
+    lut::tone_curve(&mut a, &p);
+    let mut b = over.clone();
+    lut::tone_curve_keep_over(&mut b, &p);
+
+    assert!(
+        a.iter().all(|v| *v <= 1.0),
+        "SDR 的曲线尾部必须钳到 1，实测最大 {:.4}",
+        a.iter().copied().fold(f32::MIN, f32::max)
+    );
+    let mb = b.iter().copied().fold(f32::MIN, f32::max);
+    assert!(
+        mb > 1.0,
+        "HDR 的曲线尾部应当保留 >1，实测最大 {mb:.4}——尾部被钳回去了"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// soft_clip / hl_rolloff / 曲线尾部：宽度与拐点的取值依据
+// ---------------------------------------------------------------------------
+
+/// 软拐点的数学性质与宽度上下界。
+///
+/// 形状是可证的：`f(1-s)=1-s` 处值与斜率都连续、`f(1+s)=1` 处斜率为 0、全程单调
+/// 不减且 ≤1。宽度上下界则要靠量：
+/// - `white_soft=100`（s=0.25）时**编码 0.75 以下逐位不动**——这是上界 0.25 的
+///   全部理由，再大就开始压中间调；
+/// - `white_soft=1`（s≈0.082）时编码 0.95 处仍有可见压缩（≥0.2 级/255），
+///   再小就等于没开。
+///
+/// The soft knee's maths and its width bounds. The shape is provable (value and slope
+/// continuous at `1-s`, zero slope at `1+s`, monotone, bounded by 1); the bounds are measured:
+/// `white_soft=100` (s=0.25) leaves encoded 0.75 and below **bit-identical** — that is the whole
+/// reason for the upper bound; `white_soft=1` (s≈0.082) still compresses encoded 0.95 by at
+/// least 0.2 of a 255 level, and anything smaller is indistinguishable from off.
+#[test]
+fn soft_clip_is_c1_and_width_bounds_are_meaningful() {
+    let src = ramp(W, H, 0.0, 1.0);
+    let base = render(&src, &GradeParams::default(), W, H);
+    let at = |t: f32| (W as f32 * t).min(W as f32 - 1.0) as usize;
+
+    // 上界：最大档不得碰 75% 灰以下。
+    for k in [100.0f64, 60.0] {
+        let mut p = GradeParams::default();
+        p.white_soft = k;
+        let out = render(&src, &p, W, H);
+        for t in [0.10f32, 0.35, 0.60, 0.74] {
+            let x = at(t);
+            assert!(
+                (px(&out, W, x, H / 2) - px(&base, W, x, H / 2)).abs() < 1e-6,
+                "white_soft={k} 动了编码 {t}（x={x}）——宽度上界破了"
+            );
+        }
+        // 靠近白的必须被拉回来。
+        let hi = at(0.98);
+        assert!(
+            px(&out, W, hi, H / 2) < px(&base, W, hi, H / 2) - 1e-4,
+            "white_soft={k} 在编码 0.98 处没把高光拉回来"
+        );
+    }
+
+    // 下界：最小档也要有可见作用（≥ 0.2 级 / 255）。
+    let mut p = GradeParams::default();
+    p.white_soft = 1.0;
+    let out = render(&src, &p, W, H);
+    let x = at(0.95);
+    let drop = px(&base, W, x, H / 2) - px(&out, W, x, H / 2);
+    assert!(
+        drop >= 0.2 / 255.0,
+        "white_soft=1 在编码 0.95 只压了 {:.4} 级，等于没开——宽度下界太小",
+        drop * 255.0
+    );
+
+    // 单调：拉得越大压得越多。
+    let mut prev = f32::MAX;
+    for k in [0.0f64, 1.0, 25.0, 50.0, 75.0, 100.0] {
+        let mut q = GradeParams::default();
+        q.white_soft = k;
+        let o = render(&src, &q, W, H);
+        let v = px(&o, W, at(0.98), H / 2);
+        assert!(
+            v <= prev + 1e-6,
+            "white_soft={k} 的高光 {v:.4} 反而比上一档亮"
+        );
+        prev = v;
+    }
+}
+
+/// `hl_rolloff` 的 knee 落在编码 0.881，len 决定饱和抬升量。
+///
+/// knee 的判据是**贴着落点采样**：编码 0.875（线性 0.740）必须逐位不动，编码
+/// 0.885（线性 0.757）必须动——窗口只有 0.01 编码。只采 0.05/0.25/0.5 的话，
+/// 把 knee 从 0.75 改到 0.30 测试照样绿，那个坑以前踩过。
+///
+/// len 的判据要用 HDR 渲染才看得见：SDR 在末尾钳到 1，抬上去的部分被吃掉。拉满
+/// 时饱和抬升量 = `krl·len` = 0.40 线性，所以编码 1.0 的像素在 HDR 下落到编码
+/// 1.065（线性 1.154）。len 改成 0.05 只有 1.013、改成 10 会到 1.108，都掉出窗口。
+///
+/// The knee criterion samples **at the landing point**: encoded 0.875 (linear 0.740) must be
+/// bit-identical and 0.885 (linear 0.757) must move — a 0.01 window. Sampling only at
+/// 0.05/0.25/0.5 lets a knee moved from 0.75 to 0.30 pass, which has happened here before.
+///
+/// The len criterion needs HDR rendering: SDR clamps at the end and eats the lift. At full
+/// strength the saturated lift is `krl·len` = 0.40 linear, so an encoded 1.0 pixel lands at
+/// encoded 1.065 (linear 1.154) in HDR. len=0.05 gives 1.013 and len=10 gives 1.108, both
+/// outside the window.
+#[test]
+fn hl_rolloff_knee_and_len_bounds() {
+    let src = ramp(W, H, 0.0, 1.0);
+    let base = render(&src, &GradeParams::default(), W, H);
+    let at = |t: f32| (W as f32 * t).min(W as f32 - 1.0) as usize;
+
+    let mut p = GradeParams::default();
+    p.hl_rolloff = 100.0;
+    let out = render(&src, &p, W, H);
+
+    for t in [0.80f32, 0.87] {
+        let x = at(t);
+        assert!(
+            (px(&out, W, x, H / 2) - px(&base, W, x, H / 2)).abs() < 1e-6,
+            "hl_rolloff=100 动了编码 {t}（knee 在编码 0.881，这之前不该动）"
+        );
+    }
+    let x = at(0.89);
+    assert!(
+        px(&out, W, x, H / 2) > px(&base, W, x, H / 2) + 1e-6,
+        "hl_rolloff=100 在编码 0.89 没抬起来——knee 位置变了"
+    );
+
+    // len：用 HDR 渲染量饱和抬升量。
+    let plain = ramp(W, H, 1.0, 1.0);
+    let mut q = GradeParams::default();
+    q.hl_rolloff = 100.0;
+    let mut hdr = plain.clone();
+    develop::render(&mut hdr, W, H, &q, Ev::NONE, Opts::HDR);
+    let top = hdr.iter().copied().fold(f32::MIN, f32::max);
+    assert!(
+        (1.03..1.10).contains(&top),
+        "拉满时编码 1.0 抬到 {top:.4}，落在 [1.03, 1.10] 之外——len=0.40 的饱和抬升变了"
+    );
+}
+
+/// 曲线尾部的额外斜率 `k·0.6`：把 +1…+3EV 的输入**接着往上接**，但四条硬约束。
+///
+/// 那个 0.6 没有文献值可抄（LR 只暴露一个 0–100 的「HDR 尾部」滑杆，反编译里拿不到
+/// 内部的斜率系数），所以只能自证。四条判据都贴着**看得见的后果**，任何一条被改坏
+/// 都说明 0.6 这个数不成立了：
+///
+/// ① **接得上**：x=1 处必须逐位等于曲线端点，x 刚过 1 时不允许跳变（尾部是斜率，
+///    不是偏置——若写成 `y1 + k` 就断了）。
+/// ② **不放大**：亮部滚降的定义就是「输出不超过输入」。任意 `slope ≤ 1` 且
+///    `y1 ≤ 1` 时恒成立；斜率改成 1.4 就破了（`0.784+1.4=2.18 > 2.0`）。
+/// ③ **斜率本身落在可用窗口 [0.40, 0.85]**：实测 0.6033。窗口下界由「+1EV 必须
+///    越过参考白」钉住（斜率 0.2 时 x=1.5 只到 0.884，HDR 高光压根没越过白），上界
+///    由「+1EV 不该冲到 +0.5 stop 以上」钉住。0.6 落在窗口 44% 处，偏保守那一侧——
+///    尾部太缓只是把高光压平（可接受），太陡则是凭空造光（不可接受），所以宁可偏缓。
+/// ④ **高光还有层次**：x=4 与 x=2 的输出差得开（`2·slope`），不然 HDR 上部就是一坨。
+///
+/// 实测（`s_curve(200)`，端点 0.7843，拉满）：x=1.5→1.0858，x=2→1.3873，
+/// x=4→2.5934，x=8→5.0055 —— 换成人眼熟悉的尺度，x=2.0（+1 stop over 参考白）
+/// 落到 +0.47 stop，压缩了半档多，正是滚降该有的样子。
+///
+/// The extra tail slope `k·0.6` carries inputs from +1 to +3 EV upward, under four hard
+/// constraints. There is no literature value to copy (LR only exposes a 0–100 slider and the
+/// decompiled code has no inner coefficient), so it has to be self-proved — each criterion is
+/// tied to a visible consequence:
+///
+/// (1) **Continuous**: at x=1 it must equal the curve endpoint bit-for-bit, no jump just above
+///     1 (the tail is a slope, not an offset — `y1 + k` would break this).
+/// (2) **Non-amplifying**: a highlight roll-off by definition never outputs more than it was
+///     given. Any `slope ≤ 1` with `y1 ≤ 1` satisfies this; 1.4 breaks it
+///     (`0.784+1.4=2.18 > 2.0`).
+/// (3) **Slope lands in the usable window [0.40, 0.85]**: measured 0.6033. The lower bound is
+///     pinned by "+1 EV must cross reference white" (slope 0.2 puts x=1.5 at 0.884 — the HDR
+///     highlight never gets above white), the upper by "+1 EV must not gain more than half a
+///     stop". 0.6 sits at 44% of the window, the conservative side: a too-gentle tail only
+///     flattens highlights, a too-steep one invents light.
+/// (4) **Highlights stay graded**: x=4 and x=2 must separate (`2·slope`), otherwise the top of
+///     the HDR range is one flat block.
+///
+/// Measured (`s_curve(200)`, endpoint 0.7843, maxed): x=1.5→1.0858, x=2→1.3873, x=4→2.5934,
+/// x=8→5.0055. In stops: x=2.0 (+1 stop over reference white) lands at +0.47 stop — a little
+/// over half a stop of compression, which is what a roll-off should look like.
+#[test]
+fn curve_hdr_tail_slope_stays_in_a_usable_window() {
+    let mut p = GradeParams::default();
+    p.curve_rgb = s_curve(200.0);
+    p.curve_hdr_tail = 100.0;
+    let end = 200.0f32 / 255.0;
+
+    let out = |x: f32| {
+        let mut v = vec![x; 3];
+        lut::tone_curve_keep_over(&mut v, &p);
+        v[0]
+    };
+
+    // ① 接得上。
+    assert!(
+        (out(1.0) - end).abs() < 1e-3,
+        "x=1 落在 {:.4}，不等于曲线端点 {end:.4}——尾部不是从端点接出去的",
+        out(1.0)
+    );
+    assert!(
+        (out(1.0001) - end).abs() < 2e-3,
+        "x 刚过 1 就跳到 {:.4}——尾部被写成了偏置而不是斜率",
+        out(1.0001)
+    );
+
+    // ② 不放大。
+    for x in [2.0f32, 4.0, 8.0] {
+        assert!(
+            out(x) < x,
+            "x={x} 的输出 {:.4} 比输入还亮——亮部滚降在放大",
+            out(x)
+        );
+    }
+
+    // ③ 斜率在窗口内。
+    let slope = (out(2.0) - out(1.5)) / 0.5;
+    assert!(
+        (0.40..=0.85).contains(&slope),
+        "尾部斜率实测 {slope:.4}，掉出 [0.40, 0.85]——k·0.6 里的 0.6 不再是可用值"
+    );
+
+    // ④ 高光还有层次。
+    assert!(
+        out(4.0) - out(2.0) >= 0.6,
+        "x=4 与 x=2 只差 {:.4}，HDR 上部糊成一片",
+        out(4.0) - out(2.0)
+    );
 }

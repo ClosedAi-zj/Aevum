@@ -228,6 +228,7 @@ fn render(probe: &[f32], w: usize, h: usize, q: &Proposal) -> (f64, f64, f64) {
             sketch: false,
             for_lut: true,
             local: false,
+            hdr: false,
         },
     );
     let lum = luminance(&px, w * h);

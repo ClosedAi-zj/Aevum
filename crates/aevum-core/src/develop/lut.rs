@@ -516,14 +516,69 @@ fn curve_lut(p: &GradeParams) -> (Vec<u16>, Vec<u16>, Vec<u16>) {
 /// Levels plus parametric curve plus curve: one composed 16-bit table, with the
 /// quantized input looked up once.
 pub fn tone_curve(rgb: &mut [f32], p: &GradeParams) {
+    tone_curve_inner(rgb, p, false);
+}
+
+/// 与 [`tone_curve`] 相同，但**白以上的部分不截断**（HDR 用）。
+///
+/// 这两者的差别只有一处：尾部延伸的结果是否钳到 1。SDR 必须钳——下游按 8bit 写盘，
+/// 白以上没有地方放；HDR 不能钳——那一段正是 PQ 上半段的内容，钳掉它等于「HDR 只
+/// 到参考白为止」。
+///
+/// 尾部公式本身两边一样：`y1 + (x − 1) · slope`，其中 `y1` 是曲线端点值。
+/// `slope = pchip_end_slope / 255 + k · 0.6`，k 是 `curve_hdr_tail` 滑杆（0–1）。
+/// 那个 `0.6` 是「滑杆拉满时斜率额外加多少」——它决定尾部多陡。实测（`s_curve(200)`，
+/// 端点 0.7843，拉满，`slope` = 0.6033）：x=1.5 → 1.0858、x=2 → 1.3873、x=4 → 2.5934。
+/// 也就是 +1 stop over 参考白的输入落成 +0.47 stop，压缩半档多。
+///
+/// Identical to [`tone_curve`] except that **values above white are not clamped** (for HDR).
+///
+/// That single difference is the point: SDR must clamp (it is written as 8bit, there is nowhere
+/// to put anything above white), HDR must not (that region *is* the upper half of PQ; clamping
+/// it would mean "HDR stops at reference white").
+///
+/// The tail formula is the same on both sides: `y1 + (x − 1) · slope` with `y1` the curve
+/// endpoint and `slope = pchip_end_slope / 255 + k · 0.6`, where k is the `curve_hdr_tail`
+/// slider (0–1). The `0.6` is how much extra slope a maxed slider adds. Measured
+/// (`s_curve(200)`, endpoint 0.7843, maxed, `slope` = 0.6033): x=1.5 → 1.0858, x=2 → 1.3873,
+/// x=4 → 2.5934 — an input one stop over reference white lands half a stop and change above it.
+pub fn tone_curve_keep_over(rgb: &mut [f32], p: &GradeParams) {
+    tone_curve_inner(rgb, p, true);
+}
+
+fn tone_curve_inner(rgb: &mut [f32], p: &GradeParams, keep_over: bool) {
     if curves_default(p) && !levels_active(p) && !par_active(p) {
         return;
     }
     let (lr, lg, lb) = curve_lut(p);
-    // 曲线 HDR 尾部（对齐 LR fExtension_LumaHDR 的「延伸而非截断」，E2；
-    // 斜率混合需拟合 TODO(fit)）：x>1 的输入按「曲线端点值 + PCHIP 末端斜率
-    // 延伸」处理，输出仍 clamp ≤1、下游零风险；末端斜率 0 时尾部自然水平。
+    // 曲线 HDR 尾部（对齐 LR fExtension_LumaHDR 的「延伸而非截断」，E2）：x>1 的
+    // 输入按「曲线端点值 + 末端斜率 × (x−1)」延伸。斜率的两个来源分开：曲线自身的
+    // PCHIP 末端斜率（换算到 0–1 值域，除以 255）给出「曲线往哪儿走」，滑杆
+    // `curve_hdr_tail` 乘 0.6 给「额外多陡」。
+    //
+    // 那个 0.6 的判据是**接得住但既不放大也不甩出去**（详见 `fit_sliders.rs::
+    // curve_hdr_tail_slope_stays_in_a_usable_window` 的四条）：斜率恒 < 1 保证
+    // 「输出 ≤ 输入」（亮部滚降的定义），下界 0.40 保证 +1EV 之后还越得过参考白；
+    // 实测 0.6033，落在可用窗口 [0.40, 0.85] 的 44% 处，偏保守那一侧。
+    //
+    // 早期注释在这里写过「实测最大输出 0.90」——那个数是在 SDR 出口量的，被末尾钳位
+    // 掩盖了，跟斜率没关系，已删。
+    //
     // x∈[0,1] 主路径逐位不动——这是「默认不漂移」最干净的 else 分支实现。
+    //
+    // Curve HDR tail (matching LR's fExtension_LumaHDR "extend, do not truncate", E2): inputs
+    // above 1 extend as `endpoint + slope · (x−1)`. The slope comes from two places: the curve's
+    // own PCHIP end slope (scaled into 0–1 by dividing by 255) says where the curve is heading,
+    // and the `curve_hdr_tail` slider times 0.6 adds extra steepness.
+    //
+    // The 0.6 is judged by **carrying the input without amplifying or flinging it**: a slope
+    // always below 1 keeps "output ≤ input" (the very definition of a highlight roll-off), and
+    // the 0.40 lower bound keeps +1 EV above reference white; measured 0.6033, at 44% of the
+    // usable window [0.40, 0.85] — the conservative side. See
+    // `fit_sliders.rs::curve_hdr_tail_slope_stays_in_a_usable_window` for all four criteria.
+    //
+    // An earlier comment here claimed "measured max output 0.90". That number was taken through
+    // the *SDR* exit, where the final clamp hides it; it says nothing about the slope. Removed.
     let k = (p.curve_hdr_tail / 100.0) as f32;
     let tail = if k > 0.0 {
         Some((
@@ -545,7 +600,12 @@ pub fn tone_curve(rgb: &mut [f32], p: &GradeParams) {
                 let tabs = [&lr, &lg, &lb];
                 for c in 0..3 {
                     if px[c] > 1.0 {
-                        px[c] = (y1[c] + (px[c] - 1.0) * slope).clamp(0.0, 1.0);
+                        let ext = y1[c] + (px[c] - 1.0) * slope;
+                        px[c] = if keep_over {
+                            ext.max(0.0)
+                        } else {
+                            ext.clamp(0.0, 1.0)
+                        };
                     } else {
                         // ≤1 的通道仍走原查表口径。
                         let q = rint(px[c].clamp(0.0, 1.0) * 65535.0) as usize;
@@ -554,7 +614,11 @@ pub fn tone_curve(rgb: &mut [f32], p: &GradeParams) {
                 }
                 return;
             }
-            // 先 clip 再量化（Python：clip -> rint(x*65535) -> 查表 -> /65535）。
+            // 三个通道都在 [0,1] 内：走量化查表（Python：clip -> rint(x*65535) -> 查表
+            // -> /65535）。查表值天然 ≤1，所以 HDR 与 SDR 在这一支没有差别。
+            //
+            // All three channels are within [0,1], so this is the quantised lookup; table
+            // values are inherently ≤1, which is why HDR and SDR do not differ on this branch.
             let q0 = rint(px[0].clamp(0.0, 1.0) * 65535.0) as usize;
             let q1 = rint(px[1].clamp(0.0, 1.0) * 65535.0) as usize;
             let q2 = rint(px[2].clamp(0.0, 1.0) * 65535.0) as usize;

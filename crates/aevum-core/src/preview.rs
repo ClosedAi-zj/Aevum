@@ -20,6 +20,24 @@ pub fn render(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev) {
     develop::render(rgb, w, h, p, gain, Opts::FULL);
 }
 
+/// HDR 导出的渲染：全量，且**不把白以上的部分截断**。
+///
+/// 与 [`render`] 的唯一差别就是这一条：`render` 在终点把结果钳到 [0,1]（SDR 的语义，
+/// 下游按 8bit 写盘），这里只压负值，好让 PQ 编码器接住参考白以上的亮度。预览永远
+/// 走 [`render`]——屏幕显示不到白以上，钳不钳都一样，但钳了才能保证参数面板里看到
+/// 的就是 SDR 交付的样子。
+///
+/// HDR export render: full set, and **values above white are not clamped**.
+///
+/// The only difference from [`render`]: that one pins the result to [0,1] at the end (SDR
+/// semantics — it is written as 8bit), while this one only floors negatives so the PQ encoder
+/// can receive everything above reference white. Preview always uses [`render`]: a display
+/// cannot show above white, and keeping the clamp is what makes the panel show exactly what the
+/// SDR delivery looks like.
+pub fn render_hdr(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev) {
+    develop::render(rgb, w, h, p, gain, Opts::HDR);
+}
+
 /// 拖动中的草图：跳过最贵的空间运算，保证跟手。
 /// 无空间参数时与 [render] 逐点一致，有差异的那几项正是草图省掉的。
 ///

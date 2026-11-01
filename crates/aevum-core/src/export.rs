@@ -1255,7 +1255,19 @@ fn render_frame_raw(
         )));
     }
     let Scratch { a, b, tmp, c, d } = s;
-    preview::render(a, w as usize, h as usize, params, gain);
+    // 动态范围决定终点要不要保留白以上的亮度：HDR 走不截断那条，SDR 沿用原路径
+    // （逐位不变）。这一句是 HDR 真能产出高光的**唯一**开关——预览里看不到差别，
+    // 因为屏幕显示不到白以上。
+    //
+    // The dynamic range decides whether brightness above white survives to the encoder: HDR
+    // takes the unclamped path, SDR keeps the original one (bit-identical). This line is the
+    // **only** switch that makes HDR actually carry highlights; the preview cannot show the
+    // difference because a display does not go past white.
+    if options.dynamic == OutputDynamic::HdrPq {
+        preview::render_hdr(a, w as usize, h as usize, params, gain);
+    } else {
+        preview::render(a, w as usize, h as usize, params, gain);
+    }
 
     let crop = clamp_crop(options.crop, w, h)?;
     let framing = Framing {
