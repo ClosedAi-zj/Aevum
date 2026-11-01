@@ -20,6 +20,7 @@ pub mod colorspace;
 pub mod config_dir;
 pub mod crop;
 pub mod cube;
+pub mod cull;
 pub mod dcp;
 pub mod deflicker;
 pub mod denoise_chroma_weights;
