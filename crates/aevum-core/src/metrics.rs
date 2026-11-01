@@ -303,6 +303,36 @@ fn area_weights(src: u32, dst: u32) -> Vec<Vec<(u32, f32)>> {
         .collect()
 }
 
+/// 像素是从哪条路解出来的。**白平衡口径由它决定**：内置 DNG 解析不解白平衡，
+/// RAW 后端已经按文件里的 AsShotNeutral 做过一次增益，配置再乘一次就是双份。
+///
+/// 分开报是因为「谁做的白平衡」不能靠文件后缀猜：同一张 `.dng` 既可能被内置解析器
+/// 接下来（单通道 CFA），也可能落到后端（三通道 LinearRaw），两条路的像素口径不同。
+///
+/// Which route produced the pixels. **The white-balance convention depends on it**: the built-in
+/// DNG parser does not apply white balance, while the RAW backend has already applied the gains
+/// from the file's AsShotNeutral, so applying the profile's again would double it.
+///
+/// It is reported separately because "who did the white balance" cannot be guessed from the file
+/// suffix: the same `.dng` may be handled by the built-in parser (single-channel CFA) or fall
+/// through to the backend (three-channel LinearRaw), and the two routes yield different pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PixelOrigin {
+    /// 普通图像文件（JPEG/PNG/TIFF…），image 库解的，已是成品色彩。
+    ///
+    /// An ordinary image file (JPEG/PNG/TIFF, ...) decoded by the image crate, already
+    /// colour-finished.
+    Image,
+    /// 内置 DNG 解析器（单通道 CFA/LinearRaw），**没做白平衡**。
+    ///
+    /// The built-in DNG parser (single-channel CFA/LinearRaw), with **no white balance**.
+    DngBuiltin,
+    /// RAW 后端（rawler 等），**已按文件里的增益做过白平衡**。
+    ///
+    /// The RAW backend (rawler, ...), with white balance **already applied from the file**.
+    RawBackend,
+}
+
 /// 解码并按 EXIF 方向转正。
 ///
 /// image 库不会自己应用方向（只把它挂在 `decoder.orientation()` 上），手机/相机
@@ -310,7 +340,9 @@ fn area_weights(src: u32, dst: u32) -> Vec<Vec<(u32, f32)>> {
 /// 进，方向的语义只有一份。
 ///
 /// `.dng` 也从这个口子进：image 库不认 CFA 马赛克，只有 `dng::read` 解得开，解出来
-/// 是 16bit RGB，所以下游的位深判定天然按高位深走。
+/// 是 16bit RGB，所以下游的位深判定天然按高位深走。内置解析器只解单通道原始数据，
+/// **三通道 LinearRaw（iPhone 导出的 DNG 就是）会回落 RAW 后端**——拒绝它是能力
+/// 边界而不是文件坏了，见 [`crate::dng::DngError::soft_fallback`]。
 ///
 /// 厂商 RAW（`.rw2`/`.nef`/`.arw`/`.cr2`/`.cr3`/`.orf`/`.rwl`）同理由：`raw::read`
 /// 两条路（传感器 CFA 或机身内嵌预览）都返回 16bit RGB，位深口径只有一套；
@@ -326,7 +358,10 @@ fn area_weights(src: u32, dst: u32) -> Vec<Vec<(u32, f32)>> {
 ///
 /// `.dng` also enters here: the image crate does not understand CFA mosaics and only `dng::read`
 /// can decode them, yielding 16bit RGB, so downstream bit-depth decisions follow the high-bit-depth
-/// path by construction.
+/// path by construction. The built-in parser only handles single-channel raw data, so
+/// **three-channel LinearRaw (which is what an iPhone-exported DNG is) falls back to the RAW
+/// backend**: rejecting it is a capability limit, not corruption, see
+/// [`crate::dng::DngError::soft_fallback`].
 ///
 /// Vendor RAW (`.rw2`/`.nef`/`.arw`/`.cr2`/`.cr3`/`.orf`/`.rwl`) works the same way: both paths of
 /// `raw::read` (sensor CFA or camera-embedded preview) return 16bit RGB, keeping a single
@@ -334,29 +369,50 @@ fn area_weights(src: u32, dst: u32) -> Vec<Vec<(u32, f32)>> {
 /// read the `raw::RawPath` returned by `raw::read`/`raw::info`, where a preview is not sensor
 /// data.
 pub fn decode(path: impl AsRef<Path>) -> Result<DynamicImage, MetricsError> {
+    Ok(decode_with_origin(path)?.0)
+}
+
+/// [`decode`] 的完整版：连「像素从哪条路来」一起报。
+///
+/// [`decode`] with the route also reported.
+pub fn decode_with_origin(
+    path: impl AsRef<Path>,
+) -> Result<(DynamicImage, PixelOrigin), MetricsError> {
     let path = path.as_ref();
-    if crate::dng::is_named_dng(path) {
-        let mosaic = DynamicImage::ImageRgb16(crate::dng::read(path)?);
-        return Ok(crate::exif::oriented(
-            mosaic,
-            crate::exif::read(path).orientation,
-        ));
+    let is_dng = crate::dng::is_named_dng(path);
+    if is_dng {
+        match crate::dng::read(path) {
+            Ok(mosaic) => {
+                return Ok((
+                    crate::exif::oriented(
+                        DynamicImage::ImageRgb16(mosaic),
+                        crate::exif::read(path).orientation,
+                    ),
+                    PixelOrigin::DngBuiltin,
+                ));
+            }
+            // 能力边界（三通道 LinearRaw、瓦片、非 8/16 位…）：后端再试一次。
+            // 字节层面坏掉的不在此列，白读一遍文件不解决问题，直接把内置的具体错误串
+            // 抛出去——它对 TIFF 结构的描述比「后端解不动」有用得多。
+            Err(e) if e.soft_fallback() => {}
+            Err(e) => return Err(e.into()),
+        }
     }
-    if crate::raw::is_raw_name(path) {
+    if is_dng || crate::raw::is_raw_name(path) {
         // 走了哪条路在这里不能丢：`raw::read` 已经把它当第二个返回值摆出来了。
         // 方向用后端报的：CR3 的 Exif item 在 BMFF 容器里，`exif::read` 读不到，
         // rawler 能——竖拍躺平就是在这里漏的方向。
         let (mosaic, _path, orientation) = crate::raw::read_full(path)?;
-        return Ok(crate::exif::oriented(
-            DynamicImage::ImageRgb16(mosaic),
-            orientation,
+        return Ok((
+            crate::exif::oriented(DynamicImage::ImageRgb16(mosaic), orientation),
+            PixelOrigin::RawBackend,
         ));
     }
     let reader = image::ImageReader::open(path)?.with_guessed_format()?;
     let img = reader.decode()?;
-    Ok(crate::exif::oriented(
-        img,
-        crate::exif::read(path).orientation,
+    Ok((
+        crate::exif::oriented(img, crate::exif::read(path).orientation),
+        PixelOrigin::Image,
     ))
 }
 
@@ -384,7 +440,23 @@ pub fn decode_rgb(path: impl AsRef<Path>, max_side: u32) -> Result<image::RgbIma
 /// The bit-depth decision uses the same match as `export::load_rgb_f32`, so both export paths say
 /// the same thing about what counts as a high-bit-depth source.
 pub fn decode_rgb_f32(path: impl AsRef<Path>) -> Result<(Vec<f32>, u32, u32, bool), MetricsError> {
-    let img = decode(path)?;
+    let (rgb, w, h, deep, _origin) = decode_rgb_f32_with_origin(path)?;
+    Ok((rgb, w, h, deep))
+}
+
+/// [`decode_rgb_f32`] 的完整版：连「像素从哪条路来」一起报。
+///
+/// 相机配置（DCP）要按它决定白平衡乘不乘第二次：内置 DNG 解析不解白平衡，
+/// 后端已经解过。见 [`PixelOrigin`]。
+///
+/// [`decode_rgb_f32`] with the route also reported.
+///
+/// The camera profile (DCP) reads it to decide whether to apply white balance a second time: the
+/// built-in DNG parser does not apply it, the backend already did. See [`PixelOrigin`].
+pub fn decode_rgb_f32_with_origin(
+    path: impl AsRef<Path>,
+) -> Result<(Vec<f32>, u32, u32, bool, PixelOrigin), MetricsError> {
+    let (img, origin) = decode_with_origin(path)?;
     let (w, h) = (img.width(), img.height());
     let mut rgb = Vec::with_capacity(w as usize * h as usize * 3);
     let deep = match img.color() {
@@ -418,7 +490,7 @@ pub fn decode_rgb_f32(path: impl AsRef<Path>) -> Result<(Vec<f32>, u32, u32, boo
             false
         }
     };
-    Ok((rgb, w, h, deep))
+    Ok((rgb, w, h, deep, origin))
 }
 
 pub fn decode_for_grade(

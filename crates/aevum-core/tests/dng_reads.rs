@@ -245,7 +245,7 @@ fn base(w: u32, h: u32, bits: u16) -> Vec<Ent> {
         e_u16(284, 1),
         e_u16(278, h as u16),
         e_u16s(33421, &[2, 2]),
-        e_bytes(33422, &[2, 3, 3, 4]),
+        e_bytes(33422, &[0, 1, 1, 2]),
         e_bytes(50706, &[1, 4, 0, 0]),
         e_ascii(271, "TestMake"),
         e_ascii(272, "TestModel"),
@@ -1026,13 +1026,13 @@ fn hostile_files_are_rejected() {
             set(e, e_u16s(33421, &[4, 4]));
             set(
                 e,
-                e_bytes(33422, &[2, 3, 3, 4, 3, 2, 4, 3, 2, 3, 3, 4, 3, 2, 4, 3]),
+                e_bytes(33422, &[0, 1, 1, 2, 1, 0, 2, 1, 0, 1, 1, 2, 1, 0, 2, 1]),
             );
         })),
         Err(DngError::UnsupportedCfa)
     ));
     assert!(matches!(
-        dng::read_bytes(&with(&|e| set(e, e_bytes(33422, &[1, 3, 3, 5])))),
+        dng::read_bytes(&with(&|e| set(e, e_bytes(33422, &[0, 1, 1, 3])))),
         Err(DngError::UnsupportedCfa)
     ));
     // 32803 少了 CFA 图案没法去拜尔。

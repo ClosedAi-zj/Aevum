@@ -323,12 +323,23 @@ pub fn decode(path: &Path, profile_path: &Path) -> Result<(Vec<f32>, u32, u32, b
             camera_line(&make, &model)
         ));
     }
-    let (mut rgb, w, h, deep) = crate::metrics::decode_rgb_f32(path).map_err(|e| e.to_string())?;
+    let (mut rgb, w, h, deep, origin) =
+        crate::metrics::decode_rgb_f32_with_origin(path).map_err(|e| e.to_string())?;
     if w == 0 || h == 0 {
         return Err("解码结果为空".to_owned());
     }
-    // DNG 解码路径不做白平衡；RAW 解码路径已经做过（按 AsShotNeutral 的固定点增益）。
-    if crate::dng::is_named_dng(path) {
+    // 白平衡只补在「谁没做」的那条路上：内置 DNG 解析不解白平衡，这里补；RAW 后端
+    // 已经按 AsShotNeutral 做过定点增益，再乘一次就是双份。判据用解码路由，不用
+    // 文件后缀——同一张 `.dng` 既可能被内置接下来（单通道 CFA），也可能落到后端
+    // （三通道 LinearRaw），后缀说不出这件事。
+    //
+    // White balance is added only on the route that did not do it: the built-in DNG parser does
+    // not apply any, so it is added here, while the RAW backend has already applied the fixed-point
+    // gains from AsShotNeutral, and a second application would double it. The test is the decode
+    // route, not the file suffix: the same `.dng` may be handled by the built-in parser
+    // (single-channel CFA) or fall through to the backend (three-channel LinearRaw), and the suffix
+    // cannot tell them apart.
+    if origin == crate::metrics::PixelOrigin::DngBuiltin {
         let neutral = neutral
             .ok_or_else(|| "这个 DNG 没有 AsShotNeutral，无法做相机配置白平衡".to_owned())?;
         apply_neutral(&mut rgb, &neutral);
@@ -390,17 +401,27 @@ pub fn decode(path: &Path, profile_path: &Path) -> Result<(Vec<f32>, u32, u32, b
 }
 
 /// 机型/白平衡事实：DNG 走 `dng::`，厂商 RAW 走 `raw::`，其它一律拒绝。
+///
+/// DNG 内置解析器只认单通道原始数据，三通道 LinearRaw（iPhone 导出的 DNG 就是）会被
+/// 它拒掉；那不是文件坏了而是能力边界，机型事实得问后端——**解码走哪条路，机型事实
+/// 就得跟哪条路**，否则「内置说解不了、后端说解得了」这两句话会同时出现在界面上。
 fn source_facts(path: &Path) -> Result<(String, String, Option<[f64; 3]>), String> {
     if crate::dng::is_named_dng(path) {
-        let info = crate::dng::info(path).map_err(|e| e.to_string())?;
-        let neutral = crate::dng::as_shot_neutral(path).map_err(|e| e.to_string())?;
-        return Ok((
-            info.make.unwrap_or_default(),
-            info.model.unwrap_or_default(),
-            neutral,
-        ));
+        match crate::dng::info(path) {
+            Ok(info) => {
+                let neutral = crate::dng::as_shot_neutral(path).map_err(|e| e.to_string())?;
+                return Ok((
+                    info.make.unwrap_or_default(),
+                    info.model.unwrap_or_default(),
+                    neutral,
+                ));
+            }
+            // 与 `metrics::decode` 同一个判据：软错才回落，硬错照内置的具体错误串报。
+            Err(e) if e.soft_fallback() => {}
+            Err(e) => return Err(e.to_string()),
+        }
     }
-    if crate::raw::is_raw_name(path) {
+    if crate::raw::is_raw_name(path) || crate::dng::is_named_dng(path) {
         let info = crate::raw::info(path).map_err(|e| e.to_string())?;
         if info.path == crate::raw::RawPath::Preview {
             return Err(

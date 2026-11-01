@@ -3007,15 +3007,22 @@ fn find_box(data: &[u8], start: usize, end: usize, want: &[u8; 4]) -> Option<usi
 
 /// 只拿像素数，不解全图：`image` 不认 RAW 容器，那两种得问我们自己的解析器，
 /// 否则每张 24MP RAW 都会被当成「尺寸不明」按单线程导出。
+///
+/// DNG 内置解析只认单通道原始数据，三通道 LinearRaw 会被它拒掉；那不是文件坏了，
+/// 尺寸得问后端——拿不到尺寸只会退成单线程，但那是性能损失，不该由「内置解不了」
+/// 这样的能力边界来触发。
 fn frame_pixels(path: &Path) -> u64 {
     let info = if crate::raw::is_raw_name(path) {
         crate::raw::info(path)
             .map(|i| Some((i.width, i.height)))
             .unwrap_or(None)
     } else if crate::dng::is_named_dng(path) {
-        crate::dng::info(path)
-            .map(|i| Some((i.width, i.height)))
-            .unwrap_or(None)
+        match crate::dng::info(path) {
+            Ok(i) => Some((i.width, i.height)),
+            // 软错说明该问后端；硬错问也是白问，尺寸当未知。
+            Err(e) if e.soft_fallback() => crate::raw::info(path).ok().map(|i| (i.width, i.height)),
+            Err(_) => None,
+        }
     } else {
         image::ImageReader::open(path)
             .ok()

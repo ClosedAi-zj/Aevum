@@ -2453,6 +2453,19 @@ impl AppState {
                         Some(rotated((i.width, i.height))),
                         Some(crate::i18n::tr_fmt("DNG · 传感器直解 · {} 位", &[&i.bits])),
                     ),
+                    // 内置解析只认单通道原始数据，三通道 LinearRaw（iPhone 导出的 DNG）
+                    // 会回落后端解码——尺寸和保真度就得问后端。不回落的话，面板会对着
+                    // 一张能正常显示的图说「尺寸不明」，两处说法自相矛盾。
+                    Err(e) if e.soft_fallback() => match aevum_core::raw::info(p) {
+                        Ok(i) => (
+                            Some(rotated((i.width, i.height))),
+                            Some(crate::i18n::tr_fmt(
+                                "{} · {} 位",
+                                &[&i.path.short(), &i.bits],
+                            )),
+                        ),
+                        Err(_) => (None, None),
+                    },
                     Err(_) => (None, None),
                 },
                 Some(p) => (image::image_dimensions(p).ok().map(rotated), None),

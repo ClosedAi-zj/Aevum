@@ -51,6 +51,15 @@ const TAG_ROWS_PER_STRIP: u16 = 278;
 const TAG_STRIP_BYTE_COUNTS: u16 = 279;
 const TAG_PLANAR_CONFIG: u16 = 284;
 const TAG_PREDICTOR: u16 = 317;
+/// 子 IFD 偏移表。iPhone 这类写入器把 CFA 主图放这里，IFD0 只留一张预览。
+///
+/// Sub-IFD offset table. Writers like iPhone's put the CFA main image here and leave only a
+/// preview in IFD0.
+const TAG_SUB_IFDS: u16 = 330;
+/// 位 0 = 缩减分辨率（即预览/缩略图）。选主图就靠这一位。
+///
+/// Bit 0 = reduced resolution, that is, a preview or thumbnail. Picking the main image uses it.
+const TAG_NEW_SUBFILE_TYPE: u16 = 254;
 const TAG_CFA_REPEAT_DIM: u16 = 33421;
 const TAG_CFA_PATTERN: u16 = 33422;
 const TAG_BITS_PER_SAMPLE_DNG: u16 = 371;
@@ -116,6 +125,43 @@ pub enum DngError {
     Deflate(&'static str),
 }
 
+impl DngError {
+    /// 换个解码器还可能成功吗——即「内置解析器的能力边界」而非「文件坏了」。
+    ///
+    /// 这条判据决定要不要回落 `raw::backend`：内置只解单通道 CFA/LinearRaw 的
+    /// 无压缩或 deflate 条带，**三通道 LinearRaw 是真实存在的常见写法**（iPhone
+    /// 导出的 DNG 就是），拒绝它是能力边界，不是文件损坏。字节层面坏掉的
+    /// （TIFF 头不对、条带越界、deflate 流非法）换谁来解都一样，回落只是白读一遍。
+    ///
+    /// 与 `raw::RawError::soft_fallback` 同一套语义，别让两边对「软错」说两句话。
+    ///
+    /// Whether another decoder might still succeed, that is, whether this is a limit of the
+    /// built-in parser rather than a broken file.
+    ///
+    /// This decides whether to fall back to `raw::backend`: the built-in parser only handles
+    /// single-channel CFA or LinearRaw in uncompressed or deflate strips, while **three-channel
+    /// LinearRaw is a real and common layout** (DNGs exported by iPhone use it). Rejecting it is a
+    /// capability limit, not corruption. Byte-level damage (bad TIFF header, strip out of range,
+    /// invalid deflate stream) fails the same way everywhere, so falling back would only re-read
+    /// the file for nothing.
+    ///
+    /// Same semantics as `raw::RawError::soft_fallback`; the two sides must not disagree about
+    /// what counts as a soft error.
+    pub fn soft_fallback(&self) -> bool {
+        matches!(
+            self,
+            Self::MissingTag(_)
+                | Self::UnsupportedCompression(_)
+                | Self::UnsupportedPhotometric(_)
+                | Self::UnsupportedBits(_)
+                | Self::UnsupportedPlanar(_)
+                | Self::UnsupportedSamples(_)
+                | Self::UnsupportedCfa
+                | Self::TooLarge { .. }
+        )
+    }
+}
+
 /// 主图元数据，只放解码真要用的字段。
 ///
 /// Main image metadata, holding only the fields decoding actually needs.
@@ -127,6 +173,12 @@ pub struct DngInfo {
     ///
     /// Bit depth per sample; only 8 or 16 is possible.
     pub bits: u16,
+    /// 每像素采样数。**1 = 单通道马赛克（本模块解得动）**；3 = 线性 RGB，
+    /// 元数据报得出来但像素要交给 `raw::backend`。
+    ///
+    /// Samples per pixel. **1 = single-channel mosaic (this module can decode it)**; 3 = linear
+    /// RGB, whose metadata is reportable but whose pixels go to `raw::backend`.
+    pub samples: u16,
     pub make: Option<String>,
     pub model: Option<String>,
     /// 黑场电平（原始 ADC 值）：标记里多个值取平均，缺标记时为 0。
@@ -138,6 +190,16 @@ pub struct DngInfo {
     /// White level as the saturation value: the maximum of multiple tag values, with a missing tag
     /// falling back to the full scale of the bit depth.
     pub white: u16,
+    /// 2×2 CFA 图案的通道索引（0=R、1=G、2=B，按左上、右上、左下、右下的存储顺序）。
+    /// 线性原始数据没有图案时为 `None`。
+    ///
+    /// Why expose it: the panel shows the user their own sensor's arrangement (RGGB vs
+    /// BGGR), which is the one fact that tells apart "highlights turned magenta because
+    /// the pattern is misread" from a real colour cast.
+    ///
+    /// Channel indices of the 2×2 CFA pattern (0=R, 1=G, 2=B, in stored order: top-left,
+    /// top-right, bottom-left, bottom-right). `None` for linear raw data.
+    pub cfa: Option<[u8; 4]>,
 }
 
 impl DngInfo {
@@ -213,15 +275,20 @@ pub fn info(path: impl AsRef<Path>) -> Result<DngInfo, DngError> {
 }
 
 pub fn info_bytes(data: &[u8]) -> Result<DngInfo, DngError> {
-    let m = meta(&Tiff::parse(data)?)?;
+    let t = Tiff::parse(data)?;
+    // 报的是**主图**的元数据，不是 IFD0 那张预览的：界面上「4032×3024 · 16 位」和
+    // 画布上真正显示的图必须是同一张。
+    let m = meta(&t, t.main_ifd()?)?;
     Ok(DngInfo {
         width: m.width,
         height: m.height,
         bits: m.bits,
+        samples: m.spp,
         make: m.make,
         model: m.model,
         black: m.black as u16,
         white: m.white as u16,
+        cfa: m.cfa,
     })
 }
 
@@ -256,12 +323,28 @@ pub fn read(path: impl AsRef<Path>) -> Result<Rgb16Image, DngError> {
 
 /// 字节入口：测试与已经握在手里的一段 DNG（例如从别的容器里抠出来的）走这条。
 ///
+/// **解像素需要单通道马赛克**。三通道 LinearRaw（iPhone 导出的 DNG 就是）在这里被拒，
+/// 报的是 [`DngError::UnsupportedSamples`]——它属于 [`DngError::soft_fallback`]，
+/// 调用方该把这份文件交给 `raw::backend` 再试一次，而不是告诉用户「文件不支持」。
+/// 元数据（宽高、位深、机型、电平）那条路不受影响，见 [`info`]。
+///
 /// Byte entry point: tests and a DNG already in hand, for example one extracted from another
 /// container, take this path.
+///
+/// **Decoding pixels needs a single-channel mosaic.** Three-channel LinearRaw (which is what an
+/// iPhone-exported DNG uses) is rejected here with [`DngError::UnsupportedSamples`], which belongs
+/// to [`DngError::soft_fallback`]: the caller should hand the file to `raw::backend` for another
+/// attempt rather than telling the user the file is unsupported. The metadata route is unaffected,
+/// see [`info`].
 pub fn read_bytes(data: &[u8]) -> Result<Rgb16Image, DngError> {
     let tiff = Tiff::parse(data)?;
-    let m = meta(&tiff)?;
-    let mut mosaic = decode_mosaic(&tiff, &m)?;
+    let ifd = tiff.main_ifd()?;
+    let m = meta(&tiff, ifd)?;
+    if m.spp != 1 {
+        return Err(DngError::UnsupportedSamples(m.spp));
+    }
+    let l = layout(&tiff, ifd, m.height)?;
+    let mut mosaic = decode_mosaic(&tiff, &m, &l)?;
     scale_levels(&mut mosaic, m.black, m.white);
     let rgb = demosaic(&mosaic, m.width as usize, m.height as usize, m.cfa);
     Rgb16Image::from_raw(m.width, m.height, rgb).ok_or(DngError::TooLarge {
@@ -368,6 +451,76 @@ impl<'a> Tiff<'a> {
             return Err(DngError::Truncated);
         }
         Ok(off)
+    }
+
+    /// 主图所在的 IFD。
+    ///
+    /// DNG 的主图是「`NewSubfileType` 位 0 为 0」的那一张，**不一定是 IFD0**：iPhone
+    /// 这类写入器把 852×640 的 YCbCr 预览放在 IFD0，把 4032×3024 的 CFA 主图放在
+    /// `SubIFDs` 里。只看 IFD0 的实现，轻则去解一张预览、重则因为「photometric=6
+    /// （YCbCr）」把整个文件判成不支持——真实样本上两种情况都出现过。
+    ///
+    /// 候选是 IFD0 加上 `SubIFDs` 的每一项；跳过标了「缩减分辨率」的，剩下取面积
+    /// 最大的（DNG 允许多张同分辨率主图，大的那张是用户要的）。全被跳过或都没有
+    /// 标记时退回 IFD0，与老文件的语义一致。
+    ///
+    /// The IFD holding the main image.
+    ///
+    /// A DNG main image is the one with `NewSubfileType` bit 0 clear, which **is not necessarily
+    /// IFD0**: writers like iPhone's put an 852×640 YCbCr preview in IFD0 and the 4032×3024 CFA
+    /// main image in `SubIFDs`. An implementation that only reads IFD0 either decodes a preview or
+    /// rejects the whole file because of "photometric=6 (YCbCr)"; both were observed on a real
+    /// sample.
+    ///
+    /// The candidates are IFD0 plus every entry of `SubIFDs`; those marked reduced-resolution are
+    /// skipped and the largest remaining area wins (DNG allows several full-resolution images and
+    /// the user wants the big one). If everything is skipped or nothing carries the tag, IFD0 is
+    /// returned, matching the older convention.
+    fn main_ifd(&self) -> Result<usize, DngError> {
+        let ifd0 = self.ifd0()?;
+        let mut candidates = vec![ifd0];
+        if let Some(e) = self.entry(ifd0, TAG_SUB_IFDS)? {
+            for off in self.scalars(&e, TAG_SUB_IFDS)? {
+                let off = off as usize;
+                // 越界的子 IFD 不猜：跳过，由主图判据决定还剩谁。
+                if off >= 8 && off < self.d.len() {
+                    candidates.push(off);
+                }
+            }
+        }
+
+        let mut best: Option<(u64, usize)> = None;
+        for off in candidates {
+            // 缺标记按 0 处理：老文件不写 NewSubfileType，那就是主图。
+            let reduced = match self.entry(off, TAG_NEW_SUBFILE_TYPE)? {
+                Some(e) => self.scalar(&e, TAG_NEW_SUBFILE_TYPE)? & 1 != 0,
+                None => false,
+            };
+            if reduced {
+                continue;
+            }
+            let area = self.pixels_of(off)?;
+            if best.is_none_or(|(a, _)| area > a) {
+                best = Some((area, off));
+            }
+        }
+        Ok(best.map_or(ifd0, |(_, off)| off))
+    }
+
+    /// 某个 IFD 声明的像素数；宽高缺失或是 0 就返回 0（候选排序用，不报错）。
+    ///
+    /// Pixels declared by one IFD; 0 when width or height is missing or zero. Used for ranking
+    /// candidates, so it never fails.
+    fn pixels_of(&self, ifd: usize) -> Result<u64, DngError> {
+        let width = match self.entry(ifd, TAG_IMAGE_WIDTH)? {
+            Some(e) => self.scalar(&e, TAG_IMAGE_WIDTH)?,
+            None => return Ok(0),
+        };
+        let height = match self.entry(ifd, TAG_IMAGE_LENGTH)? {
+            Some(e) => self.scalar(&e, TAG_IMAGE_LENGTH)?,
+            None => return Ok(0),
+        };
+        Ok(u64::from(width) * u64::from(height))
     }
 
     fn u16(&self, at: usize) -> Result<u16, DngError> {
@@ -486,14 +639,29 @@ impl<'a> Tiff<'a> {
     }
 }
 
+/// 元数据 + 存储布局是解码要的两层，分别由 [`meta`] 与 [`layout`] 产出：前者给
+/// [`info`] 报尺寸，后者只在解像素时校验。拆开是为了让「元数据报得出来」不被
+/// 「像素存储不认」连坐。
+///
+/// Metadata and storage layout are the two layers decoding needs, produced by [`meta`] and
+/// [`layout`] respectively: the first reports size for [`info`], the second is only checked when
+/// decoding pixels. They are separate so that "metadata is reportable" is not taken down by
+/// "this pixel layout is not supported".
 struct Meta {
     width: u32,
     height: u32,
+    /// 每采样位深。多个声明值必须一致，不一致的写法不猜。
+    ///
+    /// Bits per sample. Several declared values must agree; a disagreeing layout is not guessed.
     bits: u16,
-    compression: u16,
-    predictor: u16,
-    rows_per_strip: u32,
-    strips: Vec<(u64, u64)>,
+    /// 每像素采样数。**1 才解像素**（CFA/LinearRaw），其余只用于报元数据：
+    /// 三通道 LinearRaw 是 iPhone 导出的 DNG 的常规写法，读不出它的宽高而说
+    /// 「文件不支持」，会让信息面板和预览各说一套。
+    ///
+    /// Samples per pixel. Only 1 decodes pixels (CFA/LinearRaw); other values are metadata-only:
+    /// three-channel LinearRaw is the normal layout of an iPhone-exported DNG, and failing to
+    /// report its size as "unsupported file" would make the info panel and the preview disagree.
+    spp: u16,
     make: Option<String>,
     model: Option<String>,
     black: u32,
@@ -502,8 +670,25 @@ struct Meta {
     cfa: Option<[u8; 4]>,
 }
 
-fn meta(t: &Tiff<'_>) -> Result<Meta, DngError> {
-    let ifd = t.ifd0()?;
+/// 像素的存储布局：哪些字节属于哪一条带、怎么压的。
+///
+/// 与 [`Meta`] 分开是刻意的：存储布局的校验（压缩方式、瓦片、predictor）只属于解码，
+/// 提到了元数据层就会连累 [`info`]——真实相机 DNG 用 lossless JPEG 瓦片，那样连尺寸
+/// 都报不出来。
+///
+/// Pixel storage layout: which bytes belong to which strip and how they are compressed.
+///
+/// Keeping it apart from [`Meta`] is deliberate: storage checks (compression, tiles, predictor)
+/// belong to decoding only, and promoting them to the metadata layer would drag [`info`] down with
+/// them. Real camera DNGs use lossless-JPEG tiles, which would cost even the size report.
+struct Layout {
+    compression: u16,
+    predictor: u16,
+    rows_per_strip: u32,
+    strips: Vec<(u64, u64)>,
+}
+
+fn meta(t: &Tiff<'_>, ifd: usize) -> Result<Meta, DngError> {
     let width = t.scalar(&t.required(ifd, TAG_IMAGE_WIDTH)?, TAG_IMAGE_WIDTH)?;
     let height = t.scalar(&t.required(ifd, TAG_IMAGE_LENGTH)?, TAG_IMAGE_LENGTH)?;
     if width == 0 || height == 0 || width as u64 * height as u64 > MAX_PIXELS {
@@ -514,8 +699,16 @@ fn meta(t: &Tiff<'_>) -> Result<Meta, DngError> {
         &t.required(ifd, TAG_SAMPLES_PER_PIXEL)?,
         TAG_SAMPLES_PER_PIXEL,
     )?;
-    if spp != 1 {
-        return Err(DngError::UnsupportedSamples(spp as u16));
+    // 这里**不拒绝**多采样：宽高、位深、机型、电平都是元数据，与采样数无关，
+    // 报得出来就该报。拒绝发生在解像素那一步（见 `read_bytes`），那条路才需要
+    // 单通道马赛克。
+    //
+    // Multiple samples are **not** rejected here: width, height, bit depth, camera model, and
+    // levels are metadata unrelated to the sample count, so report what can be reported. The
+    // rejection happens at the pixel-decoding step (see `read_bytes`), which is the step that needs
+    // a single-channel mosaic.
+    if spp == 0 {
+        return Err(DngError::UnsupportedSamples(0));
     }
 
     let bits_entry = match t.entry(ifd, TAG_BITS_PER_SAMPLE_DNG)? {
@@ -523,8 +716,12 @@ fn meta(t: &Tiff<'_>) -> Result<Meta, DngError> {
         None => t.required(ifd, TAG_BITS_PER_SAMPLE)?,
     };
     let bits = t.scalars(&bits_entry, TAG_BITS_PER_SAMPLE_DNG)?;
-    // 单通道图像只允许一个位深声明；12/14 位的 packed 写法与 32 位浮点都不在这条路上。
-    if bits.len() != 1 || (bits[0] != 8 && bits[0] != 16) {
+    // 每采样一个声明值，多通道就是多个；各通道位深不一致的写法不猜。12/14 位的
+    // packed 写法与 32 位浮点都不在这条路上。
+    //
+    // One declared value per sample, so multiple channels give several; a layout whose channels
+    // disagree is not guessed. The 12/14-bit packed layouts and 32-bit float are off this path.
+    if bits.is_empty() || bits.iter().any(|b| *b != bits[0]) || (bits[0] != 8 && bits[0] != 16) {
         return Err(DngError::UnsupportedBits(
             bits.first().copied().unwrap_or(0) as u16,
         ));
@@ -534,55 +731,6 @@ fn meta(t: &Tiff<'_>) -> Result<Meta, DngError> {
     if photometric != PHOTO_CFA && photometric != PHOTO_LINEAR_RAW {
         return Err(DngError::UnsupportedPhotometric(photometric as u16));
     }
-
-    let compression = t.scalar(&t.required(ifd, TAG_COMPRESSION)?, TAG_COMPRESSION)? as u16;
-    if compression != COMP_NONE && compression != COMP_ADOBE_DEFLATE {
-        return Err(DngError::UnsupportedCompression(compression));
-    }
-
-    let planar = match t.entry(ifd, TAG_PLANAR_CONFIG)? {
-        Some(e) => t.scalar(&e, TAG_PLANAR_CONFIG)? as u16,
-        None => 1,
-    };
-    // 单通道时「按采样分面」(2) 的条带布局与 (1) 完全一致，所以两种都收。
-    if planar != 1 && planar != 2 {
-        return Err(DngError::UnsupportedPlanar(planar));
-    }
-
-    let predictor = match t.entry(ifd, TAG_PREDICTOR)? {
-        Some(e) => t.scalar(&e, TAG_PREDICTOR)? as u16,
-        None => 1,
-    };
-    // 3（浮点差分）要拆指数/尾数，超出第一版范围，宁可拒绝。
-    if predictor != 1 && predictor != 2 {
-        return Err(DngError::BadTag(TAG_PREDICTOR));
-    }
-
-    let offsets = t.scalars(&t.required(ifd, TAG_STRIP_OFFSETS)?, TAG_STRIP_OFFSETS)?;
-    let counts = t.scalars(
-        &t.required(ifd, TAG_STRIP_BYTE_COUNTS)?,
-        TAG_STRIP_BYTE_COUNTS,
-    )?;
-    if offsets.len() != counts.len() || offsets.is_empty() || offsets.len() > MAX_STRIPS {
-        return Err(DngError::BadTag(TAG_STRIP_OFFSETS));
-    }
-    let mut rows_per_strip = t.scalar(&t.required(ifd, TAG_ROWS_PER_STRIP)?, TAG_ROWS_PER_STRIP)?;
-    if rows_per_strip == 0 || rows_per_strip > height {
-        // TIFF 允许 0 表示整图一条带；比图高也按整图处理。
-        rows_per_strip = height;
-    }
-    let want = height.div_ceil(rows_per_strip) as usize;
-    if offsets.len() != want {
-        return Err(DngError::StripCountMismatch {
-            found: offsets.len(),
-            want,
-        });
-    }
-    let strips = offsets
-        .iter()
-        .zip(counts.iter())
-        .map(|(o, c)| (u64::from(*o), u64::from(*c)))
-        .collect();
 
     // 逐行/逐列黑场在 DNG 里允许多值，第一版取平均，误差 LSB 级；白场取最大。
     let black = match t.entry(ifd, TAG_BLACK_LEVEL)? {
@@ -632,15 +780,82 @@ fn meta(t: &Tiff<'_>) -> Result<Meta, DngError> {
         width,
         height,
         bits: bits[0] as u16,
-        compression,
-        predictor,
-        rows_per_strip,
-        strips,
+        spp: spp as u16,
         make,
         model,
         black,
         white,
         cfa,
+    })
+}
+
+/// 存储布局：解像素才需要的那一层。
+///
+/// 校验都放在这里，`meta` 不碰——把「用了瓦片」「压的是 lossless JPEG」这类**像素存储
+/// 问题**提到元数据层，代价是真实相机 DNG 连尺寸都报不出来。它们确实是软错
+/// （[`DngError::soft_fallback`]）：换后端解得动，因为后端认识这些写法。
+///
+/// Storage layout: the layer only pixel decoding needs.
+///
+/// All the checks live here and `meta` never touches them: promoting pixel-storage facts such as
+/// "uses tiles" or "lossless JPEG" to the metadata layer costs a real camera DNG even its size
+/// report. They are genuinely soft errors ([`DngError::soft_fallback`]): another backend can decode
+/// them because it knows these layouts.
+fn layout(t: &Tiff<'_>, ifd: usize, height: u32) -> Result<Layout, DngError> {
+    let compression = t.scalar(&t.required(ifd, TAG_COMPRESSION)?, TAG_COMPRESSION)? as u16;
+    if compression != COMP_NONE && compression != COMP_ADOBE_DEFLATE {
+        return Err(DngError::UnsupportedCompression(compression));
+    }
+
+    let planar = match t.entry(ifd, TAG_PLANAR_CONFIG)? {
+        Some(e) => t.scalar(&e, TAG_PLANAR_CONFIG)? as u16,
+        None => 1,
+    };
+    // 单通道时「按采样分面」(2) 的条带布局与 (1) 完全一致，所以两种都收。
+    if planar != 1 && planar != 2 {
+        return Err(DngError::UnsupportedPlanar(planar));
+    }
+
+    let predictor = match t.entry(ifd, TAG_PREDICTOR)? {
+        Some(e) => t.scalar(&e, TAG_PREDICTOR)? as u16,
+        None => 1,
+    };
+    // 3（浮点差分）要拆指数/尾数，超出第一版范围，宁可拒绝。
+    if predictor != 1 && predictor != 2 {
+        return Err(DngError::BadTag(TAG_PREDICTOR));
+    }
+
+    let offsets = t.scalars(&t.required(ifd, TAG_STRIP_OFFSETS)?, TAG_STRIP_OFFSETS)?;
+    let counts = t.scalars(
+        &t.required(ifd, TAG_STRIP_BYTE_COUNTS)?,
+        TAG_STRIP_BYTE_COUNTS,
+    )?;
+    if offsets.len() != counts.len() || offsets.is_empty() || offsets.len() > MAX_STRIPS {
+        return Err(DngError::BadTag(TAG_STRIP_OFFSETS));
+    }
+    let mut rows_per_strip = t.scalar(&t.required(ifd, TAG_ROWS_PER_STRIP)?, TAG_ROWS_PER_STRIP)?;
+    if rows_per_strip == 0 || rows_per_strip > height {
+        // TIFF 允许 0 表示整图一条带；比图高也按整图处理。
+        rows_per_strip = height;
+    }
+    let want = height.div_ceil(rows_per_strip) as usize;
+    if offsets.len() != want {
+        return Err(DngError::StripCountMismatch {
+            found: offsets.len(),
+            want,
+        });
+    }
+    let strips = offsets
+        .iter()
+        .zip(counts.iter())
+        .map(|(o, c)| (u64::from(*o), u64::from(*c)))
+        .collect();
+
+    Ok(Layout {
+        compression,
+        predictor,
+        rows_per_strip,
+        strips,
     })
 }
 
@@ -663,11 +878,29 @@ fn cfa_pattern(t: &Tiff<'_>, ifd: usize, photometric: u32) -> Result<Option<[u8;
     let mut out = [0u8; 4];
     let mut seen = [false; 3];
     for (i, b) in bytes.iter().enumerate() {
-        // CFAPattern 取值 2/3/4 = R/G/B；C/M/Y/全色要配色彩矩阵，超出这条路。
+        // TIFF-EP / DNG 规范里 CFAPattern 的取值是 **0 起**：0=R、1=G、2=B，
+        // 3=C、4=M、5=Y、6=White（DNG 1.6 §4.6.2 Table 8）。
+        // 只有 0..=2 是这条拜耳路能去的；3 以上是互补色/全色滤镜，要配色彩矩阵才回得到
+        // 三原色，超出本解析器的范围，宁可拒绝也不猜。
+        //
+        // 这里曾经按 2/3/4 读，等于整体偏移一位：任何**合规**的 DNG（RGGB 写
+        // `[0,1,1,2]`）都会被判成 UnsupportedCfa，只有按错误约定写的合成靶能过——
+        // 那种"靶和实现对错得一样"的自证闭环，正是这个 bug 长期没被发现的原因。
+        //
+        // TIFF-EP / DNG put CFAPattern values at a **zero** base: 0=R, 1=G, 2=B,
+        // 3=C, 4=M, 5=Y, 6=White (DNG 1.6 §4.6.2 Table 8). Only 0..=2 fit this Bayer path;
+        // 3 and above are complementary-colour or panchromatic filters that need a colour
+        // matrix to return to primaries, which is outside this parser, so we refuse rather
+        // than guess.
+        //
+        // This used to read 2/3/4, an off-by-one across the board: every **conforming** DNG
+        // (RGGB written as `[0,1,1,2]`) was rejected as UnsupportedCfa, and only synthetic
+        // fixtures written to the same wrong convention passed, a self-confirming loop that
+        // is exactly why the bug survived so long.
         let ch = match b {
-            2 => 0,
-            3 => 1,
-            4 => 2,
+            0 => 0,
+            1 => 1,
+            2 => 2,
             _ => return Err(DngError::UnsupportedCfa),
         };
         out[i] = ch;
@@ -681,24 +914,24 @@ fn cfa_pattern(t: &Tiff<'_>, ifd: usize, photometric: u32) -> Result<Option<[u8;
 
 // ------------------------------------------------------------------ 条带解码
 
-fn decode_mosaic(t: &Tiff<'_>, m: &Meta) -> Result<Vec<u16>, DngError> {
+fn decode_mosaic(t: &Tiff<'_>, m: &Meta, l: &Layout) -> Result<Vec<u16>, DngError> {
     let w = m.width as usize;
     let mut mosaic = vec![0u16; w * m.height as usize];
     let bytes_per_sample = if m.bits == 8 { 1 } else { 2 };
-    for (i, (offset, length)) in m.strips.iter().enumerate() {
-        let y0 = i as u32 * m.rows_per_strip;
+    for (i, (offset, length)) in l.strips.iter().enumerate() {
+        let y0 = i as u32 * l.rows_per_strip;
         if y0 >= m.height {
             return Err(DngError::StripCountMismatch {
-                found: m.strips.len(),
-                want: m.height.div_ceil(m.rows_per_strip) as usize,
+                found: l.strips.len(),
+                want: m.height.div_ceil(l.rows_per_strip) as usize,
             });
         }
-        let rows = m.rows_per_strip.min(m.height - y0) as usize;
+        let rows = l.rows_per_strip.min(m.height - y0) as usize;
         let samples = rows * w;
         let need = samples * bytes_per_sample;
         let src = t.range(*offset, *length)?;
         let dst = &mut mosaic[y0 as usize * w..][..samples];
-        match m.compression {
+        match l.compression {
             COMP_NONE => {
                 if src.len() != need {
                     return Err(DngError::StripSizeMismatch {
@@ -717,7 +950,7 @@ fn decode_mosaic(t: &Tiff<'_>, m: &Meta) -> Result<Vec<u16>, DngError> {
                 fill_samples(&raw, t.order, m.bits, dst);
             }
         }
-        if m.predictor == 2 {
+        if l.predictor == 2 {
             // 横向差分按条带内每一行独立还原，行首值不带入下一行。
             for row in dst.chunks_mut(w) {
                 let mut prev = row[0];
