@@ -15,60 +15,92 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
-## v1.2.1 — 2026-11-01
+## v1.2.1 — 2026-11-02
 
-Patch release. **No rendering changes, no contract changes** — one thing only: making the word
-"green" true.
+A patch release in name, but a substantial one: four **real bugs** fixed (two of which made RAW
+import and HDR export look outright broken), plus a batch of tone and UI work. **No external
+contract changes** — the four promises (project format, presets and parameters, command line,
+MCP tools) hold exactly as in 1.2.0.
 
-### Fixed: 12 export tests never ran in CI
+### Real bugs fixed
+
+**1. Every spec-compliant DNG was rejected as "CFA pattern unusable"**
+
+In DNG (TIFF-EP / DNG 1.6 §4.6.2 Table 8) `CFAPattern` is **0-based**: `0=R, 1=G, 2=B`. The code
+read `2/3/4`, off by one, so every DNG written to spec failed with "CFA pattern is not a usable
+2×2 RGBG layout". Synthetic targets could not catch this — target and implementation shared the
+same misreading and were wrong in the same place. A real iPhone DNG exposed it immediately.
+
+**2. The iPhone CFA image lives in SubIFDs, not IFD0**
+
+In that same DNG, IFD0 is an 852×640 YCbCr preview; the 4032×3024 raw data sits under `SubIFDs`.
+Looking only at IFD0 means always getting the preview. The loader now collects IFD0 + SubIFDs,
+excludes thumbnails via bit 0 of `NewSubfileType`, and takes the largest image.
+
+**3. HDR export flattened everything above white**
+
+Three clamps plus the curve tail pinned every value above 1.0 back to white. `Opts::hdr` now
+routes those clamps and the tone curve keeps its tail (`lut::tone_curve_keep_over`). The SDR path
+is bit-identical (golden md5 unchanged).
+
+**4. Twelve export tests never ran in CI**
 
 Seven in `export_video`, three in `queue_export`, one in `retime_export`, one in `export_stills` —
-all of them start with `let Some(ffmpeg) = ffmpeg() else { return };`. No ffmpeg, no work, and the
-test still reports "ok". Meanwhile `.github/workflows/ci.yml` said, in as many words, that CI does
-not install ffmpeg.
+all start with `let Some(ffmpeg) = ffmpeg() else { return };`. No ffmpeg, no work, and the test
+still reported "ok"; and CI explicitly did not install ffmpeg. Worse, those files pinned ffmpeg to
+a **hard-coded absolute path** and did not even consult `AEVUM_FFMPEG` — move the repo and they go
+silent forever.
 
-Worse, those three files pinned ffmpeg to a **hard-coded absolute path**:
+The probe now uses the production `find_ffmpeg()` (`AEVUM_FFMPEG` → `tools/` next to the exe →
+`PATH`); **no ffmpeg means red**; CI installs ffmpeg. To skip deliberately you must set
+`AEVUM_ALLOW_NO_FFMPEG=1`, and it prints a line saying the test verified nothing.
 
-```rust
-const FFMPEG: &str = "D:/work/project/pycharm/p/pythonProject4/.venv/.../ffmpeg-win-x86_64-v7.1.exe";
-```
+### Added
 
-It exists on exactly one machine, and it does not even consult `AEVUM_FFMPEG`. So even if CI had
-installed ffmpeg, the tests could never reach it — move the repo, rename the directory, delete that
-virtualenv, and they are silent forever.
+- **HDR video**: x265 `main10` + PQ VUI (`bt2020` / `smpte2084` / `bt2020nc`). HDR video is only
+  allowed as H.265 + Rec.2020; other combinations are refused rather than silently downgraded.
+- **HDR inspection in the preview**: "is there anything above white?" — a soft fold at 0.90 that
+  leaves everything below white bit-identical.
+- **Tone**: dehaze constants fitted against known-truth haze targets; HDR curve tail re-derived
+  from measurement; `contrast_linear` pivot fixed (mid grey stays at 0.5049 across the range);
+  the `masking` dead zone is gone (0–50 now responds across the whole slider).
+- **Output sharpening**: the three presets and manual σ mapping are complete.
+- **UI**: the three preset sections can be dragged into a new order and persist; the three
+  floating windows remember their position across launches (clamped back into the viewport).
 
-The "AVIF export has been broken since it shipped" bug fixed in 1.2.0 (the write target is
-`<name>.part`, so ffmpeg cannot infer the container) hid inside exactly this. A permanently green
-shell is worse than no test, because it returns the illusion of green.
+### Interface and experience
 
-Three changes together:
+- **Error messages follow the UI language.** Errors used to be produced as finished Chinese
+  sentences, so an English UI still showed Chinese errors, sometimes half-English half-Chinese.
+  A message is now split into "template + arguments": the template is a translatable key, the
+  arguments are values (numbers, paths), and nested errors are translated recursively. Logs
+  (`Display`) stay Chinese; the UI renders in the current language.
+- **The language list is registry-driven**: adding a language means one table plus one line in
+  `CATALOGS` — no third place.
+- **New icon**: an A whose blue crossbar is the shadow a gnomon casts — the letter for Aevum and
+  the meaning of 晷 in one mark.
 
-- The probe now uses the production `find_ffmpeg()` (`AEVUM_FFMPEG` → `tools/` next to the exe →
-  `PATH`) — the same binary users actually get;
-- **No ffmpeg now means red**, with the two ways out printed ("point at one" / "declare the skip");
-- CI installs ffmpeg (no-op if the image already has it). CI green now means those 12 tests ran.
+### Decided against
 
-If you genuinely have no ffmpeg and want to run the rest, set `AEVUM_ALLOW_NO_FFMPEG=1`: skipping
-still works, but it prints a line saying this test verified nothing this time.
-
-### Also: the local gate finds ffmpeg by itself
-
-`acceptance/check.sh` now probes in user-first order — `dist/aevum/tools/ffmpeg.exe` (byte-identical
-to the shipped package) → `AEVUM_FFMPEG` → `PATH` — and prints which one stage 3 is using. If none is
-found it says plainly that tests will fail rather than quietly letting them through.
+- **16-bit HDR in TIFF/PNG.** Declaring PQ there is only possible through an ICC `curveType`
+  sampled at 4096 points; Photoshop, Windows Photos and most viewers do not parse it and show a
+  grey wash. Shipping linear 16-bit instead is interpreted as gamma by those same tools — a more
+  insidious error. So: **refuse and explain**, with the panel snapping to AVIF + Rec.2020.
 
 ### Known issues
 
-- **HDR applies to stills + AVIF only.** Video (x264/x265) is still 8bit SDR, and 16bit HDR in
-  TIFF/PNG is not done either — that needs a PQ curve inside the ICC profile, not a one-liner.
-  Combinations that cannot hold it are refused rather than fallen back from.
-- **There is no HDR preview mapping.** The panel keeps showing the SDR preview; to see HDR you must
-  export and view it on an HDR display or in a player. This is the most visible gap today.
-- Directional demosaicing is still well below ideal on 45° edges and coloured boundaries: the
-  direction test only considers horizontal and vertical, and diagonal detail falls back to the
-  colour-difference constancy assumption.
-- There are no real camera RAW samples on this machine, so that demosaicing data all comes from
-  synthetic targets; behaviour on real photographs remains unverified.
+- **HDR applies to AVIF stills and H.265 video only.** 16-bit HDR in TIFF/PNG is out (see above).
+- **There is no HDR preview mapping.** The panel shows whether anything exists above white, but
+  that is not a simulation of a 203-nit HDR display — panel brightness is not something software
+  can change, and faking it would only impose a highlight roll-off on the user.
+- **45° edges are bounded by the sampling pattern.** At R/B sites the green neighbours are only
+  up/down/left/right; on a 45° line the neighbours are same-colour R/B, not G, so the boundary
+  ring is off by a full step. Measured error 2190 ≈ 0.168 × step, matching the 1/6 boundary share;
+  away from the boundary nothing is off at all. Other methods (cell average 2167, directional
+  2190) land on the same line.
+- **There is exactly one real camera RAW sample** (an iPhone 6s Plus DNG, CC0). CFA mapping and
+  IFD selection are pinned against a real file; other bodies (CR3 / X-Trans in particular) remain
+  unverified.
 
 ---
 
