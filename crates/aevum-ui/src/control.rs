@@ -302,7 +302,7 @@ pub fn command_catalog() -> Vec<CommandSpec> {
             id: "crop.set",
             summary: "读取或改写取景：手动裁剪框、拉直角度、画幅比例，一次命令定好最后留下的画面。",
             params: "x?/y?/width?/height?（四个一起给，源像素）/ rotate? / aspect? / reset?",
-            schema: r#"{"type":"object","additionalProperties":false,"properties":{"x":{"type":"number","minimum":0,"description":"取景框左上角 X（源像素，自动取偶）"},"y":{"type":"number","minimum":0,"description":"取景框左上角 Y（源像素，自动取偶）"},"width":{"type":"number","minimum":2,"description":"取景框宽（源像素，自动取偶）"},"height":{"type":"number","minimum":2,"description":"取景框高（源像素，自动取偶）"},"rotate":{"type":"number","minimum":-45,"maximum":45,"description":"拉直角度（度，正角=画面逆时针，绕画面中心）；取景框量的是转过之后的那一帧，0.2° 以内当没转"},"aspect":{"type":"string","enum":["原生","16:9","4:3","1:1","9:16"],"description":"画幅比例；改比例时已有取景框绕中心重铺"},"reset":{"type":"boolean","description":"true=取消手动裁剪与拉直，回到按比例内接的默认取景"}}}"#,
+            schema: r#"{"type":"object","additionalProperties":false,"properties":{"x":{"type":"number","minimum":0,"description":"取景框左上角 X（源像素，自动取偶）"},"y":{"type":"number","minimum":0,"description":"取景框左上角 Y（源像素，自动取偶）"},"width":{"type":"number","minimum":2,"description":"取景框宽（源像素，自动取偶）"},"height":{"type":"number","minimum":2,"description":"取景框高（源像素，自动取偶）"},"rotate":{"type":"number","minimum":-45,"maximum":45,"description":"拉直角度（度，正角=画面逆时针，绕画面中心）；取景框量的是转过之后的那一帧，0.2° 以内当没转"},"aspect":{"type":"string","enum":["原生","16:9","3:2","4:3","5:4","1:1","4:5","9:16","2:3"],"description":"画幅比例；改比例时已有取景框绕中心重铺"},"reset":{"type":"boolean","description":"true=取消手动裁剪与拉直，回到按比例内接的默认取景"}}}"#,
         },
         CommandSpec {
             id: "lens.set",

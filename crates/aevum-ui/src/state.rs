@@ -137,27 +137,42 @@ impl Module {
 pub enum Aspect {
     Native,
     Wide,
+    ThreeTwo,
     FourThree,
+    FiveFour,
     Square,
+    FourFive,
     Vertical,
+    TwoThree,
 }
 
 impl Aspect {
-    pub const ALL: [Aspect; 5] = [
+    /// 预设比例的排布照 Photoshop 裁剪工具的惯例：横构图一排、方一档、
+    /// 竖构图一排，最前面是「原生」（不约束）。3:2 与 4:3 是相机传感器的
+    /// 两个原生形状，5:4 / 4:5 是八大打印幅面最常用的两档，竖版给镜像。
+    pub const ALL: [Aspect; 9] = [
         Aspect::Native,
         Aspect::Wide,
+        Aspect::ThreeTwo,
         Aspect::FourThree,
+        Aspect::FiveFour,
         Aspect::Square,
+        Aspect::FourFive,
         Aspect::Vertical,
+        Aspect::TwoThree,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
             Aspect::Native => "原生",
             Aspect::Wide => "16:9",
+            Aspect::ThreeTwo => "3:2",
             Aspect::FourThree => "4:3",
+            Aspect::FiveFour => "5:4",
             Aspect::Square => "1:1",
+            Aspect::FourFive => "4:5",
             Aspect::Vertical => "9:16",
+            Aspect::TwoThree => "2:3",
         }
     }
 
@@ -165,9 +180,13 @@ impl Aspect {
         match self {
             Aspect::Native => None,
             Aspect::Wide => Some(16.0 / 9.0),
+            Aspect::ThreeTwo => Some(3.0 / 2.0),
             Aspect::FourThree => Some(4.0 / 3.0),
+            Aspect::FiveFour => Some(5.0 / 4.0),
             Aspect::Square => Some(1.0),
+            Aspect::FourFive => Some(4.0 / 5.0),
             Aspect::Vertical => Some(9.0 / 16.0),
+            Aspect::TwoThree => Some(2.0 / 3.0),
         }
     }
 
@@ -176,9 +195,13 @@ impl Aspect {
         match self {
             Aspect::Native => None,
             Aspect::Wide => Some((16, 9)),
+            Aspect::ThreeTwo => Some((3, 2)),
             Aspect::FourThree => Some((4, 3)),
+            Aspect::FiveFour => Some((5, 4)),
             Aspect::Square => Some((1, 1)),
+            Aspect::FourFive => Some((4, 5)),
             Aspect::Vertical => Some((9, 16)),
+            Aspect::TwoThree => Some((2, 3)),
         }
     }
 
@@ -9680,9 +9703,13 @@ fn aspect_arg(text: &str) -> Result<Aspect, String> {
     Ok(match t {
         "原生" | "native" | "free" | "0" => Aspect::Native,
         "16:9" | "wide" | "1" => Aspect::Wide,
+        "3:2" => Aspect::ThreeTwo,
         "4:3" | "standard" | "2" => Aspect::FourThree,
+        "5:4" => Aspect::FiveFour,
         "1:1" | "square" | "3" => Aspect::Square,
+        "4:5" => Aspect::FourFive,
         "9:16" | "vertical" | "4" => Aspect::Vertical,
+        "2:3" => Aspect::TwoThree,
         other => {
             let known = Aspect::ALL
                 .iter()
@@ -14846,7 +14873,10 @@ mod notice_tests {
     use super::*;
 
     /// 提示队列是全进程共享的：两个用例并行跑会互相抢名额，串起来跑。
-    static SERIAL: Mutex<()> = Mutex::new(());
+    /// 锁放在 `env`（队列旁边），跑完整界面帧的测试也用同一把——见 env.rs。
+    fn lock() -> std::sync::MutexGuard<'static, ()> {
+        aevum_core::env::lock_notes_for_test()
+    }
 
     /// 每条用例一个唯一前缀，从共享队列里按前缀捞回自己的那几条。
     fn unique(tag: &str) -> String {
@@ -14855,12 +14885,6 @@ mod notice_tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         format!("aevum-ui-notice-{tag}-{}-{nanos}", std::process::id())
-    }
-
-    fn lock() -> std::sync::MutexGuard<'static, ()> {
-        SERIAL
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// `env::note` 压下的提示要按原顺序搬进 `state.notices`，同一句只留一条。
