@@ -1216,11 +1216,12 @@ def _denoise(x, luma_amt, color_amt, luma_detail=0.0, luma_contrast=0.0,
 
 
 def _min_filter(m, r):
-    """半径 r 的最小滤波：两遍 3×3 最小迭代，⌈r/2⌉ 轮。
+    """半径 r 的最小滤波：r 轮 3×3 最小迭代。
 
-    **有效半径 = ⌈r/2⌉**：每轮 3×3 最小只把极值向外扩 1px，r 轮才是严格
-    意义的 r 半径最小滤波——两边（Rust dehaze.rs::min_filter）同构取
-    ⌈r/2⌉ 轮，语义钉死在这里，TODO(fit) 时再评估改成 r 轮。
+    **有效半径 = 轮数**：每轮 3×3 最小只把极值向外扩 1px，所以 r 轮才是严格
+    意义的 r 半径最小滤波。历史上取 ⌈r/2⌉ 轮（有效半径只有名义值一半），
+    `dehaze.rs` 的扫参表把两者都跑过：r 轮 PSNR 16.14 / 透射 RMSE 0.0930，
+    ⌈r/2⌉ 轮 16.04 / 0.0955，两个尺子上都更好，因此改成 r 轮。
 
     边界用 BORDER_REFLECT_101（np.pad mode='reflect' 即 reflect_101），
     与 Rust dehaze.rs::min_filter 逐式对应。
@@ -1228,7 +1229,7 @@ def _min_filter(m, r):
     if m.shape[0] < 2 or m.shape[1] < 2:
         return m.copy()
     cur = m
-    for _ in range((r + 1) // 2):
+    for _ in range(r):
         p = np.pad(cur, 1, mode="reflect")
         cur = np.minimum(np.minimum(
             np.minimum(np.minimum(p[:-2, :-2], p[:-2, 1:-1]), p[:-2, 2:]),
