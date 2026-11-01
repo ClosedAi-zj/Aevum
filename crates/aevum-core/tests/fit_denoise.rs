@@ -467,3 +467,72 @@ fn sweep_detail_return() {
     }
     println!("目标：方差下降 > 50% 且 MTF 保持 > 85%\n");
 }
+
+// ---------------------------------------------------------------------------
+// 手动 σ 映射（A9）：`σ = 0.002 + (v/100)^1.6 · 0.030`
+// ---------------------------------------------------------------------------
+
+/// `nr_sigma_manual` 的映射必须兑现它自己声称的两件事。
+///
+/// 映射写的是「滑杆读数 → 噪声标准差」：v=0 时几乎不降噪（σ=0.002），v=100 时覆盖
+/// 到 σ=0.032（ISO 25600 量级）。这两句都能变成可观测的后果，不必信注释：
+///
+/// **① 字面值**：v=0/50/100 → σ=0.002/0.01190/0.032。改任何一个数字都报红——
+/// 这条挡的是「手滑改了系数还到处绿」。
+///
+/// **② 指数 1.6 是真的在起作用**：同一份噪声上，v=25 的方差降幅必须明显小于
+/// v=100（差 ≥ 0.25）。实测 σ=0.008 的噪声：v=25 降 62.6%、v=100 降 98.4%。
+/// 指数改成 0.6 时 σ(25) 从 0.0053 跳到 0.0151，低档立刻吃到满档的活，差只剩
+/// 0.04 —— 报红。换句话说这条判的是「低档真的平缓」。
+///
+/// **③ 满档真的够到最大噪声档**：在 σ_true=0.032 的噪声上，v=100 必须把方差降掉
+/// 75% 以上（实测 85.1%），而 v=25 几乎不动（实测 6.3%）。0.030 改成 0.003 时满档
+/// 只有 0.005 的 σ、压不动 0.032 的噪声；改成 0.30 时 v=25 就已经 0.035，低档直接
+/// 吃满 —— 两头都报红。
+///
+/// 三点合起来把「0.002 / 1.6 / 0.030」夹在一个窄窗口里：端点错、形状错、量级错，
+/// 各有一条独立的判据接住。
+///
+/// The `nr_sigma_manual` mapping must cash out both of its own claims. It says "slider reading
+/// → noise standard deviation": v=0 barely denoises (σ=0.002), v=100 covers σ=0.032 (ISO 25600
+/// territory). Both become observable consequences, no trust required. (1) **Literal values**:
+/// v=0/50/100 → σ=0.002/0.01190/0.032, so any digit changed by hand goes red. (2) **The 1.6
+/// exponent does real work**: on one noise field the variance drop at v=25 must be clearly
+/// below v=100 (gap ≥ 0.25); measured 62.6% vs 98.4% at σ=0.008. With an exponent of 0.6,
+/// σ(25) jumps from 0.0053 to 0.0151 and the gap collapses to 0.04. (3) **Full scale really
+/// reaches the top noise level**: on σ_true=0.032, v=100 must drop variance by more than 75%
+/// (measured 85.1%) while v=25 barely moves (6.3%). Shrinking 0.030 to 0.003 cannot touch
+/// 0.032 noise; growing it to 0.30 makes v=25 already saturate — both sides go red.
+#[test]
+fn manual_sigma_map_matches_its_two_claims() {
+    // ① 字面值。
+    let map = |v: f64| 0.002 + (v / 100.0).powf(1.6) * 0.030;
+    for (v, want) in [(0.0f64, 0.002f64), (50.0, 0.011_903), (100.0, 0.032)] {
+        assert!(
+            (map(v) - want).abs() < 1e-5,
+            "σ 映射在 v={v} 处给出 {:.6}，应为 {want:.6}",
+            map(v)
+        );
+    }
+
+    // ② 低档平缓：v=25 与 v=100 必须拉得开。
+    let (low, _) = measure(&params(100.0, 50.0, 25.0), 0.008, W, H);
+    let (top, _) = measure(&params(100.0, 50.0, 100.0), 0.008, W, H);
+    assert!(
+        top - low >= 0.25,
+        "σ=0.008 上 v=25 降 {low:.3}、v=100 降 {top:.3}，只差 {:.3} —— 低档已经不「几乎不降噪」了",
+        top - low
+    );
+
+    // ③ 满档够到最大噪声档，而低档碰不到。
+    let (big_top, _) = measure(&params(100.0, 50.0, 100.0), 0.032, W, H);
+    let (big_low, _) = measure(&params(100.0, 50.0, 25.0), 0.032, W, H);
+    assert!(
+        big_top > 0.75,
+        "σ=0.032 的噪声上 v=100 只降 {big_top:.3} —— 满档覆盖不到它声称的量级"
+    );
+    assert!(
+        big_low < 0.15,
+        "σ=0.032 的噪声上 v=25 就降了 {big_low:.3} —— 低档已经有劲，指数 1.6 的平缓段没了"
+    );
+}

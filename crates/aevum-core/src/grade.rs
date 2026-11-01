@@ -63,11 +63,19 @@ pub struct GradeParams {
     /// See `develop/dehaze.rs`.
     pub dehaze_dark: f64,
     /// 去雾对比（-50–50）：DCP 透射修正后的中间对比/黑位微调，仅在
-    /// `dehaze_dark>0` 时生效。幅度 = contrast·0.15，TODO(fit)。
+    /// `dehaze_dark>0` 时生效。幅度 = contrast·0.15。
+    ///
+    /// 0.15 的依据在 `dehaze.rs::DehazeTune::contrast_amp` 上写明，判据是「拉满时黑位
+    /// 相对基线挪不到 10%」——实测 0.15 → 3.1%、0.30 → 6.4%、0.90 → 24.6%，10% 那条线
+    /// 正好把「微调」和「重构图」分开。同时判了位移与幅度成正比、正负号方向相反。
     ///
     /// Dehaze contrast (-50–50): a midtone contrast and black point trim applied after the DCP
-    /// transmission correction, active only when `dehaze_dark>0`.
-    /// Amplitude is contrast·0.15, TODO(fit).
+    /// transmission correction, active only when `dehaze_dark>0`. Amplitude is contrast·0.15.
+    ///
+    /// The basis for 0.15 lives on `dehaze.rs::DehazeTune::contrast_amp`: maxed, the black point
+    /// must not move 10% off baseline — measured 3.1% at 0.15, 6.4% at 0.30, 24.6% at 0.90, so
+    /// the 10% line separates "a trim" from "a re-grade". The same test also checks the shift is
+    /// proportional to amplitude and flips sign with it.
     pub dehaze_contrast: f64,
     pub grain: f64,
     pub grain_size: f64,
@@ -121,10 +129,23 @@ pub struct GradeParams {
     /// See the multiscale branch of `develop/spatial.rs::denoise_apply`.
     pub nr_multiscale: f64,
     /// 手动噪声 σ（0–100）：0 = 自动 MAD 估计（Donoho 口径）；>0 手动覆盖
-    /// （映射 σ = 0.002 + (v/100)^1.6·0.030，TODO(fit)）。
+    /// （映射 σ = 0.002 + (v/100)^1.6·0.030，值域 [0.002, 0.032]）。
+    ///
+    /// 这个映射兑现两句可测的话（`fit_denoise.rs::manual_sigma_map_matches_its_two_claims`）：
+    /// ① 字面值 v=0/50/100 → 0.002/0.0119/0.032 逐点断言；② 指数 1.6 让低档真的平缓
+    /// ——σ=0.008 的噪声上 v=25 只降 62.6%、v=100 降 98.4%（差 ≥ 0.25 是判据）；③ 满档
+    /// 够得到最大噪声档——σ=0.032 上 v=100 降 85.1% 而 v=25 只有 6.3%。三个数任改一个
+    /// 都有独立判据接住，不再是「猜值」。
     ///
     /// Manual noise σ (0–100): 0 selects the automatic MAD estimate under the Donoho convention;
-    /// >0 overrides it manually (mapping σ = 0.002 + (v/100)^1.6·0.030, TODO(fit)).
+    /// >0 overrides it manually (mapping σ = 0.002 + (v/100)^1.6·0.030, range [0.002, 0.032]).
+    ///
+    /// The mapping cashes out two testable claims
+    /// (`fit_denoise.rs::manual_sigma_map_matches_its_two_claims`): literal values at
+    /// v=0/50/100 are asserted as 0.002/0.0119/0.032; the 1.6 exponent keeps the low end gentle
+    /// (at σ=0.008, v=25 drops 62.6% while v=100 drops 98.4%, gap ≥ 0.25); and full scale
+    /// reaches the top noise level (at σ=0.032, v=100 drops 85.1% while v=25 manages 6.3%).
+    /// Changing any of the three numbers trips a separate criterion, so it is no longer a guess.
     pub nr_sigma_manual: f64,
     /// AI 亮度降噪强度（0–100），0 = 关。
     ///

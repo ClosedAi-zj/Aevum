@@ -23,6 +23,7 @@ mod support;
 use aevum_core::develop::spatial::{
     UsmSettings, UsmTuning, output_sharpen_usm_tuned, usm_size_gain,
 };
+use aevum_core::export::{OutputSharpen, RenderOptions, SharpenStrength};
 use support::{
     gaussian_blur as blur, halo_ratio, mtf_freqs, mtf_through, mtf50, mtf50_gain, sine_target,
     step_target,
@@ -103,41 +104,176 @@ fn metrics_passthrough_is_flat() {
 // 验收：把拟合出来的默认值钉在 atlas §46.2 的阈值上
 // ---------------------------------------------------------------------------
 
-/// 真实 UI 能到达的四个角（用途档 × 强度档）：`(amount, radius)`。
+/// 生产路径真正会用的三元组：直接问 `RenderOptions::sharpen_profile()`，不抄字面量。
 ///
-/// 用途档基准 Screen 0.55 / Glossy 0.80 / Matte 1.00，强度档乘 0.7 / 1.0 / 1.4；
-/// 半径随用途内置：Screen 0.6 / Glossy 0.9 / Matte 1.4。于是四个角是
-/// `(0.385,0.6)` `(0.8,0.9)` `(1.0,1.4)` `(1.4,1.4)`。
-const REAL_CORNERS: &[(f32, f32)] = &[(0.385, 0.6), (0.8, 0.9), (1.0, 1.4), (1.4, 1.4)];
+/// 这里以前是 `const REAL_CORNERS: &[(f32, f32)] = &[(0.385,0.6), (0.8,0.9), (1.0,1.4),
+/// (1.4,1.4)]` —— 手抄的。抄出来的数等于第二个事实源：`OutputSharpen::profile()`
+/// 改了它不知道，测试继续对着空气绿。现在只有一条路取数。
+///
+/// The triples the production path actually uses: asked of
+/// `RenderOptions::sharpen_profile()`, never copied by hand. The old `const REAL_CORNERS`
+/// was a hand-copied second source of truth — change `OutputSharpen::profile()` and it would
+/// not know, leaving the test green against nothing.
+fn real_triples() -> Vec<(&'static str, &'static str, (f32, f32, f32))> {
+    let mut out = Vec::new();
+    for p in OutputSharpen::ALL {
+        for s in SharpenStrength::ALL {
+            let mut o = RenderOptions::default();
+            o.sharpen_for = p;
+            o.sharpen_strength = s;
+            if let Some(t) = o.sharpen_profile() {
+                out.push((p.key(), s.key(), t));
+            }
+        }
+    }
+    out
+}
 
 /// 全部真实设置都不许出过冲红线：`halo < 3%`。
 ///
 /// 这条与用途档无关——哪怕是「哑面 + 高」这种最狠的组合，过冲也得压住。
+/// 量的是**生产三元组**（含各自的软阈值），不是把阈值拆成 0 的理想路径：
+/// 软阈值会把小 Δ 吃掉，拆掉它量出来的数偏大，等于给了一个生产上不存在的余量。
+///
+/// Every real setting must stay under the overshoot red line of 3%, including the harshest
+/// "matte + high" pairing. Measured on the **production triples** (each with its own soft
+/// threshold), not on the idealised path with the threshold zeroed: the soft threshold eats
+/// small deltas, so dropping it measures a margin that production never has.
 #[test]
 fn no_real_setting_exceeds_halo_budget() {
-    for &(amount, radius) in REAL_CORNERS {
-        let (_, halo) = measure_output_sharpen(amount, radius, 0.0);
+    for (p, s, (amount, radius, threshold)) in real_triples() {
+        let (_, halo) = measure_output_sharpen(amount, radius, threshold);
         assert!(
             halo < 0.03,
-            "amount={amount} radius={radius} 的 halo {:.2}% 超 3%",
+            "{p}/{s}（amount={amount:.4} radius={radius} thr={threshold}）的 halo {:.2}% 超 3%",
             halo * 100.0
         );
     }
 }
 
-/// 主用途档（Matte，`amount` 1.0 与 1.4）必须拿到 `MTF50× ∈ [1.2, 1.6]`。
+/// 主用途档（Matte）在 `Standard` / `High` 上必须拿到 `MTF50× ∈ [1.2, 1.6]`。
 ///
 /// 只对 Matte 提这条要求：Screen / Glossy 的设计意图就是「只回补缩放损耗」，
 /// 拿 Matte 的强度指标去卡它们等于把三档做成同一档。
+///
+/// `Low` 例外，而且必须是例外：实测 1.144×，故意压在目标下面。强度档存在的意义就是
+/// 「同一用途下调力度」，若 `Matte/Low` 也达标，那强度滑杆就只有往上两个方向有用。
+/// 所以这里反过来钉住它：**必须低于 1.2，且仍 > 1.05**（不是没锐化）。
+///
+/// The Matte profile must hit `MTF50× ∈ [1.2, 1.6]` at `Standard` / `High`. `Low` is the
+/// exception by design: measured 1.144×, deliberately under target — the strength mode exists
+/// to scale force within one purpose, so a `Matte/Low` that also hit the target would mean the
+/// slider only works upward. Hence it is pinned the other way: **below 1.2 but still above
+/// 1.05** (it does sharpen).
 #[test]
 fn matte_profile_reaches_the_mtf_target() {
-    for &amount in &[1.0f32, 1.4] {
-        let (gain, _) = measure_output_sharpen(amount, 1.4, 0.0);
+    for (p, s, (amount, radius, threshold)) in real_triples() {
+        if p != "matte" {
+            continue;
+        }
+        let (gain, _) = measure_output_sharpen(amount, radius, threshold);
+        if s == "low" {
+            assert!(
+                (1.05..1.20).contains(&gain),
+                "Matte/low 的 MTF50 提升 {gain:.3}× 不在 [1.05, 1.20)——它该低于打印目标但仍在锐化"
+            );
+        } else {
+            assert!(
+                (1.2..=1.6).contains(&gain),
+                "Matte/{s} 的 MTF50 提升 {gain:.3}× 出界（目标 1.2–1.6）"
+            );
+        }
+    }
+}
+
+/// 三个用途档必须是一条**量出来的阶梯**，不是三个名字。
+///
+/// 判据分三层，全部实测（`Standard` 强度，生产三元组）：
+///
+/// | 档 | MTF50× | halo |
+/// |---|---|---|
+/// | screen | 1.096 | 0.19% |
+/// | glossy | 1.161 | 0.71% |
+/// | matte | 1.209 | 2.09% |
+///
+/// **① 目的与代价同向**：锐度递增、过冲也递增，且档间差 ≥ 0.02×——三档若拉不开就
+/// 等于一个档。**② 档不塌陷**：screen 的**最强**档也必须弱于 matte 的**标准**档
+/// （实测 1.136 < 1.209）——否则「屏幕」这个用途只是名字，用户选它等于选打印档。
+/// 这条不能写成「screen ≤ 1.15」那种绝对阈值：那个界在档序约束下永远碰不到，
+/// 是个不会炸的判据。**③ 三元组同向**：`amount` 递增、`radius` 递增、`threshold`
+/// **递减**。任何一格反向都会让相邻两档互相抵消（比如 radius 涨、threshold 也涨 =
+/// 半径更钝却更不响应），是设计上不该出现的形状。
+///
+/// The three purpose profiles must be a **measured ladder**, not three names. Three layers,
+/// all measured at `Standard` strength on the production triples: (1) sharpening and its cost
+/// rise together, at least a 0.02× gap between rungs; (2) **rungs do not collapse** — the
+/// strongest `screen` setting must still be weaker than the standard `matte` one
+/// (measured 1.136 < 1.209), otherwise "screen" is just a label; (3) the triples move in the
+/// same direction — `amount` up, `radius` up, `threshold` **down** — any field reversed makes
+/// neighbouring rungs cancel out.
+#[test]
+fn purpose_profiles_form_a_measured_ladder() {
+    let at = |p: OutputSharpen, s: SharpenStrength| {
+        let mut o = RenderOptions::default();
+        o.sharpen_for = p;
+        o.sharpen_strength = s;
+        o.sharpen_profile().expect("真实用途档必须有 profile")
+    };
+    let gain_of = |t: (f32, f32, f32)| measure_output_sharpen(t.0, t.1, t.2).0;
+
+    let rungs = [
+        (
+            "screen",
+            at(OutputSharpen::Screen, SharpenStrength::Standard),
+        ),
+        (
+            "glossy",
+            at(OutputSharpen::Glossy, SharpenStrength::Standard),
+        ),
+        ("matte", at(OutputSharpen::Matte, SharpenStrength::Standard)),
+    ];
+
+    // ③ 三元组同向。
+    for pair in rungs.windows(2) {
+        let (lo_name, (a0, r0, t0)) = pair[0];
+        let (hi_name, (a1, r1, t1)) = pair[1];
         assert!(
-            (1.2..=1.6).contains(&gain),
-            "Matte amount={amount} 的 MTF50 提升 {gain:.3}× 出界（目标 1.2–1.6）"
+            a1 > a0,
+            "{lo_name}→{hi_name} 的 amount 没递增：{a0:.4} → {a1:.4}"
+        );
+        assert!(r1 > r0, "{lo_name}→{hi_name} 的 radius 没递增：{r0} → {r1}");
+        assert!(
+            t1 < t0,
+            "{lo_name}→{hi_name} 的 threshold 没递减：{t0} → {t1}（半径更大却更不响应，两档会互相抵消）"
         );
     }
+
+    // ① 锐度与过冲同向递增。
+    let mut prev_gain = 0.0f32;
+    let mut prev_halo = 0.0f32;
+    for (name, (a, r, t)) in rungs {
+        let (gain, halo) = measure_output_sharpen(a, r, t);
+        assert!(
+            gain > prev_gain + 0.02,
+            "{name} 的 MTF50 提升 {gain:.3}× 没比下一档 {prev_gain:.3}× 高出 0.02×——两档分不开"
+        );
+        assert!(
+            halo > prev_halo,
+            "{name} 的 halo {:.2}% 反而低于下一档 {:.2}%——「更用力」没体现成代价",
+            halo * 100.0,
+            prev_halo * 100.0
+        );
+        prev_gain = gain;
+        prev_halo = halo;
+    }
+
+    // ② 档不塌陷：screen 最强 < matte 标准。
+    let screen_top = gain_of(at(OutputSharpen::Screen, SharpenStrength::High));
+    let matte_std = gain_of(at(OutputSharpen::Matte, SharpenStrength::Standard));
+    assert!(
+        screen_top < matte_std,
+        "screen/high 的 MTF50 提升 {screen_top:.3}× 追平甚至超过 matte/standard 的 {matte_std:.3}× ——「屏幕」档塌进打印档了"
+    );
 }
 
 /// 过冲必须**不随力度平方增长**——这是那条真缺陷的回归测试。

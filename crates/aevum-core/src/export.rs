@@ -241,8 +241,45 @@ impl OutputSharpen {
     }
 
     /// (强度基准 amount∈[0,1], 半径基准, 阈值基准) —— 专用 USM 三元组；
-    /// [`SharpenStrength`] 只乘强度。半径/阈值随用途内置、UI 不暴露（E2 口径），
-    /// 数值沿旧 profile 量级重标定，全部 TODO(fit)。
+    /// [`SharpenStrength`] 只乘强度。半径/阈值随用途内置、UI 不暴露（E2 口径）。
+    ///
+    /// 三档不是「三个名字」，是一条量出来的阶梯。`Standard` 强度下的实测
+    /// （`fit_sharpen.rs::purpose_profiles_form_a_measured_ladder`，合成靶：镜头软化
+    /// σ=0.7 + ATLAS §46.2 口径）：
+    ///
+    /// | 档 | amount | radius | thr | MTF50× | halo |
+    /// |---|---|---|---|---|---|
+    /// | 屏幕 | 0.55 | 0.6 | 0.004 | 1.096 | 0.19% |
+    /// | 光面 | 0.80 | 0.9 | 0.003 | 1.161 | 0.71% |
+    /// | 哑面 | 1.00 | 1.4 | 0.002 | 1.209 | 2.09% |
+    ///
+    /// 三格必须**同向**：amount 升、radius 升、threshold 降。任一格反向都会让相邻两档
+    /// 互相抵消（半径更大却更不响应 = 白给），这条写在测试里逐格断言，不是备注。
+    /// 哑面 `Standard`/`High` 落在 ATLAS §46.2 的 1.2–1.6× 目标内（1.209 / 1.305），
+    /// 而 `Low` 实测 1.144× **故意低于目标**——强度档的意义就是同一用途下调力度。
+    /// 九个真实组合的 halo 全部 < 3%，最紧的是哑面 + 高（2.93%），余量只有 0.07
+    /// 个百分点，所以这两格数值不要再往上加。阈值不是装饰：拆成 0 会让低强度档的
+    /// MTF50 虚高（屏幕 + 低 1.074 → 1.067），验收量的是带阈值的那一条。
+    ///
+    /// (base strength amount∈[0,1], base radius, base threshold) — a USM triple per purpose;
+    /// [`SharpenStrength`] only scales strength. The three rungs are a measured ladder, not
+    /// three names (measured at `Standard`, synthetic target: σ=0.7 lens softening, ATLAS §46.2):
+    ///
+    /// | purpose | amount | radius | thr | MTF50× | halo |
+    /// |---|---|---|---|---|---|
+    /// | screen | 0.55 | 0.6 | 0.004 | 1.096 | 0.19% |
+    /// | glossy | 0.80 | 0.9 | 0.003 | 1.161 | 0.71% |
+    /// | matte | 1.00 | 1.4 | 0.002 | 1.209 | 2.09% |
+    ///
+    /// The three fields must move **together**: amount up, radius up, threshold down. Any field
+    /// reversed makes neighbouring rungs cancel out (bigger radius yet less responsive is free
+    /// nothing); the test asserts this field by field. `matte` at `Standard`/`High` lands inside
+    /// ATLAS §46.2's 1.2–1.6× target (1.209 / 1.305) while `Low` measures 1.144×
+    /// **deliberately under target** — that is what a strength mode is for. All nine real
+    /// combinations keep halo under 3%, the tightest being matte+high at 2.93%: only 0.07
+    /// points of margin, so those two numbers must not be raised. The threshold is not
+    /// decoration: zeroing it inflates low-strength MTF50 (screen+low 1.074 → 1.067), and the
+    /// acceptance test measures the path that keeps it.
     fn profile(self) -> Option<(f32, f32, f32)> {
         match self {
             Self::Off => None,
