@@ -39,32 +39,62 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     );
 
     // 右端两枚开关降为 ghost：透明底、dim 字，悬停才抬起 —— 头部行是说明，
-    // 不是按钮排。
-    let mut chip_x = hd.right() - 10.0 - 36.0;
-    for (label, on) in [("胶片", state.show_film), ("曲线", state.show_curves)] {
-        let r = Rect::from_min_size(
-            Pos2::new(chip_x, hd.center().y - 9.0),
-            Vec2::new(36.0, 18.0),
-        );
-        let resp = ui.interact(r, ui.make_persistent_id(("tl-chip", label)), Sense::click());
-        if resp.hovered() {
-            p.rect_filled(r, radius_control(), elev());
-        }
-        p.text(
-            r.center(),
-            Align2::CENTER_CENTER,
-            crate::i18n::tr(label),
-            font(SIZE_SMALL),
-            if on { text() } else { dim() },
-        );
-        if resp.clicked() {
-            if label == "胶片" {
-                state.show_film = !state.show_film;
-            } else {
-                state.show_curves = !state.show_curves;
-            }
-        }
-        chip_x -= 40.0;
+    // 不是按钮排。胶片那枚带旋转箭头（Lightroom 口径）：▼ 收起 / ▸ 展开，
+    // 点击收起的只是缩略图条，这行 26px 头部留着，展开的入口永远在场。
+    let chip_x = hd.right() - 10.0 - 60.0;
+    let film_rect = Rect::from_min_size(
+        Pos2::new(chip_x, hd.center().y - 9.0),
+        Vec2::new(60.0, 18.0),
+    );
+    let film_resp = ui.interact(film_rect, ui.make_persistent_id("tl-film"), Sense::click());
+    if film_resp.hovered() {
+        p.rect_filled(film_rect, radius_control(), elev());
+    }
+    icons::paint(
+        &p,
+        Rect::from_center_size(
+            Pos2::new(film_rect.left() + 10.0, film_rect.center().y),
+            Vec2::splat(10.0),
+        ),
+        if state.show_film {
+            Glyph::ChevronDown
+        } else {
+            Glyph::ChevronRight
+        },
+        if film_resp.hovered() { text() } else { dim() },
+    );
+    p.text(
+        Pos2::new(film_rect.left() + 20.0, film_rect.center().y),
+        Align2::LEFT_CENTER,
+        crate::i18n::tr("胶片"),
+        font(SIZE_SMALL),
+        if state.show_film { text() } else { dim() },
+    );
+    if film_resp.clicked() {
+        state.show_film = !state.show_film;
+    }
+    film_resp.on_hover_text(crate::i18n::t!("收起 / 展开底部预览栏"));
+    let curve_rect = Rect::from_min_size(
+        Pos2::new(film_rect.left() - 44.0, hd.center().y - 9.0),
+        Vec2::new(40.0, 18.0),
+    );
+    let curve_resp = ui.interact(
+        curve_rect,
+        ui.make_persistent_id("tl-curve"),
+        Sense::click(),
+    );
+    if curve_resp.hovered() {
+        p.rect_filled(curve_rect, radius_control(), elev());
+    }
+    p.text(
+        curve_rect.center(),
+        Align2::CENTER_CENTER,
+        crate::i18n::tr("曲线"),
+        font(SIZE_SMALL),
+        if state.show_curves { text() } else { dim() },
+    );
+    if curve_resp.clicked() {
+        state.show_curves = !state.show_curves;
     }
 
     let mut y = hd.bottom() + 4.0;

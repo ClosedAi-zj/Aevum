@@ -375,6 +375,29 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         state.export_current(ctx);
     }
 
+    // 设置齿轮：外观/布局/语言的唯一常驻入口。此前只有「视图 → 外观与布局…」
+    // 一条路，用户找不到（2026-11-01 反馈「界面自定义与中英切换在哪」）——
+    // 全程序只此一颗齿轮，位置固定，认它就行。
+    let gear = Rect::from_center_size(Pos2::new(export.left() - 16.0, mid), Vec2::splat(24.0));
+    let gr = ui.interact(gear, ui.make_persistent_id("tb-look"), Sense::click());
+    if gr.hovered() {
+        p.rect_filled(gear, radius_control(), elev());
+    }
+    icons::paint(
+        &p,
+        gear.shrink(5.0),
+        Glyph::Gear,
+        if gr.hovered() { text() } else { muted() },
+    );
+    let open_look = gr.clicked();
+    gr.on_hover_text(crate::i18n::tr_fmt(
+        "{}（Ctrl+,）",
+        &[&crate::i18n::tr("外观与布局")],
+    ));
+    if open_look {
+        state.look_open = true;
+    }
+
     // 工作区胶囊：紧跟菜单（界面稿 .menu-end + .ws-div + .ws-menu 的次序）——
     // 「现在在哪个工作区」是标题栏的第二个信息，不是右角的第三颗按钮。
     // 一条 1px 竖分隔线把它和菜单隔开，右侧只留导出与窗口钮。

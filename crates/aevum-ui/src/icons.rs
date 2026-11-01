@@ -37,6 +37,7 @@ pub enum Glyph {
     Close,
     Export,
     Help,
+    Gear,
 }
 
 fn pt(r: Rect, x: f32, y: f32) -> Pos2 {
@@ -302,6 +303,24 @@ pub fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32) {
                 );
                 painter.circle_filled(pt(r, x, y), sw * 1.5, color);
             }
+        }
+        Glyph::Gear => {
+            // 齿圈：8 枚短齿（径向线段）+ 中孔圆。小尺寸下比真齿轮轮廓可读，
+            // 悬停放大到 24px 时齿距仍然分得开。
+            let c = pt(r, 0.5, 0.5);
+            let r_out = s * 0.40;
+            let r_in = s * 0.28;
+            for k in 0..8 {
+                let a = k as f32 * std::f32::consts::TAU / 8.0 + std::f32::consts::PI / 8.0;
+                let (dx, dy) = (a.sin(), -a.cos());
+                seg(
+                    painter,
+                    Pos2::new(c.x + dx * r_in, c.y + dy * r_in),
+                    Pos2::new(c.x + dx * r_out, c.y + dy * r_out),
+                    Stroke::new(sw * 0.9, color),
+                );
+            }
+            painter.circle_stroke(c, s * 0.17, st);
         }
         Glyph::Info => {
             painter.circle_stroke(pt(r, 0.5, 0.5), s * 0.4, st);

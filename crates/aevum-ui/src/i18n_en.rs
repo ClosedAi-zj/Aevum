@@ -645,6 +645,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("撤销 Ctrl+Z", "Undo Ctrl+Z"),
     ("撤销 · {}", "Undo · {}"),
     ("撤销最近一步；回到那之前的状态。没有可撤的改动时报错。", "Undo the last step and return to the state before it. Errors when there is nothing to undo."),
+    ("收起 / 展开底部预览栏", "Collapse / expand the bottom preview strip"),
     ("改 {}", "Edit {}"),
     ("改动即时生效并记住", "Changes apply immediately and are remembered"),
     ("改局部蒙版", "Local mask changed"),
