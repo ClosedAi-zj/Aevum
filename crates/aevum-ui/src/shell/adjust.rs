@@ -1524,11 +1524,14 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         if state.render_mode == OutputMode::Video && !state.render_format.frames_ok() {
             state.render_format = StillFormat::Png8;
         }
-        // 成片只会出 SDR：切到视频模式时把动态范围收回 SDR，别留一个点导出就报错的
-        // 组合。与上面那条容器回退同一口径。
-        if state.render_mode == OutputMode::Video && state.render_dynamic != OutputDynamic::Sdr {
-            state.render_dynamic = OutputDynamic::Sdr;
-        }
+        // 成片现在也能出 HDR（x265 main10 + PQ）。以前这里把动态范围硬收回 SDR，
+        // 因为那时成片只有 8bit；现在改由 `apply_dynamic` 补齐前提（HDR 成片必须
+        // HEVC + Rec.2020），切换模式时不再动用户的动态范围选择。
+        //
+        // Video can now be HDR too (x265 main10 + PQ). This used to force the dynamic range
+        // back to SDR because video was 8bit only; now `apply_dynamic` fills in the
+        // prerequisites (HDR video needs HEVC + Rec.2020), so switching modes no longer
+        // touches the user's choice.
         let formats: &[StillFormat] = if state.render_mode == OutputMode::Video {
             &[StillFormat::Png8, StillFormat::Tiff16]
         } else {
@@ -1555,9 +1558,13 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                 }
             }
         });
-        // 动态范围只对静帧开放：成片那条路目前只出 SDR（x264/x265 的 8bit VUI 流），
-        // 摆一个点了会报错的开关比不摆更糟。
-        if state.render_mode == OutputMode::Stills {
+        // 动态范围两种模式都开放：静帧走 AVIF 10bit，成片走 x265 main10。
+        // 前提（容器 / 编码器）由 `apply_dynamic` 当场补齐，用户不会先点导出再挨错。
+        //
+        // Dynamic range is available in both modes: stills go AVIF 10bit, video goes x265
+        // main10. The prerequisites (container / codec) are filled in by `apply_dynamic`, so
+        // nobody presses export and gets an error afterwards.
+        {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 for dyn_range in OutputDynamic::ALL {
@@ -1574,9 +1581,13 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             if state.render_dynamic == OutputDynamic::HdrPq {
                 ui.add_space(2.0);
                 ui.label(
-                    RichText::new(crate::i18n::t!(
-                        "HDR：参考白 203 nits，超过白的部分沿曲线尾部继续上升；只有 AVIF 装得下"
-                    ))
+                    RichText::new(if state.render_mode == OutputMode::Video {
+                        crate::i18n::t!("HDR：x265 main10 + PQ，成片里带 smpte2084 标记")
+                    } else {
+                        crate::i18n::t!(
+                            "HDR：参考白 203 nits，超过白的部分沿曲线尾部继续上升；只有 AVIF 装得下"
+                        )
+                    })
                     .size(SIZE_SMALL)
                     .color(theme::muted()),
                 );
@@ -2106,6 +2117,15 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             for codec in ["HEVC", "H.264"] {
                 if bar_chip(ui, codec, state.codec == codec).clicked() {
                     state.codec = codec.to_owned();
+                    // H.264 那条是 8bit，装不下 PQ。选它就把动态范围退回 SDR——可见地
+                    // 退，不是偷偷留一个点导出才报错的组合。
+                    //
+                    // H.264 is 8bit and cannot carry PQ. Picking it drops the dynamic range
+                    // back to SDR — visibly, rather than leaving a combination that only
+                    // fails when export is pressed.
+                    if state.codec != "HEVC" {
+                        state.render_dynamic = OutputDynamic::Sdr;
+                    }
                 }
             }
         });

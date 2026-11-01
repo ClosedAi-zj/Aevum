@@ -846,6 +846,10 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("状态栏", "Status bar"),
     ("电视色域，SDR 写法（γ2.4），不是 HDR", "TV gamut in SDR (γ2.4), not HDR"),
     ("画布显示对齐后", "Canvas shows the aligned result"),
+    (
+        "HDR：x265 main10 + PQ，成片里带 smpte2084 标记",
+        "HDR: x265 main10 + PQ, the clip carries an smpte2084 tag",
+    ),
     ("预览白以上（SDR 屏上检视高光）", "Preview above white (inspect highlights on SDR)"),
     (
         "屏幕显示不到白：打开后把白以上折进最后约 25 级，高光里的层次就看得见；中间调与暗部一位不动。这不是模拟 HDR 屏亮度，只是让你确认白以上还有没有东西。",

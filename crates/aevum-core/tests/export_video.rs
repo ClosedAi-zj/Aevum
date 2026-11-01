@@ -11,9 +11,9 @@ use aevum_core::align::CropRect;
 use aevum_core::audio::{AudioOptions, AudioProbe};
 use aevum_core::colorspace::ColorSpace;
 use aevum_core::export::{
-    Codec, ExportError, JobProgress, OutputMode, OutputSharpen, RenderOptions, SharpenStrength,
-    Stage, StillFormat, cover_size, encode_video, export_stills, export_video, fit_size,
-    pipe_command, probe_audio, video_command,
+    Codec, ExportError, JobProgress, OutputDynamic, OutputMode, OutputSharpen, RenderOptions,
+    SharpenStrength, Stage, StillFormat, cover_size, encode_video, export_stills, export_video,
+    fit_size, pipe_command, probe_audio, video_command,
 };
 use aevum_core::grade::GradeParams;
 use image::{ImageDecoder, Rgb, RgbImage};
@@ -1102,4 +1102,159 @@ fn direct_pipeline_cancels_before_start() {
         &|_| {},
     );
     assert!(matches!(res, Err(ExportError::Cancelled)));
+}
+
+// ---------------------------------------------------------------------------
+// B2：HDR 成片（x265 main10 + PQ VUI）
+// ---------------------------------------------------------------------------
+
+/// HDR 成片走管道时必须换三样东西：输入位深、VUI 传递函数、编码器内部参数。
+///
+/// 判别力来自「SDR 那条不许变」——所以两条都比：SDR 是 `rgb24` + `bt709`，HDR 是
+/// `rgb48le` + `smpte2084` + `bt2020nc` + 10bit。只断言 HDR 那条的话，把管道改成
+/// 「永远 16bit」也会绿，而那会让 SDR 成片变成一卷斜纹。
+///
+/// HDR video over the pipe must change three things: input depth, VUI transfer, and the
+/// encoder's own params. The discriminating power comes from "SDR must not move", so both are
+/// asserted: SDR is `rgb24` + `bt709`, HDR is `rgb48le` + `smpte2084` + `bt2020nc` + 10bit.
+/// Asserting only the HDR side would stay green even if the pipe went "always 16bit", which
+/// would turn every SDR render into diagonal stripes.
+#[test]
+fn hdr_video_swaps_pipe_depth_and_vui() {
+    let base = || {
+        let mut o = RenderOptions::default();
+        o.mode = OutputMode::Video;
+        o.codec = Codec::H265;
+        o.fps = 12.0;
+        o
+    };
+
+    let sdr = pipe_command(&base(), 3, None, (160, 90));
+    assert!(pair(&sdr, "-pix_fmt", "rgb24"), "SDR 输入位深变了：{sdr:?}");
+    let sdr_vui = sdr
+        .iter()
+        .find(|a| a.starts_with("colorprim="))
+        .expect("SDR 没写 VUI");
+    assert!(
+        sdr_vui.contains("transfer=bt709"),
+        "SDR 传递函数变了：{sdr_vui}"
+    );
+
+    let mut hdr_opts = base();
+    hdr_opts.dynamic = OutputDynamic::HdrPq;
+    hdr_opts.color_space = ColorSpace::Rec2020;
+    let hdr = pipe_command(&hdr_opts, 3, None, (160, 90));
+    assert!(
+        pair(&hdr, "-pix_fmt", "rgb48le"),
+        "HDR 输入还是 8bit：{hdr:?}"
+    );
+    assert!(
+        pair(&hdr, "-pix_fmt", "yuv420p10le"),
+        "HDR 输出不是 10bit：{hdr:?}"
+    );
+    let vui = hdr
+        .iter()
+        .find(|a| a.starts_with("colorprim="))
+        .expect("HDR 没写 VUI");
+    for want in [
+        "colorprim=bt2020",
+        "transfer=smpte2084",
+        "colormatrix=bt2020nc",
+    ] {
+        assert!(vui.contains(want), "HDR 的 VUI 缺 {want}：{vui}");
+    }
+    assert!(
+        pair(&hdr, "-color_trc", "smpte2084"),
+        "全局 -color_trc 没跟着改：{hdr:?}"
+    );
+}
+
+/// HDR 成片的两道关：H.264 装不下 10bit PQ，非 Rec.2020 的原色没有播放器认。
+///
+/// 两条都必须**在导出之前**报错——按了导出再挨一句，用户已经在等结果了。
+///
+/// The two gates for HDR video: H.264 cannot carry 10bit PQ, and non-Rec.2020 primaries are
+/// recognised by no player. Both must fail **before** the export starts; failing after the
+/// button is pressed means the user is already waiting for a result.
+#[test]
+fn hdr_video_refuses_h264_and_narrow_gamut() {
+    let mut o = RenderOptions::default();
+    o.mode = OutputMode::Video;
+    o.dynamic = OutputDynamic::HdrPq;
+    o.codec = Codec::H265;
+    o.color_space = ColorSpace::Rec2020;
+    assert!(o.check_dynamic().is_ok(), "合法的 HDR 组合被拒了");
+
+    let mut h264 = o.clone();
+    h264.codec = Codec::H264;
+    let err = h264.check_dynamic().unwrap_err().to_string();
+    assert!(err.contains("H.265"), "H.264 那条没被挡住：{err}");
+
+    let mut srgb = o.clone();
+    srgb.color_space = ColorSpace::Srgb;
+    let err = srgb.check_dynamic().unwrap_err().to_string();
+    assert!(err.contains("Rec.2020"), "sRGB 原色那条没被挡住：{err}");
+}
+
+/// 端到端：真编一段 HDR 成片，码流里必须**真的**是 10bit + smpte2084 + bt2020。
+///
+/// 只查参数数组是查不出编码器到底写了什么的（x265 会把不认识的 VUI 键默默丢掉）。
+/// 这条让 ffmpeg 把成片的流信息打出来，逐项认。没有 ffmpeg 时按约定让用例红。
+///
+/// End to end: actually encode a short HDR clip and read the stream info back from ffmpeg, which
+/// must report 10bit + smpte2084 + bt2020. Checking the argument array alone cannot tell what
+/// the encoder wrote (x265 silently drops VUI keys it does not know).
+#[test]
+fn hdr_video_is_really_ten_bit_pq_in_the_bitstream() {
+    let Some(ffmpeg) = ffmpeg() else {
+        return;
+    };
+    let td = TempDir::new("hdrvideo");
+    let src = td.path.join("src");
+    let paths = make_sequence(&src, 4);
+    let n = paths.len();
+    let params = vec![GradeParams::default(); n];
+    let gains = vec![aevum_core::develop::Ev::NONE; n];
+    let offsets = vec![[0.0f64; 2]; n];
+
+    let mut o = default_options(&td.path.join("frames"));
+    o.mode = OutputMode::Video;
+    o.dynamic = OutputDynamic::HdrPq;
+    o.color_space = ColorSpace::Rec2020;
+    o.codec = Codec::H265;
+    o.fps = 4.0;
+    o.crf = 30;
+    o.preset = "ultrafast".to_owned();
+    o.long_side = Some(80);
+    o.keep_frames = false;
+    o.video_out = td.path.join("hdr.mp4");
+
+    let cancel = AtomicBool::new(false);
+    export_video(
+        &ffmpeg,
+        &paths,
+        &params,
+        &gains,
+        &offsets,
+        &o,
+        &cancel,
+        &|_| {},
+    )
+    .unwrap();
+
+    // `ffmpeg -i` 会把流信息写到 stderr：`Video: hevc (Main 10), yuv420p10le(tv,
+    // bt2020nc/bt2020/smpte2084, ...)`。不用 ffprobe，少一个依赖。
+    let mut cmd = Command::new(&ffmpeg);
+    cmd.arg("-hide_banner").arg("-i").arg(&o.video_out);
+    #[cfg(windows)]
+    cmd.creation_flags(NO_WINDOW);
+    let out = cmd.output().unwrap();
+    let text = String::from_utf8_lossy(&out.stderr).into_owned();
+    for want in ["yuv420p10le", "smpte2084", "bt2020"] {
+        assert!(
+            text.contains(want),
+            "成片码流里没有 {want}：\n{}",
+            text.lines().take(6).collect::<Vec<_>>().join("\n")
+        );
+    }
 }

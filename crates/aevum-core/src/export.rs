@@ -688,6 +688,34 @@ impl RenderOptions {
     ///   silently falling back to SDR would look like HDR was exported when the file has none.
     /// - HDR (PQ) requires Rec.2020. See [`ColorSpace::vui_pq`].
     pub fn check_dynamic(&self) -> Result<(), ExportError> {
+        // 成片那条路有两道额外的关：① 只有 H.265 能带 10bit + PQ（H.264 那条写死
+        // `yuv420p`，8bit 会让 PQ 的暗部只剩几十级）；② PNG 序列承载不了 PQ——PNG 里
+        // 没有地方声明「这些数是 PQ」，中转一次就被当成 sRGB 解释。
+        //
+        // 两道都写成「拒绝 + 说清」，不悄悄退回 SDR：界面写着 HDR、文件是 SDR 是最坏的
+        // 失败方式。
+        //
+        // The video path has two extra gates: (1) only H.265 can carry 10bit + PQ (the H.264
+        // arm is hard-wired to `yuv420p`, and 8bit leaves PQ's shadows with a few dozen
+        // levels); (2) a PNG sequence cannot carry PQ — PNG has nowhere to declare "these
+        // numbers are PQ", so one round trip gets them read as sRGB.
+        //
+        // Both are "refuse and explain", never a silent fall back to SDR: a UI that says HDR
+        // while the file is SDR is the worst failure mode.
+        if self.mode == OutputMode::Video && self.dynamic == OutputDynamic::HdrPq {
+            if self.codec != Codec::H265 {
+                return Err(ExportError::Invalid(
+                    "HDR（PQ）成片只能用 H.265：H.264 那条是 8bit，PQ 的暗部会只剩几十级"
+                        .to_owned(),
+                ));
+            }
+            if self.color_space.nclx_pq().is_none() {
+                return Err(ExportError::Invalid(
+                    "HDR（PQ）成片必须配 Rec.2020：PQ 配 sRGB / P3 原色没有播放器认".to_owned(),
+                ));
+            }
+            return Ok(());
+        }
         if !self.dynamic.fits(self.format) {
             return Err(ExportError::Invalid(format!(
                 "{} 装不下 HDR（PQ）：10bit + nclx 目前只有 AVIF 支持",
@@ -1198,12 +1226,23 @@ fn mix_frames(
     Ok(size)
 }
 
-/// 渲一个输出帧并压成 rgb24，供直连 ffmpeg 的管道喂给编码器。
+/// 渲一个输出帧并压成管道字节：SDR 是 `rgb24`，HDR 是 BT.2020 + PQ 的 `rgb48le`。
 ///
 /// 单来源那一路直接在 scratch 里出，跟改造前的 1:1 路径逐字节相同；只有真的要混
 /// 几帧时才用 `mix` 多占一块全幅缓冲。
+///
+/// 返回的字节布局必须和 `pipe_command` 里写的 `-pix_fmt` 一致——两边由
+/// `options.dynamic` 同时决定，**不能有一边自己判断**，否则 ffmpeg 会把 16bit 的字节
+/// 当 8bit 读，画面变成一卷斜纹。
+///
+/// Render one output frame and pack it for the pipe: `rgb24` for SDR, BT.2020 + PQ
+/// `rgb48le` for HDR.
+///
+/// The byte layout must match the `-pix_fmt` written by `pipe_command`; both are decided by
+/// `options.dynamic` and **neither side may decide on its own**, or ffmpeg reads 16bit bytes as
+/// 8bit and the picture turns into diagonal stripes.
 #[allow(clippy::too_many_arguments)]
-fn output_frame_rgb24(
+fn output_frame_bytes(
     plan: Option<&Plan>,
     i: usize,
     paths: &[PathBuf],
@@ -1237,7 +1276,12 @@ fn output_frame_rgb24(
         )?;
         (&mut mix[..], w, h)
     };
-    Ok((to_rgb24(rgb, options.color_space), tw, th))
+    let bytes = if options.dynamic == OutputDynamic::HdrPq {
+        to_rgb48_pq(rgb, options.color_space)
+    } else {
+        to_rgb24(rgb, options.color_space)
+    };
+    Ok((bytes, tw, th))
 }
 
 /// 每帧的临时缓冲，跨帧复用。
@@ -1480,6 +1524,31 @@ fn to_rgb24(rgb: &mut [f32], color_space: ColorSpace) -> Vec<u8> {
     out
 }
 
+/// f32 像素 → BT.2020 + PQ 的 `rgb48le` 字节流，供 HDR 成片的管道输入。
+///
+/// 三步顺序不能换：① 先搬色域（矩阵在 sRGB 线性域里算），② 再换传递函数（PQ 是
+/// **编码值**的函数，必须在色域搬运完之后），③ 最后量化到 16bit。反过来做等于拿
+/// sRGB 编码值去查 PQ，出来一片黑。
+///
+/// 与 [`to_rgb24`] 的另一个区别是不夹到 8bit：PQ 的暗部在这条链上只有几百个码值，
+/// 先压成 8bit 再交给 10bit 编码器，等于把 PQ 的暗部层级全扔掉。
+///
+/// f32 pixels → an `rgb48le` byte stream in BT.2020 + PQ, for the HDR video pipe input.
+///
+/// The order of the three steps is not negotiable: (1) move the gamut first (the matrix is
+/// computed in the sRGB linear domain), (2) then swap the transfer function (PQ is a function
+/// of the **encoded** value, so it must come after the gamut move), (3) quantize to 16bit last.
+/// Reversing them means looking up PQ with sRGB-encoded values, which comes out black.
+///
+/// The other difference from [`to_rgb24`]: no 8bit clamp. PQ's shadows only span a few hundred
+/// codes on this chain, and squashing to 8bit before handing to a 10bit encoder throws that
+/// shadow layering away.
+fn to_rgb48_pq(rgb: &mut [f32], color_space: ColorSpace) -> Vec<u8> {
+    color_space.convert_in_place(rgb);
+    crate::hdr_output::encode_pq_in_place(rgb);
+    to_rgb48_le(rgb)
+}
+
 /// 用序列帧编码视频；`-progress pipe:1` 的帧计数转成进度。
 ///
 /// Encodes a video from the frame sequence; the frame counter of `-progress pipe:1` becomes
@@ -1498,6 +1567,16 @@ pub fn encode_video(
     }
     if !(options.fps.is_finite() && options.fps > 0.0) {
         return Err(ExportError::Invalid("帧率必须大于 0".to_owned()));
+    }
+    // 这条是「PNG 序列 → 视频」的老路：帧是 8bit sRGB 写进 PNG 的，PQ 无处声明。
+    // HDR 成片走直连编码那条（原始字节直喂编码器），不经过这里。
+    //
+    // This is the old "PNG sequence → video" path: frames are written as 8bit sRGB PNGs, and
+    // PQ has nowhere to be declared. HDR goes through the piped encoder instead.
+    if options.dynamic == OutputDynamic::HdrPq {
+        return Err(ExportError::Invalid(
+            "HDR 成片不能走 PNG 序列：PNG 里没法声明 PQ。请用直连编码（默认路径）".to_owned(),
+        ));
     }
     if options.video_out.as_os_str().is_empty() {
         return Err(ExportError::Invalid("成片路径为空".to_owned()));
@@ -1704,7 +1783,7 @@ pub fn export_video_direct_planned(
     // 渲染线程继续用，一开始就按满负荷备好缓冲。
     let mut first_scratch = Scratch::default();
     let mut first_mix = Vec::new();
-    let (first, fw, fh) = output_frame_rgb24(
+    let (first, fw, fh) = output_frame_bytes(
         plan,
         0,
         paths,
@@ -1789,7 +1868,7 @@ pub fn export_video_direct_planned(
                     break;
                 }
                 let one = (|| -> Result<(), ExportError> {
-                    let (bytes, w, h) = output_frame_rgb24(
+                    let (bytes, w, h) = output_frame_bytes(
                         plan,
                         i,
                         paths,
@@ -2093,7 +2172,17 @@ pub fn pipe_command(
         "-f".to_owned(),
         "rawvideo".to_owned(),
         "-pix_fmt".to_owned(),
-        "rgb24".to_owned(),
+        // 与 `output_frame_bytes` 同一判据：HDR 喂 16bit，SDR 喂 8bit。两边只要有一边
+        // 自己判断，ffmpeg 就会把字节按错误的位深切，画面立刻变成斜纹。
+        //
+        // Same criterion as `output_frame_bytes`: 16bit for HDR, 8bit for SDR. If either side
+        // decides on its own, ffmpeg slices the bytes at the wrong depth and the picture turns
+        // into diagonal stripes.
+        if options.dynamic == OutputDynamic::HdrPq {
+            "rgb48le".to_owned()
+        } else {
+            "rgb24".to_owned()
+        },
         "-s".to_owned(),
         format!("{}x{}", size.0, size.1),
         "-framerate".to_owned(),
@@ -2167,7 +2256,23 @@ fn video_args(
     // 调色链路全程在 sRGB 里算，输出色域由 color_space 决定。VUI 必须逐条显式写：
     // 本机 ffmpeg 7.1 实测，只给 -color_primaries/-color_trc 全局参数时 x264/x265 都把
     // 码流里的字段留成 unknown，得靠各自的 -x26?-params 才真落进 VUI。
-    let (primaries, transfer, matrix) = options.color_space.vui();
+    //
+    // HDR 与 SDR 的 VUI 只差传递函数与原色：Rec.2020 + PQ（`smpte2084`）。`vui_pq()`
+    // 只对 Rec.2020 返回 `Some`，而 `check_dynamic` 已经要求 HDR 必须 Rec.2020，所以
+    // `unwrap_or` 那条分支实际走不到——留着是为了配置不合法时退化成可播放的 SDR 标记，
+    // 而不是 panic。
+    //
+    // HDR differs from SDR only in transfer and primaries: Rec.2020 + PQ (`smpte2084`).
+    // `vui_pq()` returns `Some` for Rec.2020 only and `check_dynamic` already requires
+    // Rec.2020 for HDR, so the `unwrap_or` arm is unreachable — it degrades an invalid
+    // configuration into a playable SDR tag instead of panicking.
+    let (primaries, transfer, matrix) = match options.dynamic {
+        OutputDynamic::HdrPq => options
+            .color_space
+            .vui_pq()
+            .unwrap_or_else(|| options.color_space.vui()),
+        OutputDynamic::Sdr => options.color_space.vui(),
+    };
     let vui_params =
         format!("colorprim={primaries}:transfer={transfer}:colormatrix={matrix}:range=limited");
 
@@ -3050,7 +3155,64 @@ fn fps_text(fps: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{area_weights, avif_crf};
+    use super::{area_weights, avif_crf, to_rgb24, to_rgb48_pq};
+    use crate::colorspace::ColorSpace;
+    use crate::hdr_output::encoded_to_pq;
+
+    /// 管道字节数必须和 `pipe_command` 写的 `-pix_fmt` 对得上：SDR 3 字节/像素，
+    /// HDR 6 字节/像素。
+    ///
+    /// 这条挡的是「有一边自己改了判断」：ffmpeg 不会因为字节不够就报错，它会按自己的
+    /// 位深切，切出来是一卷斜纹——参数数组的测试看不出这种错，只有数长度能。
+    ///
+    /// The pipe byte count must match the `-pix_fmt` written by `pipe_command`: 3 bytes per
+    /// pixel for SDR, 6 for HDR.
+    ///
+    /// This catches "one side changed its mind on its own": ffmpeg does not error when it is
+    /// short of bytes, it slices at its own depth and the picture turns into diagonal stripes.
+    /// Argument-array tests cannot see that; counting can.
+    #[test]
+    fn pipe_bytes_per_pixel_match_the_declared_pix_fmt() {
+        let n = 4 * 3 * 4; // 4 个像素 × 3 通道 × 4 字节的 f32 缓冲，前面当 f32 用
+        let mut sdr = vec![0.5f32; n];
+        assert_eq!(
+            to_rgb24(&mut sdr, ColorSpace::Srgb).len(),
+            n,
+            "SDR 不是 1 字节/通道"
+        );
+
+        let mut hdr = vec![0.5f32; n];
+        assert_eq!(
+            to_rgb48_pq(&mut hdr, ColorSpace::Rec2020).len(),
+            n * 2,
+            "HDR 不是 2 字节/通道——rgb48le 会被当成 rgb24 切"
+        );
+    }
+
+    /// HDR 那条路必须真的做了 PQ：中性灰 0.5 的 16bit 样本要等于 `encoded_to_pq(0.5)`。
+    ///
+    /// 中性灰在 sRGB/Rec.2020 之间搬色域不变（三通道相等），所以这个断言只可能被
+    /// 「漏掉 PQ」或「PQ 用错锚点」打破——漏掉时样本会是 0.5（32768），差出整整 0.06。
+    ///
+    /// The HDR path must really apply PQ: the 16bit sample for neutral 0.5 has to equal
+    /// `encoded_to_pq(0.5)`. Neutral grey is unchanged by an sRGB→Rec.2020 move (all three
+    /// channels equal), so only "PQ left out" or "PQ anchored wrong" can break this — without
+    /// PQ the sample is 0.5 (32768), off by a full 0.06.
+    #[test]
+    fn hdr_pipe_sample_is_the_pq_code_of_the_input() {
+        let mut rgb = vec![0.5f32];
+        let bytes = to_rgb48_pq(&mut rgb, ColorSpace::Rec2020);
+        let got = u16::from_le_bytes([bytes[0], bytes[1]]) as f32 / 65535.0;
+        let want = encoded_to_pq(0.5);
+        assert!(
+            (got - want).abs() < 2e-4,
+            "16bit 样本 {got:.5} ≠ PQ 码 {want:.5}"
+        );
+        assert!(
+            (got - 0.5f32).abs() > 0.02,
+            "样本还停在 {got:.5}，PQ 没生效"
+        );
+    }
 
     /// 与 `metrics::area_weights` 同一处算术，越界同样会把导出线程直接打挂。
     #[test]

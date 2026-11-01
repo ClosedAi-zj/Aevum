@@ -10073,11 +10073,23 @@ impl AppState {
     /// to let the user hit core's guard after pressing export. The adjustment is **visible**
     /// (the colour space and container selections move), not a silent rewrite.
     pub fn apply_dynamic(&mut self) {
-        if self.render_dynamic == OutputDynamic::HdrPq {
-            self.render_color_space = ColorSpace::Rec2020;
-            if !self.render_dynamic.fits(self.render_format) {
-                self.render_format = StillFormat::Avif;
+        if self.render_dynamic != OutputDynamic::HdrPq {
+            return;
+        }
+        // 两个前提：色域必须 Rec.2020（PQ 配窄色域没人认），容器 / 编码器必须装得下
+        // 10bit。静帧是 AVIF，成片是 HEVC——两条都当场补齐，别让用户点导出才发现。
+        //
+        // Two prerequisites: Rec.2020 primaries (PQ in a narrow gamut is recognised by
+        // nobody) and a container/codec that holds 10bit. AVIF for stills, HEVC for video —
+        // both fixed here rather than at export time.
+        self.render_color_space = ColorSpace::Rec2020;
+        match self.render_mode {
+            OutputMode::Stills => {
+                if !self.render_dynamic.fits(self.render_format) {
+                    self.render_format = StillFormat::Avif;
+                }
             }
+            OutputMode::Video => self.codec = "HEVC".to_owned(),
         }
     }
 
@@ -11672,6 +11684,13 @@ mod frame_tests {
     #[test]
     fn hdr_forces_rec2020_and_avif() {
         let mut state = AppState::new();
+        // 默认模式是**成片**（`AppState::new` 里就是 Video），而这条判的是静帧那条路，
+        // 所以必须先显式切过来——否则它验的是成片的补齐逻辑，名字与实际不符。
+        //
+        // The default mode is **video** (that is what `AppState::new` sets), and this test is
+        // about the stills path, so the mode has to be switched explicitly first; otherwise it
+        // measures the video fill-in while claiming to measure stills.
+        state.render_mode = OutputMode::Stills;
         state.render_dynamic = OutputDynamic::Sdr;
         state.render_color_space = ColorSpace::Srgb;
         state.render_format = StillFormat::Png8;
@@ -11689,6 +11708,33 @@ mod frame_tests {
         state.render_dynamic = OutputDynamic::Sdr;
         state.apply_dynamic();
         assert_eq!(state.render_format, StillFormat::Avif, "SDR 不需要改容器");
+    }
+
+    /// 成片选 HDR 时，编码器与色域必须被补到唯一成立的组合（HEVC + Rec.2020）。
+    ///
+    /// 与静帧那条（AVIF + Rec.2020）分开断言，因为它们的「装得下的容器」不是一个东西：
+    /// 静帧是 AVIF，成片是 H.265。共用一条判据会让其中一条路悄悄退回默认。
+    ///
+    /// Choosing HDR for video must fill in the only valid combination (HEVC + Rec.2020).
+    /// Asserted separately from the stills case (AVIF + Rec.2020) because "the container that
+    /// can hold it" differs: AVIF for stills, H.265 for video. One shared criterion would let
+    /// either path quietly fall back to defaults.
+    #[test]
+    fn hdr_for_video_forces_hevc_and_rec2020() {
+        let mut state = AppState::new();
+        state.render_mode = OutputMode::Video;
+        state.codec = "H.264".to_owned();
+        state.render_color_space = ColorSpace::Srgb;
+        state.render_dynamic = OutputDynamic::HdrPq;
+        state.apply_dynamic();
+        assert_eq!(state.codec, "HEVC", "HDR 成片还挂在 H.264 上，导出必被拒");
+        assert_eq!(state.render_color_space, ColorSpace::Rec2020);
+
+        // 静帧那条不许被成片的规则带跑。
+        state.render_mode = OutputMode::Stills;
+        state.render_format = StillFormat::Png8;
+        state.apply_dynamic();
+        assert_eq!(state.render_format, StillFormat::Avif);
     }
 
     /// 「预览白以上」是观看方式，必须跟着用户走：进 settings 载荷、读回来还开着。
