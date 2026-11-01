@@ -17,6 +17,40 @@ folder onto the window and it switches to the right module.
 > Old projects (`.lumen/`), old `LUMEN_*` environment variables and old `lumen_*` MCP
 > tool names keep working — see "Upgrading from 0.4 and earlier" below.
 
+## A look at the interface
+
+One window carries the whole pipeline. Develop is the main workspace — presets and
+history on the left, canvas and masks in the middle, parameters and histogram on the
+right, a per-frame filmstrip along the bottom:
+
+![Develop — masks, parameter panel and the per-frame filmstrip](assets/shots/develop.png)
+
+| **Sequence — alignment check-up** | **Deflicker — per-frame metering curves** |
+|---|---|
+| ![Sequence](assets/shots/sequence.png) | ![Deflicker](assets/shots/deflicker.png) |
+| **Compose — crop and straighten** | **Render — export and the render queue** |
+| ![Compose](assets/shots/compose.png) | ![Render](assets/shots/render.png) |
+
+## Why this project exists
+
+Producing a decent timelapse today means moving files across four or five tools:
+LRTimelapse for deflicker, Lightroom for grading, After Effects or Premiere for the
+final render — with repeated exports and imports in between. Each tool owns one
+segment of the process, so:
+
+- **parameters don't carry over**: a grade tuned in Lightroom can only be approximated
+  with LUTs once it reaches the compositing tool;
+- **the preview and the final film disagree**: every tool sees only its own segment,
+  and no tool is responsible for the finished picture;
+- **one missed step restarts everything**: a forgotten XMP save is enough to ruin an
+  overnight render.
+
+Aevum's goal is to fit "camera sequence → finished film" into **one window**: import,
+alignment, deflicker, develop, compose, soundtrack and export form a single pipeline
+where each step's output flows into the next and parameters follow the sequence all
+the way through. For single-photo editors this is a side quest; for Aevum it is the
+whole point.
+
 ## Features
 
 - **Sequence pipeline**: frame alignment (sub-pixel), deflicker (luminance-curve based),
@@ -36,6 +70,27 @@ folder onto the window and it switches to the right module.
   "follow system" is the default and the preference lives in `settings.json`, never in a
   project). Coverage is guarded by `tests/i18n_coverage.rs`: the whole UI is painted in
   English and every rendered glyph is scanned — one Chinese character on screen fails the test
+
+## Where it stands against Lightroom / Photoshop
+
+Lightroom and Photoshop are the industry standard for editing single photographs, and
+Aevum's develop chain deliberately follows Lightroom's classic conventions
+(exposure / curves / HSL / split toning / sharpening ...); `crs:` parameter keys in XMP
+presets are read directly. The difference is the *sequence*:
+
+| | Lightroom / Photoshop | Aevum Studio |
+|---|---|---|
+| basic unit | a single photo | the sequence (sequences are first-class citizens) |
+| timelapse deflicker | none built in; needs LRTimelapse | built in: per-frame metering curves + luminance correction |
+| frame alignment | none | sub-pixel translation alignment + an alignment check-up |
+| HDR / stacking | manual, script-driven stacking in PS | multi-frame merge feeds straight into the develop chain |
+| video output | LRT → LR → AE/PR, three hops | direct mp4 export (H.264 / H.265 10-bit HDR), batch render queue |
+| grading parameters | XMP presets | the same XMP (`crs:` keys) + keyframes inside the project |
+| automation | — | a built-in MCP control plane: 34 tools an AI agent can drive directly |
+| licence | subscription | MIT, free and open source |
+
+One sentence: **single-photo retouching remains Lightroom / Photoshop territory;
+getting from a sequence of photos to a finished film takes one window in Aevum.**
 
 ## Repository layout
 
