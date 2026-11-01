@@ -28,6 +28,23 @@ cd "$ROOT"
 CARGO=(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
     -u all_proxy -u ALL_PROXY CARGO_HTTP_PROXY= cargo)
 
+# 直删目录，不进回收站。
+# 这台机器（CODEBUDDY_SAFE_DELETE_ENABLED=1）的 rm 不真删，而是把文件搬到本盘的
+# $RECYCLE.BIN。打包每轮要清 dist/licenses（千余个小文件）、dist/third-party-src
+# 和两个 mktemp 临时目录（解压回验那个约 130 MB）—— 用 rm 的话每打一次包就往
+# 回收站塞一份，堆到几十万文件后会把盘顶满：2026-11-01 实测 E 盘被 115 GB /
+# 39.9 万文件的回收站占满，链接器报 LNK1180 编不动，打包链整个停摆。
+# python 的 shutil.rmtree 走 Win32 DeleteFile，不进回收站。python 不可用时退回
+# rm —— 宁可脏一点，也不能让打包中断。
+purge_dir() {
+    [ -e "$1" ] || return 0
+    if command -v python >/dev/null 2>&1; then
+        python -c 'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' "$1"
+    else
+        rm -rf "$1"
+    fi
+}
+
 if [ "${SKIP_CHECK:-}" = "1" ]; then
     echo "==> 跳过门槛（SKIP_CHECK=1）"
 else
@@ -86,9 +103,8 @@ cp -f "$ROOT/README.md" "$DIST/"
 cp -f "$ROOT/THIRD-PARTY-NOTICES.txt" "$DIST/"
 
 # ---- 许可文本：LGPL-2.1 / OFL-1.1 / UFL-1.0 / MIT / ISC 都要求随分发附带 ----
-rm -rf "$DIST/licenses"
-cp -rf "$ROOT/licenses" "$DIST/licenses"
-# 项目自选字体与图标的许可文本散在 assets/ 下，统一归到 licenses/，让随包只有一处要找。
+purge_dir "$DIST/licenses"
+cp -rf "$ROOT/licenses" "$DIST/licenses"# 项目自选字体与图标的许可文本散在 assets/ 下，统一归到 licenses/，让随包只有一处要找。
 cp -f "$ROOT/assets/fonts/OFL-Inter.txt"        "$DIST/licenses/OFL-1.1-Inter.txt"
 cp -f "$ROOT/assets/fonts/OFL-NotoSansSC.txt"   "$DIST/licenses/OFL-1.1-Noto-Sans-SC.txt"
 cp -f "$ROOT/assets/icons/LICENSE-Lucide.txt"   "$DIST/licenses/ISC-Lucide.txt"
@@ -96,7 +112,7 @@ cp -f "$ROOT/assets/icons/LICENSE-Lucide.txt"   "$DIST/licenses/ISC-Lucide.txt"
 # ---- rawler 源码：LGPL-2.1 §6 要求提供对应源码，直接附 Cargo 源码包（约 730 KB）----
 # 找不到时不阻断打包（换个容器/CI 可能没有 registry 缓存），但必须喊出来，
 # 并把下载地址打在随包说明里——静默少一个文件才是最坏的结果。
-rm -rf "$DIST/third-party-src"
+purge_dir "$DIST/third-party-src"
 mkdir -p "$DIST/third-party-src"
 rawler_src="${AEVUM_RAWLER_SRC:-}"
 if [ -z "$rawler_src" ]; then
@@ -130,7 +146,7 @@ echo "==> 真实导出（只用随包 ffmpeg，清空 PATH 里的 ffmpeg 影响�
 # 返回带盘符的路径，下游的 rm/工具链对盘符路径行为不一；/tmp 在 Git Bash 里
 # 恒存在且始终是 POSIX 形式。本脚本只承诺在 Git Bash 里跑。
 work="$(TMPDIR=/tmp mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+trap 'purge_dir "$work"' EXIT
 work_win="$(cygpath -m "$work")"
 
 "$DIST/tools/ffmpeg.exe" -y -hide_banner -loglevel error \
@@ -187,11 +203,11 @@ zip_sha="$(sha256sum "$zip_out" | awk '{print $1}')"
 printf '%s  %s\n' "$zip_sha" "$zip_name" > "$ROOT/dist/SHA256SUMS"
 
 echo "==> 解压回验（zip 里跑 --selftest，形状数必须与构建树一致）"
-# 这里用 rm -rf 是安全的：删的是本脚本自己 mktemp -d 出来的临时目录
+# 这里用 purge_dir 是安全的：删的是本脚本自己 mktemp -d 出来的临时目录
 # （$work 与 $zipcheck），里面的每一样东西都是本次运行创建的，
 # 不含任何用户数据；trap 保证脚本无论成败退出前都清干净。
 zipcheck="$(TMPDIR=/tmp mktemp -d)"
-trap 'rm -rf "$work" "$zipcheck"' EXIT
+trap 'purge_dir "$work"; purge_dir "$zipcheck"' EXIT
 unzip -q "$zip_out" -d "$zipcheck"
 selftest_zip="$("$zipcheck/Aevum-Studio-v$ver/aevum.exe" --selftest)"
 if [ "$selftest_zip" != "$selftest_build" ]; then
