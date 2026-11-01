@@ -13,8 +13,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 # 本机 gitconfig 里有死代理，cargo 必须临时清掉代理变量。
+# CARGO_INCREMENTAL=0：门槛会重编整个 workspace，增量缓存对本机没好处，却会
+# 在 target/debug/incremental 里堆出几十 GB（实测一次 20.5 GB / 35k 文件，
+# 还伴随「删除 lock 文件被拒绝」的告警）。开发时的日常增量编译不受影响。
 CARGO=(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-    -u all_proxy -u ALL_PROXY CARGO_HTTP_PROXY= cargo)
+    -u all_proxy -u ALL_PROXY CARGO_HTTP_PROXY= CARGO_INCREMENTAL=0 cargo)
 # 只有「没设」才回落成本机离线；显式设成空串是 CI 的「允许联网解析」，
 # 用 `:-` 会把空值也当成未设置，CI 上就变成没缓存还强制 offline。
 CARGO_FLAGS="${CARGO_FLAGS---offline}"
