@@ -18,16 +18,24 @@
 //! 那一段，因此 MTF50 与 halo 都只由 `delta_cap` 决定，换 knee 数值一格不动。
 //! 结论：这个参数化下软膝买不到东西，不做。
 
-mod support;
+// `support` 只在 `suite/main.rs` 里引入一次。以前每个文件各是一个 crate 根，
+// 各写一句 `mod support;`；合并成一个可执行文件后，同一个文件被当模块加载两次以上
+// 会被 clippy 的 `duplicate_mod` 当场拦下——那本来也是浪费（四份一模一样的代码）。
+//
+// `support` is declared once, in `suite/main.rs`. Each file used to be its own crate
+// root with its own `mod support;`; now that they share one executable, loading the same
+// file more than once trips clippy's `duplicate_mod` -- which was also wasteful (four
+// identical copies).
+use crate::support;
 
+use crate::support::{
+    gaussian_blur as blur, halo_ratio, mtf_freqs, mtf_through, mtf50, mtf50_gain, sine_target,
+    step_target,
+};
 use aevum_core::develop::spatial::{
     UsmSettings, UsmTuning, output_sharpen_usm_tuned, usm_size_gain,
 };
 use aevum_core::export::{OutputSharpen, RenderOptions, SharpenStrength};
-use support::{
-    gaussian_blur as blur, halo_ratio, mtf_freqs, mtf_through, mtf50, mtf50_gain, sine_target,
-    step_target,
-};
 
 const W: usize = 256;
 const H: usize = 24;

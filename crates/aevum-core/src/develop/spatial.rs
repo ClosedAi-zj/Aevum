@@ -504,7 +504,7 @@ pub const NR_MS_EPS_MIN: f32 = 1e-6;
 /// 两件事：σ̂ 由高频残差的 MAD 估计、并非真噪声标准差（在 48×64 这类小图上
 /// 还与真值有偏），以及「一个 rm 窗口内多大比例的起伏算噪声」这个经验系数。
 ///
-/// 取值来自 `tests/fit_denoise.rs` 的扫参（2026-10-31，三个画幅 σ=0.020 /
+/// 取值来自 `tests/suite/fit_denoise.rs` 的扫参（2026-10-31，三个画幅 σ=0.020 /
 /// nr_luma=50；粗网格步长 0.2–0.3、加密网格步长 0.05）。加密后双目标都进
 /// 窗口的 C 实测在 **0.70–1.05**：0.70 在 1024×768 上只剩 1.7 点方差余量，
 /// 1.10 在 1536×1152 上 MTF 掉到 84.8%。
@@ -533,7 +533,7 @@ pub const NR_MS_EPS_MIN: f32 = 1e-6;
 /// empirical coefficient for "what fraction of the ripple inside one rm window counts as
 /// noise".
 ///
-/// The value comes from the parameter sweep in `tests/fit_denoise.rs` (2026-10-31, three
+/// The value comes from the parameter sweep in `tests/suite/fit_denoise.rs` (2026-10-31, three
 /// aspects at σ=0.020 / nr_luma=50; coarse grid step 0.2–0.3, refined grid step 0.05).
 /// After refinement, C values that keep both targets inside the window measure **0.70–1.05**:
 /// 0.70 leaves only 1.7 points of variance margin at 1024×768, and 1.10 drops MTF to 84.8% at
@@ -690,7 +690,7 @@ pub(crate) fn denoise_apply(
             };
             // eps = C·σ̂²/rm（方差量纲）。
             //
-            // 病灶（1.0.0 验收 B1，实测见 `tests/fit_denoise.rs`）：旧式
+            // 病灶（1.0.0 验收 B1，实测见 `tests/suite/fit_denoise.rs`）：旧式
             // `(0.0001+0.006k)·max(1,(σ̂/0.006)²)` 在 σ=0.02、k=0.5 时给出
             // eps≈0.0344，是噪声方差 σ²=4e-4 的 86 倍，相当于把方差小于 eps
             // 的结构（正弦振幅 < √(2eps)≈0.26）一律当噪声——eps 被当成「对比度
@@ -829,7 +829,7 @@ pub(crate) fn sharpen_apply(
     // 现场估计，edge 场复用 masking 的 absbase 高斯模糊。protect=0 且 masking=0 时
     // 整段跳过 = 旧路径逐位一致。
     //
-    // 两个阈值常量的位置已被实测确认（`tests/fit_sharpen_protect.rs`）：平坦区的
+    // 两个阈值常量的位置已被实测确认（`tests/suite/fit_sharpen_protect.rs`）：平坦区的
     // edge 约为 0.8σ（高斯噪声 E|x| = σ√(2/π)），落在 t0=1.2σ 以下 → 全量抑制；
     // 真实强边的 edge 远超 t1 → 一点不抑制。实测边缘增益全程不动（1.359），
     // 平坦区噪声放大从 1.944 压到 1.773（protect=20）/ 1.093（protect=100）。
@@ -972,13 +972,13 @@ pub fn output_sharpen_usm(rgb: &mut [f32], w: usize, h: usize, s: UsmSettings) {
 /// 同 [`output_sharpen_usm`]，但接受一组显式的拟合参数。
 ///
 /// 生产路径不该用它——默认值才是拟合出来的结论。它存在的意义是让
-/// `tests/fit_sharpen.rs` 能在同一份实现上扫参，而不是复制一份算法来试数
+/// `tests/suite/fit_sharpen.rs` 能在同一份实现上扫参，而不是复制一份算法来试数
 /// （那样试出来的值跟真正跑的值不是一回事）。
 ///
 /// Same as [`output_sharpen_usm`], but with an explicit set of fitting parameters.
 ///
 /// The production path must not use it: the defaults are the fitted conclusion.
-/// Its purpose is to let `tests/fit_sharpen.rs` sweep parameters over the same implementation
+/// Its purpose is to let `tests/suite/fit_sharpen.rs` sweep parameters over the same implementation
 /// instead of copying the algorithm to try numbers, since values tried on a copy are not the
 /// values that actually run.
 pub fn output_sharpen_usm_tuned(
@@ -1009,7 +1009,7 @@ pub fn usm_size_gain(w: usize, h: usize) -> f32 {
 /// 扫参时需要在同一份代码上试不同取值；定下来以后仍然只有一个默认值，
 /// 生产路径行为不变。
 ///
-/// `delta_cap` 已按上述口径拟合（见 `tests/fit_sharpen.rs`，扫参表可复现）；
+/// `delta_cap` 已按上述口径拟合（见 `tests/suite/fit_sharpen.rs`，扫参表可复现）；
 /// `size_scale` / `size_cap` 仍是无参照的自定值——**不要**把它们标成已拟合。
 ///
 /// The constants in output sharpening that "can only be fitted, not evidenced", kept in one
@@ -1020,7 +1020,7 @@ pub fn usm_size_gain(w: usize, h: usize) -> f32 {
 /// gain of 1.2–1.6×, halo < 3%), and the sweep needs to try different values on the same code;
 /// once settled there is still a single default and the production path behaves the same.
 ///
-/// `delta_cap` is already fitted to that convention (see `tests/fit_sharpen.rs`, the sweep table
+/// `delta_cap` is already fitted to that convention (see `tests/suite/fit_sharpen.rs`, the sweep table
 /// reproduces it); `size_scale` / `size_cap` are still self-defined values with no reference:
 /// **do not** mark them as fitted.
 #[derive(Clone, Copy, Debug, PartialEq)]

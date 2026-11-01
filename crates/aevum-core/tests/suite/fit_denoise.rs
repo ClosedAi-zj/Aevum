@@ -47,11 +47,18 @@
 //!
 //! 出表用 release：2048×1536 那一段 debug 下要跑几分钟，且与读数无关。
 
-mod support;
+// `support` 只在 `suite/main.rs` 里引入一次。以前每个文件各是一个 crate 根，
+// 各写一句 `mod support;`；合并成一个可执行文件后，同一个文件被当模块加载两次以上
+// 会被 clippy 的 `duplicate_mod` 当场拦下——那本来也是浪费（四份一模一样的代码）。
+//
+// `support` is declared once, in `suite/main.rs`. Each file used to be its own crate
+// root with its own `mod support;`; now that they share one executable, loading the same
+// file more than once trips clippy's `duplicate_mod` -- which was also wasteful (four
+// identical copies).
 
+use crate::support::{mtf_through, noise_target, variance};
 use aevum_core::develop::spatial::{NR_MS_EPS_C, denoise};
 use aevum_core::grade::GradeParams;
-use support::{mtf_through, noise_target, variance};
 
 /// 退化靶：`min<390`，两层半径双双落到地板 2。只用来做形状不变量与历史读数
 /// 对照，**不拿来判达标**（见文件头）。

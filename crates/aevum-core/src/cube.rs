@@ -3,7 +3,7 @@
 //! 导出走的是 `develop::render` 的 `for_lut` 分支，与预览/静帧用的是同一条逐点
 //! 链，所以视频里看到的颜色和套这张 LUT 的播放器看到的颜色是同一个口径；
 //! 文本格式与 Python oracle 的 `grade.write_cube` 逐字节一致（见
-//! `tests/cube_golden.rs`）。
+//! `tests/suite/cube_golden.rs`）。
 //!
 //! 格点顺序是 .cube 的标准顺序：**红分量变化最快**。索引
 //! `i = (b * size + g) * size + r`，搞反了整张 LUT 的颜色会错位成一片糊。
@@ -13,7 +13,7 @@
 //! Export takes the `for_lut` branch of `develop::render`, the same per-point chain used by
 //! preview and still rendering, so a video and a player applying this LUT share one convention.
 //! The text format is byte-identical to the Python oracle's `grade.write_cube` (see
-//! `tests/cube_golden.rs`).
+//! `tests/suite/cube_golden.rs`).
 //!
 //! Node order is the standard .cube order: **the red component varies fastest**.
 //! The index is `i = (b * size + g) * size + r`; reversed, the colors of the whole LUT turn into a

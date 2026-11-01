@@ -162,7 +162,7 @@ impl Module {
 /// 的默认态——打开一张图只看见「基本」是展开的，其余都是折叠的标题条；面板是
 /// 按需打开的抽屉，不是一屏到底的清单。
 ///
-/// 漏登记、重复登记、或者登记了却没人调用，都会在 `tests/ui_tokens.rs` 里变红。
+/// 漏登记、重复登记、或者登记了却没人调用，都会在 `tests/suite/ui_tokens.rs` 里变红。
 ///
 /// Registry of panel groups: key, owning module, and whether it opens on the first
 /// screen.
@@ -186,7 +186,7 @@ impl Module {
 /// needed, not one long list end to end.
 ///
 /// A missing registration, a duplicate, or a registration nobody calls turns red in
-/// `tests/ui_tokens.rs`.
+/// `tests/suite/ui_tokens.rs`.
 pub struct GroupSpec {
     pub key: &'static str,
     /// 挂在哪个模块下面。`None` = 挂在 dock 标签页（信息 / 代理 / 图库）而不是模块：

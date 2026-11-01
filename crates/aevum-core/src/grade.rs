@@ -1,12 +1,12 @@
 //! 调色的参数集与纯函数：曲线表、暗角场。
 //!
 //! 参数名与 Python 版的 `grade.DEFAULT` 一一对应，预设也照抄同一张表，
-//! 逐字段由 `tests/golden.rs` 比对，防止搬运时打错一个数字。
+//! 逐字段由 `tests/suite/golden.rs` 比对，防止搬运时打错一个数字。
 //!
 //! Grading parameter set and pure functions: curve table, vignette field.
 //!
 //! Parameter names correspond one-to-one to `grade.DEFAULT` in the Python version, and presets
-//! copy the same table; `tests/golden.rs` compares every field, catching a mistyped number
+//! copy the same table; `tests/suite/golden.rs` compares every field, catching a mistyped number
 //! during the port.
 
 use serde::{Deserialize, Serialize};
@@ -105,13 +105,13 @@ pub struct GradeParams {
     pub sharp_masking: f64,
     /// 锐化的恒开边缘保护（0–100）：噪声底之上的平坦区不锐化。
     /// 0 = 旧路径（只有 masking 生效）逐位一致。对齐 LR/ACR Sharpen3。
-    /// 强度已实测（`tests/fit_sharpen_protect.rs`）：全量锐化下无保护把噪声放大
+    /// 强度已实测（`tests/suite/fit_sharpen_protect.rs`）：全量锐化下无保护把噪声放大
     /// 1.944×，20 压到 1.773、100 压到 1.093，边缘增益全程不动（1.359）——
     /// 即 20 大致等于 `sharp_masking` 70 的强度，但只吃平坦区。
     ///
     /// Always-on edge protection for sharpening (0–100): flat regions above the noise floor are
     /// left unsharpened. 0 reproduces the old path, where only masking applied, bit for bit.
-    /// Aligned with LR/ACR Sharpen3. Strength has been measured (`tests/fit_sharpen_protect.rs`):
+    /// Aligned with LR/ACR Sharpen3. Strength has been measured (`tests/suite/fit_sharpen_protect.rs`):
     /// at full sharpening the unprotected path amplifies noise 1.944×; 20 brings it to 1.773 and
     /// 100 to 1.093, while the edge gain never moves (1.359) — so 20 is roughly as strong as
     /// `sharp_masking` 70, but it only touches flat regions.
@@ -203,7 +203,7 @@ pub struct GradeParams {
     /// 碰不到它，所以这条滑杆照常生效（+2EV 实测 tail=0 与 100 差 0.098）。
     /// 被钳位挡住的是「从外部直接喂 >1」，解码器输出的编码值本来就 ≤1，
     /// 今天无可见影响，但 HDR 解码 / 16-bit 线性输入会在这里被削平。
-    /// 边界见 `tests/fit_sliders.rs` 的两条测试。
+    /// 边界见 `tests/suite/fit_sliders.rs` 的两条测试。
     ///
     /// **It feeds on headroom created by the exposure stage, not on external input**: in the
     /// real chain, values above 1 come from `lin_to_srgb(lin·gain)`, and the `clamp01` in the
@@ -211,7 +211,7 @@ pub struct GradeParams {
     /// a 0.098 difference between tail=0 and tail=100). What the clamp does block is a caller
     /// handing in >1 directly; decoder output is already <=1 in encoded units, so nothing is
     /// visible today, but an HDR decode or 16-bit linear input would be flattened right there.
-    /// See the two boundary tests in `tests/fit_sliders.rs`.
+    /// See the two boundary tests in `tests/suite/fit_sliders.rs`.
     pub curve_hdr_tail: f64,
 
     /// 外部 .cube「外观」：主链之前先套一层三维查表，空串表示没有。

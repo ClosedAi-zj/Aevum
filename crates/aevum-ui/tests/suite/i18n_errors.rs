@@ -26,7 +26,7 @@
 use aevum_core::dng::DngError;
 use aevum_core::metrics::MetricsError;
 use aevum_ui::i18n::{self, Lang};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::MutexGuard;
 
 /// 当前语言是一个全局原子（`i18n::current()`），cargo 默认并行跑同一个文件里的测试：
 /// 一条刚 `set(EN)`，另一条已经 `set(ZH)`，断言就会读到别人的语言。这不是被测代码的
@@ -41,15 +41,16 @@ use std::sync::{Mutex, MutexGuard};
 /// the same file in parallel: one has just `set(EN)` while another already `set(ZH)`, so
 /// an assertion can read someone else's language. That is not a defect in the code under
 /// test -- the test simply is not serialised. Take the lock before touching the language.
+///
+/// 锁与 `i18n_coverage` 共用同一把（`common::i18n_guard`）：两个文件现在编进同一个
+/// 可执行文件，各拿各的锁等于没锁。
 struct LangGuard {
     _lock: MutexGuard<'static, ()>,
 }
 
-static LANG_LOCK: Mutex<()> = Mutex::new(());
-
 impl LangGuard {
     fn new(lang: Lang) -> LangGuard {
-        let lock = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let lock = crate::common::i18n_guard();
         i18n::set(lang);
         LangGuard { _lock: lock }
     }

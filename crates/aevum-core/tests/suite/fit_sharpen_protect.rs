@@ -50,11 +50,18 @@
 //! 中等对比纹理。**这就是那两个阈值常量的依据**：不必再调，证据就是上面这张表
 //! （结论已写进 `docs/遗留台账.md` 的已关闭表）。
 
-mod support;
+// `support` 只在 `suite/main.rs` 里引入一次。以前每个文件各是一个 crate 根，
+// 各写一句 `mod support;`；合并成一个可执行文件后，同一个文件被当模块加载两次以上
+// 会被 clippy 的 `duplicate_mod` 当场拦下——那本来也是浪费（四份一模一样的代码）。
+//
+// `support` is declared once, in `suite/main.rs`. Each file used to be its own crate
+// root with its own `mod support;`; now that they share one executable, loading the same
+// file more than once trips clippy's `duplicate_mod` -- which was also wasteful (four
+// identical copies).
 
+use crate::support::{noise_target, step_target};
 use aevum_core::develop::spatial::sharpen;
 use aevum_core::grade::GradeParams;
-use support::{noise_target, step_target};
 
 const W: usize = 256;
 const H: usize = 64;

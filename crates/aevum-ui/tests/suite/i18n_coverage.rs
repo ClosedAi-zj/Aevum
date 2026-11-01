@@ -29,10 +29,19 @@ use aevum_ui::i18n::{self, Lang};
 /// 缺译探针是进程级静态，而 `cargo test` 默认并行：两个扫描测试各画一遍界面，
 /// 一边 `take` 一边另一边的帧还在往里写，结果会时好时坏。三处碰探针的测试
 /// 都先拿这把锁，宁可串行——这是回归基线，不能看心情通过。
-static PROBE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
+///
+/// 锁本身在 `common` 里，因为 `i18n_errors` 也要改当前语言；两个测试文件现在编进
+/// 同一个可执行文件（台账 C1），各拿各的锁等于没锁。见 `common.rs`。
+///
+/// The probe is a process-wide static and `cargo test` is parallel by default: two
+/// scanning tests paint the UI at once, one `take`s while the other is still writing, and
+/// the result flips run to run. Every test that touches the probe takes this lock.
+///
+/// The lock lives in `common` because `i18n_errors` switches the language too, and both
+/// files are now compiled into one executable (ledger item C1); separate locks would be no
+/// lock at all. See `common.rs`.
 fn probe_guard() -> std::sync::MutexGuard<'static, ()> {
-    PROBE.lock().unwrap_or_else(|e| e.into_inner())
+    crate::common::i18n_guard()
 }
 use aevum_ui::state::{AppState, DockTab, Module};
 use aevum_ui::{shell, theme};

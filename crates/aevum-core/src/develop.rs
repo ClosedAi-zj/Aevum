@@ -2,7 +2,7 @@
 //!
 //! 这里是 GUI 预览、静帧导出与视频导出唯一的真相来源，顺序与
 //! Python oracle 的 `acceptance/reference/grade.py::_core` / `apply` 严格一致，逐张图由
-//! `tests/develop_golden.rs` 与 `acceptance/oracle/golden/develop.json` 比对。
+//! `tests/suite/develop_golden.rs` 与 `acceptance/oracle/golden/develop.json` 比对。
 //!
 //! 顺序（照抄 Python，不要凭直觉调整）：
 //! 镜头校正 →（外部 .cube 外观）→ 降噪 → 白平衡/曝光 → 对比度 → 去朦胧
@@ -11,14 +11,14 @@
 //! → 局部蒙版 → 颗粒 → 晕影
 //!
 //! `STAGES_READY` 是诚实开关：只有列在这里的阶段才真的参与运算，
-//! `tests/develop_golden.rs` 据此决定哪些 case 必须逐像素对上、哪些只能跳过。
+//! `tests/suite/develop_golden.rs` 据此决定哪些 case 必须逐像素对上、哪些只能跳过。
 //! 实现一个新阶段就把它加进来，别在没实现时说"已经一致"。
 //!
 //! Develop main chain: the full pixel pipeline from lens correction to vignetting.
 //!
 //! This is the single source of truth for GUI preview, still export, and video export.
 //! The order matches the Python oracle in `acceptance/reference/grade.py::_core` and `apply`
-//! exactly, and every image is compared by `tests/develop_golden.rs` against
+//! exactly, and every image is compared by `tests/suite/develop_golden.rs` against
 //! `acceptance/oracle/golden/develop.json`.
 //!
 //! Order, copied from Python and not to be rearranged on intuition:
@@ -28,7 +28,7 @@
 //! → local masks → grain → vignetting
 //!
 //! `STAGES_READY` is an honesty switch: only the stages listed there take part in the computation,
-//! and `tests/develop_golden.rs` uses it to decide which cases must match pixel for pixel and which
+//! and `tests/suite/develop_golden.rs` uses it to decide which cases must match pixel for pixel and which
 //! may be skipped.
 //! Adding a new stage means adding it there, not claiming "already consistent" before it is
 //! implemented.

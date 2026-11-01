@@ -17,7 +17,7 @@
 //!
 //! 漏译不 panic：`t!` 回退中文原文。但**表里多余**（代码里已经找不到的键）说明
 //! 改文案时忘了清表，`i18n_extract.py` 会因此返回非零。真正的守门人是
-//! `tests/i18n_coverage.rs`：它把整个界面用英文画一遍，扫渲染出来的每一个字，
+//! `tests/suite/i18n_coverage.rs`：它把整个界面用英文画一遍，扫渲染出来的每一个字，
 //! 屏幕上出现汉字就红。
 //!
 //! English UI copy table. Keys are the Chinese original (see the `i18n` module
@@ -45,7 +45,7 @@
 //! A missing translation does not panic: `t!` falls back to the Chinese original.
 //! But a **stale row** (a key the code no longer uses) means the table was not
 //! cleaned when the copy changed, and `i18n_extract.py` returns non-zero for it.
-//! The real gatekeeper is `tests/i18n_coverage.rs`: it draws the whole UI in
+//! The real gatekeeper is `tests/suite/i18n_coverage.rs`: it draws the whole UI in
 //! English and scans every glyph rendered -- one Han character on screen turns it
 //! red.
 

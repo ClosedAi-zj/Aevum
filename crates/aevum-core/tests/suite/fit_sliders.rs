@@ -44,11 +44,18 @@
 //! 两条各一个测试：[`curve_hdr_tail_works_on_exposure_headroom`]（靠曝光的 >1 有效）
 //! 与 [`external_hdr_input_survives_the_lens_stage`]（外部 >1 能活到曲线）。
 
-mod support;
+// `support` 只在 `suite/main.rs` 里引入一次。以前每个文件各是一个 crate 根，
+// 各写一句 `mod support;`；合并成一个可执行文件后，同一个文件被当模块加载两次以上
+// 会被 clippy 的 `duplicate_mod` 当场拦下——那本来也是浪费（四份一模一样的代码）。
+//
+// `support` is declared once, in `suite/main.rs`. Each file used to be its own crate
+// root with its own `mod support;`; now that they share one executable, loading the same
+// file more than once trips clippy's `duplicate_mod` -- which was also wasteful (four
+// identical copies).
 
+use crate::support::{noise_target, psnr};
 use aevum_core::develop::{self, Ev, Opts, lut};
 use aevum_core::grade::GradeParams;
-use support::{noise_target, psnr};
 
 const W: usize = 128;
 const H: usize = 32;
