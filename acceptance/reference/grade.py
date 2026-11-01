@@ -636,6 +636,23 @@ def _defringe(x, amount):
     return out
 
 
+_PIVOT_GAMMA = np.float32(0.4496)      # ln(0.5) / ln(srgb_to_lin(0.5))
+_PIVOT_INV = np.float32(2.2242)        # 1 / _PIVOT_GAMMA
+
+
+def _contrast_s_lin(xl):
+    """线性光域对比度的 S 曲线：绕中灰转，不是绕线性 0.5。
+
+    直接对 xl 做 smoothstep 会在线性 0.5（编码 0.735）拐弯，等于把支点抬到
+    73% 灰——实测 contrast=50 时中灰被压暗 14 级。这里先把 xl 重标定成
+    u = xl^γ 使中灰（线性 ≈0.214）落到 0.5，做完 smoothstep 再拉回来，
+    于是 S(0)=0、S(中灰)=中灰、S(1)=1。与 Rust develop.rs::contrast_s_lin 同式。
+    """
+    u = np.power(np.maximum(xl, 0.0), _PIVOT_GAMMA)
+    s = u * u * (np.float32(3.0) - np.float32(2.0) * u)
+    return np.power(s, _PIVOT_INV)
+
+
 def _lens(x, p):
     d = p.get("lens_distort", 0.0)
     if d:
@@ -651,7 +668,10 @@ def _lens(x, p):
     fr = p.get("lens_fringe", 0.0)
     if fr:
         x = _defringe(np.clip(x, 0.0, 1.0), fr)
-    return np.clip(x, 0.0, 1.0)
+    # 只压负值，向上不封顶：影调链要靠 >1 的亮度做曲线尾部衔接，HDR 那条路也
+    # 指望这一步别把动态范围削平。负值必须压掉，_lin_to_srgb 对负数做 pow 会出 NaN。
+    # 旧口径是 np.clip(x, 0, 1)，与 Rust spatial::lens 的 clamp01 一一对应。
+    return np.maximum(x, 0.0)
 
 
 # ---- 局部蒙版 ----
@@ -1303,7 +1323,9 @@ def _sharpen(x, amount, radius, detail, masking, protect=0.0):
             t1 = t0 + sig * 2.0 + 0.004
             base = base * (1.0 - pw * (1.0 - _smooth(t0, t1, edge)))
         if m:
-            thr = 0.001 + 0.02 * m * m
+            # 平方根而不是平方：旧的 m² 把前段压平，0–50 对平坦噪声完全不生效。
+            # 端点不动（m=0 仍是 0.001、m=1 仍是 0.021），中段才真正起作用。
+            thr = 0.001 + 0.02 * np.sqrt(m)
             base = base * _smooth(thr * 0.35, thr, edge)
     gain = max(0.0, float(amount)) / 100.0 * 1.2
     ratio = np.clip((lum + gain * base) / np.maximum(lum, 1e-4), 0.0, 3.0)
@@ -1532,7 +1554,7 @@ def _core(x, p, for_lut=False, fast=False, local=False):
     if c != 0.0 and ck > 0.0:
         xc = np.minimum(x, 1.0)
         xl = _srgb_to_lin(xc)
-        s_lin = xl * xl * (3.0 - 2.0 * xl)
+        s_lin = _contrast_s_lin(xl)
         delta_lin = _lin_to_srgb(xl + np.float32(c) * (s_lin - xl)) - xc
         delta_gam = np.float32(c) * (xc * xc * (3.0 - 2.0 * xc) - xc)
         x = x + delta_gam * np.float32(1.0 - ck) + delta_lin * np.float32(ck)

@@ -847,7 +847,23 @@ pub(crate) fn sharpen_apply(
             });
         }
         if m != 0.0 {
-            let thr = 0.001 + 0.02 * m * m;
+            // 阈值随滑杆走**平方根**：旧口径是 `0.001 + 0.02·m²`，平方项把前段压得
+            // 太平——实测 masking 0–50 对纯噪声完全不生效（噪声增益恒为 1.944），
+            // 拉到 75 才降到 1.683。用户把滑杆拉到 25、40，界面在动，一个像素都没变。
+            //
+            // 换曲线后两端不动（m=0 仍是 0.001、m=1 仍是 0.021），中段真正起作用：
+            // 实测噪声增益 0 → 1.00、25 → 0.94、50 → 0.72、75 → 0.61、100 → 0.56。
+            // 纯线性（m）太靠前、m^0.6 又略钝，sqrt 最匀。Python `_sharpen` 同一句。
+            //
+            // The threshold now follows the **square root** of the slider. The old form was
+            // `0.001 + 0.02·m²`, whose square term flattened the low end so badly that masking
+            // between 0 and 50 had no effect on flat noise at all (noise gain stayed at 1.944)
+            // and only started working past 75. The endpoints are unchanged (0.001 at m=0,
+            // 0.021 at m=1); the middle now does something: measured noise gain is 1.00 at 0,
+            // 0.94 at 25, 0.72 at 50, 0.61 at 75, 0.56 at 100. A plain linear ramp was too
+            // front-loaded and m^0.6 too blunt, so sqrt is the most even of the three.
+            // Python's `_sharpen` uses the same line, and the golden data follows.
+            let thr = 0.001 + 0.02 * m.sqrt();
             base.par_iter_mut().enumerate().for_each(|(i, v)| {
                 *v *= smooth(thr * 0.35, thr, edge[i]);
             });
@@ -1276,7 +1292,26 @@ pub fn lens(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams) {
         let a = (p.lens_fringe / 100.0) as f32;
         defringe(rgb, w, h, a);
     }
-    rgb.par_iter_mut().for_each(|x| *x = clamp01(*x));
+    // 只压负值，**向上不封顶**：影调链要靠 >1 的亮度做曲线尾部衔接，HDR 解码与
+    // 16-bit 线性输入也指望这一步别把动态范围削平。负值必须压掉——下游
+    // `lin_to_srgb` 会对负数做 powf，出来是 NaN。
+    //
+    // 旧口径是 `clamp01`（Python `_lens` 同样是 `np.clip(x, 0, 1)`）。解码器输出
+    // 的编码值本来 ≤1，所以放开上界今天没有可见影响；放开是为了 HDR 那条路。
+    //
+    // Clamp negatives only, **no upper bound**: the tone chain needs values above 1 for the
+    // curve's HDR tail, and an HDR decode or 16-bit linear input would otherwise be flattened
+    // right here. Negatives must still go, since `lin_to_srgb` raises them to a powf and
+    // returns NaN.
+    //
+    // The old rule was `clamp01` (Python's `_lens` does the same `np.clip(x, 0, 1)`). Decoder
+    // output is already <=1 in encoded units, so lifting the upper bound changes nothing
+    // visible today; it is lifted for the HDR path.
+    rgb.par_iter_mut().for_each(|x| {
+        if *x < 0.0 {
+            *x = 0.0;
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------

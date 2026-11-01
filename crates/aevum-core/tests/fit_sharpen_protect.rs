@@ -27,9 +27,22 @@
 //! | 100 | 1.093 | 1.359 |
 //!
 //! 边缘增益**全程不动**，说明保护确实只吃平坦区——这是它和 `masking` 的本质区别
-//! （masking 是硬阈值，0–50 之间完全不生效：1.944 一动不动，75 才到 1.683）。
-//! 换算出量级：`protect=20` ≈ `masking=70`。所以默认 20 不是「保守试探」，是
-//! 「已经等于很强的传统 masking 再加噪声自适应」，没有往上抬的理由。
+//! （masking 是硬阈值，靠 edge 场做门限；保护是噪声自适应的软衰减）。
+//!
+//! `masking` 的标尺在这份文件里量过两次，形如两代：
+//!
+//! | masking | 旧映射 `0.001+0.02·m²` | 现映射 `0.001+0.02·√m` |
+//! |---|---|---|
+//! | 25 | 1.944（**完全没动**） | 1.816 |
+//! | 50 | 1.944（**完全没动**） | 1.385 |
+//! | 75 | 1.683 | 1.174 |
+//! | 100 | 1.077 | 1.077 |
+//!
+//! 旧映射是平方项，前段太平，滑杆拉到 25、40 时界面在动、一个像素没变；换成平方根
+//! 后从 25 起就有反应（端点不变，所以 `masking=100` 与历史结果仍一致）。
+//! 换算量级：`protect=20`（1.773）落在旧 masking 的 50（1.944，其实没作用）与 75
+//! （1.683）之间，所以默认 20 不是「保守试探」，是已经等于很强的传统 masking，
+//! 没有往上抬的理由。
 //!
 //! 两个阈值常量（`t0 = 1.2σ + 0.0008`、`t1 = t0 + 2σ + 0.004`）的位置是对的：
 //! 平坦区的 `edge` 约为 `0.8σ`（高斯噪声的 E|x| = σ√(2/π)）落在 `t0` 以下 →
@@ -235,4 +248,36 @@ fn missing_sharp_protect_deserializes_to_zero() {
     assert!(obj.remove("sharp_protect").is_some(), "字段名对不上");
     let p: GradeParams = serde_json::from_value(v).expect("缺字段也应能反序列化");
     assert_eq!(p.sharp_protect, 0.0, "缺失字段必须兜底为 0（旧行为）");
+}
+
+/// `masking` 必须全段可用：拉到 25 就要有反应，且随滑杆单调变强。
+///
+/// 旧映射（`0.001 + 0.02·m²`）在 0–50 之间对纯噪声一动不动，等于假滑杆。
+/// 现在换成 `0.001 + 0.02·√m`：实测 25 → 1.816、50 → 1.385、75 → 1.174、
+/// 100 → 1.077（0 是 1.944）。端点没动，所以 `masking=100` 与历史结果一致。
+#[test]
+fn masking_responds_across_the_whole_slider() {
+    let noise = noise_target(W, H, MID, SIGMA, 0x9E37_79B9);
+    let mut prev = f32::INFINITY;
+    let mut at25 = 0.0f32;
+    for k in [0.0f64, 10.0, 25.0, 50.0, 75.0, 100.0] {
+        let mut img = noise.clone();
+        let mut p = params(0.0);
+        p.sharp_masking = k;
+        sharpen(&mut img, W, H, &p);
+        let g = noise_gain(&img, &noise);
+        assert!(
+            g <= prev + 1e-3,
+            "masking={k} 的噪声增益 {g:.3} 反而高于上一档 {prev:.3}"
+        );
+        if k == 25.0 {
+            at25 = g;
+        }
+        prev = g;
+    }
+    let open = noise_gain(&run(&noise, 0.0), &noise);
+    assert!(
+        at25 < open - 0.05,
+        "masking=25 就该看得出作用（无 masking 是 {open:.3}，实测 {at25:.3}）"
+    );
 }

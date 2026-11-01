@@ -39,10 +39,10 @@
 //! 不到它。实测 +2EV 时 `tail=0` 与 `tail=100` 的最大差 0.098，滑杆是有效的。
 //!
 //! 钳位真正挡住的是「从外部直接喂进 > 1 的输入」——解码器输出的编码值本来就是
-//! ≤ 1，所以今天没有可见影响；但将来要做 HDR 解码 / 16-bit 线性输入时，这一句
-//! 会在第一步就把动态范围削平。两条各一个测试：
-//! [`curve_hdr_tail_works_on_exposure_headroom`]（有效）与
-//! [`external_hdr_input_is_clamped_at_the_lens_stage`]（边界在哪）。
+//! ≤ 1，所以当时没有可见影响；但将来要做 HDR 解码 / 16-bit 线性输入时，这一句
+//! 会在第一步就把动态范围削平。**这一处已经改掉**（只压负值、向上不封顶），
+//! 两条各一个测试：[`curve_hdr_tail_works_on_exposure_headroom`]（靠曝光的 >1 有效）
+//! 与 [`external_hdr_input_survives_the_lens_stage`]（外部 >1 能活到曲线）。
 
 mod support;
 
@@ -451,38 +451,47 @@ fn hl_rolloff_touches_only_the_top_end() {
     );
 }
 
-/// `contrast_linear`：把对比度增量搬进线性光域，**支点跟着上移**。
+/// `contrast_linear`：线性光域的 S 曲线**绕中灰转**，不再顺手压暗中灰。
 ///
-/// 实测（contrast=50）：中灰 x=0.5 从 gamma 域的 0.5049 掉到线性域的 0.4487，
-/// 也就是拉满时中灰被压暗约 14 级（8 位满量程）。
+/// 修之前，`s_lin` 是直接对线性值做的 smoothstep，拐点落在线性 0.5，也就是编码
+/// 0.735——等于把对比度的支点抬到 73% 灰。实测 contrast=50 时中灰 0.5049 被压到
+/// 0.4487，即拉满 `contrast_linear` 白吃 14 级（8 位）。
 ///
-/// 这不是 bug 而是「在线性光里做 smoothstep」的直接后果：线性 0.5 对应编码
-/// 0.735，所以曲线拐点跑到高光那一侧去了。要让它像常规对比度那样绕中灰转，
-/// 得把线性域的支点从 0.5 挪到 `srgb_to_lin(0.5) ≈ 0.214`。这条测试只钉住
-/// 现状与单调性，好让将来改支点时有个明确的对撞点。
+/// 现在先把线性值重标定成 `u = xl^γ`（使中灰落到 u=0.5），做完 smoothstep 再
+/// 拉回，于是 S(中灰)=中灰。实测中灰全档 0.5049 不动，阴影/高光各自挪 0.001–0.003。
+///
+/// **顺带说清一件事**：修好支点之后这个滑杆的可见差异只剩 0.005 量级——它原来的
+/// 「效果」绝大部分来自那个错位的支点，而不是线性光域本身。
 #[test]
-fn contrast_linear_moves_the_pivot_up() {
+fn contrast_linear_keeps_mid_gray_fixed() {
     let src = ramp(W, H, 0.0, 1.0);
-    let mid = W / 2;
     let mut gamma = GradeParams::default();
     gamma.contrast = 50.0;
     let g = render(&src, &gamma, W, H);
-    let mut prev = px(&g, W, mid, H / 2);
+    let mid = px(&g, W, W / 2, H / 2);
+    let mut moved = 0.0f32;
     for k in [25.0f64, 50.0, 75.0, 100.0] {
         let mut p = gamma.clone();
         p.contrast_linear = k;
         let out = render(&src, &p, W, H);
-        let v = px(&out, W, mid, H / 2);
         assert!(
-            v <= prev + 1e-6,
-            "contrast_linear={k} 中灰 {v:.4} 没继续往下走（上一档 {prev:.4}）"
+            (px(&out, W, W / 2, H / 2) - mid).abs() < 1e-4,
+            "contrast_linear={k} 动了中灰：{:.4} vs {mid:.4}",
+            px(&out, W, W / 2, H / 2)
         );
-        prev = v;
+        // 整条剖面取最大差异，别只看两个点。
+        let d = (0..W)
+            .map(|x| (px(&out, W, x, H / 2) - px(&g, W, x, H / 2)).abs())
+            .fold(0.0f32, f32::max);
+        moved = moved.max(d);
     }
+    // 实测最大差异 0.0041（编码 0.18 附近，contrast=50、ck=100）——约 1 级。
+    // 上界 0.01 是给支点回归用的：谁把 `s_lin` 改回绕线性 0.5 转，差异立刻回到
+    // 0.05 量级（中灰被压暗 14 级），这里就先红。真要在线性光域做更强的对比度，
+    // 该改的是 `contrast` 的强度曲线，不是这个支点。
     assert!(
-        prev < px(&g, W, mid, H / 2) - 0.03,
-        "线性域支点上移应当明显压暗中灰：{prev:.4} vs gamma {:.4}",
-        px(&g, W, mid, H / 2)
+        moved > 0.001 && moved < 0.01,
+        "contrast_linear 的可见差异应当只有 1 级上下，实测 {moved:.4}"
     );
 }
 
@@ -612,13 +621,14 @@ fn curve_hdr_tail_works_on_exposure_headroom() {
     );
 }
 
-/// 边界：从外部直接喂 > 1 的输入，会被 `spatial::lens` 的 `clamp01` 削平。
+/// 镜头阶段**不再向上封顶**：外部喂进的 >1 输入能一路活到曲线。
 ///
-/// 解码器输出的编码值本来 ≤1，所以今天没有可见影响；但这是「管线装不了 HDR」
-/// 的落点——将来做 16-bit 线性输入或 HDR 解码，第一件事就是改这里。
-/// 这条测试红了说明钳位被去掉/放宽了，那时应当同步删掉本条并把契约写进文档。
+/// 旧口径是 `clamp01`（Python `_lens` 同样 `np.clip(x, 0, 1)`）。解码器输出本来
+/// ≤1，所以放开上界今天看不出变化；放开是为了 HDR 解码与 16-bit 线性输入，
+/// 否则动态范围在第一步就被削平。负值仍然要压掉——下游 `lin_to_srgb` 对负数
+/// 做 powf 会出 NaN。
 #[test]
-fn external_hdr_input_is_clamped_at_the_lens_stage() {
+fn external_hdr_input_survives_the_lens_stage() {
     let src = ramp(W, H, 0.5, 1.9);
     let mut off = GradeParams::default();
     off.curve_rgb = s_curve(230.0);
@@ -626,14 +636,30 @@ fn external_hdr_input_is_clamped_at_the_lens_stage() {
     on.curve_hdr_tail = 100.0;
     let a = render(&src, &off, W, H);
     let b = render(&src, &on, W, H);
-    assert_eq!(
-        a, b,
-        "镜头阶段的 clamp01 吃掉 >1 的输入；这条红了说明那处钳位被改了"
+    let d = a
+        .iter()
+        .zip(&b)
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        d > 0.05,
+        "tail 对外部 >1 输入应当有效（说明 >1 活到了曲线），实测最大差 {d:.4}"
     );
+    // tail=0 时 x>1 停在曲线终点值，这是「不延伸」的定义。
     assert!(
         (max_of(&a, W, H) - 230.0 / 255.0).abs() < 1e-3,
-        "x>1 的输入应当被钳到 1 再查表，停在曲线终点值"
+        "tail=0 时应当停在曲线终点值"
     );
+    // 负值必须被压掉，不能把 NaN 传下去。
+    let mut neg = ramp(W, H, 0.0, 1.0);
+    for (i, v) in neg.iter_mut().enumerate() {
+        if i % 4 == 0 {
+            *v = -0.2;
+        }
+    }
+    let out = render(&neg, &GradeParams::default(), W, H);
+    assert!(out.iter().all(|v| v.is_finite()), "负输入产生了 NaN/Inf");
+    assert!(out.iter().all(|v| *v >= 0.0), "负输入没被压到 0");
 }
 
 /// `dehaze_dark`：压黑位、拉开中段对比，亮部不动。

@@ -268,6 +268,35 @@ pub(crate) fn lin_to_srgb(v: f32) -> f32 {
     }
 }
 
+/// 线性光域的对比度 S 曲线：**绕中灰转**，不是绕线性 0.5。
+///
+/// 直接对 `xl` 做 smoothstep 会在线性 0.5 拐弯，而线性 0.5 对应编码 0.735——
+/// 等于把对比度的支点抬到 73% 灰。实测 contrast=50 时中灰 0.5 被压暗到 0.4487，
+/// 也就是拉满 `contrast_linear` 顺手吃掉 14 级（8 位）的中灰。
+///
+/// 这里用共轭：先把 `xl` 重标定成 `u = xl^γ`，使中灰（线性 ≈0.214）落到 u=0.5，
+/// 做 smoothstep 再用 `u^(1/γ)` 拉回。于是 S(0)=0、S(中灰)=中灰、S(1)=1，
+/// 中灰处斜率仍是 smoothstep 的 1.5——支点不动，阴影与高光是反方向拉开。
+///
+/// The contrast S-curve in linear light, pivoting **on mid-gray** rather than on linear 0.5.
+///
+/// A plain smoothstep on `xl` turns at linear 0.5, which is encoded 0.735 — that puts the
+/// contrast pivot at 73% gray. Measured with contrast=50, mid-gray 0.5 was pushed down to
+/// 0.4487, so turning `contrast_linear` up silently ate 14 levels (8-bit) of mid-gray.
+///
+/// This conjugates instead: re-scale `xl` to `u = xl^γ` so mid-gray (linear ≈0.214) lands on
+/// u=0.5, run the smoothstep, then pull back with `u^(1/γ)`. S(0)=0, S(mid)=mid, S(1)=1, and
+/// the slope at mid-gray is still smoothstep's 1.5 — the pivot stays put while shadows and
+/// highlights move in opposite directions.
+pub(crate) fn contrast_s_lin(xl: f32) -> f32 {
+    // γ = ln(0.5) / ln(srgb_to_lin(0.5))，其中 srgb_to_lin(0.5) ≈ 0.2140。
+    const GAMMA: f32 = 0.4496;
+    const INV_GAMMA: f32 = 2.2242;
+    let u = xl.max(0.0).powf(GAMMA);
+    let s = u * u * (3.0 - 2.0 * u);
+    s.powf(INV_GAMMA)
+}
+
 pub(crate) fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -387,7 +416,7 @@ fn core(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, opts: Op
         rgb.par_iter_mut().for_each(|v| {
             let x = v.min(1.0);
             let xl = srgb_to_lin(x);
-            let s_lin = xl * xl * (3.0 - 2.0 * xl);
+            let s_lin = contrast_s_lin(xl);
             let delta_lin = lin_to_srgb(xl + c * (s_lin - xl)) - x;
             let delta_gam = c * (x * x * (3.0 - 2.0 * x) - x);
             *v += delta_gam * (1.0 - ck) + delta_lin * ck;
