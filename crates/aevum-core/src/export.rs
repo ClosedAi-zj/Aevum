@@ -30,7 +30,6 @@ use std::time::Duration;
 use image::ImageEncoder;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use crate::align::CropRect;
 use crate::audio::{AudioOptions, AudioProbe};
@@ -851,32 +850,80 @@ pub struct JobProgress {
     pub stage: Stage,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum ExportError {
-    #[error("已取消")]
     Cancelled,
-    #[error("没有可导出的帧")]
     Empty,
-    #[error("读图失败 {path}：{source}")]
     Decode {
         path: String,
         source: crate::metrics::MetricsError,
     },
-    #[error("写图失败 {path}：{source}")]
     Write {
         path: String,
         source: image::ImageError,
     },
-    #[error("找不到 ffmpeg（设 AEVUM_FFMPEG 或加进 PATH）")]
     NoFfmpeg,
-    #[error("ffmpeg 失败：{0}")]
     Ffmpeg(String),
-    #[error("参数不合法：{0}")]
     Invalid(String),
-    #[error("IO 失败：{0}")]
-    Io(#[from] std::io::Error),
-    #[error("写 XMP 旁车失败：{0}")]
-    Xmp(#[from] crate::xmp::XmpError),
+    Io(std::io::Error),
+    Xmp(crate::xmp::XmpError),
+}
+
+impl crate::errmsg::Msg for ExportError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        match self {
+            Self::Cancelled => ("已取消", vec![]),
+            Self::Empty => ("没有可导出的帧", vec![]),
+            Self::Decode { path, source } => (
+                "读图失败 {}：{}",
+                vec![
+                    crate::errmsg::Arg::Text(path.to_string()),
+                    crate::errmsg::Arg::Text(source.to_string()),
+                ],
+            ),
+            Self::Write { path, source } => (
+                "写图失败 {}：{}",
+                vec![
+                    crate::errmsg::Arg::Text(path.to_string()),
+                    crate::errmsg::Arg::Text(source.to_string()),
+                ],
+            ),
+            Self::NoFfmpeg => ("找不到 ffmpeg（设 AEVUM_FFMPEG 或加进 PATH）", vec![]),
+            Self::Ffmpeg(v) => (
+                "ffmpeg 失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::Invalid(v) => (
+                "参数不合法：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::Io(v) => ("IO 失败：{}", vec![crate::errmsg::Arg::Text(v.to_string())]),
+            Self::Xmp(v) => ("写 XMP 旁车失败：{}", vec![crate::errmsg::Arg::Nested(v)]),
+        }
+    }
+}
+
+crate::impl_msg_display!(ExportError);
+
+impl std::error::Error for ExportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Xmp(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ExportError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<crate::xmp::XmpError> for ExportError {
+    fn from(e: crate::xmp::XmpError) -> Self {
+        Self::Xmp(e)
+    }
 }
 
 /// 优先 `AEVUM_FFMPEG`（旧名 `LUMEN_FFMPEG` 回退），其次 PATH 里的 ffmpeg。

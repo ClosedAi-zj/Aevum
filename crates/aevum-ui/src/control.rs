@@ -1135,6 +1135,8 @@ pub fn save_png(path: &Path, image: &egui::ColorImage) -> Result<(), String> {
     {
         fs::create_dir_all(dir).map_err(|e| crate::i18n::tr_fmt("建目录失败：{}", &[&e]))?;
     }
+    // image 的 ImageError 不是 Msg（它的文本由外部库给，没有可翻译的模板），
+    // 原样带出即可——英文界面下看到英文，比看到一句硬翻的中文更正常。
     image::save_buffer(path, &buf, w as u32, h as u32, image::ColorType::Rgba8)
         .map_err(|e| e.to_string())
 }

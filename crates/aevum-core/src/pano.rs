@@ -37,19 +37,54 @@ const DESC: usize = 8;
 /// 描述子取样窗口半径（源像素），特征点离边界得比它远。
 const DESC_RADIUS: usize = 8;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum PanoError {
-    #[error("全景合并至少要 2 张，实得 {0} 张")]
     TooFew(usize),
-    #[error("全景合并一次最多 {MAX_FRAMES} 张，实得 {0} 张")]
     TooMany(usize),
-    #[error("第 {a} 张与第 {b} 张找不到足够的重叠：确认它们相邻且有共同区域")]
     NoOverlap { a: usize, b: usize },
-    #[error("拼接后尺寸过大（{w}×{h}）：单应发散，检查是否混进了不相干的照片")]
     CanvasTooBig { w: usize, h: usize },
-    #[error("读图失败：{0}")]
     Read(String),
 }
+
+impl crate::errmsg::Msg for PanoError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        match self {
+            Self::TooFew(v) => (
+                "全景合并至少要 2 张，实得 {} 张",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::TooMany(v) => (
+                "全景合并一次最多 {} 张，实得 {} 张",
+                vec![
+                    crate::errmsg::Arg::Text(MAX_FRAMES.to_string()),
+                    crate::errmsg::Arg::Text(v.to_string()),
+                ],
+            ),
+            Self::NoOverlap { a, b } => (
+                "第 {} 张与第 {} 张找不到足够的重叠：确认它们相邻且有共同区域",
+                vec![
+                    crate::errmsg::Arg::Text(a.to_string()),
+                    crate::errmsg::Arg::Text(b.to_string()),
+                ],
+            ),
+            Self::CanvasTooBig { w, h } => (
+                "拼接后尺寸过大（{}×{}）：单应发散，检查是否混进了不相干的照片",
+                vec![
+                    crate::errmsg::Arg::Text(w.to_string()),
+                    crate::errmsg::Arg::Text(h.to_string()),
+                ],
+            ),
+            Self::Read(v) => (
+                "读图失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+        }
+    }
+}
+
+crate::impl_msg_display!(PanoError);
+
+impl std::error::Error for PanoError {}
 
 /// 读一张图成 f32 RGB（0..1）：与导出/HDR 共用同一条解码路。
 ///

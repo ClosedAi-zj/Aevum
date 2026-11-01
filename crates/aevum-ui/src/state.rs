@@ -6668,7 +6668,7 @@ impl AppState {
         };
         match export::probe_audio(&ffmpeg, path) {
             Ok(info) => self.audio_info = Some(info),
-            Err(e) => self.audio_probe_err = Some(e.to_string()),
+            Err(e) => self.audio_probe_err = Some(crate::i18n::err_text(&e)),
         }
     }
 
@@ -7782,7 +7782,8 @@ impl AppState {
                 &[&self.lib_roots.len()],
             ));
         };
-        aevum_core::library::organize(&dir, frame, &patch).map_err(|e| e.to_string())?;
+        aevum_core::library::organize(&dir, frame, &patch)
+            .map_err(|e| crate::i18n::err_text(&e))?;
         if let Some(f) = self
             .lib_entries
             .get_mut(root)
@@ -7820,7 +7821,8 @@ impl AppState {
         if frames.is_empty() {
             return Err("没有选中的照片".to_owned());
         }
-        aevum_core::library::organize_many(&dir, frames, &patch).map_err(|e| e.to_string())?;
+        aevum_core::library::organize_many(&dir, frames, &patch)
+            .map_err(|e| crate::i18n::err_text(&e))?;
         if let Some(entries) = self.lib_entries.get_mut(root) {
             for &frame in frames {
                 let Some(f) = entries.get_mut(frame) else {
@@ -7929,7 +7931,7 @@ impl AppState {
             return Err("没有选中的照片".to_owned());
         }
         let touched = aevum_core::library::keyword_edit(&dir, frames, add, remove)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| crate::i18n::err_text(&e))?;
         // 内存编目同步：词表归一化、排序的规则只在 core 里有一份，改完重读一次工程。
         let proj =
             aevum_core::project::load(&aevum_core::project::project_path(&dir)).unwrap_or_default();
@@ -7977,7 +7979,8 @@ impl AppState {
         frames: &[usize],
     ) -> Result<Vec<Vec<usize>>, String> {
         let dir = self.lib_dir(root)?;
-        let stacks = aevum_core::library::stack_create(&dir, frames).map_err(|e| e.to_string())?;
+        let stacks = aevum_core::library::stack_create(&dir, frames)
+            .map_err(|e| crate::i18n::err_text(&e))?;
         Ok(self.lib_stack_sync(root, stacks))
     }
 
@@ -7990,7 +7993,8 @@ impl AppState {
         stack: usize,
     ) -> Result<Vec<Vec<usize>>, String> {
         let dir = self.lib_dir(root)?;
-        let stacks = aevum_core::library::stack_dissolve(&dir, stack).map_err(|e| e.to_string())?;
+        let stacks = aevum_core::library::stack_dissolve(&dir, stack)
+            .map_err(|e| crate::i18n::err_text(&e))?;
         Ok(self.lib_stack_sync(root, stacks))
     }
 
@@ -8008,7 +8012,8 @@ impl AppState {
             }
             _ => return Err("这个目录还没编目：先展开它".to_owned()),
         };
-        let stacks = aevum_core::library::stack_auto(&dir, &names).map_err(|e| e.to_string())?;
+        let stacks =
+            aevum_core::library::stack_auto(&dir, &names).map_err(|e| crate::i18n::err_text(&e))?;
         Ok(self.lib_stack_sync(root, stacks))
     }
 
@@ -9038,7 +9043,7 @@ impl AppState {
                     let _ = tx.send(Msg::Aligned { token, report });
                 }
                 Err(e) => {
-                    let _ = tx.send(Msg::AlignFailed(e.to_string()));
+                    let _ = tx.send(Msg::AlignFailed(crate::i18n::err_text(&e)));
                 }
             }
             ctx2.request_repaint();
@@ -9203,7 +9208,7 @@ impl AppState {
                         &cancel,
                         &progress,
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| crate::i18n::err_text(&e))?;
                     if !options.keep_frames {
                         cleanup_frames(&options.out_dir, options.format);
                     }
@@ -9219,7 +9224,7 @@ impl AppState {
                         &cancel,
                         &progress,
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| crate::i18n::err_text(&e))?;
                     Ok(options.out_dir.clone())
                 }
             })();
@@ -9504,7 +9509,7 @@ impl AppState {
                         let _ = tx.send(Msg::QueueRow {
                             index,
                             status: QueueStatus::Failed,
-                            note: e.to_string(),
+                            note: crate::i18n::err_text(&e),
                         });
                     }
                 }
@@ -10579,7 +10584,7 @@ fn source_slot(
     );
     if fresh {
         let (buf, w, h) = metrics::decode_profile_preview(path, profile, PREVIEW_SIDE)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| crate::i18n::err_text(&e))?;
         if w == 0 || h == 0 {
             return Err("解码结果为空".to_owned());
         }
@@ -10742,7 +10747,7 @@ fn render_full_file(job: FrameExport<'_>) -> Result<(), String> {
         render,
     } = job;
     let (mut buf, w, h, deep) =
-        metrics::decode_for_grade(src, params).map_err(|e| e.to_string())?;
+        metrics::decode_for_grade(src, params).map_err(|e| crate::i18n::err_text(&e))?;
     let (w, h) = (w as usize, h as usize);
     if w == 0 || h == 0 {
         return Err("解码结果为空".to_owned());
@@ -10763,10 +10768,10 @@ fn render_full_file(job: FrameExport<'_>) -> Result<(), String> {
     // 和批量导出共用同一条路，两条不许各调一刀。`deep` 是单帧有意保留的差别：
     // 高位深源选 PNG 仍写 16bit，别让最后一步把精度砍回 256 级。
     aevum_core::export::write_single_still(src, dst, &mut out_buf, ow, oh, deep, &render)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| crate::i18n::err_text(&e))?;
     // 旁车是静帧旁边的另一个文件，不在容器编码那条尾巴里：单帧这一路自己调一次。
     aevum_core::export::write_sidecar(dst, params, &render)
-        .map_err(|e| e.to_string())
+        .map_err(|e| crate::i18n::err_text(&e))
         .map(|_| ())
 }
 

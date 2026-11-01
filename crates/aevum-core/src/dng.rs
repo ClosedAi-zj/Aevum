@@ -24,8 +24,6 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use thiserror::Error;
-
 /// 文件大小上限。再大的 DNG 当坏文件处理，别让一次 `read_to_end` 吃掉整机内存。
 const MAX_FILE_BYTES: u64 = 512 << 20;
 /// 嗅探只读头部这么多：绝大多数写入器把 IFD0 紧跟在 8 字节头后面。
@@ -85,44 +83,121 @@ const COMP_ADOBE_DEFLATE: u16 = 8;
 /// is defined here.
 pub type Rgb16Image = image::ImageBuffer<image::Rgb<u16>, Vec<u16>>;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum DngError {
-    #[error("打开 DNG 失败：{0}")]
-    Io(#[from] std::io::Error),
-    #[error("不是 TIFF/DNG：字节序标记或 magic 42 不对")]
+    Io(std::io::Error),
     NotTiff,
-    #[error("文件被截断，标记或数据指向了文件之外")]
     Truncated,
-    #[error("文件超过 {0} 字节上限")]
     FileTooLarge(u64),
-    #[error("缺少必要标记 {0}")]
     MissingTag(u16),
-    #[error("标记 {0} 的类型或数量不合法")]
     BadTag(u16),
-    #[error("不支持的压缩方式 {0}")]
     UnsupportedCompression(u16),
-    #[error("不支持的影像解释 {0}")]
     UnsupportedPhotometric(u16),
-    #[error("不支持的位深 {0}（只接 8 或 16）")]
     UnsupportedBits(u16),
-    #[error("不支持的平面配置 {0}")]
     UnsupportedPlanar(u16),
-    #[error("每像素 {0} 个采样不支持（只认单通道原始数据）")]
     UnsupportedSamples(u16),
-    #[error("CFA 图案不是可用的 2×2 RGBG 排列")]
     UnsupportedCfa,
-    #[error("尺寸 {width}×{height} 超出上限")]
     TooLarge { width: u32, height: u32 },
-    #[error("条带越界：偏移 {offset} 长度 {length} 落在文件外")]
     StripOutOfRange { offset: u64, length: u64 },
-    #[error("条带数量 {found} 与宽高推出的 {want} 不一致")]
     StripCountMismatch { found: usize, want: usize },
-    #[error("条带字节数 {found} 与解码所需的 {want} 不一致")]
     StripSizeMismatch { found: usize, want: usize },
-    #[error("黑场 {black} 不低于白场 {white}，电平非法")]
     BadLevels { black: u32, white: u32 },
-    #[error("deflate 数据非法：{0}")]
     Deflate(&'static str),
+}
+
+impl crate::errmsg::Msg for DngError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        match self {
+            Self::Io(v) => (
+                "打开 DNG 失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::NotTiff => ("不是 TIFF/DNG：字节序标记或 magic 42 不对", vec![]),
+            Self::Truncated => ("文件被截断，标记或数据指向了文件之外", vec![]),
+            Self::FileTooLarge(v) => (
+                "文件超过 {} 字节上限",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::MissingTag(v) => (
+                "缺少必要标记 {}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::BadTag(v) => (
+                "标记 {} 的类型或数量不合法",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedCompression(v) => (
+                "不支持的压缩方式 {}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedPhotometric(v) => (
+                "不支持的影像解释 {}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedBits(v) => (
+                "不支持的位深 {}（只接 8 或 16）",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedPlanar(v) => (
+                "不支持的平面配置 {}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedSamples(v) => (
+                "每像素 {} 个采样不支持（只认单通道原始数据）",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedCfa => ("CFA 图案不是可用的 2×2 RGBG 排列", vec![]),
+            Self::TooLarge { width, height } => (
+                "尺寸 {}×{} 超出上限",
+                vec![
+                    crate::errmsg::Arg::Text(width.to_string()),
+                    crate::errmsg::Arg::Text(height.to_string()),
+                ],
+            ),
+            Self::StripOutOfRange { offset, length } => (
+                "条带越界：偏移 {} 长度 {} 落在文件外",
+                vec![
+                    crate::errmsg::Arg::Text(offset.to_string()),
+                    crate::errmsg::Arg::Text(length.to_string()),
+                ],
+            ),
+            Self::StripCountMismatch { found, want } => (
+                "条带数量 {} 与宽高推出的 {} 不一致",
+                vec![
+                    crate::errmsg::Arg::Text(found.to_string()),
+                    crate::errmsg::Arg::Text(want.to_string()),
+                ],
+            ),
+            Self::StripSizeMismatch { found, want } => (
+                "条带字节数 {} 与解码所需的 {} 不一致",
+                vec![
+                    crate::errmsg::Arg::Text(found.to_string()),
+                    crate::errmsg::Arg::Text(want.to_string()),
+                ],
+            ),
+            Self::BadLevels { black, white } => (
+                "黑场 {} 不低于白场 {}，电平非法",
+                vec![
+                    crate::errmsg::Arg::Text(black.to_string()),
+                    crate::errmsg::Arg::Text(white.to_string()),
+                ],
+            ),
+            Self::Deflate(v) => (
+                "deflate 数据非法：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+        }
+    }
+}
+
+crate::impl_msg_display!(DngError);
+
+impl std::error::Error for DngError {}
+
+impl From<std::io::Error> for DngError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 impl DngError {

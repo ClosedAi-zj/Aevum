@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use crate::align::{AlignIssue, CropRect};
 use crate::audio::AudioOptions;
@@ -378,13 +377,10 @@ impl Default for ProjectFile {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum ProjectError {
-    #[error("读写工程失败：{0}")]
-    Io(#[from] std::io::Error),
-    #[error("工程文件不是合法 JSON：{0}")]
-    Json(#[from] serde_json::Error),
-    #[error("工程版本 {0} 比程序支持的 {VERSION} 新，请升级程序")]
+    Io(std::io::Error),
+    Json(serde_json::Error),
     Version(u32),
     /// 护带路径上蹲着一个同名**文件**（不是目录）。
     ///
@@ -398,11 +394,51 @@ pub enum ProjectError {
     /// Windows) or `EEXIST` — the user sees a string of system error codes and cannot guess
     /// that the cause is a file named `.aevum` in the frame folder.
     /// Checking up front yields a message the user can act on.
-    #[error(
-        "{} 上有个同名文件、不是目录，工程存不进去；请把它移走或改名后重试（程序没有动它）",
-        .0.display()
-    )]
     GuardBlockedByFile(std::path::PathBuf),
+}
+
+impl crate::errmsg::Msg for ProjectError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        use crate::errmsg::Arg;
+        match self {
+            Self::Io(v) => ("读写工程失败：{}", vec![Arg::Text(v.to_string())]),
+            Self::Json(v) => ("工程文件不是合法 JSON：{}", vec![Arg::Text(v.to_string())]),
+            // `VERSION` 原先是 thiserror 的隐式 format 参数，这里显式取一次：
+            // 模板里多一个占位符就等于多一个可以翻译的句子，而版本号是参数本身。
+            Self::Version(v) => (
+                "工程版本 {} 比程序支持的 {} 新，请升级程序",
+                vec![Arg::Text(v.to_string()), Arg::Text(VERSION.to_string())],
+            ),
+            Self::GuardBlockedByFile(p) => (
+                "{} 上有个同名文件、不是目录，工程存不进去；请把它移走或改名后重试（程序没有动它）",
+                vec![Arg::Text(p.display().to_string())],
+            ),
+        }
+    }
+}
+
+crate::impl_msg_display!(ProjectError);
+
+impl std::error::Error for ProjectError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Json(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ProjectError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<serde_json::Error> for ProjectError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
 }
 
 /// 序列根目录下的护带目录：工程文件、控制令牌、操作日志都在这儿。

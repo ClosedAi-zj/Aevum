@@ -42,7 +42,6 @@ use std::time::Instant;
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 /// Python `measure_offsets` 的默认搜索边距。
 const SEARCH_MARGIN: usize = 150;
@@ -128,20 +127,43 @@ pub struct AlignReport {
     pub elapsed_secs: f64,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum AlignError {
-    #[error("没有可对齐的帧")]
     Empty,
-    #[error("参考帧 {0} 超出范围")]
     Reference(usize),
-    #[error("读图失败 {path}：{source}")]
     Decode {
         path: String,
         source: crate::metrics::MetricsError,
     },
-    #[error("内部错误：{0}")]
     Message(String),
 }
+
+impl crate::errmsg::Msg for AlignError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        match self {
+            Self::Empty => ("没有可对齐的帧", vec![]),
+            Self::Reference(v) => (
+                "参考帧 {} 超出范围",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::Decode { path, source } => (
+                "读图失败 {}：{}",
+                vec![
+                    crate::errmsg::Arg::Text(path.to_string()),
+                    crate::errmsg::Arg::Text(source.to_string()),
+                ],
+            ),
+            Self::Message(v) => (
+                "内部错误：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+        }
+    }
+}
+
+crate::impl_msg_display!(AlignError);
+
+impl std::error::Error for AlignError {}
 
 /// 估计整段序列的位移并给出统一裁切。
 ///

@@ -48,12 +48,12 @@ def main() -> int:
         print(__doc__)
         return 2
 
-    pairs = json.loads(Path(args[0]).read_text(encoding="utf-8"))
+    pairs = json.loads(Path(rest[0]).read_text(encoding="utf-8"))
     incoming: dict[str, str] = {}
     neutral: list[str] = []
     for item in pairs:
         if not (isinstance(item, list) and len(item) == 2):
-            raise SystemExit(f"i18n_fill: {item!r} 不是 [中文, English] 二元组")
+            raise SystemExit(f"i18n_fill: {item!r} 不是 [源文, 译文] 二元组")
         zh, en = item
         if not isinstance(zh, str) or not isinstance(en, str):
             raise SystemExit(f"i18n_fill: {item!r} 两侧都必须是字符串")

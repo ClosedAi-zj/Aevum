@@ -16,22 +16,73 @@ use std::path::{Path, PathBuf};
 
 use image::{DynamicImage, RgbaImage};
 use rayon::prelude::*;
-use thiserror::Error;
 
 use crate::deflicker;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum MetricsError {
-    #[error("读取失败：{0}")]
-    Io(#[from] std::io::Error),
-    #[error("解码失败：{0}")]
-    Image(#[from] image::ImageError),
-    #[error("DNG 解码失败：{0}")]
-    Dng(#[from] crate::dng::DngError),
-    #[error("RAW 解码失败：{0}")]
-    Raw(#[from] crate::raw::RawError),
-    #[error("相机配置处理失败：{0}")]
+    Io(std::io::Error),
+    Image(image::ImageError),
+    Dng(crate::dng::DngError),
+    Raw(crate::raw::RawError),
     Profile(String),
+}
+
+impl crate::errmsg::Msg for MetricsError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        match self {
+            Self::Io(v) => (
+                "读取失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::Image(v) => (
+                "解码失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::Dng(v) => ("DNG 解码失败：{}", vec![crate::errmsg::Arg::Nested(v)]),
+            Self::Raw(v) => ("RAW 解码失败：{}", vec![crate::errmsg::Arg::Nested(v)]),
+            Self::Profile(v) => (
+                "相机配置处理失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+        }
+    }
+}
+
+crate::impl_msg_display!(MetricsError);
+
+impl std::error::Error for MetricsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Dng(e) => Some(e),
+            Self::Raw(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for MetricsError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<image::ImageError> for MetricsError {
+    fn from(e: image::ImageError) -> Self {
+        Self::Image(e)
+    }
+}
+
+impl From<crate::dng::DngError> for MetricsError {
+    fn from(e: crate::dng::DngError) -> Self {
+        Self::Dng(e)
+    }
+}
+
+impl From<crate::raw::RawError> for MetricsError {
+    fn from(e: crate::raw::RawError) -> Self {
+        Self::Raw(e)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -614,6 +614,30 @@ pub fn tr(s: &str) -> &str {
     }
 }
 
+/// 把 core 的错误按**当前语言**渲染成一句话。
+///
+/// 错误的 [`Display`] 恒是中文（日志、`anyhow` 上下文、测试断言都靠它），界面不能直接
+/// 用它——那样英文用户看到的是中文。core 的错误类型都实现了
+/// `aevum_core::errmsg::Msg`，给出「模板 + 参数」；这里把模板过一遍当前语言的表，
+/// 参数原样填回去。嵌套错误（例如 `MetricsError::Dng(DngError)`）递归处理。
+///
+/// 模板就是中文原文，与界面文案同一套键，所以**加一种语言不需要改 core 一行代码**。
+///
+/// Render a core error into one sentence in the **current** language.
+///
+/// An error's [`Display`] is always Chinese (logs, `anyhow` contexts and test assertions
+/// rely on it), so the UI must not print it directly -- an English user would see Chinese.
+/// Core error types implement `aevum_core::errmsg::Msg`, yielding a template plus
+/// arguments; this function runs the template through the current language's table and
+/// fills the arguments back in. Nested errors (for example `MetricsError::Dng(DngError)`)
+/// are handled recursively.
+///
+/// The template is the Chinese original, the same kind of key as any UI string, so
+/// **adding a language touches no core code**.
+pub fn err_text(e: &dyn aevum_core::errmsg::Msg) -> String {
+    e.render(&tr)
+}
+
 /// 翻译一个带 `{}` 占位的模板，再按顺序填空。
 ///
 /// 为什么需要它：`format!` 的首参**必须是字面量**，编译器不接受函数返回值，所以

@@ -31,7 +31,6 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use crate::audio::AudioOptions;
 use crate::colorspace::ColorSpace;
@@ -227,16 +226,54 @@ impl QueueItem {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum QueueError {
-    #[error("{0}")]
     Invalid(String),
-    #[error("打开序列失败：{0}")]
-    Sequence(#[from] SequenceError),
-    #[error("{0}")]
-    Project(#[from] project::ProjectError),
-    #[error("{0}")]
-    Export(#[from] ExportError),
+    Sequence(SequenceError),
+    Project(project::ProjectError),
+    Export(ExportError),
+}
+
+impl crate::errmsg::Msg for QueueError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        match self {
+            Self::Invalid(v) => ("{}", vec![crate::errmsg::Arg::Text(v.to_string())]),
+            Self::Sequence(v) => ("打开序列失败：{}", vec![crate::errmsg::Arg::Nested(v)]),
+            Self::Project(v) => ("{}", vec![crate::errmsg::Arg::Nested(v)]),
+            Self::Export(v) => ("{}", vec![crate::errmsg::Arg::Nested(v)]),
+        }
+    }
+}
+
+crate::impl_msg_display!(QueueError);
+
+impl std::error::Error for QueueError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Sequence(e) => Some(e),
+            Self::Project(e) => Some(e),
+            Self::Export(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<SequenceError> for QueueError {
+    fn from(e: SequenceError) -> Self {
+        Self::Sequence(e)
+    }
+}
+
+impl From<project::ProjectError> for QueueError {
+    fn from(e: project::ProjectError) -> Self {
+        Self::Project(e)
+    }
+}
+
+impl From<ExportError> for QueueError {
+    fn from(e: ExportError) -> Self {
+        Self::Export(e)
+    }
 }
 
 /// `<成片去扩展名>_帧`，跟着成片走，删成片时好一起找。

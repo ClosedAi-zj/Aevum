@@ -140,7 +140,6 @@ use std::io::Read;
 use std::path::Path;
 
 use rayon::prelude::*;
-use thiserror::Error;
 
 use tiff::{Header, Tiff};
 
@@ -297,72 +296,182 @@ impl RawInfo {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum RawError {
-    #[error("打开 RAW 失败：{0}")]
-    Io(#[from] std::io::Error),
-    #[error("不是 TIFF 家族容器：字节序标记 II/MM 不对")]
+    Io(std::io::Error),
     NotTiff,
-    #[error(
-        "不支持的 TIFF magic {0:#06x}（认 42、0x0202、RO、RW2 的 0x0055；BigTIFF/RRIF 另有具名错误）"
-    )]
     BadMagic(u16),
-    #[error(
-        "BigTIFF/RRIF（magic {0}）不支持：偏移是 64 位、IFD 计数是 8 字节，与这层的行/条带读法不兼容；请先转成 DNG"
-    )]
     BigTiff(u16),
-    #[error("文件被截断，标记或数据指向了文件之外")]
     Truncated,
-    #[error("文件超过 {0} 字节上限")]
     FileTooLarge(u64),
-    #[error("IFD 数量超过 {0} 层上限，这个结构不像相机写的")]
     TooManyIfds(usize),
-    #[error("缺少必要标记 {0}")]
     MissingTag(u16),
-    #[error("标记 {0} 的类型或数量不合法")]
     BadTag(u16),
-    #[error("不支持的压缩方式 {0}")]
     UnsupportedCompression(u16),
-    #[error("不支持的影像解释 {0}（只认 CFA 32803 与线性原始数据 34892）")]
     UnsupportedPhotometric(u16),
-    #[error(
-        "不支持的位深 {0}：传感器路径只接 8/16 位容器，12/14 位打包无法区分行内与整图连续两种写法（见模块头）"
-    )]
     UnsupportedBits(u16),
-    #[error("不支持的平面配置 {0}")]
     UnsupportedPlanar(u16),
-    #[error("每像素 {0} 个采样不支持（只认单通道原始数据）")]
     UnsupportedSamples(u16),
-    #[error("不支持的取样顺序 FillOrder {0}（只按高位在前读行）")]
     UnsupportedFillOrder(u16),
-    #[error("不支持的差分预测 {0}（不压缩的原始数据不该带预测）")]
     UnsupportedPredictor(u16),
-    #[error("瓦片（Tiles）存储不支持：这层只按条带读行")]
     UnsupportedTiles,
-    #[error("CFA 图案不是可用的 2×2 RGBG 排列，或用了需要色彩矩阵的 C/M/Y 图案")]
     UnsupportedCfa,
-    #[error("尺寸 {width}×{height} 超出上限")]
     TooLarge { width: u32, height: u32 },
-    #[error("条带越界：偏移 {offset} 长度 {length} 落在文件外")]
     StripOutOfRange { offset: u64, length: u64 },
-    #[error("条带数量 {found} 与宽高推出的 {want} 不一致")]
     StripCountMismatch { found: usize, want: usize },
-    #[error("条带字节数 {found} 与行布局对不上（每行按位深至少要 {want} 的整数倍）")]
     StripSizeMismatch { found: usize, want: usize },
-    #[error("黑场 {black} 不低于白场 {white}，电平非法")]
     BadLevels { black: u32, white: u32 },
-    #[error("IFD 链里没有任何单通道原始数据图层")]
     NoCfaIfd,
-    #[error("没有可解码的原始影像，也没有可用的内嵌预览：{0}")]
     NoRawData(Box<RawError>),
-    #[error("ISO/BMFF 容器里没有可解的完整 JPEG 预览；原始数据是厂商自有的 CRX 压缩，本版不解")]
     NoContainerPreview,
-    #[error("内嵌预览尺寸 {width}×{height} 超出上限")]
     PreviewTooLarge { width: u32, height: u32 },
-    #[error("内嵌预览解码失败：{0}")]
-    Image(#[from] image::ImageError),
-    #[error("第三方解码器（rawler）失败：{0}")]
+    Image(image::ImageError),
     Rawler(String),
+}
+
+impl crate::errmsg::Msg for RawError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        match self {
+            Self::Io(v) => (
+                "打开 RAW 失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::NotTiff => ("不是 TIFF 家族容器：字节序标记 II/MM 不对", vec![]),
+            Self::BadMagic(v) => (
+                "不支持的 TIFF magic {}（认 42、0x0202、RO、RW2 的 0x0055；BigTIFF/RRIF 另有具名错误）",
+                vec![crate::errmsg::Arg::Text(format!("{:#06x}", v))],
+            ),
+            Self::BigTiff(v) => (
+                "BigTIFF/RRIF（magic {}）不支持：偏移是 64 位、IFD 计数是 8 字节，与这层的行/条带读法不兼容；请先转成 DNG",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::Truncated => ("文件被截断，标记或数据指向了文件之外", vec![]),
+            Self::FileTooLarge(v) => (
+                "文件超过 {} 字节上限",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::TooManyIfds(v) => (
+                "IFD 数量超过 {} 层上限，这个结构不像相机写的",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::MissingTag(v) => (
+                "缺少必要标记 {}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::BadTag(v) => (
+                "标记 {} 的类型或数量不合法",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedCompression(v) => (
+                "不支持的压缩方式 {}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedPhotometric(v) => (
+                "不支持的影像解释 {}（只认 CFA 32803 与线性原始数据 34892）",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedBits(v) => (
+                "不支持的位深 {}：传感器路径只接 8/16 位容器，12/14 位打包无法区分行内与整图连续两种写法（见模块头）",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedPlanar(v) => (
+                "不支持的平面配置 {}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedSamples(v) => (
+                "每像素 {} 个采样不支持（只认单通道原始数据）",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedFillOrder(v) => (
+                "不支持的取样顺序 FillOrder {}（只按高位在前读行）",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedPredictor(v) => (
+                "不支持的差分预测 {}（不压缩的原始数据不该带预测）",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::UnsupportedTiles => ("瓦片（Tiles）存储不支持：这层只按条带读行", vec![]),
+            Self::UnsupportedCfa => (
+                "CFA 图案不是可用的 2×2 RGBG 排列，或用了需要色彩矩阵的 C/M/Y 图案",
+                vec![],
+            ),
+            Self::TooLarge { width, height } => (
+                "尺寸 {}×{} 超出上限",
+                vec![
+                    crate::errmsg::Arg::Text(width.to_string()),
+                    crate::errmsg::Arg::Text(height.to_string()),
+                ],
+            ),
+            Self::StripOutOfRange { offset, length } => (
+                "条带越界：偏移 {} 长度 {} 落在文件外",
+                vec![
+                    crate::errmsg::Arg::Text(offset.to_string()),
+                    crate::errmsg::Arg::Text(length.to_string()),
+                ],
+            ),
+            Self::StripCountMismatch { found, want } => (
+                "条带数量 {} 与宽高推出的 {} 不一致",
+                vec![
+                    crate::errmsg::Arg::Text(found.to_string()),
+                    crate::errmsg::Arg::Text(want.to_string()),
+                ],
+            ),
+            Self::StripSizeMismatch { found, want } => (
+                "条带字节数 {} 与行布局对不上（每行按位深至少要 {} 的整数倍）",
+                vec![
+                    crate::errmsg::Arg::Text(found.to_string()),
+                    crate::errmsg::Arg::Text(want.to_string()),
+                ],
+            ),
+            Self::BadLevels { black, white } => (
+                "黑场 {} 不低于白场 {}，电平非法",
+                vec![
+                    crate::errmsg::Arg::Text(black.to_string()),
+                    crate::errmsg::Arg::Text(white.to_string()),
+                ],
+            ),
+            Self::NoCfaIfd => ("IFD 链里没有任何单通道原始数据图层", vec![]),
+            Self::NoRawData(v) => (
+                "没有可解码的原始影像，也没有可用的内嵌预览：{}",
+                vec![crate::errmsg::Arg::Nested(&**v)],
+            ),
+            Self::NoContainerPreview => (
+                "ISO/BMFF 容器里没有可解的完整 JPEG 预览；原始数据是厂商自有的 CRX 压缩，本版不解",
+                vec![],
+            ),
+            Self::PreviewTooLarge { width, height } => (
+                "内嵌预览尺寸 {}×{} 超出上限",
+                vec![
+                    crate::errmsg::Arg::Text(width.to_string()),
+                    crate::errmsg::Arg::Text(height.to_string()),
+                ],
+            ),
+            Self::Image(v) => (
+                "内嵌预览解码失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::Rawler(v) => (
+                "第三方解码器（rawler）失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+        }
+    }
+}
+
+crate::impl_msg_display!(RawError);
+
+impl std::error::Error for RawError {}
+
+impl From<std::io::Error> for RawError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<image::ImageError> for RawError {
+    fn from(e: image::ImageError) -> Self {
+        Self::Image(e)
+    }
 }
 
 impl RawError {

@@ -9,8 +9,6 @@
 
 use std::path::{Path, PathBuf};
 
-use thiserror::Error;
-
 /// 能当帧用的扩展名，必须和 `metrics::decode` 真解得开的格式对齐。
 ///
 /// 相机 RAW 里只有 DNG 认：CR2/NEF/ARW 这些是厂商私有压缩，解不开却先认领，
@@ -24,16 +22,36 @@ const IMAGE_EXT: &[&str] = &[
     "cr3", "orf", "rwl",
 ];
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum SequenceError {
-    #[error("读取目录失败：{0}")]
-    Io(#[from] std::io::Error),
-    #[error("这个文件夹里没有可用的帧")]
+    Io(std::io::Error),
     Empty,
-    #[error("这些文件里有我们解不开的格式")]
     NoUsableFile,
-    #[error("选中的照片不在同一个文件夹，先放进一个目录")]
     NoCommonRoot,
+}
+
+impl crate::errmsg::Msg for SequenceError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        match self {
+            Self::Io(v) => (
+                "读取目录失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::Empty => ("这个文件夹里没有可用的帧", vec![]),
+            Self::NoUsableFile => ("这些文件里有我们解不开的格式", vec![]),
+            Self::NoCommonRoot => ("选中的照片不在同一个文件夹，先放进一个目录", vec![]),
+        }
+    }
+}
+
+crate::impl_msg_display!(SequenceError);
+
+impl std::error::Error for SequenceError {}
+
+impl From<std::io::Error> for SequenceError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 #[derive(Clone, Debug)]

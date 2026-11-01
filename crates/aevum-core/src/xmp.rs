@@ -24,8 +24,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use thiserror::Error;
-
 use crate::grade::GradeParams;
 use crate::project::Metadata;
 use crate::xmp_map::{self, CRS_NS};
@@ -33,14 +31,37 @@ use crate::xmp_map::{self, CRS_NS};
 const RDF_NS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 const DC_NS: &str = "http://purl.org/dc/elements/1.1/";
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum XmpError {
-    #[error("读写 XMP 失败：{0}")]
-    Io(#[from] std::io::Error),
-    #[error("XMP 里没有 Camera Raw 参数")]
+    Io(std::io::Error),
     Empty,
-    #[error("解析失败：{0}")]
     Parse(String),
+}
+
+impl crate::errmsg::Msg for XmpError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        match self {
+            Self::Io(v) => (
+                "读写 XMP 失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::Empty => ("XMP 里没有 Camera Raw 参数", vec![]),
+            Self::Parse(v) => (
+                "解析失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+        }
+    }
+}
+
+crate::impl_msg_display!(XmpError);
+
+impl std::error::Error for XmpError {}
+
+impl From<std::io::Error> for XmpError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 // ---------------------------------------------------------------- 最小 XML 树

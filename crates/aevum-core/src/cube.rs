@@ -23,8 +23,6 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use thiserror::Error;
-
 use crate::develop::{self, Ev, Opts};
 use crate::grade::GradeParams;
 
@@ -36,12 +34,35 @@ pub const DEFAULT_SIZE: usize = 65;
 pub const MIN_SIZE: usize = 2;
 pub const MAX_SIZE: usize = 256;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum CubeError {
-    #[error("读写 .cube 失败：{0}")]
-    Io(#[from] std::io::Error),
-    #[error(".cube 解析失败：{0}")]
+    Io(std::io::Error),
     Parse(String),
+}
+
+impl crate::errmsg::Msg for CubeError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        match self {
+            Self::Io(v) => (
+                "读写 .cube 失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::Parse(v) => (
+                ".cube 解析失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+        }
+    }
+}
+
+crate::impl_msg_display!(CubeError);
+
+impl std::error::Error for CubeError {}
+
+impl From<std::io::Error> for CubeError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 /// 生成 `size³` 个输入格点（红最快），行优先交织成 `[f32]`。

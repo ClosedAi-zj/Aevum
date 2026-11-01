@@ -27,6 +27,7 @@ pub mod denoise_weights;
 pub mod develop;
 pub mod dng;
 pub mod env;
+pub mod errmsg;
 pub mod exif;
 pub mod export;
 pub mod fonts;

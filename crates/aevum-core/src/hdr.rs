@@ -21,13 +21,10 @@ use rayon::prelude::*;
 /// limit needs a stated bound.
 pub const MAX_FRAMES: usize = 9;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum HdrError {
-    #[error("HDR 合并至少要 2 张，实得 {0} 张")]
     TooFew(usize),
-    #[error("HDR 合并一次最多 {MAX_FRAMES} 张，实得 {0} 张")]
     TooMany(usize),
-    #[error("第 0 张是 {aw}×{ah}，第 {b} 张是 {bw}×{bh}：尺寸不一致，先对齐或裁成同尺寸")]
     SizeMismatch {
         aw: u32,
         ah: u32,
@@ -35,9 +32,44 @@ pub enum HdrError {
         bw: u32,
         bh: u32,
     },
-    #[error("读图失败：{0}")]
     Read(String),
 }
+
+impl crate::errmsg::Msg for HdrError {
+    fn msg(&self) -> (&'static str, Vec<crate::errmsg::Arg<'_>>) {
+        match self {
+            Self::TooFew(v) => (
+                "HDR 合并至少要 2 张，实得 {} 张",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::TooMany(v) => (
+                "HDR 合并一次最多 {} 张，实得 {} 张",
+                vec![
+                    crate::errmsg::Arg::Text(MAX_FRAMES.to_string()),
+                    crate::errmsg::Arg::Text(v.to_string()),
+                ],
+            ),
+            Self::SizeMismatch { aw, ah, b, bw, bh } => (
+                "第 0 张是 {}×{}，第 {} 张是 {}×{}：尺寸不一致，先对齐或裁成同尺寸",
+                vec![
+                    crate::errmsg::Arg::Text(aw.to_string()),
+                    crate::errmsg::Arg::Text(ah.to_string()),
+                    crate::errmsg::Arg::Text(b.to_string()),
+                    crate::errmsg::Arg::Text(bw.to_string()),
+                    crate::errmsg::Arg::Text(bh.to_string()),
+                ],
+            ),
+            Self::Read(v) => (
+                "读图失败：{}",
+                vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+        }
+    }
+}
+
+crate::impl_msg_display!(HdrError);
+
+impl std::error::Error for HdrError {}
 
 /// 读一张图成 f32 RGB（0..1）：与导出共用同一条解码路，方向与 RAW 语义一致。
 ///
