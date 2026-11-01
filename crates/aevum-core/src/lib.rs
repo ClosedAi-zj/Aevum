@@ -54,6 +54,7 @@ pub mod queue;
 pub mod raw;
 pub mod retime;
 pub mod sequence;
+pub mod stack;
 pub mod temp_track;
 pub mod warp;
 pub mod watermark;
