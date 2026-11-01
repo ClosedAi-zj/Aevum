@@ -104,7 +104,8 @@ cp -f "$ROOT/THIRD-PARTY-NOTICES.txt" "$DIST/"
 
 # ---- 许可文本：LGPL-2.1 / OFL-1.1 / UFL-1.0 / MIT / ISC 都要求随分发附带 ----
 purge_dir "$DIST/licenses"
-cp -rf "$ROOT/licenses" "$DIST/licenses"# 项目自选字体与图标的许可文本散在 assets/ 下，统一归到 licenses/，让随包只有一处要找。
+# 项目自选字体与图标的许可文本散在 assets/ 下，统一归到 licenses/，让随包只有一处要找。
+cp -rf "$ROOT/licenses" "$DIST/licenses"
 cp -f "$ROOT/assets/fonts/OFL-Inter.txt"        "$DIST/licenses/OFL-1.1-Inter.txt"
 cp -f "$ROOT/assets/fonts/OFL-NotoSansSC.txt"   "$DIST/licenses/OFL-1.1-Noto-Sans-SC.txt"
 cp -f "$ROOT/assets/icons/LICENSE-Lucide.txt"   "$DIST/licenses/ISC-Lucide.txt"
