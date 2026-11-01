@@ -7,6 +7,18 @@
 //!
 //! 协议握手（initialize / ping / notifications）全部本地处理：即使 GUI 暂时没开，
 //! 客户端也能完成握手，真正调用工具时才连回环，并拿到中文错误。
+//!
+//! Attach mode: proxy MCP tools to a GUI that is already open.
+//!
+//! `aevum.exe --mcp --attach <control.json>` only reads the `<root>/.aevum/control.json`
+//! the GUI wrote, and completes the MCP handshake over stdin/stdout as usual;
+//! `tools/list` and `tools/call` become JSON-RPC on the control channel (a local
+//! HTTP `POST /rpc`). One executable therefore runs both headless (`--mcp`) and as
+//! a driver for a live interface, where every change shows up on screen at once.
+//!
+//! The protocol handshake (initialize / ping / notifications) is handled entirely
+//! locally: even with the GUI closed, a client can finish the handshake, and only a
+//! real tool call reaches the loopback and gets an error message.
 
 use std::ffi::OsString;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -24,6 +36,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// 控制文件里真正需要的字段。
+///
+/// The only fields actually needed from the control file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ControlTarget {
     pub port: u16,
@@ -303,6 +317,11 @@ const FALLBACK_TOOLS: &[(&str, &str)] = &[
 ///
 /// 只有 `--mcp` 存在时调用方才会进来；单独 `--mcp` 返回 `Ok(None)`，
 /// 继续走无头模式。
+///
+/// Find `--attach <path>` / `--attach=<path>` among the entry arguments.
+///
+/// The caller only gets here when `--mcp` is present; a bare `--mcp` returns
+/// `Ok(None)` and headless mode continues.
 pub fn attach_path(argv: &[OsString]) -> Result<Option<PathBuf>, String> {
     let mut found: Option<PathBuf> = None;
     let mut iter = argv.iter();
@@ -329,6 +348,8 @@ pub fn attach_path(argv: &[OsString]) -> Result<Option<PathBuf>, String> {
 }
 
 /// 读 control.json。错误文案要能让用户知道下一步该做什么。
+///
+/// Read control.json. The error message has to tell the user what to do next.
 pub fn load_target(path: &Path) -> Result<ControlTarget, String> {
     let text = std::fs::read_to_string(path).map_err(|e| {
         format!(
@@ -367,6 +388,8 @@ pub fn load_target(path: &Path) -> Result<ControlTarget, String> {
 }
 
 /// 附着的 stdio MCP 入口。
+///
+/// The stdio MCP entry point for attach mode.
 pub fn run_stdio_attach(path: PathBuf) -> ExitCode {
     let target = match load_target(&path) {
         Ok(target) => target,
@@ -389,6 +412,9 @@ pub fn run_stdio_attach(path: PathBuf) -> ExitCode {
 }
 
 /// 逐行读 MCP 请求、逐行写响应；抽出来便于脱离进程做协议测试。
+///
+/// Read MCP requests line by line and write responses line by line; extracted so
+/// the protocol can be tested without a process.
 pub fn serve<R: BufRead, W: Write>(
     mut input: R,
     mut output: W,
@@ -611,6 +637,12 @@ fn call_tool(id: Value, params: &Value, target: &ControlTarget) -> Value {
 ///
 /// 严格客户端只接受 `[A-Za-z0-9_-]`，所以工具名不能带点；命令 ID 仍保留点号。
 /// 实现只有一份，在 `aevum_core::mcp_routes`——本函数只是本地别名。
+///
+/// MCP tool name: `sequence.info` → `aevum_sequence_info`.
+///
+/// Strict clients accept `[A-Za-z0-9_-]` only, so tool names cannot carry dots;
+/// command IDs keep theirs. There is one implementation, in
+/// `aevum_core::mcp_routes` — this function is just a local alias.
 pub fn mcp_name(command: &str) -> String {
     aevum_core::mcp_routes::mcp_name(command)
 }
@@ -625,6 +657,21 @@ pub fn mcp_name(command: &str) -> String {
 ///
 /// 返回 `None` 的语义是「这个名字既不是工具、也不是 GUI 命令」；
 /// 「工具存在但 GUI 没这项能力」也是 `None`，调用方用 [`is_known_tool`] 区分。
+///
+/// Tool name → command ID.
+///
+/// Two lookup paths together cover two namespaces:
+/// 1. the 34 tool names of server mode (`aevum_xmp_read` and other historical
+///    spellings that do not line up with a command ID are in here too);
+/// 2. the 72 names in the GUI command catalogue (`aevum_library_add`,
+///    `aevum_history_undo` and so on).
+///
+/// The old `lumen_*` prefix is canonicalised first, so old and new names take
+/// **the same** path and behave byte-identically.
+///
+/// `None` means "this name is neither a tool nor a GUI command"; "the tool exists
+/// but the GUI has no such capability" is also `None`, and callers tell them apart
+/// with [`is_known_tool`].
 pub fn resolve_command(name: &str) -> Option<&'static str> {
     let canonical = aevum_core::brand::canonical_tool(name);
     let name = canonical.as_ref();
@@ -644,6 +691,9 @@ pub fn resolve_command(name: &str) -> Option<&'static str> {
 }
 
 /// 这个名字是不是已知的服务模式工具（不区分附着模式能不能跑）。
+///
+/// Whether this is a known server-mode tool (regardless of whether attach mode can
+/// run it).
 pub fn is_known_tool(name: &str) -> bool {
     let canonical = aevum_core::brand::canonical_tool(name);
     aevum_core::mcp_routes::is_known_tool(canonical.as_ref())
@@ -718,6 +768,9 @@ fn post_rpc(port: u16, token: &str, body: &Value) -> Result<Value, String> {
 }
 
 /// 读一条 HTTP/1.1 响应（含状态行、头、按 Content-Length 或 EOF 的正文）。
+///
+/// Read one HTTP/1.1 response: status line, headers, then a body delimited by
+/// Content-Length or by EOF.
 pub fn read_http_response<R: BufRead>(reader: &mut R) -> Result<(u16, String), String> {
     let mut status_line = String::new();
     reader

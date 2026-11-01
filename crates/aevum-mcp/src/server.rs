@@ -2,6 +2,12 @@
 //!
 //! 传输就是换行分隔的 JSON：一行一条消息，stdout 只能有协议消息，日志走 stderr。
 //! MCP 请求本身串行处理，不需要异步运行时。
+//!
+//! JSON-RPC 2.0 / MCP over stdio.
+//!
+//! The transport is newline-delimited JSON: one message per line, stdout carries
+//! protocol messages only, and logs go to stderr. MCP requests are handled one at
+//! a time, so no async runtime is needed.
 
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,13 +25,27 @@ use crate::{commands, dispatch};
 /// 依据官方规范页 `https://modelcontextprotocol.io/specification/latest`
 /// （2026-10 时显示 revision 2026-07-28）。initialize 时若客户端带了本机也
 /// 认识的历史版本就原样回显，避免让老客户端降级失败；不认识才回最新版。
+///
+/// The newest protocol revision this build speaks.
+///
+/// Based on the official specification page
+/// `https://modelcontextprotocol.io/specification/latest` (which showed revision
+/// 2026-07-28 in 2026-10). During `initialize`, a historical version we also know
+/// is echoed back verbatim so older clients do not fail to downgrade; only an
+/// unknown one falls back to the latest.
 pub const LATEST_PROTOCOL_VERSION: &str = "2026-07-28";
 
 /// 本机认识的历史版本，均来自官方 specification 版本列表。
+///
+/// The historical revisions we recognise, all taken from the official
+/// specification version list.
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
     &["2024-11-05", "2025-03-26", "2025-06-18", "2026-07-28"];
 
 /// 无头模式的入口：读到 EOF 就正常退出，退出码由调用方给 0。
+///
+/// Entry point of headless mode: return normally on EOF; the caller supplies exit
+/// code 0.
 pub fn run_stdio() -> std::process::ExitCode {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -40,6 +60,13 @@ pub fn run_stdio() -> std::process::ExitCode {
 ///
 /// 写端放在 `Arc<Mutex<_>>` 里：进度通知由旁路线程在长任务运行期间直接写 stdout，
 /// 必须和响应共用同一把锁，否则两条消息会交错。
+///
+/// Read requests line by line and write responses line by line. Extracted so the
+/// protocol can be unit-tested without a process.
+///
+/// The writer lives behind `Arc<Mutex<_>>`: during a long job the progress thread
+/// writes straight to stdout, and it must share that one lock with the responses,
+/// otherwise two messages interleave.
 pub fn serve<R: BufRead, W: Write + Send + 'static>(
     mut input: R,
     output: W,

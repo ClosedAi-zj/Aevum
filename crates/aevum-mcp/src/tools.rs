@@ -5,6 +5,16 @@
 //!
 //! 所有写操作都遵守两条底线：不覆盖源图、不删除源图；覆盖已有输出和
 //! 批量写真要调用方显式给 `confirm: true`。
+//!
+//! The command registry and the tool implementations.
+//!
+//! Tool names are flat and all prefixed with `aevum_`: MCP clients do not add a
+//! namespace for us, and a flat list lets an agent see at a glance that these are
+//! Aevum Studio capabilities.
+//!
+//! Every write operation keeps two bottom lines: never overwrite a source image,
+//! never delete one. Overwriting existing output and batch writes require the
+//! caller to pass `confirm: true` explicitly.
 
 use std::collections::BTreeSet;
 use std::fs;
