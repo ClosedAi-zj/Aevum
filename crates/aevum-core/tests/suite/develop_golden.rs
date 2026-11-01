@@ -1,8 +1,12 @@
 //! 显影主链与 Python 实现的逐像素比对。
 //!
 //! 基准由 `acceptance/oracle/freeze_golden.py --develop-only` 生成：三张 48×64 的小图
-//! （色相渐变 / 硬边结构 / 带噪点）过一遍 `grade.apply`，存 36 个 case 的
-//! 完整输出（小端 float32 的 hex）。
+//! （色相渐变 / 硬边结构 / 带噪点）过一遍 `grade.apply`，把完整输出存成 case（小端
+//! float32 的 hex）。
+//!
+//! **case 数以 `acceptance/oracle/golden/develop.json` 为准，不在这句注释里写死。**
+//! 这里曾写「存 36 个 case」，实际早就涨到 47，注释没跟着改——2026-11-02 写白皮书
+//! 逐节核对代码时才发现。凡是会随时间增长的数量，注释里只写「以某处为准」。
 //!
 //! 每个 case 标了它压到哪些阶段（`tone`/`lut`/`spatial`/`vignette`/`grain`/
 //! `mask`/`mask_local`）。只有当全部阶段都进了 `develop::STAGES_READY` 才逐像素
