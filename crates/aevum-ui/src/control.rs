@@ -12,6 +12,27 @@
 //! - 无窗口单测通过 [`CommandExecutor`] 注入 mock，不需要真实 GUI。
 //!
 //! 安全边界：绝不删除素材，只删自己写下的那份 control.json；令牌不对就不动文件。
+//!
+//! GUI loopback control: a tiny command channel on local `127.0.0.1`.
+//!
+//! Corresponds to the three run modes in plan 8.1: the GUI starts a server itself and
+//! writes `<root>/.aevum/control.json`, and `aevum.exe --mcp --attach
+//! <control.json>` then proxies MCP tools onto that channel.
+//!
+//! Design constraints:
+//! - Binds `127.0.0.1` only, on a random port; the token is regenerated every launch
+//!   and never written anywhere else.
+//! - Transport is hand-written HTTP/1.1 (one request per connection) carrying a
+//!   single JSON-RPC 2.0 object, serving only `POST /rpc` and `GET /health`; the body
+//!   is capped at 1 MiB and both directions have timeouts.
+//! - Commands are **not executed here**: a [`ControlEvent`] is posted to the UI
+//!   thread and the result comes back over a one-shot reply channel, which keeps an
+//!   agent's edit and a human's interaction on the same state path.
+//! - Windowless unit tests inject a mock through [`CommandExecutor`]; no real GUI
+//!   required.
+//!
+//! Safety boundary: never deletes user footage, only the control.json it wrote
+//! itself; a wrong token means no file is touched.
 
 use std::collections::hash_map::RandomState;
 use std::fs;
@@ -30,6 +51,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// 请求体上限：命令参数都是小对象，1 MiB 足够，也挡住误发整帧数据。
+///
+/// Body cap: command arguments are small objects, 1 MiB is plenty, and it stops a
+/// whole frame of pixel data from being sent by mistake.
 pub const MAX_BODY: usize = 1024 * 1024;
 /// 请求行 / 请求头各自的上限。
 const MAX_LINE: usize = 8 * 1024;
@@ -37,6 +61,9 @@ const MAX_HEAD: usize = 32 * 1024;
 const READ_TIMEOUT: Duration = Duration::from_secs(8);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(8);
 /// UI 线程最多等这么久；超时把错误交给调用方，而不是无限占着连接。
+///
+/// The UI thread waits at most this long; on timeout the error goes back to the
+/// caller instead of holding the connection open forever.
 pub const UI_TIMEOUT: Duration = Duration::from_secs(30);
 
 // ---------------------------------------------------------------- control.json
@@ -51,6 +78,8 @@ pub struct ControlFile {
     pub pid: u32,
     pub version: String,
     /// Unix 秒。
+    ///
+    /// Unix seconds.
     pub started: u64,
     /// 序列根目录，方便人读；令牌才是真正的凭据。
     #[serde(default)]
@@ -58,12 +87,18 @@ pub struct ControlFile {
 }
 
 /// `<root>/.aevum/control.json`（护带目录尚未迁移时落在旧目录里）。
+///
+/// `<root>/.aevum/control.json` (lands in the legacy directory while the guard
+/// directory has not been migrated yet).
 pub fn control_path(root: &Path) -> PathBuf {
     aevum_core::project::guard_dir(root).join("control.json")
 }
 
 impl ControlFile {
     /// 原子写：先写同目录临时文件，再改名覆盖。失败时绝不删旧文件。
+    ///
+    /// Atomic write: write a temp file in the same directory, then rename over the
+    /// target. Never deletes the old file on failure.
     pub fn write(&self, path: &Path) -> Result<(), String> {
         let dir = path
             .parent()
@@ -84,6 +119,8 @@ impl ControlFile {
     }
 
     /// 读回控制文件；错误文案直接给 attach 模式用。
+    ///
+    /// Read the control file back; the error text is used verbatim by attach mode.
     pub fn read(path: &Path) -> Result<Self, String> {
         let text = fs::read_to_string(path).map_err(|e| {
             crate::i18n::tr_fmt("读取控制文件失败（{}）：{}", &[&path.display(), &e])
@@ -101,6 +138,15 @@ impl ControlFile {
 /// 已经超时走人、甚至可能重试了一遍 —— 这种迟到事件必须拒绝执行，
 /// 否则 `export.video` / `queue.run` 这类批量写命令会被跑两遍
 /// （审查确认的重复执行路径）。
+///
+/// An execution request received on the UI thread side. `reply` is the one-shot
+/// response channel.
+///
+/// `queued_at` is the post time: the client gives up after at most [`UI_TIMEOUT`],
+/// and if the UI thread wakes up to find a command that has been queued longer than
+/// that, the client has probably timed out already and may even have retried -- such
+/// a late event must be rejected, otherwise batched writes like `export.video` /
+/// `queue.run` would run twice (a duplicate-execution path confirmed in review).
 pub struct ControlEvent {
     pub id: String,
     pub args: Value,
@@ -110,6 +156,9 @@ pub struct ControlEvent {
 
 /// 在界面线程执行一条命令。实现可以是闭包（见 `AppState::sync_control`），
 /// 单测里换成 mock 即可脱离窗口。
+///
+/// Execute one command on the UI thread. The implementation can be a closure (see
+/// `AppState::sync_control`); tests swap in a mock and need no window.
 pub trait CommandExecutor: Send + Sync + 'static {
     fn execute(&self, id: &str, args: &Value) -> Result<Value, String>;
 }
@@ -126,11 +175,19 @@ where
 // ---------------------------------------------------------------- 命令清单
 
 /// 一条可被控制通道 / AI 面板 / MCP 附着模式调用的命令。
+///
+/// A command callable from the control channel, the AI panel, or MCP attach mode.
 pub struct CommandSpec {
     pub id: &'static str,
     /// 一句话说明，直接显示在 AI 面板与 MCP 的 tool description 里。
+    ///
+    /// One-line description, shown verbatim in the AI panel and in the MCP tool
+    /// description.
     pub summary: &'static str,
     /// 参数提示（中文短句）。
+    ///
+    /// Parameter hint (a short phrase, written in the source language and translated at
+    /// display time).
     pub params: &'static str,
     /// JSON Schema 原文，按需解析，避免启动时构造一堆对象。
     schema: &'static str,
@@ -146,6 +203,12 @@ impl CommandSpec {
 ///
 /// 这里是唯一的一份「ID + 说明 + 参数 + Schema」；执行体在
 /// `AppState::run_ui_command`，MCP 附着模式通过 `system.commands` 读这份清单。
+///
+/// The initial command list.
+///
+/// This is the only copy of "ID + description + parameters + schema"; the
+/// implementation lives in `AppState::run_ui_command`, and MCP attach mode reads this
+/// list through `system.commands`.
 pub fn command_catalog() -> Vec<CommandSpec> {
     vec![
         CommandSpec {
@@ -584,6 +647,8 @@ pub fn command_catalog() -> Vec<CommandSpec> {
 }
 
 /// 给 `system.commands` 用的 JSON 形态。
+///
+/// JSON form for `system.commands`.
 pub fn catalog_json() -> Vec<Value> {
     command_catalog()
         .into_iter()
@@ -599,6 +664,9 @@ pub fn catalog_json() -> Vec<Value> {
 }
 
 /// 给 AI 面板与文档用的附着命令（同一 exe，不需要第二个程序）。
+///
+/// The attach command shown in the AI panel and the docs (same executable, no
+/// second program needed).
 pub fn attach_command(control_path: &Path) -> String {
     format!(
         "\"{}\" --mcp --attach \"{}\"",
@@ -608,6 +676,9 @@ pub fn attach_command(control_path: &Path) -> String {
 }
 
 /// MCP 客户端通用的 `mcpServers` 配置片段，整段复制即可粘贴。
+///
+/// The `mcpServers` snippet every MCP client understands; copy the whole block and
+/// paste it.
 pub fn attach_config(control_path: &Path) -> String {
     serde_json::to_string_pretty(&json!({
         "mcpServers": {
@@ -630,6 +701,9 @@ fn executable_path() -> String {
 // ---------------------------------------------------------------- 服务端
 
 /// 运行中的控制服务。Drop 时停线程，并只删除自己写下的 control.json。
+///
+/// A running control server. Dropping it stops the thread and deletes only the
+/// control.json it wrote itself.
 pub struct ControlServer {
     file: ControlFile,
     path: PathBuf,
@@ -640,6 +714,8 @@ pub struct ControlServer {
 
 impl ControlServer {
     /// 绑定随机端口、写 control.json、起接受连接的线程。
+    ///
+    /// Bind a random port, write control.json, and start the accept thread.
     pub fn start(root: &Path, executor: Arc<dyn CommandExecutor>) -> Result<Self, String> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .map_err(|e| crate::i18n::tr_fmt("控制服务无法绑定 127.0.0.1：{}", &[&e]))?;
@@ -747,6 +823,9 @@ fn serve_stream(
 // ---------------------------------------------------------------- HTTP
 
 /// 处理一个 HTTP/1.1 请求。抽成泛型是为了在单测里用 Cursor 驱动整条链路。
+///
+/// Handle one HTTP/1.1 request. Generic so a unit test can drive the whole path from
+/// a Cursor.
 pub fn handle_http<R: BufRead, W: Write>(
     input: &mut R,
     out: &mut W,
@@ -876,6 +955,9 @@ pub fn handle_http<R: BufRead, W: Write>(
 }
 
 /// JSON-RPC 2.0 分发：`system.*` 本地处理，其余按命令 ID 交给执行器。
+///
+/// JSON-RPC 2.0 dispatch: names under `system.` are handled locally, everything else
+/// goes to the executor by command ID.
 pub fn rpc_response(request: Value, info: &ControlFile, executor: &dyn CommandExecutor) -> Value {
     let Value::Object(object) = request else {
         return rpc_error(Value::Null, -32600, "请求必须是单个 JSON-RPC 2.0 对象");
@@ -1007,6 +1089,13 @@ fn reason(status: u16) -> &'static str {
 ///
 /// 不引 rand：这条通道只在本机、生命周期短，`RandomState` 的种子已由标准库
 /// 从系统随机源取过，再混入时间与 pid 足够避免同机猜测。
+///
+/// Random token: several rounds over system time + process id + `RandomState`,
+/// rendered as 64 hex digits.
+///
+/// No `rand` dependency: this channel is local-only and short-lived, and the standard
+/// library already seeded `RandomState` from the OS entropy source; mixing in time and
+/// pid is enough to prevent same-machine guessing.
 pub fn random_token() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1032,6 +1121,9 @@ fn unix_secs() -> u64 {
 }
 
 /// 把 `--shot` 与 `ui.screenshot` 共用的写 PNG 逻辑放在这里，入口只调一处。
+///
+/// The PNG-writing logic shared by `--shot` and `ui.screenshot` lives here, so the
+/// entry points call one place.
 pub fn save_png(path: &Path, image: &egui::ColorImage) -> Result<(), String> {
     let [w, h] = image.size;
     let mut buf = Vec::with_capacity(w * h * 4);
@@ -1048,6 +1140,9 @@ pub fn save_png(path: &Path, image: &egui::ColorImage) -> Result<(), String> {
 }
 
 /// UI 线程持有一份 Sender，服务端线程持有一份；Sender 不是 Sync，用 Mutex 包一层。
+///
+/// The UI thread holds one Sender and the server thread holds another; `Sender` is not
+/// `Sync`, so it is wrapped in a `Mutex`.
 pub type SharedSender<T> = Arc<Mutex<Sender<T>>>;
 
 // ---------------------------------------------------------------- 单测
