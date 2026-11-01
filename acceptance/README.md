@@ -9,6 +9,7 @@ acceptance/
   check.sh           提交门槛：版本一致性 → 格式 → clippy → 全量测试 → 界面自检
   check_version.py   check.sh 的第 0 关（Cargo.toml 单一真源 → lock / README / CHANGELOG）
   check_docs.py      第 0 关后半段：每份入库文档都有中英孪生，且顶部互链
+  ../tools/doc_lint.py  第 0 关末段：生产代码的模块级 //! 与 pub 项的 /// 必须有英文块
   reference/         Python 参考实现（与 Rust 逐式同构的 numpy 镜像）
   oracle/            freeze_golden.py 等冻结脚本 + golden/ 里已冻结的金标数据
 ```
@@ -78,6 +79,9 @@ python acceptance/check_version.py
 
 # 只跑文档双语与链接检查（第 0 关后半段）
 python acceptance/check_docs.py
+
+# 只跑代码注释双语检查（第 0 关末段；--list 只列清单不判失败）
+python tools/doc_lint.py
 
 # 重冻结显影 / cube 金标（合成图，不读素材）
 ./.venv/Scripts/python.exe acceptance/oracle/freeze_golden.py --develop-only

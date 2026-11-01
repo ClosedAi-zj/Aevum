@@ -7517,6 +7517,10 @@ impl AppState {
 
     /// 把某个目录工程里的说明与版权读进信息面板的编辑缓冲。
     /// 只在展开/重扫目录时调用：面板每帧重绘，逐帧读会把正在输入的内容冲掉。
+    ///
+    /// Read a folder project's description and copyright into the info panel's editing buffer.
+    /// Called only when expanding or rescanning a folder: the panel repaints every frame, and
+    /// reading per frame would wipe what is being typed.
     pub fn lib_load_meta(&mut self, index: usize) {
         let Some(dir) = self.lib_roots.get(index).cloned() else {
             return;
@@ -7526,6 +7530,9 @@ impl AppState {
     }
 
     /// 信息面板的「存」：写回该目录的工程文件，其余字段原样保留。
+    ///
+    /// The info panel's Save: writes back to that folder's project file and keeps every other
+    /// field as it is.
     pub fn lib_save_meta(&mut self) -> Result<(), String> {
         let dir = self
             .lib_meta_root
@@ -7547,6 +7554,9 @@ impl AppState {
     }
 
     /// 图库加目录：同一目录只留一行并挪到末尾，随即展开编目。
+    ///
+    /// Add a folder to the library: the same folder keeps one row and moves to the end, then
+    /// its catalogue is expanded immediately.
     pub fn lib_add(&mut self, dir: &Path) -> usize {
         let index = aevum_core::library::add(&mut self.lib_roots, dir);
         while self.lib_entries.len() < self.lib_roots.len() {
@@ -7574,6 +7584,10 @@ impl AppState {
 
     /// 在图库里直接改一张的评级/旗标/色标：写回该目录自己的工程文件，
     /// 内存编目同步改，不重扫整个目录。
+    ///
+    /// Change one image's rating / flag / colour label straight from the library: written back
+    /// to that folder's own project file, with the in-memory catalogue updated in step and no
+    /// whole-folder rescan.
     pub fn lib_organize(
         &mut self,
         root: usize,
@@ -7606,6 +7620,9 @@ impl AppState {
     }
 
     /// 批量改一类帧：整批一次落盘，内存编目同步改。
+    ///
+    /// Change a class of frames in bulk: one write for the whole batch, with the in-memory
+    /// catalogue updated in step.
     pub fn lib_organize_many(
         &mut self,
         root: usize,
@@ -7642,6 +7659,9 @@ impl AppState {
     }
 
     /// 编目行被单击：普通点选一行，Ctrl 切换勾选，Shift 从锚点连选。
+    ///
+    /// A catalogue row was clicked: a plain click selects one row, Ctrl toggles its check
+    /// mark, Shift extends from the anchor.
     pub fn lib_click(&mut self, row: usize, ctrl: bool, shift: bool) {
         if shift && let Some(anchor) = self.lib_anchor {
             let (lo, hi) = (anchor.min(row), anchor.max(row));
@@ -7664,6 +7684,9 @@ impl AppState {
     }
 
     /// 键盘/右键的目标行：有勾选就作用于全部勾选，否则只作用于选中行。
+    ///
+    /// The rows the keyboard and context menu act on: every checked row when there are any,
+    /// otherwise just the selected row.
     pub fn lib_targets(&self) -> Vec<(usize, usize)> {
         let Some(root) = self.lib_sel else {
             return Vec::new();
@@ -7678,6 +7701,9 @@ impl AppState {
     }
 
     /// 对当前目标行套一次整理状态；返回改了几张。
+    ///
+    /// Apply one organise state to the current target rows; returns how many images
+    /// changed.
     pub fn lib_organize_targets(
         &mut self,
         patch: aevum_core::library::Organize,
@@ -7692,6 +7718,9 @@ impl AppState {
     }
 
     /// 给目标行加/去关键词（勾选优先）；整批只读写一次工程文件。
+    ///
+    /// Add / remove keywords on the target rows (checked rows take priority); the project file
+    /// is read and written once for the whole batch.
     pub fn lib_keyword_edit(&mut self, add: &[String], remove: &[String]) -> Result<usize, String> {
         let targets = self.lib_targets();
         let Some(&(root, _)) = targets.first() else {
@@ -7757,6 +7786,9 @@ impl AppState {
     }
 
     /// 并成一叠：写一次盘，返回归一化后的全部堆叠。少于两张由调用方拦。
+    ///
+    /// Merge into a stack: one disk write, returns all stacks after normalisation. Fewer than
+    /// two images is rejected by the caller.
     pub fn lib_stack_create(
         &mut self,
         root: usize,
@@ -7768,6 +7800,8 @@ impl AppState {
     }
 
     /// 拆散一叠（叠号 0 起）；越界当没这叠。
+    ///
+    /// Dissolve one stack (0-based stack index); out of range is treated as no such stack.
     pub fn lib_stack_dissolve(
         &mut self,
         root: usize,
@@ -7780,6 +7814,10 @@ impl AppState {
 
     /// 按文件名前缀自动分叠（`A001_0001`…/`B002_0001`… 各成一叠）：整目录重写堆叠，
     /// 评级、关键词、元数据一律不动。
+    ///
+    /// Group automatically by filename prefix (`A001_0001`..., `B002_0001`... each become a
+    /// stack): rewrites the stacks of the whole folder and leaves ratings, keywords and
+    /// metadata untouched.
     pub fn lib_stack_auto(&mut self, root: usize) -> Result<Vec<Vec<usize>>, String> {
         let dir = self.lib_dir(root)?;
         let names: Vec<String> = match self.lib_entries.get(root) {
@@ -7793,6 +7831,8 @@ impl AppState {
     }
 
     /// 把目标行（勾选优先）并成一叠；返回这一叠的张数。
+    ///
+    /// Merge the target rows (checked rows take priority) into one stack; returns its size.
     pub fn lib_stack_targets(&mut self) -> Result<usize, String> {
         let targets = self.lib_targets();
         let Some(&(root, first)) = targets.first() else {
@@ -7810,6 +7850,9 @@ impl AppState {
     }
 
     /// 拆散目标行所在的那一叠；返回被放出来的张数。目标行不在叠里就是错。
+    ///
+    /// Dissolve the stack the target rows belong to; returns how many images were released.
+    /// An error when the target rows are in no stack.
     pub fn lib_stack_dissolve_targets(&mut self) -> Result<usize, String> {
         let targets = self.lib_targets();
         let Some(&(root, first)) = targets.first() else {
@@ -7833,6 +7876,9 @@ impl AppState {
     }
 
     /// 选中的编目行 →（目录序号, 帧号, 文件），键盘与「加入集合」共用。
+    ///
+    /// The selected catalogue row -> (folder index, frame index, file); shared by the keyboard
+    /// and "add to collection".
     pub fn lib_selected(&self) -> Option<(usize, usize, aevum_core::library::LibFile)> {
         let (root, frame) = (self.lib_sel?, self.lib_sel_file?);
         let f = self.lib_entries.get(root)?.get(frame)?.clone();
@@ -7840,6 +7886,8 @@ impl AppState {
     }
 
     /// 编目里上下挪选中行；跳过被筛掉的行。
+    ///
+    /// Move the selected row up or down in the catalogue, skipping filtered-out rows.
     pub fn lib_step_row(&mut self, delta: i64) {
         let Some(root) = self.lib_sel else { return };
         let Some(entries) = self.lib_entries.get(root) else {
@@ -7884,6 +7932,8 @@ impl AppState {
     }
 
     /// 把一张照片放进集合；已存在返回 `false`。
+    ///
+    /// Put one photo into a collection; returns `false` when it is already there.
     pub fn lib_collection_put(&mut self, col: usize, path: &Path) -> Result<bool, String> {
         if col >= self.lib_cols.len() {
             return Err(crate::i18n::tr_fmt(
@@ -7899,6 +7949,9 @@ impl AppState {
     }
 
     /// 一次把几张放进集合；返回新加进去的张数（已在里面的不算）。
+    ///
+    /// Put several photos into a collection at once; returns how many were newly added (ones
+    /// already inside do not count).
     pub fn lib_collection_put_many(&mut self, col: usize, paths: &[PathBuf]) -> usize {
         let mut added = 0;
         for path in paths {
@@ -7922,6 +7975,11 @@ impl AppState {
 
     /// 集合视图的行：成员路径先在已编目的根目录里找（评级与帧号跟着来），
     /// 找不到的给一行只带路径的占位——目录还没展开过时也能看集合有哪些照片。
+    ///
+    /// The rows of the collection view: member paths are looked up in the catalogued roots
+    /// first (so ratings and frame indices come along), and misses get a path-only placeholder
+    /// row -- the collection's contents are visible even before a folder has ever been
+    /// expanded.
     pub fn lib_collection_rows(&self, col: usize) -> Vec<aevum_core::library::LibFile> {
         let Some(collection) = self.lib_cols.get(col) else {
             return Vec::new();
@@ -7955,6 +8013,9 @@ impl AppState {
     }
 
     /// 图库可见行的缩略图：按路径键，后台线程与序列缩略图共用同一个池。
+    ///
+    /// Thumbnails for the visible library rows: keyed by path, and the background thread
+    /// shares the same pool as the sequence thumbnails.
     pub fn lib_ensure_thumbs(&mut self, ctx: &Context, lo: usize, hi: usize) {
         let Some(index) = self.lib_sel else { return };
         let Some(entries) = self.lib_entries.get(index) else {
@@ -7971,6 +8032,9 @@ impl AppState {
     }
 
     /// 任意一批照片的缩略图（集合视图也走这里）。
+    ///
+    /// Thumbnails for an arbitrary batch of photos (the collection view goes through here
+    /// too).
     pub fn lib_ensure_thumb_paths(&mut self, ctx: &Context, paths: Vec<PathBuf>) {
         if self.headless {
             return;
@@ -8058,6 +8122,9 @@ impl AppState {
     }
 
     /// 当前调色等于哪套副本：整表现算，不留一个改参后会过期的字段。
+    ///
+    /// Which copy the current grade equals: computed from the whole table every time, with no
+    /// field that could go stale after a parameter change.
     pub fn active_copy(&self) -> Option<&str> {
         self.copies
             .iter()
@@ -8198,17 +8265,29 @@ impl AppState {
 
     /// 画布当前是不是裁剪态：裁剪工具或构图模块。这时预览画整帧，
     /// 取景框只是盖在上面的一层矢量，拖它不重画像素。
+    ///
+    /// Whether the canvas is in crop mode: the crop tool, or the composition module. In that
+    /// mode the preview draws the whole frame and the viewfinder is only a vector layer on top,
+    /// so dragging it repaints no pixels.
     pub fn crop_editing(&self) -> bool {
         self.tool == Tool::Crop || self.module == Module::Frame
     }
 
     /// 画布上是「像素不动、只拖矢量框」的两种态之一：拖裁剪框或拖运镜取景框。
     /// 这两种态下预览都不把取景框叠进像素，所以拖动跟手。
+    ///
+    /// Whether the canvas is in one of the two states where "pixels stay put, only a vector
+    /// box is dragged": dragging the crop box, or dragging the motion viewfinder. In both, the
+    /// preview does not bake the box into the pixels, which is what makes the drag feel attached
+    /// to the cursor.
     pub fn vector_editing(&self) -> bool {
         self.crop_editing() || self.motion_editing()
     }
 
     /// 画布上要画的那个框：拖过的用拖出来的，没拖过给当前取景（再兜底整块可见区）。
+    ///
+    /// The box to draw on the canvas: the dragged one when there is one, otherwise the current
+    /// framing (with the whole visible area as a final fallback).
     pub fn crop_box(&self) -> CropRect {
         self.user_crop
             .or_else(|| self.effective_crop())
@@ -8217,6 +8296,11 @@ impl AppState {
 
     /// 画布上画出来的那块像素（旋转后坐标）：整幅，或拉直削出来的安全区。
     /// 裁剪态的覆盖层按它换算屏幕坐标，所以框永远只在有像素的地方走。
+    ///
+    /// The block of pixels drawn on the canvas (post-rotation coordinates): the whole frame,
+    /// or the safe area left after straightening.
+    /// The crop-mode overlay converts screen coordinates against it, so the box can never travel
+    /// where there are no pixels.
     pub fn crop_view(&self) -> CropRect {
         let (w, h) = self.resolution.unwrap_or((1, 1));
         let full = CropRect { x: 0, y: 0, w, h };
@@ -8239,6 +8323,14 @@ impl AppState {
     /// 这里只摆拖拽姿态，不写 `user_crop`、不登记历史——「按下」本身不是编辑。
     /// 框的固化和历史登记都在 `crop_drag_to`：一次拖动 = 一步历史，
     /// 点一下画布什么都不会留下（v0.3.0 之前纯点击也会挤出一条裁剪历史）。
+    ///
+    /// Mouse down on the canvas: hitting a handle resizes, hitting inside the box pans, and
+    /// landing outside starts a new box.
+    ///
+    /// This only sets the drag posture; it does not write `user_crop` and registers no history --
+    /// "mouse down" on its own is not an edit. Committing the box and recording history both
+    /// happen in `crop_drag_to`: one drag equals one history step, and clicking the canvas leaves
+    /// nothing behind (before v0.3.0 a bare click squeezed out a crop history entry).
     pub fn crop_begin(&mut self, at: [f64; 2], hit: crop::Hit) {
         let cur = self.crop_box();
         self.crop_drag = Some(match hit {
@@ -8254,6 +8346,9 @@ impl AppState {
     }
 
     /// 拖动中：几何规则全在 `aevum_core::crop`，这里只喂坐标。
+    ///
+    /// During the drag: all the geometry rules live in `aevum_core::crop`; this only feeds
+    /// coordinates.
     pub fn crop_drag_to(&mut self, at: [f64; 2]) {
         let Some(drag) = self.crop_drag else { return };
         let Some((w, h)) = self.resolution else {
@@ -8281,6 +8376,9 @@ impl AppState {
     }
 
     /// 松手：框铺满可见区等于没裁，退回默认取景，省掉一次无谓的重画。
+    ///
+    /// Mouse up: a box covering the whole visible area means no crop at all, so it falls back to
+    /// the default framing and saves a pointless repaint.
     pub fn crop_end(&mut self) {
         self.crop_drag = None;
         let view = self.crop_view();
@@ -8298,6 +8396,8 @@ impl AppState {
     }
 
     /// 方向键微调取景框：`step` 一般给 2，按住 Shift 给 10。
+    ///
+    /// Arrow-key nudge of the viewfinder: `step` is normally 2, and 10 with Shift held.
     pub fn crop_nudge(&mut self, dx: i64, dy: i64, step: u32) {
         let Some((w, h)) = self.resolution else {
             return;
@@ -8311,6 +8411,8 @@ impl AppState {
     }
 
     /// 取消手动裁剪，回到「按比例内接」的默认取景。
+    ///
+    /// Cancel the manual crop and return to the default "aspect ratio inscribed" framing.
     pub fn crop_reset(&mut self) {
         if self.user_crop.take().is_some() {
             self.crop_drag = None;
@@ -8322,12 +8424,21 @@ impl AppState {
     /// 画布是不是在拖运镜取景框：这时预览画的是取景基准那一幅（不是框里的内容），
     /// 两个框只是盖在上面的矢量，所以拖动一个像素都不重画。裁剪态优先——
     /// 同一时刻只有一层矢量框拿鼠标。
+    ///
+    /// Whether the canvas is dragging the motion viewfinder: the preview then draws the reference
+    /// frame (not the contents of the box), and the two boxes are only a vector layer on top, so
+    /// dragging repaints nothing.
+    /// Crop mode wins -- only one vector layer holds the mouse at a time.
     pub fn motion_editing(&self) -> bool {
         self.motion_picking && !self.crop_editing()
     }
 
     /// 开关画布的取景框编辑：进入时要重画一次「整幅」预览，离开时要重画回
     /// 框里的内容，两头都得脏一次。
+    ///
+    /// Toggle canvas viewfinder editing: entering must repaint the whole-frame preview once,
+    /// and leaving must repaint the contents of the box once -- both ends need one dirty
+    /// frame.
     pub fn set_motion_picking(&mut self, on: bool) {
         if self.motion_picking == on {
             return;
@@ -8355,6 +8466,11 @@ impl AppState {
 
     /// 取景框归一化的基准那一幅（拉直 + 导出取景之后的像素框，对齐坐标）。
     /// 画布把预览铺回这一幅，框才画在它对得上的位置上。
+    ///
+    /// The frame the viewfinder is normalised against (the pixel box after straightening and
+    /// export cropping, in align coordinates).
+    /// The canvas lays the preview back onto this frame, which is what puts the box where it
+    /// visually belongs.
     pub fn motion_base_rect(&self) -> CropRect {
         let (w, h) = self.resolution.unwrap_or((1, 1));
         self.effective_crop()
@@ -8363,6 +8479,11 @@ impl AppState {
 
     /// 取景框换算成基准那一幅里的整数像素框（对齐坐标，带基准原点偏移）。
     /// 画布画它、拖它都走这个口径，归一化与像素的往返只在这里发生一次。
+    ///
+    /// Convert a viewfinder into an integer pixel box inside the reference frame (align
+    /// coordinates, with the reference origin offset applied).
+    /// Drawing and dragging both go through this definition; the normalised to pixel round trip
+    /// happens exactly once, here.
     pub fn motion_rect_of(&self, v: Viewfinder) -> CropRect {
         let base = self.motion_base_rect();
         let v = v.normalized();
@@ -8383,6 +8504,8 @@ impl AppState {
     }
 
     /// 某一端当前占的那块像素。
+    ///
+    /// The pixels either end currently occupies.
     pub fn motion_box_rect(&self, which: MotionBox) -> CropRect {
         self.motion_rect_of(match which {
             MotionBox::Start => self.motion.from,
@@ -8391,6 +8514,9 @@ impl AppState {
     }
 
     /// 选中帧上运镜走到的那一格：画布上给一条「现在在哪」的参照框。
+    ///
+    /// Where the motion has reached on the selected frame: a reference box on the canvas saying
+    /// "you are here".
     pub fn motion_current_rect(&self) -> Option<CropRect> {
         let n = self.frame_count();
         self.motion_view_at(self.selected.min(n.saturating_sub(1)), n)
@@ -8444,6 +8570,14 @@ impl AppState {
     ///
     /// 与 `crop_begin` 同一条规矩：按下只摆姿态，不落账不记历史。「点一下就
     /// 偷偷启用运镜并挤出一条历史」是 v0.3.0 的实测毛病；启用发生在真的拖动时。
+    ///
+    /// Mouse down on the canvas: handle = resize, inside = pan, outside = start a new box. The
+    /// same test as cropping, except the coordinate conversion lands on the reference frame and
+    /// the result is written into `motion.from` or `motion.to`.
+    ///
+    /// Same rule as `crop_begin`: mouse down only sets the posture, writes nothing and records no
+    /// history. "One click silently enables the motion and squeezes out a history entry" was a
+    /// real problem measured in v0.3.0; enabling happens on an actual drag.
     pub fn motion_begin(&mut self, at: [f64; 2], hit: crop::Hit) {
         let cur = self.motion_box_rect(self.motion_box);
         self.motion_drag = Some(match hit {
@@ -8459,6 +8593,9 @@ impl AppState {
     }
 
     /// 拖动中：只改草稿对应的取景框，不重画预览。
+    ///
+    /// During the drag: only the draft's viewfinder changes, and the preview is not
+    /// repainted.
     pub fn motion_drag_to(&mut self, at: [f64; 2]) {
         let Some(drag) = self.motion_drag else { return };
         let base = self.motion_base_rect();
@@ -8519,11 +8656,17 @@ impl AppState {
     }
 
     /// 松手：预览不用重画（拖的那一层是矢量），只把这次的尺寸留在历史上。
+    ///
+    /// Mouse up: the preview needs no repaint (the dragged layer is a vector); only this size is
+    /// left in the history.
     pub fn motion_end(&mut self) {
         self.motion_drag = None;
     }
 
     /// 方向键微调当前拖的那一端：`step` 一般给 2，按住 Shift 给 10。只在取景框编辑态用。
+    ///
+    /// Arrow-key nudge of the end being dragged: `step` is normally 2, and 10 with Shift held.
+    /// Used only in viewfinder editing mode.
     pub fn motion_nudge(&mut self, dx: i64, dy: i64, step: u32) {
         let base = self.motion_base_rect();
         if base.w < 2 || base.h < 2 {
@@ -8557,6 +8700,9 @@ impl AppState {
     }
 
     /// 开关运镜：关掉就是不动，预览得从「框里的内容」重画回整幅。
+    ///
+    /// Toggle the motion: turning it off means no movement, so the preview must repaint from the
+    /// contents of the box back to the whole frame.
     pub fn set_motion_enabled(&mut self, on: bool) {
         if self.motion.enabled == on {
             return;
@@ -8579,6 +8725,9 @@ impl AppState {
     }
 
     /// 起点终点互换：倒放同一条运动，框不用重拖。
+    ///
+    /// Swap start and end: plays the same movement backwards without dragging the boxes
+    /// again.
     pub fn motion_swap(&mut self) {
         std::mem::swap(&mut self.motion.from, &mut self.motion.to);
         self.preview_dirty = true;
@@ -8586,6 +8735,9 @@ impl AppState {
     }
 
     /// 把当前拖的那一端铺满整幅：想「从全景推到细节」时先按一下，省得拉把手拉半天。
+    ///
+    /// Fill the whole frame with the end being dragged: press this first when you want a push-in
+    /// from the whole view to a detail, instead of hauling the handle around.
     pub fn motion_fill_box(&mut self) {
         match self.motion_box {
             MotionBox::Start => self.motion.from = crop::FULL,
@@ -8600,6 +8752,9 @@ impl AppState {
     }
 
     /// 清除运镜：整块回到默认（关着、起点整幅、终点往里收一档）。
+    ///
+    /// Clear the motion: the whole block returns to its defaults (off, start = whole frame, end
+    /// inset by one step).
     pub fn motion_reset(&mut self) {
         if self.motion == Motion::default() {
             return;
@@ -8627,6 +8782,10 @@ impl AppState {
 
     /// 拉直：把整幅按 `deg` 度（正角=画面逆时针）转过去。0 附近吸一下，
     /// 因为推子停在 -0.3 这种值上时，人想要的一定是「没转」。
+    ///
+    /// Straighten: rotate the whole frame by `deg` degrees (positive = image
+    /// counter-clockwise). It snaps near 0, because when the fader sits at -0.3 the user
+    /// certainly meant "not rotated".
     pub fn set_rotate(&mut self, deg: f64) {
         let snapped = if deg.abs() <= 0.2 { 0.0 } else { deg };
         if (self.rotate - snapped).abs() <= 1e-6 {
@@ -8917,6 +9076,9 @@ impl AppState {
     }
 
     /// 这一趟续跑跳过了几帧：没开续跑、或者还没数完，都是 0。
+    ///
+    /// How many frames this run skipped through resume: 0 when resume is off or the count is not
+    /// in yet.
     pub fn export_skipped(&self) -> usize {
         self.export_skipped_shared.load(Ordering::Relaxed)
     }
@@ -8937,6 +9099,9 @@ impl AppState {
     // ------------------------------------------------------------ 渲染队列
 
     /// 启动时从漫游配置读队列；测试用 `AppState::new` 不会碰这份文件。
+    ///
+    /// Read the queue from the roaming config at startup; `AppState::new` in tests never touches
+    /// that file.
     pub fn load_queue(&mut self) {
         self.queue = queue::load(&self.queue_path);
     }
@@ -9027,6 +9192,9 @@ impl AppState {
     }
 
     /// 把当前序列与成片设置排进队列；同一目录重复加入等于更新规格。
+    ///
+    /// Queue the current sequence and its render settings; adding the same folder again updates
+    /// its spec.
     pub fn add_current_to_queue(&mut self) -> Result<usize, String> {
         if self.queue_busy {
             return Err("队列正在渲染，先取消或等它跑完".to_owned());
@@ -9068,6 +9236,9 @@ impl AppState {
     }
 
     /// 开始逐段渲染；立即返回，进度看 `queue.status`。
+    ///
+    /// Start rendering segment by segment; returns immediately, watch `queue.status` for
+    /// progress.
     pub fn start_queue(&mut self, ctx: &Context) -> Result<usize, String> {
         if self.headless {
             return Err("当前是无界面模式，不能启动队列".to_owned());
@@ -9174,6 +9345,8 @@ impl AppState {
     }
 
     /// 面板按钮用：按 0 基序号移除一段。
+    ///
+    /// For the panel buttons: remove one segment by 0-based index.
     pub fn remove_queue_at(&mut self, index: usize) -> bool {
         if self.queue_busy || index >= self.queue.len() {
             return false;
@@ -9644,6 +9817,19 @@ impl AppState {
     ///
     /// 注意 `GradeParams::default()` 的锐化保护仍是 0（旧工程 JSON 缺字段也反序列化
     /// 成 0、渲染走旧路径）：20 只在这里给新建工程，不进引擎默认、不进预设。
+    ///
+    /// Default parameters for a first RAW import: sharpen 40 / sharpen guard 20 / luminance
+    /// denoise 25.
+    ///
+    /// Hooked in after `load_project` and before `history_reset` in `open_paths`: "only once" is
+    /// guaranteed by the project file -- the first import writes the project (including these
+    /// defaults), and later opens read it, so the condition no longer holds; an ordinary image
+    /// sequence contains no RAW frames and is unaffected.
+    /// The defaults enter the initial history, so one undo returns to a clean state.
+    ///
+    /// Note that `GradeParams::default()` still has a sharpen guard of 0 (project JSON missing
+    /// the field also deserialises to 0 and renders the old path): 20 is given only to newly
+    /// created projects, never to the engine defaults or the presets.
     pub fn apply_raw_import_defaults(&mut self, root: &Path) {
         if project::project_path(root).is_file() {
             return;
@@ -9660,6 +9846,10 @@ impl AppState {
 
     /// 状态栏「应用边车」的一键动作：把检测到的边车当预设导入（整体替换
     /// 全局参数，与 `xmp.import` 同口径），失败落 error、成功记历史。
+    ///
+    /// The status bar's one-click "apply sidecar": import the detected sidecar as a preset
+    /// (replacing the global parameters wholesale, the same definition as `xmp.import`), raising
+    /// `error` on failure and recording history on success.
     pub fn apply_sidecar_hint(&mut self) {
         let Some(path) = self.sidecar_hint.take() else {
             return;
@@ -9758,6 +9948,9 @@ impl AppState {
     }
 
     /// 测试与截图用的演示状态：不碰磁盘，序列与测光都是合成的。
+    ///
+    /// Demo state for tests and screenshots: touches no disk, with a synthetic sequence and
+    /// synthetic metering.
     pub fn demo() -> Self {
         use aevum_core::sequence::Frame;
         let n = 48usize;
@@ -9841,6 +10034,9 @@ impl AppState {
     }
 
     /// 截图用的一套演示编辑：一张径向局部蒙版，选中并展开面板。
+    ///
+    /// The demo edit used for screenshots: one radial local mask, selected, with its panel
+    /// expanded.
     pub fn apply_demo_edit(&mut self) {
         let mut demo_mask = mask::new_mask(mask::ShapeKind::Radial);
         if let Some(comp) = demo_mask
@@ -9883,6 +10079,9 @@ impl AppState {
     }
 
     /// 给无显示环境铺一套合成纹理，让画布与胶片条的绘制路径也被走到。
+    ///
+    /// Lay down a set of synthetic textures for display-less environments, so the canvas and
+    /// filmstrip drawing paths are exercised too.
     pub fn install_demo_textures(&mut self, ctx: &Context) {
         let (w, h) = (960usize, 540usize);
         let mut pixels = Vec::with_capacity(w * h);
@@ -10765,6 +10964,8 @@ fn geometry_number(key: &str, value: &Value) -> Result<f64, String> {
 }
 
 /// 组级亮度范围的存盘形状：0~1 的区间 + 开关。
+///
+/// The persisted shape of a group-level luminance range: an interval in 0..1 plus a toggle.
 pub fn lum_range_json(range: &aevum_core::mask::LumRange) -> Value {
     json!({
         "lum_on": range.on,

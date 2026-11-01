@@ -5,6 +5,15 @@
 //!
 //! 故意不复用 [`aevum_core::plugin_host::PluginSide::handshake`]：
 //! 那会正常回 ready，挂死就测不到了。
+//!
+//! Handshake-hang sample: receives hello and then plays dead without replying.
+//!
+//! The host's handshake watchdog must kill it on timeout, otherwise `Host::start` blocks
+//! forever.
+//! A regression target, not a feature example -- a "normal" plugin should not imitate it.
+//!
+//! Deliberately does not reuse [`aevum_core::plugin_host::PluginSide::handshake`]: that
+//! would reply ready like a good plugin, and the hang would be untestable.
 
 use std::io::BufRead;
 use std::time::Duration;

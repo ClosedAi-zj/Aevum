@@ -2,6 +2,13 @@
 //!
 //! 宿主的握手失败路径必须杀进程收尸，不能留一个僵尸占着管道。
 //! 这也是回归测试的靶子 —— 一个"正常"的插件报错后应当自己退出。
+//!
+//! Handshake-refusal sample: answer with an error, then refuse to exit.
+//!
+//! The host's handshake-failure path must kill and reap the process; leaving a zombie
+//! holding the pipe is not acceptable.
+//! This is a regression target too -- a "normal" plugin should exit by itself after
+//! reporting an error.
 
 use std::io::{BufRead, Write};
 use std::time::Duration;

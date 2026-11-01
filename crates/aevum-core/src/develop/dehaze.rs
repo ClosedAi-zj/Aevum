@@ -43,8 +43,12 @@ const AIRLIGHT_FLOOR: f32 = 1e-3;
 #[allow(dead_code)]
 pub(crate) struct DehazeMaps {
     /// 精修后的透射场 t''，钳在 [t0, 1]。
+    ///
+    /// The refined transmission field t'', clamped to [t0, 1].
     pub transmission: Vec<f32>,
     /// 大气光单点估计（线性域 RGB）。
+    ///
+    /// Single-point estimate of the atmospheric light (linear-domain RGB).
     pub airlight: [f32; 3],
 }
 

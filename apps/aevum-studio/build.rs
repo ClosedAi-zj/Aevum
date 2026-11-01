@@ -5,6 +5,16 @@
 //!
 //! `rc.exe` 只有装了 Windows SDK 的机器上才有，找不到就跳过并留一条 warning——
 //! CI 上照样绿，只是那份包不带文件图标。
+//!
+//! Embed `assets/app.ico` into the executable's resource section.
+//!
+//! Without this step, Explorer, taskbar shortcuts and "send to desktop" all show the
+//! default blank page: the window icon is supplied at runtime, but the file icon can only
+//! come from the PE resource section.
+//!
+//! `rc.exe` exists only on machines with the Windows SDK; when it cannot be found the step
+//! is skipped with a warning -- CI still goes green, the package just ships without a file
+//! icon.
 
 use std::env;
 use std::fs;

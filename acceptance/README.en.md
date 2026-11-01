@@ -10,6 +10,7 @@ acceptance/
   check.sh           commit gate: versions → format → clippy → full tests → UI self-check
   check_version.py   gate 0 of check.sh (Cargo.toml as the single source of truth → lock / README / CHANGELOG)
   check_docs.py      gate 0, second half: every tracked document has a Chinese/English twin, cross-linked
+  ../tools/doc_lint.py  gate 0, last step: module-level //! and /// on pub items need an English block
   reference/         the Python reference implementation (a numpy mirror, formula by formula)
   oracle/            freeze_golden.py and friends + the frozen golden data under golden/
 ```
@@ -89,6 +90,9 @@ python acceptance/check_version.py
 
 # documents only (gate 0, second half)
 python acceptance/check_docs.py
+
+# code comments only (gate 0, last step; --list prints the list without failing)
+python tools/doc_lint.py
 
 # re-freeze the develop / cube golden (synthetic images, reads no footage)
 ./.venv/Scripts/python.exe acceptance/oracle/freeze_golden.py --develop-only
