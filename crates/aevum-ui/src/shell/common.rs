@@ -1,4 +1,7 @@
 //! 面板公共件：预设栏、侧栏行、组头、滑杆、键值行（被 adjust/mask/dock 引用）。
+//!
+//! Shared panel pieces: preset column, sidebar rows, group headers, sliders,
+//! key-value rows (used by adjust / mask / dock).
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::INSET_RIM;

@@ -1,4 +1,7 @@
 //! 画布区：图像绘制、裁剪/运动叠加、手柄、标尺与空态。
+//!
+//! Canvas area: image drawing, crop and motion overlays, handles, rulers and the
+//! empty state.
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::MICRO;

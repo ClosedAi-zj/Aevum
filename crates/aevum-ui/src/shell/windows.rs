@@ -1,4 +1,7 @@
 //! 浮动窗口：菜单段/内置动作/插件菜单/市场/调色窗口/关于。
+//!
+//! Floating windows: menu sections, built-in actions, plugin menu, marketplace,
+//! grading window, about.
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::library::group_title;

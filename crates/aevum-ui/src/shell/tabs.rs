@@ -1,4 +1,6 @@
 //! 信息/快捷键/AI/历史四个页签。
+//!
+//! The four tabs: info, shortcuts, AI, history.
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::common::bar_button_on;

@@ -1,4 +1,7 @@
 //! 蒙版域：几何解析、画布 overlay 与手柄、画笔、面板与缓存（性能重构设计 §7）。
+//!
+//! Mask domain: geometry resolution, canvas overlay and handles, brush, panel and
+//! caches (performance refactor design section 7).
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::common::group_header;
@@ -69,6 +72,10 @@ pub struct MaskGeoCache {
 
 /// 直方图 4 个 Mesh 形状的缓存（E6）：键 = (hist_version, rect)。
 /// `Shape::Mesh` 持 `Arc<Mesh>`（epaint 0.37 已确认），命中时 clone 零拷贝。
+///
+/// Cache for the four histogram `Mesh` shapes (E6): key = (hist_version, rect).
+/// `Shape::Mesh` holds `Arc<Mesh>` (confirmed in epaint 0.37), so a hit clones with
+/// zero copy.
 pub struct HistMeshCache {
     pub(crate) version: u64,
     pub(crate) rect: Rect,
@@ -76,6 +83,9 @@ pub struct HistMeshCache {
 }
 
 /// 去闪亮度曲线两条折线点集的缓存（E5）：键 = (corr_version, 帧数, inner rect)。
+///
+/// Cache for the two polyline point sets of the deflicker luminance curve (E5):
+/// key = (corr_version, frame count, inner rect).
 pub struct DeflCurveCache {
     pub(crate) version: u64,
     pub(crate) n: usize,

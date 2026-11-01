@@ -1,4 +1,7 @@
 //! 底部两行：时间线、曲线、色标、胶片条与走带控制。
+//!
+//! The two bottom rows: timeline, curve, colour scale, filmstrip and transport
+//! controls.
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::MICRO;

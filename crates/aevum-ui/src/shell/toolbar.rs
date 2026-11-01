@@ -1,4 +1,7 @@
 //! 选项栏/文档页签/工具轨/状态栏（界面顶部与左右竖条）。
+//!
+//! Options bar, document tabs, tool rail, status bar (the top strip and the left and
+//! right rails).
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::BAR_H;

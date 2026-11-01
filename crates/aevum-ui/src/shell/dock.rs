@@ -1,4 +1,6 @@
 //! 右坞骨架：页签容器、直方图与平滑辅助。
+//!
+//! Right dock skeleton: tab container, histogram and smoothing helpers.
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::adjust::adjust_tab;

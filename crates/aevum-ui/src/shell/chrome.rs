@@ -1,4 +1,7 @@
 //! 窗口镶边：拖拽缩放区、三枚窗口按钮（mac 红绿灯 / Win 几何）。
+//!
+//! Window chrome: drag-to-resize zones and the three window buttons (macOS traffic
+//! lights / Windows geometry).
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use crate::platform;

@@ -1,4 +1,7 @@
 //! 顶部菜单行与全局输入：菜单/菜单项/四个下拉、键盘与滚轮分发。
+//!
+//! Top menu row and global input: menus, menu items, the four dropdowns, keyboard and
+//! wheel dispatch.
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::chrome::window_buttons;

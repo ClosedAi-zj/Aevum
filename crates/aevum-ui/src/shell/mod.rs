@@ -2,6 +2,13 @@
 //! 配 Lightroom 式右侧直方图、折叠调整组和底部胶片条。
 //!
 //! 只借布局与交互习惯，图标、配色与控件全部自绘。
+//!
+//! UI shell: a Photoshop-style menu row, options bar, tool rail and ruled canvas,
+//! paired with a Lightroom-style histogram on the right, collapsible adjustment groups
+//! and a bottom filmstrip.
+//!
+//! Only the layout and interaction habits are borrowed; icons, colour schemes and
+//! controls are all drawn in-house.
 
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 

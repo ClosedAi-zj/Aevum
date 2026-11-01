@@ -1,4 +1,7 @@
 //! 调整组全家：显影/颜色/细节/成片队列等右侧 dock 的调整面板。
+//!
+//! All adjustment groups: the develop / colour / detail / render queue panels of the
+//! right dock.
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::BAR_H;

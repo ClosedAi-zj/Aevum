@@ -1,4 +1,7 @@
 //! 系统对话框：打开照片/序列、XMP 导入导出、.cube 导入导出、音轨选择。
+//!
+//! System dialogs: open photo / sequence, XMP import and export, .cube import and
+//! export, audio track picking.
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use crate::state::AppState;

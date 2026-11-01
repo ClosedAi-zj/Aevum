@@ -1,4 +1,7 @@
 //! 图库：目录树/筛选/元数据/目录视图/堆叠与关键字应用。
+//!
+//! Library: folder tree, filtering, metadata, folder view, stacks and keyword
+//! application.
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::UV;
