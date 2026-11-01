@@ -13,6 +13,70 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.0.1 — 2026-11-01
+
+A patch release: fixes only, no new features. **Three of the five fixes are "it happened twice"
+or "it hung forever"** — none of them raises an error, they just make the program look broken.
+The four public contracts (project format / presets and parameters / command line / MCP tool set)
+are untouched; install over the previous version.
+
+### Fixed: a hung plugin no longer leaves the app stuck on "running"
+
+If a plugin process says nothing during the handshake (wrong entry point, crashes on start, or
+simply stalls while initialising), the UI used to keep showing that job as "running" forever, and
+cancelling did not help — cancelling only raises a flag, and the blocked thread never reaches the
+point where that flag is checked. The handshake now has its own 30-second cap: on timeout the
+process is killed and an error is returned. A refused handshake (protocol too old, plugin declines)
+also cleans the process up instead of leaving a zombie holding the pipe.
+
+### Fixed: a control command that timed out is no longer executed a second time
+
+When a command is sent through the control channel for scripts or automation, and the UI stays
+busy for more than 30 seconds, the client receives a timeout. The command used to stay queued and
+be executed anyway once the UI freed up — if the client then retried, write commands such as
+`export.video`, `queue.run` and `hdr.merge` ran twice, producing two files from one clip or two
+processes fighting over the same output. Commands that waited past the limit are now discarded
+with an explicit "not executed, to avoid colliding with a retry" reply.
+
+### Fixed: queue rendering uses the parameters from when the item was added, not the old project on disk
+
+After changing the grade following a queue-up, the rendered clip could miss the last few
+adjustments — rendering read the project file from disk, and autosave runs every 5 seconds and is
+skipped while the UI is busy. The UI promises "each item uses the project parameters from when it
+was added; changing the grade later does not require re-queueing", and that is now actually true:
+the in-memory project is captured into the item when it is added, and rendering prefers it. Older
+queue files still load (no snapshot means falling back to disk, exactly as before).
+**Stated cost**: queue files get bigger — each item carries one project snapshot (tens of KB).
+
+### Fixed: a chatty plugin can no longer eat all memory
+
+Messages a plugin sends back are one line of text each. Any length used to be accepted, so a broken
+plugin (or a stray debug print) could exhaust the host's memory by streaming bytes without a
+newline. A single message is now capped at 4 MB; exceeding it disconnects and kills the plugin.
+Pixel frames already had an 8 MB cap — this closes the text half. The plugin side reading host
+messages has the same limit, because the protocol is symmetric and guarding one side is not enough.
+
+### Fixed: a crash while saving can no longer lose the whole project
+
+Saving was "write temp file → delete the old file → rename". There is a very short window between
+the delete and the rename; losing power or crashing exactly there lost the project. It is now
+"write temp file and flush → rename the old file to `.bak` → rename the new file into place":
+if any step fails the old file is still there, and the operation rolls back. When loading, a
+corrupt main file falls back to `.bak` (the last version known to be good), so half-written JSON
+no longer throws the grade away.
+
+### Fixed: three remaining Chinese strings in the English UI
+
+The clip-path row, the "All" filter label, and automatic snapshot naming plus its two status
+sentences still showed Chinese in English mode. Filled in (English entries 703 → 706).
+
+### Known limitations
+
+Identical to `1.0.0` — see the nine items in "3. Known limitations" of
+`docs/发布说明-v1.0.0.en.md`; none of them is addressed by this release.
+
+---
+
 ## v1.0.0 — 2026-10-31
 
 The first stable release. **It is not about more features — it is three things holding at once**:
