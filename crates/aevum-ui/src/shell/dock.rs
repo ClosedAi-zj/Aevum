@@ -540,6 +540,8 @@ mod dock_paint_tests {
             let help = group_help(key).expect("分组没有说明入口");
             assert!(help.chars().count() >= 12, "{key} 的说明太短，等于没写");
         }
+        // 界面帧每帧 drain 全进程共享的提示队列：持 env 的测试锁（见 env.rs）。
+        let _serial = aevum_core::env::lock_notes_for_test();
         let ctx = Context::default();
         theme::apply(&ctx, 1.0);
         let mut state = AppState::demo();

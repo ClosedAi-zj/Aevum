@@ -31,6 +31,20 @@ use crate::brand;
 /// GUI 每帧用 `drain_notes` 取走展示；无头模式靠 `note` 自带的 stderr 行兜底。
 static NOTES: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
+/// 测试串行锁：NOTES 是进程级共享的，会 drain 它的测试（notice 用例与跑完整
+/// 界面帧的用例——`shell::ui` 每帧第一件事就是 drain）都得持锁，否则并行跑
+/// 会互相捞走对方的条目（实测偶发「同一句只该留一条：[]」）。
+static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+/// 持住提示队列的测试锁，直到返回的 guard 被丢弃。仅供测试使用。
+#[doc(hidden)]
+pub fn lock_notes_for_test() -> std::sync::MutexGuard<'static, ()> {
+    TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// 队列上限：超过就丢弃并记一句截断提示。诊断不该无限吃内存。
 const NOTE_LIMIT: usize = 32;
 /// 截断提示（只记一次）。

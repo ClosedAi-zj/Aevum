@@ -321,6 +321,9 @@ mod chrome_tests {
 
     /// 悬停 → 按下 → 抬起，把抬起那一帧根视口收到的窗口命令带回来。
     fn click_win_btn(i: usize, maximized: bool) -> Vec<egui::ViewportCommand> {
+        // 完整界面帧每帧开头 drain 全进程共享的提示队列：持 env 的测试锁，
+        // 别把并行 notice 用例的条目捞走。
+        let _serial = aevum_core::env::lock_notes_for_test();
         let ctx = Context::default();
         theme::apply(&ctx, 1.0);
         let mut state = AppState::new();
@@ -377,6 +380,7 @@ mod chrome_tests {
     /// 悬停胶囊是这套 chrome 唯一的可点提示，画不出来就等于没有反馈。
     #[test]
     fn hovering_a_window_button_paints_its_pill() {
+        let _serial = aevum_core::env::lock_notes_for_test();
         let ctx = Context::default();
         theme::apply(&ctx, 1.0);
         let mut state = AppState::new();
