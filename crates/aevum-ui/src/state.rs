@@ -1076,7 +1076,7 @@ impl AppState {
         let cols = size[0].div_ceil(aevum_core::plugin_host::TILE);
         let rows = size[1].div_ceil(aevum_core::plugin_host::TILE);
         self.plugin_progress = (0, cols * rows);
-        self.status = format!("{name} 运行中…");
+        self.status = crate::i18n::tr_fmt("{} 运行中…", &[&name]);
         self.plugin_job = Some(PluginJob {
             id: plugin_id.clone(),
             name: name.clone(),
@@ -1159,7 +1159,7 @@ impl AppState {
             Err(e) => {
                 if e.contains(aevum_core::plugin_host::ERR_CANCELLED) {
                     // 用户取消不是失败：只清状态，不进错误横幅、不计崩溃。
-                    self.status = format!("{} 已取消", job.name);
+                    self.status = crate::i18n::tr_fmt("{} 已取消", &[&job.name]);
                 } else {
                     let crashes = self.plugin_crashes.entry(job.id).or_insert(0);
                     *crashes += 1;
@@ -1179,7 +1179,7 @@ impl AppState {
     pub fn plugin_cancel(&mut self) {
         if let Some(job) = &self.plugin_job {
             job.cancel.store(true, Ordering::Relaxed);
-            self.status = format!("正在取消 {}…", job.name);
+            self.status = crate::i18n::tr_fmt("正在取消 {}…", &[&job.name]);
         }
     }
 
@@ -1978,10 +1978,9 @@ impl AppState {
                     self.recompute_deflicker();
                     self.preview_dirty = true;
                     let valid = self.metrics.iter().filter(|m| m.is_some()).count();
-                    self.status = format!(
-                        "{} 帧 · 可读 {valid} · 缺帧 {}",
-                        self.frame_count(),
-                        self.issues.len()
+                    self.status = crate::i18n::tr_fmt(
+                        "{} 帧 · 可读 {} · 缺帧 {}",
+                        &[&self.frame_count(), &valid, &self.issues.len()],
                     );
                 }
                 Msg::Preview(p) => {
@@ -2097,7 +2096,7 @@ impl AppState {
                 Msg::Saved(path) => {
                     self.export_busy = false;
                     self.last_saved = Some(path.clone());
-                    self.status = format!("已保存 {path}");
+                    self.status = crate::i18n::tr_fmt("已保存 {}", &[&path]);
                 }
                 Msg::Error(e) => {
                     self.preview_inflight = false;
@@ -2171,7 +2170,10 @@ impl AppState {
                             *err = None;
                             self.merge_result = Some(v);
                             self.merge_error = None;
-                            self.status = format!("{}完成：{path}", kind.cn());
+                            self.status = crate::i18n::tr_fmt(
+                                "{}完成：{}",
+                                &[&crate::i18n::tr(kind.cn()), &path],
+                            );
                         }
                         Err(e) => {
                             self.merge_result = None;
@@ -2179,9 +2181,11 @@ impl AppState {
                             *last = None;
                             *err = Some(e.clone());
                             if e.contains("已取消") {
-                                self.status = format!("{}已取消", kind.cn());
+                                self.status =
+                                    crate::i18n::tr_fmt("{}已取消", &[&crate::i18n::tr(kind.cn())]);
                             } else {
-                                self.status = format!("{}失败", kind.cn());
+                                self.status =
+                                    crate::i18n::tr_fmt("{}失败", &[&crate::i18n::tr(kind.cn())]);
                                 self.error = Some(format!("{}失败：{e}", kind.cn()));
                             }
                         }
@@ -2223,11 +2227,13 @@ impl AppState {
                         item.status = status;
                         item.note = note;
                         self.queue_current = Some(index);
-                        self.status = format!(
+                        self.status = crate::i18n::tr_fmt(
                             "队列第 {}/{} 段：{}",
-                            index + 1,
-                            self.queue.len(),
-                            status.label()
+                            &[
+                                &(index + 1),
+                                &self.queue.len(),
+                                &crate::i18n::tr(status.label()),
+                            ],
                         );
                     }
                     self.save_queue();
@@ -2826,7 +2832,7 @@ impl AppState {
             .ok_or_else(|| "没有可以撤销的改动".to_owned())?;
         let out = self.history_move_json(&m, "undo", &m.label.clone());
         self.restore(m.snap);
-        self.status = format!("撤销 · {step}", step = m.label);
+        self.status = crate::i18n::tr_fmt("撤销 · {}", &[&m.label]);
         Ok(out)
     }
 
@@ -2837,7 +2843,7 @@ impl AppState {
             .ok_or_else(|| "没有可以重做的改动".to_owned())?;
         let out = self.history_move_json(&m, "redo", &m.label.clone());
         self.restore(m.snap);
-        self.status = format!("重做 · {step}", step = m.label);
+        self.status = crate::i18n::tr_fmt("重做 · {}", &[&m.label]);
         Ok(out)
     }
 
@@ -2860,7 +2866,7 @@ impl AppState {
         let label = m.label.clone();
         let out = self.history_move_json(&m, "jump", &label.clone());
         self.restore(m.snap);
-        self.status = format!("回到 · {label}");
+        self.status = crate::i18n::tr_fmt("回到 · {}", &[&label]);
         Ok(out)
     }
 
@@ -3736,7 +3742,7 @@ impl AppState {
             .get(index)
             .map(|f| aevum_core::library::summarize(f))
             .unwrap_or_default();
-        self.status = format!("图库加目录：{}", path.display());
+        self.status = crate::i18n::tr_fmt("图库加目录：{}", &[&path.display()]);
         Ok(json!({
             "index": index + 1,
             "roots": self.lib_roots.len(),
@@ -3752,7 +3758,7 @@ impl AppState {
         }
         let path = self.lib_roots[index as usize - 1].display().to_string();
         self.lib_remove(index as usize - 1);
-        self.status = format!("图库移除目录：{path}");
+        self.status = crate::i18n::tr_fmt("图库移除目录：{}", &[&path]);
         Ok(json!({"removed": path, "roots": self.lib_roots.len()}))
     }
 
@@ -3917,13 +3923,15 @@ impl AppState {
             .and_then(|v| v.get(frames[0]))
             .map(|f| f.keywords.clone())
             .unwrap_or_default();
-        self.status = format!(
+        self.status = crate::i18n::tr_fmt(
             "图库：{} 张改词（+{} / -{}），第 {} 帧现有 {} 个",
-            touched,
-            add.len(),
-            remove.len(),
-            frames[0] + 1,
-            words.len()
+            &[
+                &touched,
+                &add.len(),
+                &remove.len(),
+                &(frames[0] + 1),
+                &words.len(),
+            ],
         );
         Ok(json!({
             "root": root + 1,
@@ -3959,12 +3967,13 @@ impl AppState {
             if self.lib_meta_root.as_deref() == Some(dir.as_path()) {
                 self.lib_meta = meta.clone();
             }
-            self.status = format!(
-                "图库：{} 的说明与版权已写入工程",
-                dir.file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| dir.display().to_string())
-            );
+            // 目录名先算成局部变量：`tr_fmt` 只认 `{}`，把整条链式调用塞进实参
+            // 会让这一行长得读不动。
+            let dir_name = dir
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| dir.display().to_string());
+            self.status = crate::i18n::tr_fmt("图库：{} 的说明与版权已写入工程", &[&dir_name]);
         }
         let mut out = metadata_json(&meta);
         out["root"] = json!(root + 1);
@@ -4009,13 +4018,11 @@ impl AppState {
             }
         };
         if op != "list" {
-            self.status = format!(
-                "图库：{} 现在有 {} 叠",
-                dir.file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| dir.display().to_string()),
-                stacks.len()
-            );
+            let dir_name = dir
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| dir.display().to_string());
+            self.status = crate::i18n::tr_fmt("图库：{} 现在有 {} 叠", &[&dir_name, &stacks.len()]);
         }
         let rows: Vec<Value> = stacks
             .iter()
@@ -4049,16 +4056,20 @@ impl AppState {
                 .and_then(|v| v.get(frame))
                 .cloned()
                 .ok_or_else(|| "编目行没了（目录可能已移除）".to_owned())?;
-            self.status = format!(
+            // 标记与色标名都是中文表里的取值，各自过一遍 tr 再拼进句子。
+            let flag = match f.flag {
+                1 => "选用",
+                -1 => "排除",
+                _ => "未标记",
+            };
+            self.status = crate::i18n::tr_fmt(
                 "图库 {}：{} 星 · {} · 色标{}",
-                f.name,
-                f.rating,
-                match f.flag {
-                    1 => "选用",
-                    -1 => "排除",
-                    _ => "未标记",
-                },
-                LABEL_NAMES[f.label.min(4) as usize]
+                &[
+                    &f.name,
+                    &f.rating,
+                    &crate::i18n::tr(flag),
+                    &crate::i18n::tr(LABEL_NAMES[f.label.min(4) as usize]),
+                ],
             );
             return Ok(json!({
                 "root": root + 1,
@@ -4071,16 +4082,19 @@ impl AppState {
         }
         // 批量的写回在 lib_organize_many 里一次落盘，这里只补内存与汇报。
         self.lib_organize_many(root, &frames, patch)?;
-        self.status = format!(
+        let flag = match patch.flag.unwrap_or(0) {
+            1 => "选用",
+            -1 => "排除",
+            _ => "未标记",
+        };
+        self.status = crate::i18n::tr_fmt(
             "图库：{} 张已整理（{} 星 · {} · 色标{}）",
-            frames.len(),
-            patch.rating.unwrap_or(0).min(5),
-            match patch.flag.unwrap_or(0) {
-                1 => "选用",
-                -1 => "排除",
-                _ => "未标记",
-            },
-            LABEL_NAMES[patch.label.unwrap_or(0).min(4) as usize]
+            &[
+                &frames.len(),
+                &patch.rating.unwrap_or(0).min(5),
+                &crate::i18n::tr(flag),
+                &crate::i18n::tr(LABEL_NAMES[patch.label.unwrap_or(0).min(4) as usize]),
+            ],
         );
         let frames: Vec<usize> = frames.iter().map(|f| f + 1).collect();
         Ok(json!({
@@ -4144,7 +4158,7 @@ impl AppState {
         let name = arg_str(args, "name")?;
         let index = self.lib_collection_create(name);
         let name = self.lib_cols[index].name.clone();
-        self.status = format!("新建集合「{name}」");
+        self.status = crate::i18n::tr_fmt("新建集合「{}」", &[&name]);
         Ok(json!({
             "index": index + 1,
             "name": name,
@@ -4204,7 +4218,7 @@ impl AppState {
             .map(|c| c.name.clone())
             .unwrap_or_default();
         self.lib_collection_delete(col);
-        self.status = format!("删除集合「{name}」");
+        self.status = crate::i18n::tr_fmt("删除集合「{}」", &[&name]);
         Ok(json!({"deleted": name, "collections": self.lib_cols.len()}))
     }
 
@@ -4250,7 +4264,7 @@ impl AppState {
             .and_then(|s| s.frames.get(self.selected))
             .map(|f| f.name.clone())
             .unwrap_or_default();
-        self.status = format!("已跳到第 {} 帧 · {name}", self.selected + 1);
+        self.status = crate::i18n::tr_fmt("已跳到第 {} 帧 · {}", &[&(self.selected + 1), &name]);
         Ok(json!({
             "selected": self.selected + 1,
             "frames": n,
@@ -4263,7 +4277,7 @@ impl AppState {
         let module = Module::from_name(name)
             .ok_or_else(|| format!("未知模块 {name}；可用 序列/去闪/显影/构图/成片/声音 或 0-5"))?;
         self.set_module(module);
-        self.status = format!("模块：{}", module.cn());
+        self.status = crate::i18n::tr_fmt("模块：{}", &[&crate::i18n::tr(module.cn())]);
         Ok(json!({"module": module.cn(), "index": module.index()}))
     }
 
@@ -4273,7 +4287,7 @@ impl AppState {
             .ok_or_else(|| format!("未知面板 {name}；可用 调整/信息/关键帧/AI 或 0-3"))?;
         self.dock_tab = tab;
         self.show_dock = true;
-        self.status = format!("面板：{}", tab.cn());
+        self.status = crate::i18n::tr_fmt("面板：{}", &[&crate::i18n::tr(tab.cn())]);
         Ok(json!({
             "tab": tab.cn(),
             "index": tab.index(),
@@ -4473,7 +4487,7 @@ impl AppState {
         self.merge_done.store(0, Ordering::Relaxed);
         // 进度 = 读好的帧数 + 最后那一段（融合或拼接再写盘）。
         self.merge_total.store(frames + 1, Ordering::Relaxed);
-        self.status = format!("正在{}…", kind.cn());
+        self.status = crate::i18n::tr_fmt("正在{}…", &[&crate::i18n::tr(kind.cn())]);
 
         let token = self.reload_token;
         let tx = self.tx.clone();
@@ -4517,7 +4531,8 @@ impl AppState {
         if self.merge_busy {
             self.cancel_merge.store(true, Ordering::SeqCst);
             if let Some(kind) = self.merge_kind {
-                self.status = format!("正在取消{}…（帧间生效）", kind.cn());
+                self.status =
+                    crate::i18n::tr_fmt("正在取消{}…（帧间生效）", &[&crate::i18n::tr(kind.cn())]);
             }
         }
     }
@@ -4754,7 +4769,7 @@ impl AppState {
             ));
         }
         self.apply_preset(name);
-        self.status = format!("已套用预设 {name}");
+        self.status = crate::i18n::tr_fmt("已套用预设 {}", &[&name]);
         Ok(self.grade_json())
     }
 
@@ -4830,13 +4845,14 @@ impl AppState {
             return Err(format!("未知蒙版形状 {kind}；可用 linear / radial / brush"));
         }
         let index = self.add_mask(&kind);
-        self.status = format!(
+        let shape = match kind.as_str() {
+            "radial" => "径向",
+            "brush" => "画笔",
+            _ => "线性",
+        };
+        self.status = crate::i18n::tr_fmt(
             "已添加{}蒙版；拖动画布手柄调整范围",
-            match kind.as_str() {
-                "radial" => "径向",
-                "brush" => "画笔",
-                _ => "线性",
-            }
+            &[&crate::i18n::tr(shape)],
         );
         let mut out = self.mask_list_json();
         if let Some(object) = out.as_object_mut() {
@@ -4853,7 +4869,7 @@ impl AppState {
             return Err(format!("index 超出范围：1..={}", self.params.masks.len()));
         }
         self.remove_mask(index as usize - 1);
-        self.status = format!("已删除第 {index} 张蒙版");
+        self.status = crate::i18n::tr_fmt("已删除第 {} 张蒙版", &[&index]);
         let mut out = self.mask_list_json();
         if let Some(object) = out.as_object_mut() {
             object.insert("removed".to_owned(), json!(index));
@@ -4955,7 +4971,7 @@ impl AppState {
         self.mask_sel = Some(slot - 1);
         self.mask_comp = component;
         self.masks_changed();
-        self.status = format!("已更新第 {index} 张蒙版（来自命令通道）");
+        self.status = crate::i18n::tr_fmt("已更新第 {} 张蒙版（来自命令通道）", &[&index]);
         let mut out = self.mask_list_json();
         if let Some(object) = out.as_object_mut() {
             object.insert("updated".to_owned(), json!(index));
@@ -5479,7 +5495,7 @@ impl AppState {
         let snapshot = self.project_snapshot();
         project::save(&path, &snapshot).map_err(|e| format!("保存工程失败：{e}"))?;
         self.last_auto_save = Instant::now();
-        self.status = format!("工程已保存 {}", path.display());
+        self.status = crate::i18n::tr_fmt("工程已保存 {}", &[&path.display()]);
         Ok(json!({"path": path.display().to_string(), "saved": true}))
     }
 
@@ -5689,7 +5705,7 @@ impl AppState {
         self.reset_mask_state();
         self.auto_note = None;
         self.preview_dirty = true;
-        self.status = format!("已导入 XMP 预设 {name}");
+        self.status = crate::i18n::tr_fmt("已导入 XMP 预设 {}", &[&name]);
         let mut out = self.grade_json();
         if let Some(object) = out.as_object_mut() {
             object.insert("path".to_owned(), json!(path.display().to_string()));
@@ -5716,7 +5732,7 @@ impl AppState {
             std::fs::create_dir_all(dir).map_err(|e| format!("创建目录失败：{e}"))?;
         }
         xmp::write(path, &self.params).map_err(|e| format!("写 XMP 失败：{e}"))?;
-        self.status = format!("已导出 XMP 预设 {}", path.display());
+        self.status = crate::i18n::tr_fmt("已导出 XMP 预设 {}", &[&path.display()]);
         Ok(json!({
             "path": path.display().to_string(),
             "preset": self.preset,
@@ -5762,7 +5778,7 @@ impl AppState {
             self.params.look_cube = key.clone();
             self.preview_dirty = true;
             self.preset = "自定义".to_owned();
-            self.status = format!("已挂外观 {}", key);
+            self.status = crate::i18n::tr_fmt("已挂外观 {}", &[&key]);
             result["applied"] = json!(true);
         }
         Ok(result)
@@ -5798,7 +5814,7 @@ impl AppState {
         let size = size as usize;
         cube::export(&path, &params, size).map_err(|e| format!("写 .cube 失败：{e}"))?;
         let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-        self.status = format!("已导出外观 {}", path.display());
+        self.status = crate::i18n::tr_fmt("已导出外观 {}", &[&path.display()]);
         Ok(json!({
             "path": path.display().to_string(),
             "size": size,
@@ -7602,7 +7618,7 @@ impl AppState {
         self.align_busy = true;
         self.align_msg = None;
         self.align_done.store(0, Ordering::Relaxed);
-        self.status = format!("正在对齐 {} 帧…", paths.len());
+        self.status = crate::i18n::tr_fmt("正在对齐 {} 帧…", &[&paths.len()]);
 
         let token = self.reload_token;
         let done = self.align_done.clone();
@@ -7719,7 +7735,7 @@ impl AppState {
         let plan = match export::plan_for(&self.retime, n, self.output_fps.max(1.0) as f64) {
             Ok(plan) => plan,
             Err(e) => {
-                self.status = format!("变速参数不对：{e}");
+                self.status = crate::i18n::tr_fmt("变速参数不对：{}", &[&e]);
                 return;
             }
         };
@@ -7983,7 +7999,7 @@ impl AppState {
         };
         let index = queue::add(&mut self.queue, item)?;
         self.save_queue();
-        self.status = format!("已加入队列：第 {} 段", index + 1);
+        self.status = crate::i18n::tr_fmt("已加入队列：第 {} 段", &[&(index + 1)]);
         Ok(index)
     }
 
@@ -8017,7 +8033,7 @@ impl AppState {
         self.queue_done.store(0, Ordering::Relaxed);
         self.queue_total.store(0, Ordering::Relaxed);
         self.queue_stage.store(0, Ordering::Relaxed);
-        self.status = format!("队列渲染 0/{n}");
+        self.status = crate::i18n::tr_fmt("队列渲染 0/{}", &[&n]);
 
         let tx = self.tx.clone();
         let ctx2 = ctx.clone();
@@ -8223,7 +8239,7 @@ impl AppState {
         };
         let index = queue::add(&mut self.queue, item)?;
         self.save_queue();
-        self.status = format!("已加入队列：第 {} 段", index + 1);
+        self.status = crate::i18n::tr_fmt("已加入队列：第 {} 段", &[&(index + 1)]);
         let mut out = self.queue_json();
         if let Some(object) = out.as_object_mut() {
             object.insert("added".to_owned(), json!(index + 1));
@@ -8481,7 +8497,7 @@ impl AppState {
                 self.saved_snap = Some(self.snapshot());
                 self.saved_stamp = Some(self.project_stamp());
                 if !quiet {
-                    self.status = format!("工程已保存 {}", path.display());
+                    self.status = crate::i18n::tr_fmt("工程已保存 {}", &[&path.display()]);
                 }
             }
             Err(e) => {
@@ -8577,12 +8593,11 @@ impl AppState {
         };
         match self.import_xmp_preset(&path) {
             Ok(_) => {
-                self.status = format!(
-                    "已应用 XMP 边车 {}",
-                    path.file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| path.display().to_string())
-                );
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string());
+                self.status = crate::i18n::tr_fmt("已应用 XMP 边车 {}", &[&name]);
                 history::note("xmp-sidecar", format!("应用 XMP 边车 {}", path.display()));
             }
             Err(e) => {
@@ -8628,7 +8643,8 @@ impl AppState {
         };
         let path = force_container(picked, format);
         self.export_busy = true;
-        self.status = format!("正在导出当前帧（{}）…", format.cn());
+        self.status =
+            crate::i18n::tr_fmt("正在导出当前帧（{}）…", &[&crate::i18n::tr(format.cn())]);
         let params = self.params.clone();
         let gain = self.ev_at(self.selected);
         // 导出按画幅比例裁：面板上的取景框就是最终画面，对齐裁切照旧先叠一层。

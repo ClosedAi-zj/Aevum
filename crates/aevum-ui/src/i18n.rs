@@ -315,6 +315,20 @@ mod tests {
         }
     }
 
+    /// 英文值里不能残留汉字。
+    ///
+    /// 这是「译了一半」最典型的样子：`("队列第 {}/{} 段：{}", "Queue item {}/{}: 段：{}")`，
+    /// 或者把一句中文照抄进去只换了个数字占位。`entries_are_translated` 只看
+    /// 中英是否**完全相同**，挡不住这种「半中半英」；而界面上真出现汉字时，
+    /// 只有 `i18n_coverage` 那条要画遍全界面才会红——那句文案如果只在某条命令
+    /// 走完才上屏，就永远画不到。所以在数据这一层先拦一道。
+    #[test]
+    fn translations_have_no_chinese() {
+        for (zh, en) in crate::i18n_en::ENTRIES {
+            assert!(!needs_translation(en), "{zh:?} 的译文里还有汉字：{en:?}");
+        }
+    }
+
     /// 英文表里不能有重复键：`HashMap` 会静默取后者，等于悄悄丢一条翻译。
     #[test]
     fn no_duplicate_keys() {
