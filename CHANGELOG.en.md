@@ -1,5 +1,7 @@
 # Changelog
 
+[中文](CHANGELOG.md) · **English**
+
 Version history for Aevum Studio (Chinese name: 恒晷). Each entry records only what **users can
 perceive**: behaviour changes, compatibility policy, known issues, and how to roll back. Internal
 implementation details, test suites and golden data do not belong here.

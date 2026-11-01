@@ -19,10 +19,12 @@ CARGO=(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
 # 用 `:-` 会把空值也当成未设置，CI 上就变成没缓存还强制 offline。
 CARGO_FLAGS="${CARGO_FLAGS---offline}"
 
-# 第 0 关：版本号一致性（1.0.0 验收清单 B5，beta.2 当天就漂移过一次 README）。
+# 第 0 关：版本号一致性（1.0.0 验收清单 B5，beta.2 当天就漂移过一次 README）
+# + 文档双语一致性（中英分册之后：缺孪生、缺切换链接、死链都是静默失效）。
 # 只读文件、不碰 cargo，所以 CARGO_FLAGS（CI 联网 / 本机 --offline）对它无影响。
-echo "==> 0/5 版本一致性（Cargo.toml 真源 → lock / README / CHANGELOG）"
+echo "==> 0/5 版本与文档一致性（Cargo.toml 真源 → lock / README / CHANGELOG；中英孪生与链接）"
 python "$ROOT/acceptance/check_version.py"
+python "$ROOT/acceptance/check_docs.py"
 
 echo "==> 1/5 格式"
 "${CARGO[@]}" fmt --all -- --check

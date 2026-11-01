@@ -1,11 +1,14 @@
 # acceptance/ —— 验收仪器
 
+**中文** · [English](README.en.md)
+
 这个目录放的是**判定「数值对不对」的仪器**，不是产品代码：
 
 ```
 acceptance/
   check.sh           提交门槛：版本一致性 → 格式 → clippy → 全量测试 → 界面自检
   check_version.py   check.sh 的第 0 关（Cargo.toml 单一真源 → lock / README / CHANGELOG）
+  check_docs.py      第 0 关后半段：每份入库文档都有中英孪生，且顶部互链
   reference/         Python 参考实现（与 Rust 逐式同构的 numpy 镜像）
   oracle/            freeze_golden.py 等冻结脚本 + golden/ 里已冻结的金标数据
 ```
@@ -73,6 +76,9 @@ CARGO_FLAGS= bash acceptance/check.sh
 # 只跑版本一致性（门槛第 0 关）
 python acceptance/check_version.py
 
+# 只跑文档双语与链接检查（第 0 关后半段）
+python acceptance/check_docs.py
+
 # 重冻结显影 / cube 金标（合成图，不读素材）
 ./.venv/Scripts/python.exe acceptance/oracle/freeze_golden.py --develop-only
 
@@ -90,3 +96,17 @@ python acceptance/check_version.py
 `reference/` 与 `oracle/` 里的 import 一律写 `from reference import …`。历史上这个包
 叫 `lapse`（产品改名前的旧名），目录搬进本仓库的验收目录后一并改掉了；
 `.lapse_*.json`、`lapse-studio` 这类**用户数据**上的旧名字是兼容层，不在此列，也不许动。
+
+## 文档（第 0 关的后半段）
+
+`python acceptance/check_docs.py` 查三件事：入库的每份 `*.md` 有没有 `.en.md` 孪生（双向）、
+头部前 15 行有没有指向孪生的语言切换链接、文档里的本地相对链接能不能落到真实文件。
+站外链接不查——网络不是提交门槛能控制的东西。
+
+版式口径：中文在前、英文在后，**各自独立成册**（不是一份文件里两种语言），两册顶部各一行
+切换链接（`**中文** · [English](x.en.md)` / `[中文](x.md) · **English**`）。这样做的理由
+是用户提的那句「点击可以跳转那种」：读者一眼看得见另一册在哪，而不是滚到文末才知道有译文。
+
+新增文档就得两份一起加。`docs/*` 默认不入库，要随行的文档得在 `.gitignore` 里加白名单，
+且白名单要能覆盖 `.en.md` 孪生（`!docs/发布说明-*.md` 的 `*` 顺带匹配 `.en`，精确文件名
+则要单独写一条——这条规则已经被漏过一次）。

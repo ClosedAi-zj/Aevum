@@ -1,5 +1,7 @@
 # 插件目录
 
+**中文** · [English](README.en.md)
+
 这个目录**不是**运行时会读的目录，是一份可以直接抄的样板。程序读的是
 `%APPDATA%\aevum-studio\plugins`（`AEVUM_PLUGINS` 可以改到别处）。
 
@@ -9,7 +11,8 @@
 AEVUM_PLUGINS=<仓库路径>/plugins cargo run --bin aevum -- --demo
 ```
 
-打开「插件」菜单，最下面会多出「示例」组。
+打开「插件」菜单，最下面会多出「示例」组。点之前先看下面那节「让样例真跑起来」——
+仓库里只有清单，没有那个 exe。
 
 ## 一个插件就是一个目录
 
@@ -47,6 +50,29 @@ default = 100.0
 decimals = 0
 unit = "%"
 ```
+
+## 让样例真跑起来
+
+**仓库里入库的只有清单，没有二进制。** `bin/invert.exe` 是个占位路径，所以刚克隆完就点
+「反相…」会得到「插件入口不存在：…\bin\invert.exe」——菜单项是真的，背后那个可执行文件
+得你自己构建。参考实现就在 `crates/aevum-core/examples/invert.rs`（63 行：握手、分块循环、
+取消、退出）：
+
+```bash
+cargo build --examples
+mkdir -p plugins/example-invert/bin
+cp target/debug/examples/invert.exe plugins/example-invert/bin/
+```
+
+现在上面那条命令就真的会反相像素，强度滑杆也生效了。`crates/aevum-core/src/plugin_host.rs`
+的跨进程测试驱动的也是同一个样例——你在那里读到的协议就是宿主实际说的协议，不是简化版。
+
+两个顺带要知道的点：
+
+- 不想来回拷二进制，就把 `entry` 指向你自己构建产物的任意路径（相对或绝对都行），
+  清单别的字段一个都不用改。
+- `entry` 留空是合法的，含义是「由宿主自己实现」。这条路目前只给内置解码器接通了；
+  用户插件写空串会明确报「由宿主内部实现，还没接上」，而不是静默失败。
 
 ## 三条不准踩的线
 
