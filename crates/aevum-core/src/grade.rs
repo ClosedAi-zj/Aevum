@@ -175,11 +175,21 @@ pub struct GradeParams {
     pub curve_g: Vec<[f64; 2]>,
     pub curve_b: Vec<[f64; 2]>,
     /// 曲线 HDR 尾部（0–100）：x>1 的输入按 PCHIP 末端斜率延伸而非硬截断，
-    /// 输出仍 ≤1。0 = 旧 clamp(0,1) 逐位一致。对齐 LR LumaHDR，需拟合 TODO(fit)。
+    /// 输出仍 ≤1。0 = 旧 clamp(0,1) 逐位一致。
+    ///
+    /// **当前在整条链里无效**：`spatial::lens` 在渲染起点无条件 `clamp01`
+    /// （Python 侧 `_lens` 同样 `np.clip(x, 0, 1)`），进影调链的值永远 ≤1，
+    /// 这条路径走不到。修它要改「镜头之后向上不封顶」的契约并重冻结金标，
+    /// 实测见 `tests/fit_sliders.rs` 的 `curve_hdr_tail_is_inert_behind_the_lens_clamp`。
     ///
     /// Curve HDR tail (0–100): inputs with x>1 extend along the PCHIP end slope instead of being
     /// hard clipped, and the output stays ≤1. 0 reproduces the old clamp(0,1) bit for bit.
-    /// Aligned with LR LumaHDR; fitting is required, TODO(fit).
+    ///
+    /// **It currently does nothing in the full chain**: `spatial::lens` clamps to [0,1]
+    /// unconditionally at the start of every render (Python's `_lens` does the same
+    /// `np.clip(x, 0, 1)`), so nothing above 1 ever reaches the tone curve. Fixing that means
+    /// changing the "no upper clamp after lens" contract and refreezing the golden data; see
+    /// `curve_hdr_tail_is_inert_behind_the_lens_clamp` in `tests/fit_sliders.rs`.
     pub curve_hdr_tail: f64,
 
     /// 外部 .cube「外观」：主链之前先套一层三维查表，空串表示没有。
