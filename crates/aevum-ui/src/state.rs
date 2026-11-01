@@ -2500,10 +2500,13 @@ impl AppState {
     /// 名字取当前预设 + 序号：`原始 · 2`。比纯序号好认——一列「快照 1/2/3」
     /// 过两天谁也分不清哪份是满意的。
     pub fn save_snapshot(&mut self) {
-        let label = format!("{} · {}", self.preset, self.snapshots.len() + 1);
+        // 预设名按当前语言翻译进 label：快照列表直接显示这串。序号与
+        // 分隔符跟在后面 —— 一列「快照 1/2/3」过两天谁也分不清哪份是满意的。
+        let preset = crate::i18n::tr(&self.preset);
+        let label = crate::i18n::tr_fmt("{} · {}", &[&preset, &(self.snapshots.len() + 1)]);
         let snap = self.snapshot();
         self.snapshots.push((label.clone(), snap));
-        self.status = format!("已存快照「{label}」");
+        self.status = crate::i18n::tr_fmt("已存快照「{}」", &[&label]);
     }
 
     /// 回到某一份快照。整组参数换回去，照样进历史，撤得回来。
@@ -2512,7 +2515,7 @@ impl AppState {
             return;
         };
         self.restore(snap);
-        self.status = format!("已回到快照「{label}」");
+        self.status = crate::i18n::tr_fmt("已回到快照「{}」", &[&label]);
     }
 
     pub fn delete_snapshot(&mut self, i: usize) {

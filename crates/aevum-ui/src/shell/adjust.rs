@@ -2058,11 +2058,11 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                 }
             }
         });
-        let video = state.render_video_out.display().to_string();
+        let video = theme::ellipsis(&state.render_video_out.display().to_string(), 30);
         ui.add_space(2.0);
         ui.add(
             egui::Label::new(
-                RichText::new(format!("成片 · {}", theme::ellipsis(&video, 30)))
+                RichText::new(crate::i18n::tr_fmt("成片 · {}", &[&video]))
                     .size(SIZE_SMALL)
                     .color(dim()),
             )

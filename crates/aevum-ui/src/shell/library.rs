@@ -242,7 +242,7 @@ fn lib_filter_bar(
             ui.label(egui::RichText::new(crate::i18n::t!("词")).weak());
             let active = state.lib_filter.keyword.clone();
             let label = if active.is_empty() {
-                "全部".to_owned()
+                crate::i18n::t!("全部").to_owned()
             } else {
                 active.clone()
             };
