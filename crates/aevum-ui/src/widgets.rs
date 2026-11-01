@@ -2,6 +2,13 @@
 //!
 //! 全部矢量自绘，不用贴图：自检会在同一个进程里开两个 `Context`，
 //! 跨 Context 缓存纹理会串台；矢量图元每帧重画，代价可以忽略。
+//!
+//! The heavy controls inside the develop panel: hue bands, grading wheels, tone
+//! curve, levels bar.
+//!
+//! Everything is drawn as vectors, no textures: the selftest opens two `Context`s
+//! in one process, and cached textures would bleed across them; vector primitives
+//! redrawn every frame cost nothing worth measuring.
 
 use aevum_core::grade;
 use aevum_core::retime::SpeedKey;
@@ -10,8 +17,13 @@ use egui::{Align2, Color32, CursorIcon, Pos2, Rect, Sense, Shape, Stroke, Stroke
 use crate::theme::{self, *};
 
 /// 8 个色相带的中心色相，与 `develop::lut::HSL_CENTERS` 同一张表。
+///
+/// Centre hue of each of the 8 bands, the same table as
+/// `develop::lut::HSL_CENTERS`.
 pub const BAND_HUES: [f64; 8] = [0.0, 30.0, 60.0, 120.0, 180.0, 240.0, 285.0, 330.0];
 /// 色相带名字，沿用 Python 面板那套叫法。
+///
+/// Band names, carrying over the naming used by the Python panel.
 pub const BAND_NAMES: [&str; 8] = ["红", "橙", "黄", "绿", "浅绿", "蓝", "紫", "洋红"];
 
 /// 色阶里灰系数的对数轴上限：0.2~5.0 在对数轴上正好对称。
@@ -20,6 +32,9 @@ const GAMMA_HI: f64 = 5.0;
 const RIM: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 46);
 
 /// 色相角 -> 纯色（HSV 满饱和满亮），只用于画示色。
+///
+/// Hue angle -> pure colour (HSV at full saturation and value); only used to paint
+/// the swatch itself.
 pub fn hue_color(h: f64) -> Color32 {
     let x = h.rem_euclid(360.0) / 60.0;
     let i = x.floor() as usize % 6;
@@ -61,6 +76,10 @@ fn gamma_at(x: f32, span: f32) -> f64 {
 
 /// 8 格色相带：色块本身就是那一条的色相，改过的带右上角点一颗强调点。
 /// 返回是否换了选中带。
+///
+/// The 8 hue-band chips: the swatch is that band's own hue, and an edited band gets
+/// an accent dot in its top-right corner.
+/// Returns whether the selected band changed.
 pub fn band_chips(ui: &mut Ui, sel: &mut usize, used: &[f64]) -> bool {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), Sense::hover());
     let cw = (rect.width() / BAND_NAMES.len() as f32).floor();
@@ -126,6 +145,14 @@ pub fn band_chips(ui: &mut Ui, sel: &mut usize, used: &[f64]) -> bool {
 ///
 /// 内盘是矢量楔形铺出来的（36 段 × 6 圈），不用贴图：满幅渐变盘要么吃一张纹理，
 /// 要么靠 shader，两条路都不值得；而中性灰底盘又读不出「往哪边走是什么颜色」。
+///
+/// One grading wheel: the outer ring picks hue, the inner disc picks hue by angle
+/// and concentration by radius, the strip below picks luminance.
+///
+/// The inner disc is tiled from vector wedges (36 segments x 6 rings) rather than
+/// a texture: a full gradient disc either costs a texture or needs a shader,
+/// neither of which is worth it here -- and a flat neutral-grey disc cannot show
+/// which direction maps to which colour.
 pub fn grade_wheel(
     ui: &mut Ui,
     id: &'static str,
@@ -307,6 +334,11 @@ pub fn grade_wheel(
 /// 曲线 PCHIP 插值表的缓存（性能重构设计 §3 第 2 层）：
 /// 指纹命中就跳过 `grade::pchip_lut` 的 129 点重算。自校验——拖动改了
 /// `pts` 指纹必变，天然失效，不依赖手动清理。
+///
+/// Cache for the curve's PCHIP lookup table (performance refactor design section 3,
+/// layer 2): a fingerprint hit skips recomputing the 129-point
+/// `grade::pchip_lut`. Self-invalidating -- dragging changes `pts`, which changes
+/// the fingerprint, with no manual cleanup to remember.
 pub struct CurveLutCache {
     /// 参数指纹（逐点 x/y 的 f64 位型哈希）。
     pub(crate) fp: u64,
@@ -528,6 +560,15 @@ fn speed_at_pos(y: f32, side: f32) -> f64 {
 /// 不像色调曲线那样要套 pchip；面板上看到的就是导出实际算的那条。
 /// 拖动：首尾两点只动倍速（它们钉住曲线两端），中间两点横竖都能拖；
 /// 空白处单击加一个点，双击点删掉它，双击空白收回到只剩首尾。
+///
+/// The speed-curve box: x is **source progress** (0..1), y is speed (log).
+///
+/// It draws the very polyline `retime::speed_at` computes -- linear between keys,
+/// so the line is straight and needs no pchip like the tone curve does; what the
+/// panel shows is exactly what the export computes.
+/// Dragging: the two end points move speed only (they pin the curve ends), the
+/// inner points move both ways; clicking empty space adds a point, double-clicking
+/// a point removes it, double-clicking empty space reduces to the two ends.
 pub fn speed_box(
     ui: &mut Ui,
     id: &'static str,

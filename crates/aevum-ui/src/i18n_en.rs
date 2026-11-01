@@ -19,6 +19,35 @@
 //! 改文案时忘了清表，`i18n_extract.py` 会因此返回非零。真正的守门人是
 //! `tests/i18n_coverage.rs`：它把整个界面用英文画一遍，扫渲染出来的每一个字，
 //! 屏幕上出现汉字就红。
+//!
+//! English UI copy table. Keys are the Chinese original (see the `i18n` module
+//! docs for the reasoning).
+//!
+//! Two scripts maintain this file, splitting "keys" from "values":
+//!
+//! * `tools/i18n_extract.py` -- scans the sources and discovers **keys** (which
+//!   Chinese strings the code uses);
+//! * `tools/i18n_fill.py` -- merges a batch of **translations** (a JSON array of
+//!   [source, english] pairs) in.
+//!
+//! Code keeps writing Chinese as usual: explicit positions are wrapped in
+//! `crate::i18n::t!()`, helper functions (`bar_button` / `kv` / `slider_row` /
+//! `side_row` ...) take it unwrapped because translation happens inside them. Data
+//! tables (`controls::SPECS`, `PRESET_NAMES`, the various `cn()` enums) and
+//! `format!`-assembled sentences call `tr` / `tr_fmt` at the point of use.
+//!
+//! This file **must not be edited by hand**; both routes are scripts:
+//!
+//! * add keys: `python tools/i18n_extract.py --write` (merges new keys, drops
+//!   stale ones, sorts by code point)
+//! * add values: `python tools/i18n_fill.py pairs.json --write`
+//!
+//! A missing translation does not panic: `t!` falls back to the Chinese original.
+//! But a **stale row** (a key the code no longer uses) means the table was not
+//! cleaned when the copy changed, and `i18n_extract.py` returns non-zero for it.
+//! The real gatekeeper is `tests/i18n_coverage.rs`: it draws the whole UI in
+//! English and scans every glyph rendered -- one Han character on screen turns it
+//! red.
 
 // rustfmt::skip：整表一条一行是 `tools/i18n_table.py` 与两个维护脚本共同的稳定
 // 口径。折行本身合法（解析器也认），但单行形态让 diff 与合并都可预测。

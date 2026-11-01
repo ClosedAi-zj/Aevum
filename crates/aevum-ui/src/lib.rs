@@ -1,6 +1,12 @@
 //! 恒晷 · Aevum Studio 界面层：外壳、状态、主题、图标、撤销历史与 eframe 入口。
 //!
 //! 与算法层分开：这里只做绘制和交互，所有数值口径都在 `aevum-core`。
+//!
+//! Aevum Studio UI layer: shell, state, theme, icons, undo history and the eframe
+//! entry point.
+//!
+//! Kept apart from the algorithm layer: this crate only draws and handles input;
+//! every numeric definition lives in `aevum-core`.
 
 pub mod app;
 #[cfg(test)]
@@ -27,6 +33,9 @@ pub use control::ControlServer;
 pub use state::AppState;
 
 /// 无显示器自检：跑两遍布局，确认加载态与空状态都真的画出了东西。
+///
+/// Display-less selftest: run the layout twice and confirm both the loaded and the
+/// empty state really paint something.
 pub fn selftest() -> Result<String, String> {
     // 无头入口也解析一次配置路径：首启迁移与 override 诊断都挂在这条链上
     // （config_dir 的文档承诺 selftest 覆盖迁移），顺带让 AEVUM_* 指向

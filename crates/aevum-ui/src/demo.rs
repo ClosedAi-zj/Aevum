@@ -1,6 +1,12 @@
 //! 演示序列：程序生成 48 张日落到夜色的帧，用于截图与无素材时的自检。
 //!
 //! 只写系统临时目录，不碰用户素材；同参数每次生成结果一致。
+//!
+//! Demo sequence: 48 generated frames from sunset to night, used for screenshots and
+//! for the selftest when no footage is available.
+//!
+//! Writes only to the system temp directory, never to user footage; the same
+//! parameters produce identical output every time.
 
 use std::path::PathBuf;
 
@@ -25,6 +31,12 @@ pub fn ensure_demo() -> Result<PathBuf, String> {
 /// 演示配乐：3 秒 44.1 kHz 单声道 WAV，给「声音」模块截图用。
 ///
 /// 只是一段逐渐变弱的和弦，够 ffmpeg 探出编码与时长；不碰用户素材。
+///
+/// Demo soundtrack: 3 seconds of 44.1 kHz mono WAV, for the audio module
+/// screenshots.
+///
+/// Just a slowly fading chord -- enough for ffmpeg to probe codec and duration;
+/// never touches user footage.
 pub fn ensure_demo_audio() -> Result<PathBuf, String> {
     let dir = std::env::temp_dir().join("aevum_studio_demo");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

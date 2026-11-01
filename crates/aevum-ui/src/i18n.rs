@@ -19,6 +19,34 @@
 //!
 //! 模板本身是被翻译的对象，占位符必须一致：`t!("网格 {}")` 得到 `"Grid {}"` 之后照常
 //! `format!`。测试 `placeholders_match` 会逐个核对中英两侧的 `{}` 数量，漏一个就红。
+//!
+//! UI language: Chinese / English, switched at runtime.
+//!
+//! # Why the Chinese original is the key
+//!
+//! UI copy is already hard-wired at over two thousand call sites. Enum keys would
+//! mean three edits per new string (enum, Chinese table, English table) and would
+//! force all two thousand call sites to become `K::Xxx`; keying on the original
+//! only needs a [`t!`] wrapper, plus one English row for a new string.
+//!
+//! The cost is a string comparison per lookup. A `HashMap` built once makes that
+//! O(1); a few thousand lookups per frame measured out at ~0.01 ms against a
+//! 16.7 ms frame budget. **Not trading maintainability for that.**
+//!
+//! # Behaviour on a missing translation
+//!
+//! Fall back to the Chinese original: no panic, no blank, no key name on screen.
+//! A gap in the English table shows Chinese in that one spot -- ugly, but
+//! readable, and it cannot break the layout. Deliberate trade-off: in a release,
+//! "one string untranslated" is far cheaper than "one string turned into ??? or an
+//! empty box".
+//!
+//! # Relationship to `format!`
+//!
+//! The template itself is what gets translated, so placeholders must line up:
+//! `t!("...{}...")` yields the English template with the same `{}`, and
+//! `format!` then works as usual. The `placeholders_match` test counts `{}` on
+//! both sides row by row; one gap turns it red.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -34,6 +62,9 @@ pub enum Lang {
 
 impl Lang {
     /// 设置文件里存的值（小写、稳定，改字面量等于破坏用户的设置文件）。
+    ///
+    /// The value stored in the settings file (lowercase, stable; changing the literal
+    /// breaks existing settings files).
     pub fn code(self) -> &'static str {
         match self {
             Lang::Zh => "zh",
@@ -51,6 +82,10 @@ impl Lang {
 
     /// 语言切换控件上显示的名字（**用该语言自己的写法**，不翻译：让只会英文的人
     /// 也能认出 "English" 那一项，是语言选择器的通行做法）。
+    ///
+    /// The name shown in the language switcher (**written in that language's own
+    /// script**, never translated: letting an English-only reader recognise the
+    /// "English" entry is what every language picker does).
     pub fn label(self) -> &'static str {
         match self {
             Lang::Zh => "中文",
@@ -60,6 +95,10 @@ impl Lang {
 
     /// 读取系统语言。Windows 上 `LANG` 常常不存在，所以再看 `LC_ALL` / `LC_MESSAGES`；
     /// 都读不到时按英文处理——猜错成英文的用户至少能靠 "English" 那一项切回来。
+    ///
+    /// Read the system language. On Windows `LANG` is often absent, so `LC_ALL` /
+    /// `LC_MESSAGES` are checked too; if none is readable the answer is English -- a
+    /// user mis-guessed into English can still switch back via the "English" entry.
     pub fn from_system() -> Lang {
         for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
             if let Some(v) = std::env::var_os(key) {
@@ -94,6 +133,10 @@ pub enum LangPref {
 impl LangPref {
     /// 落到实际语言。「跟随系统」每次启动解析一次，之后不再变——运行中改系统语言
     /// 不重启就跟着变，会让人以为界面在抽风。
+    ///
+    /// Resolve to a concrete language. "Follow the system" is resolved once per
+    /// launch and then frozen: following a system-language change mid-run would make
+    /// the UI look like it is glitching.
     pub fn resolve(self) -> Lang {
         match self {
             LangPref::System => Lang::from_system(),
@@ -111,6 +154,9 @@ impl LangPref {
     }
 
     /// 按设置文件里的值还原；认不出来就跟随系统（手改坏了不该拦住启动）。
+    ///
+    /// Restore from the value in the settings file; anything unrecognised means
+    /// "follow the system" (a hand-edited file should not block startup).
     pub fn from_code(s: &str) -> LangPref {
         match s.trim().to_ascii_lowercase().as_str() {
             "zh" => LangPref::Zh,
@@ -189,6 +235,10 @@ pub fn take_untranslated() -> Vec<String> {
 
 /// 某个键在英文表里有没有译文。数据表的完整性测试用它——不必真的切到英文
 /// 再画一遍就能问「`controls::SPECS` 的每一条标签都有英文吗」。
+///
+/// Whether the key has a translation in the English table. Used by the data table
+/// completeness tests -- it answers "does every label in `controls::SPECS` have
+/// English" without actually switching to English and drawing a frame.
 pub fn has(key: &str) -> bool {
     table().contains_key(key)
 }
@@ -198,6 +248,15 @@ pub fn has(key: &str) -> bool {
 /// 参数是 `&str` 而不是 `&'static str`：界面辅助函数（`bar_button` / `kv` / `note` …）
 /// 收的是借用字符串，翻译下沉到它们内部之后，几百个调用点一行都不用改。
 /// 返回值的生命周期跟着入参走，而英文值本身是 `'static`，可以安全地收窄。
+///
+/// Translate one piece of UI copy. Chinese returns the input unchanged (zero
+/// cost); English looks up the table and falls back to Chinese on a miss.
+///
+/// Takes `&str` rather than `&'static str` on purpose: the UI helpers
+/// (`bar_button` / `kv` / `note` ...) take borrowed strings, and with the
+/// translation pushed down inside them, hundreds of call sites need no edit. The
+/// return lifetime follows the argument; the English values themselves are
+/// `'static`, so narrowing is safe.
 pub fn tr(s: &str) -> &str {
     // 空串是最常见的一个实参（`unit: ""` / `tip: ""` 表示「不挂」），先挡掉：
     // 既省一次查表，也免得缺译探针把「空」记成一条待翻译。
@@ -231,6 +290,22 @@ pub fn tr(s: &str) -> &str {
 ///
 /// 只认 `{}`。要保留小数位这类格式说明，先在调用点把数值格式化成字符串再传进来：
 /// `tr_fmt("拉直 {}°", &[&format!("{deg:+.1}")])`。
+///
+/// Translate a template containing `{}` placeholders, then fill them in order.
+///
+/// Why this exists: `format!` requires a **literal** as its first argument -- the
+/// compiler rejects a function's return value, so `format!(tr("...{}..."), n)`
+/// does not compile. But writing the template inline hard-wires Chinese into the
+/// call site. `tr_fmt` is the middle path: look up the whole template, then
+/// substitute `{}` yourself.
+///
+/// It also solves "the translation may reorder the placeholders": a Chinese
+/// sentence with two `{}` can become either `"{} frames ... {} readable"` or
+/// `"Frames: {} ... readable: {}"` in English, at the translator's discretion,
+/// with no code change. The `placeholders_match` test checks the count per row.
+///
+/// Only `{}` is supported. Format specs such as fixed decimals must be formatted
+/// at the call site first: `tr_fmt("...{}...", &[&format!("{deg:+.1}")])`.
 pub fn tr_fmt(template: &str, args: &[&dyn std::fmt::Display]) -> String {
     let tmpl = tr(template);
     debug_assert_eq!(
@@ -264,6 +339,19 @@ pub fn tr_fmt(template: &str, args: &[&dyn std::fmt::Display]) -> String {
 ///
 /// 所以翻译放在这里：整串命中表就直翻（`原始`、各个胶片名），命中不了再认
 /// 「副本 」这个已知前缀。副本名是用户起的，原样带过来不翻。
+///
+/// The **display** text for a preset name.
+///
+/// `AppState::preset` stores an identifier, not a label: the neutral preset, each
+/// film name, the custom marker, and the copy preset built from a user name. That
+/// value goes into `.aevum/project.json` and is compared verbatim against
+/// `PRESET_NAMES` -- if it held a translation, a Chinese session that once opened
+/// an English project would see an English copy name appear in the dropdown.
+///
+/// So translation happens here: a whole-string table hit is translated directly
+/// (the neutral preset and the film names), otherwise the known copy prefix is
+/// recognised and the rest is carried through. A copy name is user-authored and
+/// never translated.
 pub fn tr_preset(s: &str) -> String {
     if let Some(rest) = s.strip_prefix("副本 ") {
         return format!("{} {}", tr("副本"), rest);
@@ -279,6 +367,17 @@ pub fn tr_preset(s: &str) -> String {
 ///
 /// 判据用中日韩统一表意文字：中文界面文案里不可能一个汉字都没有，而语言中立的
 /// 名字里也不会冒出一个汉字。
+///
+/// Whether this string is "Chinese source text" -- only those need a translation.
+///
+/// `Windows`, `macOS`, `sRGB`, `Display P3`, `H.264`, `16:9`, `4K`, `1` all read
+/// the same in both languages and should not force translators to invent a
+/// Chinese name. The missing-translation probe uses this predicate to separate
+/// "not translated yet" from "needs no translation" -- otherwise the English UI
+/// would carry dozens of permanent false alarms and drown the real gaps.
+///
+/// The test is CJK Unified Ideographs: Chinese UI copy can never be free of Han
+/// characters, and a language-neutral name never contains one.
 pub fn needs_translation(s: &str) -> bool {
     s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
 }

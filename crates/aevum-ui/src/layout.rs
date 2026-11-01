@@ -10,6 +10,24 @@
 //!
 //! 为什么要枚举而不是自由坐标：自由拖拽在 DPI 变化、窗口缩放、多显示器
 //! 之间切换时必然错位，而且截图回归没法比对。枚举换来的是"每种组合都能拍一张图"。
+//!
+//! Layout interface: which side each region sits on, and whether it shows.
+//!
+//! Deliberately separate from the theme: **the theme owns "how it looks", the
+//! layout owns "where things go"**. Mixed together, 4 skins x 3 light/dark x 6
+//! layouts would mean 72 test surfaces; separated, the theme is a pure function
+//! (parameters in, palette out) and the layout is four enums.
+//!
+//! The implementation does exactly one thing: decide the declaration order and
+//! direction of the `egui::Panel`s. Each region's own draw function
+//! (`menu_row` / `dock_panel` / `status_bar` ...) **does not know about layout**,
+//! and does not know whether it sits left or top -- whoever starts reading the
+//! layout can never be moved again.
+//!
+//! Why enums instead of free coordinates: free dragging inevitably misaligns
+//! across DPI changes, window resizes and multiple monitors, and screenshot
+//! regression has nothing to compare against. Enums buy "one screenshot per
+//! combination".
 
 use serde::{Deserialize, Serialize};
 
@@ -138,6 +156,9 @@ impl Default for Layout {
 
 impl Layout {
     /// 当前配置对应哪个预设；改了一项就返回 `None`，面板上的预设按钮自动熄灭。
+    ///
+    /// Which preset the current configuration matches; change one item and this returns
+    /// `None`, so the preset buttons in the panel go dark on their own.
     pub fn preset(&self) -> Option<LayoutPreset> {
         LayoutPreset::ALL.into_iter().find(|p| p.layout() == *self)
     }

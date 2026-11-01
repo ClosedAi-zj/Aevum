@@ -1,4 +1,7 @@
 //! 几何图标：全部用 painter 画，不引入图标字体或第三方素材。
+//!
+//! Geometric icons: all drawn with `painter`, no icon font and no third-party
+//! assets.
 
 use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, Vec2};
 
@@ -46,6 +49,11 @@ fn pt(r: Rect, x: f32, y: f32) -> Pos2 {
 
 /// 图标描边宽度区间：macOS 发丝线口径（1.2pt 基准，小图标不低于 1px）。
 /// 颜色不在这里定义——调用方传 theme 的 ACCENT / TEXT / MUTED / DIM，层级自动跟随。
+///
+/// Icon stroke-width range: macOS hairline convention (1.2pt base, never below 1px
+/// for small icons).
+/// Colours are not defined here -- callers pass the theme's ACCENT / TEXT / MUTED /
+/// DIM, and the hierarchy follows automatically.
 pub const STROKE_MIN: f32 = 1.0;
 pub const STROKE_MAX: f32 = 1.55;
 

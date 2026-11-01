@@ -10,6 +10,24 @@
 //!
 //! 不进表的三类：绑定 `AppState` 自有字段的滑块（去闪窗口/平滑）、数组参数
 //! （HSL/黑白混合按色带循环生成，键自带下标）、蒙版局部参数（键随选中组变化）。
+//!
+//! The **single source of truth** for global grading parameters.
+//!
+//! A parameter used to be hand-listed in three places: the slider call in the
+//! panel, the change test in `group_changed`, and the reset assignment in
+//! `reset_group` -- one new parameter meant three synchronised edits, and missing
+//! one produced drawer-style bugs like "the slider moved but the group dot stays
+//! dark". Now there is only this table:
+//!
+//! - panel: `shell::spec_slider` renders the fader from the row; label, range,
+//!   default and precision all come from here;
+//! - group dot: `state::group_changed` compares against the default via the table;
+//! - group reset: `shell::reset_group` writes the field back to its default.
+//!
+//! Three kinds stay out of the table: sliders bound to `AppState`'s own fields
+//! (deflicker window / smoothing), array parameters (HSL and B&W mix are generated
+//! per band with the index in the key), and mask-local parameters (the key changes
+//! with the selected mask group).
 
 use aevum_core::grade::GradeParams;
 
@@ -88,31 +106,58 @@ pub enum Field {
 #[derive(Clone, Copy, Debug)]
 pub struct ControlSpec {
     /// 持久 id（egui 控件记忆、撤销标注用），同以前的滑块 key。
+    ///
+    /// Stable id (egui widget memory, undo labelling) -- the same key the slider used
+    /// before.
     pub key: &'static str,
     pub label: &'static str,
     pub field: Field,
     pub min: f64,
     pub max: f64,
     /// 默认值。必须等于 `GradeParams::default()` 的同名字段——有测试钉住。
+    ///
+    /// Default value. Must equal the same-named field of `GradeParams::default()` -- a
+    /// test pins this.
     pub default: f64,
     pub decimals: usize,
     /// 允许负值。只影响读数格式（带不带 + 号），范围照 min/max 走。
+    ///
+    /// Allow negative values. Affects only the readout format (whether a `+` is
+    /// shown); the range still follows min/max.
     pub signed: bool,
     /// 读数后缀，如 "px"。空串 = 纯数字。
+    ///
+    /// Readout suffix, e.g. "px". Empty string = plain number.
     pub unit: &'static str,
     /// 悬停 tooltip。空串 = 不挂（大多数推子标签自释）。
+    ///
+    /// Hover tooltip. Empty string = none (most fader labels are self-explanatory).
     pub tip: &'static str,
     /// 分组键，同 `group_header` 的 key。
+    ///
+    /// Group key, matching the `group_header` key.
     pub group: &'static str,
     /// 色温/色调这类「轨道即含义」的渐变轨。
+    ///
+    /// Gradient track for parameters where the track itself carries the meaning, such
+    /// as temperature / tint.
     pub grad: bool,
     /// 非线性轨道标记：拖动时「位置↔值」经 `aevum_core::temp_track` 换算，
     /// 数字输入框/历史/落盘仍用原始值。当前只有色温一条；换回线性
     /// 即删掉这个标记（core 侧还有一张 LINEAR 退表可整表替换）。
+    ///
+    /// Marks a non-linear track: while dragging, "position <-> value" goes through
+    /// `aevum_core::temp_track`; the number box, undo history and persistence keep
+    /// using the raw value. Only temperature uses this today; going back to linear
+    /// means deleting this flag (core also has a LINEAR retirement table that can be
+    /// swapped in wholesale).
     pub track: bool,
 }
 
 /// 渐变轨的两端色：直接取主题调色板，别在这里造第二套色值。
+///
+/// The two end colours of a gradient track: taken straight from the theme palette
+/// -- do not build a second set of colour values here.
 pub fn grad_stops(spec: &ControlSpec) -> Option<[egui::Color32; 2]> {
     match spec.key {
         "dev.temperature" => Some([crate::theme::temp_cold(), crate::theme::temp_warm()]),
@@ -142,6 +187,8 @@ macro_rules! spec {
 }
 
 /// 全表。顺序即面板绘制顺序（同组内连续）。
+///
+/// The whole table. Order is panel draw order (consecutive within a group).
 pub const SPECS: &[ControlSpec] = &[
     // ── 基本 ────────────────────────────────────────────────
     // 新增影调参数按归属挨着主参数放（LR 的口径：rolloff 属于曝光、
@@ -769,6 +816,9 @@ pub const SPECS: &[ControlSpec] = &[
 ];
 
 /// 取一个字段的可变槽位。`group_changed` / `reset_group` / 推子渲染共用。
+///
+/// Mutable slot for one field. Shared by `group_changed`, `reset_group` and the
+/// fader rendering.
 pub fn param_slot(p: &mut GradeParams, f: Field) -> &mut f64 {
     match f {
         Field::Exposure => &mut p.exposure,
@@ -831,6 +881,10 @@ pub fn param_slot(p: &mut GradeParams, f: Field) -> &mut f64 {
 
 /// 只读取数。分组圆点每帧要读几十个字段，不想要可变借用。
 /// 与 `param_slot` 的映射必须一致——下方测试逐字段钉住。
+///
+/// Read-only accessor. The group dot reads dozens of fields per frame and does not
+/// want a mutable borrow.
+/// Must map identically to `param_slot` -- the test below pins it field by field.
 pub fn param_get(p: &GradeParams, f: Field) -> f64 {
     *match f {
         Field::Exposure => &p.exposure,
@@ -892,6 +946,8 @@ pub fn param_get(p: &GradeParams, f: Field) -> f64 {
 }
 
 /// 某个分组下的全部规格，保持表序（即面板绘制序）。
+///
+/// Every spec in one group, preserving table order (that is, panel draw order).
 pub fn specs_of_group(group: &str) -> impl Iterator<Item = &'static ControlSpec> {
     SPECS.iter().filter(move |s| s.group == group)
 }

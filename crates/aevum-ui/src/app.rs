@@ -1,4 +1,7 @@
 //! eframe 入口：把启动参数、后台任务和界面外壳接起来。
+//!
+//! eframe entry point: wires the launch arguments, background jobs and UI shell
+//! together.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

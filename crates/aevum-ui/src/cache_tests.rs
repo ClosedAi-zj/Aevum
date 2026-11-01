@@ -2,6 +2,14 @@
 //!
 //! 原则：指纹是纯函数——「参数变 → 指纹变」「参数没变 → 指纹不变」；
 //! 缓存取值走 AppState 真实路径（headless 状态，无磁盘线程）。
+//!
+//! Cache unit tests (performance refactor design T03): fingerprints respond to
+//! parameter changes, and invalidation / hits are correct.
+//!
+//! Principle: a fingerprint is a pure function -- "parameters changed ->
+//! fingerprint changes", "parameters unchanged -> fingerprint unchanged"; the
+//! cache is exercised through AppState's real path (headless state, no disk
+//! thread).
 
 use crate::shell::{MaskGeo, mask_geo_fingerprint};
 use crate::state::AppState;
