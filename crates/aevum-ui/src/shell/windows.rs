@@ -8,7 +8,7 @@ use crate::layout::StatusSlot;
 use crate::platform;
 use crate::state::AppState;
 use crate::theme::{self, *};
-use egui::{Align, Align2, Context, Layout, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
+use egui::{Align, Context, Layout, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
 /// 浮窗标题栏的统一口径：底色接管成 panel，**只圆上面两角**。
@@ -186,7 +186,9 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
         .resizable(true)
         .default_size(Vec2::new(760.0, 520.0))
         .min_size(Vec2::new(620.0, 380.0))
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        // 锚点会让窗口 immovable（egui 文档原话），「子窗口拖不动」就是它：
+        // 改用 default_pos 定首开位置，之后随拖随记（egui 会话内记忆）。
+        .default_pos(ctx.input(|i| i.viewport_rect()).center() - Vec2::new(380.0, 260.0))
         // 标题栏接管成界面自己的深色：egui 默认标题栏的底与描边跟主界面
         // 不是一套口径（实测亮蓝，用户差评），这里统一成 panel 底 + 底缘
         // 一条 divider，标题居中、关闭钮走默认绘制。
@@ -452,7 +454,8 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
         .collapsible(false)
         .resizable(false)
         .default_width(340.0)
-        .anchor(Align2::RIGHT_TOP, Vec2::new(-14.0, 52.0))
+        // 同上：锚点 = 不可拖。首开贴右上角（菜单行下 52px），拖动交给用户。
+        .default_pos(ctx.input(|i| i.viewport_rect()).right_top() - Vec2::new(354.0, -52.0))
         // 与插件市场同一个标题栏口径：深色底、无高亮描边。
         .title_frame(title_frame())
         .show(ctx, |ui| {
@@ -700,7 +703,8 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
         .collapsible(false)
         .resizable(false)
         .default_width(430.0)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        // 同上：锚点 = 不可拖。
+        .default_pos(ctx.input(|i| i.viewport_rect()).center() - Vec2::new(215.0, 160.0))
         .title_frame(title_frame())
         .show(ctx, |ui| {
             ui.label(
