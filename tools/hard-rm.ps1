@@ -2,14 +2,29 @@
 hard-rm.ps1 - delete files/directories WITHOUT sending them to the Recycle Bin.
 
 Why this exists
-    This machine runs with CODEBUDDY_SAFE_DELETE_ENABLED=1, so a plain `rm`
-    does not delete anything: it moves the file to the volume's Recycle Bin
-    under E:\$RECYCLE.BIN. Cleaning build output a few times filled E: with
-    115 GB / 399k recycled files and left the drive at 100%, which then breaks
-    the linker (LNK1180: not enough disk space).
+    Deleting build output on this machine does not free space the usual way.
+    Two separate layers are involved, both measured on 2026-11-01:
 
-    This script bypasses the shell and calls the .NET delete APIs directly, so
-    the data is gone for real and the Recycle Bin never grows.
+    1. A plain `rm` moves files to E:\$RECYCLE.BIN (this machine runs with
+       CODEBUDDY_SAFE_DELETE_ENABLED=1). Cleaning build output a few times
+       filled E: with 115 GB / 399k recycled files, left the drive at 100%,
+       and broke the linker (LNK1180: not enough disk space).
+    2. Even [System.IO.Directory]::Delete - RemoveDirectoryW, documented never
+       to use the Recycle Bin - is intercepted here. Probe: write 50 MB, delete
+       it through the .NET API, and it comes back as a recycled item with its
+       original path intact. So "we called the .NET API" does NOT mean "the
+       space came back".
+
+    This script still avoids the shell path (one less hop, and it is genuinely
+    permanent on machines without the interception), but be precise about what
+    it promises: it reports what it *removed*. Whether the volume got the space
+    back is a different question, so the run now ends with a free-space delta.
+    If that delta is near zero, the payload is sitting in the Recycle Bin - run
+    tools\empty-bin.ps1 (which deletes items already inside the Bin, and those
+    deletes do take effect).
+
+    Exit codes: 0 = removed and space returned, 1 = some delete failed,
+    2 = removed but the volume did not get the space back (empty the Bin).
 
 Usage
     powershell -NoProfile -ExecutionPolicy Bypass -File tools\hard-rm.ps1 <path> [<path> ...]
@@ -84,6 +99,16 @@ $failures = 0
 $removedBytes = [long]0
 $removedItems = 0
 
+# Free space is the only thing that matters to the caller, so measure it instead
+# of trusting the byte sum we just computed from file lengths.
+function Get-FreeBytes([string] $p) {
+    $full = [System.IO.Path]::GetFullPath($p)
+    $root = [System.IO.Path]::GetPathRoot($full)
+    if ([string]::IsNullOrEmpty($root)) { return $null }
+    try { return (New-Object System.IO.DriveInfo $root).AvailableFreeSpace } catch { return $null }
+}
+$freeBefore = Get-FreeBytes ([System.IO.Path]::GetFullPath($Path[0]))
+
 foreach ($raw in $Path) {
     if ([string]::IsNullOrWhiteSpace($raw)) { continue }
     $full = [System.IO.Path]::GetFullPath($raw)
@@ -135,6 +160,22 @@ foreach ($raw in $Path) {
     }
 }
 
-Write-Output ("---- hard-rm: {0:N0} files, {1:N2} GB reclaimed, {2} failure(s)" -f $removedItems, ($removedBytes / 1GB), $failures)
+Write-Output ("---- hard-rm: {0:N0} files, {1:N2} GB removed, {2} failure(s)" -f $removedItems, ($removedBytes / 1GB), $failures)
+
+# The number above is what we were asked to delete. The number the user cares
+# about is disk free space, and on this machine the two can disagree by 100%
+# because deletes get redirected into the Recycle Bin.
+$freeAfter = Get-FreeBytes ([System.IO.Path]::GetFullPath($Path[0]))
+$reclaimed = $null
+if ($null -ne $freeBefore -and $null -ne $freeAfter) {
+    $reclaimed = $freeAfter - $freeBefore
+    Write-Output ("---- free space: {0:N2} GB reclaimed ({1:N1} GB -> {2:N1} GB free)" -f `
+            ($reclaimed / 1GB), ($freeBefore / 1GB), ($freeAfter / 1GB))
+}
 if ($failures -gt 0) { exit 1 }
+if ($null -ne $reclaimed -and $removedBytes -gt 1GB -and $reclaimed -lt ($removedBytes / 2)) {
+    Write-Warning ("deleted {0:N2} GB but the volume only got {1:N2} GB back. The payload is in the Recycle Bin; run tools\empty-bin.ps1 to actually reclaim it." -f `
+            ($removedBytes / 1GB), ($reclaimed / 1GB))
+    exit 2
+}
 exit 0
