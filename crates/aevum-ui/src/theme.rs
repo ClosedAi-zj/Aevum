@@ -12,6 +12,27 @@
 //! egui 没有真实背景模糊，所有“材质叠加”都预计算成不透明色值写死在常量里，
 //! 只有分隔线保留 alpha，让它叠在任何材质上都是同一根发丝线。
 //! 素材与图标仍然全部自绘，不引入任何系统资源。
+//!
+//! Design tokens and global styles.
+//!
+//! Look and feel follow macOS dark mode (Apple HIG Dark Mode):
+//! - Material layers replace solid separators: window background darkest, content area a
+//!   little lighter, bars and sidebars one step up, floating layers lightest; separators
+//!   are hairline strokes of low-alpha white (8-18%) rather than outlines.
+//! - Four text levels: white at 85% / 60% / 45% / 10% alpha flattened onto the actual
+//!   material colour, guaranteeing body text >= 7:1 and secondary text >= 4.5:1 (4K at
+//!   96 dpi; body text is not allowed to go grey).
+//! - The accent is macOS dark system blue #0A84FF; a selected row's background is the
+//!   same hue flattened at roughly 20-25%.
+//! - Concentric corner radii: windows and floating layers 10, ordinary controls 6;
+//!   controls are separated by fill difference and radius, never by outlines.
+//! - Type scale: Small 11 / Body and Button 13 / Heading 15 (the 17 step is covered by
+//!   the FONT_ZOOMS steps).
+//!
+//! egui has no real background blur, so every "material overlay" is precomputed into an
+//! opaque colour baked into a constant; only separators keep alpha, so the same hairline
+//! sits on any material. Assets and icons are still all drawn in code, with no system
+//! resources pulled in.
 
 use egui::{
     Align2, Color32, Context, FontData, FontDefinitions, FontFamily, FontId, Pos2, RichText,
@@ -19,6 +40,9 @@ use egui::{
 };
 
 /// 把白色以 alpha/255 压平到基色上，得到 macOS“深底 + 白叠加”的实际不透明色。
+///
+/// Flatten white at alpha/255 over a base colour to get the opaque value macOS actually
+/// renders for "dark material plus white overlay".
 pub fn overlay_white(base: Color32, white_alpha: u8) -> Color32 {
     let a = white_alpha as u32;
     let blend = |b: u8| -> u8 {
@@ -29,6 +53,8 @@ pub fn overlay_white(base: Color32, white_alpha: u8) -> Color32 {
 }
 
 /// sRGB 相对亮度（WCAG 口径），用于对比度断言。
+///
+/// sRGB relative luminance (WCAG definition), used by the contrast assertions.
 pub fn luminance(c: Color32) -> f32 {
     let lin = |v: u8| -> f32 {
         let s = v as f32 / 255.0;
@@ -42,6 +68,9 @@ pub fn luminance(c: Color32) -> f32 {
 }
 
 /// 前景压平到背景上的 WCAG 对比度（先把带 alpha 的前景叠实）。
+///
+/// WCAG contrast of a foreground flattened onto a background (an alpha foreground is
+/// composited first).
 pub fn contrast(fg: Color32, bg: Color32) -> f32 {
     let flat = if fg.a() == 255 {
         fg
@@ -74,6 +103,12 @@ pub fn contrast(fg: Color32, bg: Color32) -> f32 {
 ///
 /// 「跟随系统」要等 winit 的 `ThemeChanged` 事件接进来（见开发看板 S1），
 /// 现在只给三个确定值：宁可少一个开关，也不要一个点不动的开关。
+///
+/// Light or dark mode.
+///
+/// "Follow the system" has to wait for winit's `ThemeChanged` event to be wired in (see
+/// board item S1); for now only three definite values are offered — better one switch
+/// short than a switch that does not move.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ThemeMode {
@@ -95,6 +130,9 @@ impl ThemeMode {
 }
 
 /// 中性色倾向：所有「灰」都是同一色相上的不同亮度，所以换皮肤只改这两个数。
+///
+/// Neutral tint: every "grey" is a different lightness of the same hue, so a skin swap
+/// changes only these two numbers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Skin {
@@ -117,6 +155,9 @@ impl Skin {
     }
 
     /// (色相, 饱和)。这四个数决定了整个界面偏冷还是偏暖。
+    ///
+    /// (hue, saturation). Across the four skins these numbers decide whether the whole
+    /// interface leans cool or warm.
     pub fn hsl(self) -> (f32, f32) {
         match self {
             Self::Graphite => (240.0, 2.0),
@@ -128,20 +169,34 @@ impl Skin {
 }
 
 /// L1：外观参数。落盘就是 `settings.json` 里的 `appearance` 段。
+///
+/// L1: the appearance parameters. Persisted as the `appearance` section of
+/// `settings.json`.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Appearance {
     pub theme: ThemeMode,
     pub skin: Skin,
     /// 强调色，HSL 三数：改这三个数，36 处半透明底与全部描边一起变。
+    ///
+    /// Accent colour as three HSL numbers: change these and 36 translucent fills plus every
+    /// stroke change with them.
     pub accent_h: f32,
     pub accent_s: f32,
     pub accent_l: f32,
     /// 控件圆角。窗口与容器由它派生，不单独给。
+    ///
+    /// Control corner radius. Windows and containers are derived from it, never set
+    /// separately.
     pub radius: f32,
     /// 外壳形态：跟随编译目标，或强制成另一家的样子（截图对比用）。
+    ///
+    /// Shell form: follow the build target, or force the other platform's look (for
+    /// screenshot comparisons).
     pub os: crate::platform::OsChoice,
     /// 调整面板行高密度档（紧凑/标准/宽松）。
+    ///
+    /// Row-density step for the adjustment panel (compact / standard / roomy).
     pub density: Density,
 }
 
@@ -161,6 +216,8 @@ impl Default for Appearance {
 }
 
 /// 强调色预设：面板上排七个色点，点一下就是这套数。
+///
+/// Accent presets: the seven dots across the panel, one click each.
 pub const ACCENT_PRESETS: [(f32, f32, f32, &str); 7] = [
     (210.0, 100.0, 52.0, "蓝"),
     (265.0, 86.0, 63.0, "紫"),
@@ -256,6 +313,10 @@ const LIGHT: Ladder = Ladder {
 
 /// L2：一套完整的派生色。`Copy` 是有意的 —— 它只有 39 个 Color32，
 /// 每帧拷几百次比到处借引用便宜，也不会把借用检查搅进绘制代码。
+///
+/// L2: one complete derived palette. `Copy` is deliberate — it is only 39 `Color32`s, so
+/// copying it a few hundred times a frame is cheaper than borrowing it everywhere, and it
+/// keeps the borrow checker out of drawing code.
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
     pub bg: Color32,
@@ -270,9 +331,16 @@ pub struct Palette {
     pub elev_hover: Color32,
     /// 按下那一档：比悬停再收一档（深色更暗、浅色也更深）。按下按钮的
     /// 反馈是「往里沉」，不是整块亮起强调色——那是塑料感的来源。
+    ///
+    /// The pressed step: one notch further down from hover (darker in dark themes, deeper
+    /// in light ones too). Pressing a button should feel like sinking in, not lighting the
+    /// whole thing up in the accent colour — that is where the plastic look comes from.
     pub press: Color32,
     pub selected: Color32,
     /// 选中行的横向渐变末端：从 `selected` 衰减到这一档，左深右浅的光带。
+    ///
+    /// End of the selected row's horizontal gradient: fades from `selected` to this step, a
+    /// band that is dark on the left and light on the right.
     pub selected_row_end: Color32,
     pub field: Color32,
     pub field_hover: Color32,
@@ -299,15 +367,24 @@ pub struct Palette {
     pub ok: Color32,
     pub thumb_bg: Color32,
     /// 强调底上的字：亮底配深字。
+    ///
+    /// Text on an accent fill: dark text on a light fill.
     pub on_accent: Color32,
     /// 选中底上的字（深色白字，浅色用正文色）。
+    ///
+    /// Text on a selected fill (white in dark themes, body colour in light ones).
     pub on_selected: Color32,
     /// 抬起控件（ELEV）上的字。
+    ///
+    /// Text on raised controls (ELEV).
     pub on_elev: Color32,
 }
 
 impl Palette {
     /// 由参数算出整套色值。这是唯一的派生入口。
+    ///
+    /// Derive the whole palette from the parameters. This is the only derivation entry
+    /// point.
     pub fn of(a: &Appearance) -> Self {
         let l = match a.theme {
             ThemeMode::Dark => &DARK,
@@ -388,6 +465,9 @@ impl Palette {
 }
 
 /// HSL → sRGB。三个分量都用 0–360 / 0–100 的直觉单位，和设计稿一致。
+///
+/// HSL to sRGB. All three components use intuitive 0-360 / 0-100 units, matching the
+/// design mockup.
 pub fn hsl(h: f32, s: f32, l: f32) -> Color32 {
     let h = h.rem_euclid(360.0) / 360.0;
     let s = (s / 100.0).clamp(0.0, 1.0);
@@ -425,6 +505,8 @@ pub fn hsl(h: f32, s: f32, l: f32) -> Color32 {
 }
 
 /// 线性混合两色（`t` = 0 取 a，1 取 b）。
+///
+/// Linear blend of two colours (`t` = 0 gives a, 1 gives b).
 fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let f = |x: u8, y: u8| (x as f32 * (1.0 - t) + y as f32 * t).round() as u8;
@@ -458,11 +540,15 @@ fn state() -> &'static std::sync::RwLock<ThemeState> {
 }
 
 /// 当前参数。
+///
+/// The current parameters.
 pub fn appearance() -> Appearance {
     state().read().map(|s| s.appearance).unwrap_or_default()
 }
 
 /// 当前色板。绘制代码唯一该读的东西。
+///
+/// The current palette. The only thing drawing code should read.
 pub fn palette() -> Palette {
     state()
         .read()
@@ -472,6 +558,10 @@ pub fn palette() -> Palette {
 
 /// 换一套参数并立刻重算色板；调用方随后要再调一次 [`apply`] 把 egui 的
 /// `Visuals` 也刷一遍（那里还压着一堆派生值）。
+///
+/// Swap in a new set of parameters and recompute the palette at once; the caller then
+/// calls [`apply`] again to refresh egui's `Visuals` (a pile of derived values sits in
+/// there too).
 pub fn set_appearance(a: Appearance) {
     if let Ok(mut s) = state().write() {
         s.appearance = a;
@@ -480,6 +570,9 @@ pub fn set_appearance(a: Appearance) {
 }
 
 /// 当前是不是浅色底：少数几处（阴影、发丝线权重）需要知道方向。
+///
+/// Whether the current background is light: a handful of places (shadows, hairline
+/// weights) need to know the direction.
 pub fn is_light() -> bool {
     appearance().theme == ThemeMode::Light
 }
@@ -540,6 +633,8 @@ accessors!(
 );
 
 /// 当前强调色的 sRGB 三元组（取色器回显用）。
+///
+/// The current accent as an sRGB triple (for the colour picker's readout).
 pub fn accent_rgb() -> [u8; 3] {
     let c = accent();
     [c[0], c[1], c[2]]
@@ -547,6 +642,10 @@ pub fn accent_rgb() -> [u8; 3] {
 
 /// sRGB → HSL，与 [`hsl`] 互逆。取色器给的是 RGB，而参数存的是 HSL：
 /// 存 HSL 是为了让「同一主色的深浅档」能算出来，存 RGB 就只能一个个手挑。
+///
+/// sRGB to HSL, the inverse of [`hsl`]. The picker speaks RGB while the parameters store
+/// HSL: storing HSL is what makes "the light and dark steps of one accent" computable —
+/// with RGB you would have to pick each one by hand.
 pub fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
     let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
     let max = r.max(g).max(b);
@@ -576,6 +675,9 @@ pub fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
 }
 
 /// 控件圆角：只由 `Appearance::radius` 派生，窗口 = 控件 + 4、容器 = 控件 + 2。
+///
+/// Control corner radius: derived only from `Appearance::radius`, where window = control
+/// + 4 and container = control + 2.
 pub fn radius_control() -> f32 {
     // 平台偏置不落进 `Appearance::radius`：用户设的是"这一档"，mac 整体再圆一格
     // 是平台口径，改外观时不该把它一起改掉（否则来回切平台会把数值越推越大）。
@@ -593,6 +695,11 @@ pub fn radius_panel() -> f32 {
 /// 面板行的悬停底色：深色主题往上抬一档，浅色主题往下压一档 —— 两个方向都是
 /// "离背景远一点"。用固定 alpha 的白叠在黑上是不行的：浅色主题里会越叠越白，
 /// 高亮反而消失。
+///
+/// Hover fill for panel rows: one step up in dark themes, one step down in light ones —
+/// both directions mean "further from the background". Flattening a fixed-alpha white over
+/// black cannot work: in a light theme it gets whiter and whiter and the highlight
+/// disappears.
 pub fn row_hover() -> Color32 {
     let p = palette().panel;
     if is_light() {
@@ -613,12 +720,22 @@ pub const TAB_H: f32 = 28.0;
 pub const STATUS_H: f32 = 24.0;
 pub const TOOL_W: f32 = 52.0;
 /// 左侧预设栏：预设 / 快照 / 历史三张表，240 刚好放下"胶片 · 富士 400H"这种长名。
+///
+/// Left preset column: three tables (presets / snapshots / history); 240 is just enough
+/// for a long name like "Fuji 400H".
 pub const LEFT_W: f32 = 240.0;
 pub const DOCK_W: f32 = 372.0;
 /// 最外那条 28px 竖条：网格 / 胶片 / 曲线三个开关，界面稿里是 ⌗ ◐ ◑ 三枚。
+///
+/// The outermost 28 px vertical strip: grid / filmstrip / curve toggles, drawn as three
+/// glyphs in the mockup.
 pub const STRIP_W: f32 = 28.0;
 /// 胶片条总高：正文只有"标题 + 缩略图"两段（界面稿 --tl-h:120），
 /// 这里多留 68 —— 这个软件是序列工具，底部还要一行播放控制。
+///
+/// Total filmstrip height: the body is only "title + thumbnails" (mockup `--tl-h:120`),
+/// and the extra 68 is because this is a sequence tool — a playback row lives at the
+/// bottom as well.
 pub const TIMELINE_H: f32 = 188.0;
 
 /// 面板里的两种行高：推子行要容下标签、轨道与数值，键值行只排一对字。
@@ -627,6 +744,17 @@ pub const TIMELINE_H: f32 = 188.0;
 /// 行高密度档。紧凑给高分屏小尺寸预览多看几行，宽松给触屏/演示。
 /// 只影响推子行（`row_h`）与键值行（`kv_h`）；标题栏/工具栏等外壳高度
 /// 是结构尺寸，不随密度变——那是界面稿钉死的骨架。
+///
+/// Row-density step. Compact fits more rows on a high-DPI screen with a small preview,
+/// roomy suits touch screens and demos. It affects only slider rows (`row_h`) and key/value
+/// rows (`kv_h`); header and toolbar heights are structural and do not move with density —
+/// the mockup pinned that skeleton.
+///
+/// The two row heights inside panels: a slider row has to fit label, track and value,
+/// while a key/value row just arranges one pair of words. These used to be the smallest
+/// height that would fit, which made a whole column read like a dense table; they now keep
+/// macOS sidebar spacing — two or three rows fewer per screen, but every row is legible at
+/// a glance.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Density {
@@ -648,6 +776,8 @@ impl Density {
 }
 
 /// 调整面板推子行高：紧凑 32 / 标准 38 / 宽松 46。
+///
+/// Slider row height in the adjustment panel: compact 32 / standard 38 / roomy 46.
 pub fn row_h() -> f32 {
     match appearance().density {
         Density::Compact => 32.0,
@@ -657,6 +787,8 @@ pub fn row_h() -> f32 {
 }
 
 /// 键值行 / 剪切读数行高：20 / 24 / 30。
+///
+/// Key/value row and crop readout row height: 20 / 24 / 30.
 pub fn kv_h() -> f32 {
     match appearance().density {
         Density::Compact => 20.0,
@@ -666,30 +798,54 @@ pub fn kv_h() -> f32 {
 }
 
 /// 画布内部顶栏（cv-toolbar）：文档页签 + 尺寸读数 + 右端上下文，28px。
+///
+/// Canvas top bar (cv-toolbar): document tabs + size readout + right-hand context, 28
+/// px.
 pub const CV_TOOLBAR_H: f32 = 28.0;
 /// 胶片条头部行：标题 + 右端筛选说明，26px。
+///
+/// Filmstrip header row: title plus a filter note on the right, 26 px.
 pub const TL_HD_H: f32 = 26.0;
 
 /// 兼容旧命名。
+///
+/// Kept for the old name.
 pub const TOP_H: f32 = MENU_H;
 pub const RAIL_W: f32 = TOOL_W;
 pub const PARAMS_W: f32 = DOCK_W;
 pub const INSPECTOR_W: f32 = DOCK_W;
 
 /// 字号四档缩放（对外行为不变）：基准档对应 11/13/15/17 字阶。
+///
+/// Four font-size zoom steps (public behaviour unchanged): the base step maps to the
+/// 11/13/15/17 scale.
 pub const FONT_ZOOMS: [f32; 4] = [1.0, 1.06, 1.14, 1.24];
 
 /// macOS 字阶基准：正文 13、小字 11、大标题 15（17 顶格由 Heading+缩放档覆盖）。
+///
+/// macOS type scale: body 13, small 11, large heading 15 (the 17 top step is covered by
+/// Heading plus a zoom step).
 pub const SIZE_SMALL: f32 = 11.0;
 pub const SIZE_BODY: f32 = 13.0;
 pub const SIZE_HEADING: f32 = 15.0;
 /// 面板里的推子标签与键值行：比 11 号小字大一档，11 号在 372px 宽的面板上
 /// 读起来像脚注，而参数名是这一页最常读的字。
+///
+/// Slider labels and key/value rows inside panels: one step above the 11 px small size.
+/// 11 reads like a footnote on a 372 px panel, and parameter names are the most-read words
+/// on that screen.
 pub const SIZE_LABEL: f32 = 12.0;
 /// 顶部两行（菜单行 36 / 选项栏 46）专用字阶：行高加起来了，标签仍用 11 会
 /// 显得整条栏是空的，所以顶部比正文大一号，面板里的推子标签不受影响。
+///
+/// Type scale for the top two rows (menu row 36 / option bar 46): the rows got taller, so
+/// 11 px labels would leave the whole bar looking empty; the top is one step above body
+/// size, and slider labels inside panels are unaffected.
 pub const SIZE_CHROME: f32 = 14.0;
 /// 选项栏里的次要标签与状态文字：比小字大一号，跟得上加高后的行高。
+///
+/// Secondary labels and status text in the option bar: one step above small, keeping up
+/// with the taller rows.
 pub const SIZE_CHROME_LABEL: f32 = 12.0;
 
 // 字体字节只在水印那个 crate 里落一次（`aevum_core::fonts`）：Noto 一份 10 MB，
@@ -717,6 +873,9 @@ pub fn apply(ctx: &Context, zoom: f32) {
 }
 
 /// 只装字体。字号档位变了才需要重跑（`ctx.set_fonts` 会丢字形缓存）。
+///
+/// Install fonts only. Needs a rerun only when the size step changes (`ctx.set_fonts`
+/// drops the glyph cache).
 pub fn set_fonts(ctx: &Context) {
     let mut fonts = FontDefinitions::default();
     fonts
@@ -739,6 +898,12 @@ pub fn set_fonts(ctx: &Context) {
 ///
 /// 外观面板拖滑块时每帧都会走到这里：换色只是重算几十个 Color32 与一次
 /// `set_style`，比重新装字体便宜两个数量级。
+///
+/// Refresh `Visuals` only, without touching fonts.
+///
+/// Dragging a slider in the appearance panel lands here every frame: recolouring means
+/// recomputing a few dozen `Color32`s plus one `set_style`, two orders of magnitude cheaper
+/// than reinstalling fonts.
 pub fn apply_style(ctx: &Context, zoom: f32) {
     let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
     style.text_styles = [
@@ -862,6 +1027,8 @@ pub fn apply_style(ctx: &Context, zoom: f32) {
 }
 
 /// 手动画带字距的小标题（egui 的 Label 不支持 tracking）。
+///
+/// Draw a small, letter-spaced heading by hand (egui's `Label` has no tracking).
 pub fn tracked_text(
     painter: &egui::Painter,
     pos: Pos2,
@@ -879,6 +1046,8 @@ pub fn tracked_text(
 }
 
 /// 居中裁切的单行文本，返回实际画出的文本。
+///
+/// Single-line text centred on its own crop; returns the text actually drawn.
 pub fn ellipsis(text: &str, max_chars: usize) -> String {
     let n = text.chars().count();
     if n <= max_chars {
@@ -894,6 +1063,13 @@ pub fn ellipsis(text: &str, max_chars: usize) -> String {
 /// 按字符数砍对中文不成立：一个汉字 12px、一个字母 6px，固定宽度的栏位里
 /// 字符数没超而像素早就压到邻居控件上了。先量整串，超了才按平均字宽推起点、
 /// 逐次收紧，最多三次排版。
+///
+/// Truncate a single line to a pixel width.
+///
+/// Cutting by character count does not hold for Chinese: one Han character is 12 px and one
+/// letter 6 px, so in a fixed-width column the character count may fit while the pixels
+/// already push into the neighbouring control. Measure the whole string first, and only on
+/// overflow estimate a start from the average advance, tightening at most three times.
 pub fn fit_text(
     painter: &egui::Painter,
     text: &str,
@@ -957,6 +1133,9 @@ pub fn paint_chip(
 }
 
 /// 1px 发丝分隔线：颜色由调用方给（BORDER/DIVIDER 已是白 8–10% alpha）。
+///
+/// 1 px hairline separator: the caller supplies the colour (`BORDER`/`DIVIDER` are
+/// already white at 8-10% alpha).
 pub fn rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32) {
     painter.line_segment(
         [
@@ -972,6 +1151,14 @@ pub fn rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32) {
 /// 通栏 1px 线读作「把两块切开」，缩进的浅线读作「这是两节」——分割样式
 /// 重设计的落点就在这个语义差上。两侧留白让线不顶到边框，视觉上短一截，
 /// 恰好和分节标题的左缘缩进（12px）对齐。
+///
+/// The "soft divider" between floating windows and right-column sections: inset 12 px on
+/// each side, one step darker.
+///
+/// A full-width 1 px line reads as "cut these two apart", while an inset faint line reads as
+/// "these are two sections" — that semantic difference is exactly what the divider redesign
+/// hangs on. The inset keeps the line off the frames, making it visually shorter and lining
+/// it up with the 12 px left inset of section headings.
 pub fn soft_rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32) {
     const INSET: f32 = 12.0;
     rule(
