@@ -221,7 +221,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                         }
                         ui.add_space(8.0);
                         ui.label(
-                            RichText::new("来自 %APPDATA%\naevum-studio\\plugins")
+                            RichText::new(crate::i18n::t!("来自 %APPDATA%\naevum-studio\\plugins"))
                                 .size(10.0)
                                 .color(dim()),
                         );

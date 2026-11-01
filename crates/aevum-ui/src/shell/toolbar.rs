@@ -623,7 +623,7 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
                 state.grid = true;
             }
         }
-        resp.on_hover_text(t.hint());
+        resp.on_hover_text(crate::i18n::tr(t.hint()));
         y += size + 4.0;
     }
 

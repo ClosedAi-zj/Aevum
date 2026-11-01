@@ -86,7 +86,7 @@ fn roots_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 state.lib_sel_file = None;
             }
             if ui
-                .button("删除")
+                .button(crate::i18n::t!("删除"))
                 .on_hover_text(crate::i18n::t!("删集合本身，不动照片与各目录工程"))
                 .clicked()
             {
@@ -155,14 +155,14 @@ fn roots_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                         ui.label(egui::RichText::new(&summary).weak());
                     }
                     if ui
-                        .button("打开")
+                        .button(crate::i18n::t!("打开"))
                         .on_hover_text(crate::i18n::t!("把这个目录开成序列"))
                         .clicked()
                     {
                         state.open(ctx, dir.clone());
                     }
                     if ui
-                        .button("移除")
+                        .button(crate::i18n::t!("移除"))
                         .on_hover_text(crate::i18n::t!("从图库清单移除（不动磁盘上的文件）"))
                         .clicked()
                     {
@@ -217,7 +217,7 @@ fn lib_filter_bar(
         }
         let picked = state.lib_filter.picked;
         if ui
-            .selectable_label(picked, "选用")
+            .selectable_label(picked, crate::i18n::t!("选用"))
             .on_hover_text(crate::i18n::t!("只看旗标为「选用」的"))
             .clicked()
         {
@@ -240,7 +240,7 @@ fn lib_filter_bar(
                 state.lib_filter.label = if on { 0 } else { l };
             }
         }
-        if state.lib_filter.active() && ui.small_button("清除").clicked() {
+        if state.lib_filter.active() && ui.small_button(crate::i18n::t!("清除")).clicked() {
             state.lib_filter = aevum_core::library::Filter::default();
         }
         ui.label(egui::RichText::new(format!("{shown} / {total}")).weak());
@@ -429,7 +429,7 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
             }
             if state.lib_checked.len() >= 2
                 && ui
-                    .small_button("并成一叠")
+                    .small_button(crate::i18n::t!("并成一叠"))
                     .on_hover_text(crate::i18n::t!(
                         "把勾选的照片折叠成一叠；右键「堆叠」可拆散"
                     ))
@@ -440,7 +440,7 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
                     Err(e) => state.error = Some(e),
                 }
             }
-            if ui.small_button("清除").clicked() {
+            if ui.small_button(crate::i18n::t!("清除")).clicked() {
                 state.lib_checked.clear();
             }
         });
@@ -453,7 +453,7 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
                     .desired_width(120.0),
             );
             let entered = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-            if ui.small_button("＋ 加词").clicked() || entered {
+            if ui.small_button(crate::i18n::t!("＋ 加词")).clicked() || entered {
                 let words = split_words(&state.lib_keyword);
                 if !words.is_empty() {
                     lib_apply_keywords(state, &words, &[]);
@@ -463,9 +463,9 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
         });
     }
     ui.label(
-        egui::RichText::new(
-            "单击选中；Ctrl 加选、Shift 连选；0~5 评星、P/X 旗标、6~9 色标；右键集合、关键词与堆叠",
-        )
+        egui::RichText::new(crate::i18n::t!(
+            "单击选中；Ctrl 加选、Shift 连选；0~5 评星、P/X 旗标、6~9 色标；右键集合、关键词与堆叠"
+        ))
         .size(11.0)
         .color(dim()),
     );

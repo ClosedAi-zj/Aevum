@@ -51,7 +51,9 @@ def table_key(body: str) -> str:
     return i18n_table.unescape('"' + body + '"')
 
 # 显式标记：宏调用的字面量。`t!(` 与字符串之间允许换行（rustfmt 会拆行）。
-T_MACRO = re.compile(r'\bt!\(\s*"([^"\\]*)"', re.S)
+# 正文允许转义序列（`\n` 在多行提示里很常见）——早先写成 `[^"\\]*` 把这批整条漏掉，
+# 于是「提示文字有译文键、表里却没有」这种情况只能靠人工发现。
+T_MACRO = re.compile(r'\bt!\(\s*"((?:[^"\\]|\\.)*)"', re.S)
 # tr_fmt 的首参是模板，同样要进表。
 TR_FMT = re.compile(r'\btr_fmt\(\s*"((?:[^"\\]|\\.)*)"', re.S)
 
@@ -97,33 +99,49 @@ AUX_PATTERNS = [(n, [aux_pattern(n, i) for i in idxs]) for n, idxs in AUX.items(
 
 
 def collect() -> dict[str, set[str]]:
-    """返回 {中文原文: {出现位置}}。"""
+    """返回 {中文原文: {出现位置}}。
+
+    宏与 `tr_fmt` 在**整份文件**上匹配，不按行：rustfmt 把长文案拆成
+
+        .on_hover_text(crate::i18n::t!(
+            "输出目录里已经写完的帧……"
+        ));
+
+    时，`t!(` 与字面量分处两行，逐行扫会把整条漏掉（多行提示几乎都长这样）。
+    辅助函数那条仍按行——实参与函数名总在同一行。
+    """
     found: dict[str, set[str]] = {}
     for path in sorted(SRC.rglob("*.rs")):
         if path.name in {"i18n.rs", "i18n_en.rs"}:
             continue
         rel = str(path.relative_to(ROOT))
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+        text = path.read_text(encoding="utf-8")
+        lines = text.split("\n")
+
+        def lineno(at: int) -> int:
+            return text.count("\n", 0, at) + 1
+
+        def skipped(n: int) -> bool:
+            return SKIP_LINE.search(lines[n - 1]) is not None
+
+        for pat, tag in ((T_MACRO, ""), (TR_FMT, " (tr_fmt)")):
+            for m in pat.finditer(text):
+                body = m.group(1)
+                n = lineno(m.start())
+                if not HAN.search(body) or skipped(n):
+                    continue
+                found.setdefault(table_key(body), set()).add(f"{rel}:{n}{tag}")
+
+        for n, line in enumerate(lines, 1):
             if not HAN.search(line) or SKIP_LINE.search(line):
                 continue
-            for m in T_MACRO.finditer(line):
-                body = m.group(1)
-                if HAN.search(body):
-                    found.setdefault(table_key(body), set()).add(f"{rel}:{lineno}")
-            for m in TR_FMT.finditer(line):
-                body = m.group(1)
-                if HAN.search(body):
-                    found.setdefault(table_key(body), set()).add(
-                        f"{rel}:{lineno} (tr_fmt)"
-                    )
-            # 宏已经包住的就不再按辅助函数重复记一遍（同一行两种情况都可能出现）。
             for name, pats in AUX_PATTERNS:
                 for pat in pats:
                     for m in pat.finditer(line):
                         body = m.group(1)
                         if HAN.search(body):
                             found.setdefault(table_key(body), set()).add(
-                                f"{rel}:{lineno} ({name})"
+                                f"{rel}:{n} ({name})"
                             )
     return found
 

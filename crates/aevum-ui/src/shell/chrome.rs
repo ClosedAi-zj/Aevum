@@ -133,7 +133,12 @@ fn mac_lights(ui: &mut Ui, ctx: &Context, full: Rect) {
     const IDLE: Color32 = Color32::from_rgb(0x4A, 0x4A, 0x4E);
     let colors = [CLOSE, MIN, ZOOM];
     let glyphs = ['×', '−', '+'];
-    let tips = ["关闭", "最小化", "缩放"];
+    // 悬停提示在绑定处就翻：这三条是数组里的活字面量，没有调用点可翻。
+    let tips = [
+        crate::i18n::tr("关闭"),
+        crate::i18n::tr("最小化"),
+        crate::i18n::tr("缩放"),
+    ];
     let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
     let step = d + platform::Chrome::LIGHT_GAP;
     for i in 0..3 {
@@ -237,12 +242,12 @@ fn win_buttons(ui: &mut Ui, ctx: &Context, full: Rect) {
                 );
             }
         }
-        let tip = match i {
+        let tip = crate::i18n::tr(match i {
             0 => "最小化",
             1 if maximized => "还原窗口大小",
             1 => "最大化窗口",
             _ => "关闭",
-        };
+        });
         // on_hover_text 会接管 Response，所以点击判定在它之前问完。
         let clicked = resp.clicked();
         resp.on_hover_text(tip);

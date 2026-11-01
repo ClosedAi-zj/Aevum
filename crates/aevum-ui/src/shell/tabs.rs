@@ -230,11 +230,18 @@ pub(super) fn info_tab(state: &mut AppState, ui: &mut Ui) {
             for name in aevum_core::raw::DEMOSAIC_METHODS {
                 let label = demosaic_cn(name);
                 let resp = ui
-                    .add(egui::Button::selectable(current == name, label))
+                    .add(egui::Button::selectable(
+                        current == name,
+                        crate::i18n::tr(label),
+                    ))
                     .on_hover_text(if name == "directional" {
-                        "Hamilton–Adams 方向自适应插值（对齐 LR 的处理口径）：边缘更干净，约为单元平均的 3-4×耗时。\n只影响传感器直解；切换后当前帧重新解码，导出走同一口径。"
+                        crate::i18n::t!(
+                            "Hamilton–Adams 方向自适应插值（对齐 LR 的处理口径）：边缘更干净，约为单元平均的 3-4×耗时。\n只影响传感器直解；切换后当前帧重新解码，导出走同一口径。"
+                        )
                     } else {
-                        "2×2 单元平均（与 DNG 路径同口径），最快；边缘处 R/B 易混色。\n切换后当前帧重新解码。"
+                        crate::i18n::t!(
+                            "2×2 单元平均（与 DNG 路径同口径），最快；边缘处 R/B 易混色。\n切换后当前帧重新解码。"
+                        )
                     });
                 if resp.clicked() && aevum_core::raw::set_demosaic_method(name) {
                     state.preview_dirty = true;
@@ -724,9 +731,11 @@ pub(super) fn history_tab(state: &mut AppState, ui: &mut Ui) {
             run_history_command(state, &ctx, "history.jump", &args);
         }
         resp.on_hover_text(if revertible {
-            "点这一步就回到它做完之后的状态"
+            crate::i18n::t!("点这一步就回到它做完之后的状态")
         } else {
-            "这一步有已经落到盘上的产物（导出、对齐、存工程）：跳回去只回参数，产物不会删除"
+            crate::i18n::t!(
+                "这一步有已经落到盘上的产物（导出、对齐、存工程）：跳回去只回参数，产物不会删除"
+            )
         });
     }
     note(

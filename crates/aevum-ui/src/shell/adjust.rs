@@ -355,7 +355,10 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
                             .selectable(false)
                             .sense(Sense::click()),
                         )
-                        .on_hover_text(format!("{}：{}", f.kind.cn(), f.note));
+                        .on_hover_text(crate::i18n::tr_fmt(
+                            "{}：{}",
+                            &[&crate::i18n::tr(f.kind.cn()), &crate::i18n::tr(&f.note)],
+                        ));
                     if resp.clicked() {
                         state.set_frame(f.frame);
                     }
@@ -569,9 +572,9 @@ fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
                 &mut state.def_channels,
                 RichText::new(crate::i18n::t!("分通道（RGB 色闪）")).size(SIZE_SMALL),
             )
-            .on_hover_text(
-                "按 R/G/B 三通道分别测光与校正，治的是彩色闪烁；代价是可能带来轻微色偏漂移",
-            )
+            .on_hover_text(crate::i18n::t!(
+                "按 R/G/B 三通道分别测光与校正，治的是彩色闪烁；代价是可能带来轻微色偏漂移"
+            ))
             .changed()
         {
             state.recompute_deflicker();
@@ -1288,11 +1291,11 @@ fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
         "未套用".to_owned()
     };
     ui.horizontal(|ui| {
-        ui.label("相机配置");
+        ui.label(crate::i18n::t!("相机配置"));
         ui.label(egui::RichText::new(dcp_shown).weak());
         if ui
-            .button("自动")
-            .on_hover_text("按首帧 EXIF 机型在 DCP 目录里找配置（优先 Adobe Standard）。\nDCP 只接 RAW/DNG：相机原始数据才需要矩阵与曲线，\nJPEG/TIFF 已经是成品色彩。")
+            .button(crate::i18n::t!("自动"))
+            .on_hover_text(crate::i18n::t!("按首帧 EXIF 机型在 DCP 目录里找配置（优先 Adobe Standard）。\nDCP 只接 RAW/DNG：相机原始数据才需要矩阵与曲线，\nJPEG/TIFF 已经是成品色彩。"))
             .clicked()
         {
             let args = serde_json::json!({"kind":"dcp","auto":true});
@@ -1326,11 +1329,11 @@ fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
         None => "未套用".to_owned(),
     };
     ui.horizontal(|ui| {
-        ui.label("镜头配置");
+        ui.label(crate::i18n::t!("镜头配置"));
         ui.label(egui::RichText::new(lcp_shown).weak());
         if ui
-            .button("自动")
-            .on_hover_text("按首帧 EXIF 的机身/镜头/焦距在 LCP 目录里选帧，\n折出畸变、横向色差与暗角，先于下面的手动三项生效。")
+            .button(crate::i18n::t!("自动"))
+            .on_hover_text(crate::i18n::t!("按首帧 EXIF 的机身/镜头/焦距在 LCP 目录里选帧，\n折出畸变、横向色差与暗角，先于下面的手动三项生效。"))
             .clicked()
         {
             let args = serde_json::json!({"kind":"lcp","auto":true});
@@ -1370,8 +1373,8 @@ fn adjust_lens(state: &mut AppState, ui: &mut Ui) -> bool {
     let mut auto = state.params.lens_profile.is_some();
     ui.horizontal(|ui| {
         if ui
-            .checkbox(&mut auto, "自动匹配")
-            .on_hover_text("按 EXIF 的机身/镜头/焦距在 lensfun 数据库里找标定，\n自动折出畸变、横向色差与暗角校正；\n找不到库或没命中时只剩手动三项。")
+            .checkbox(&mut auto, crate::i18n::t!("自动匹配"))
+            .on_hover_text(crate::i18n::t!("按 EXIF 的机身/镜头/焦距在 lensfun 数据库里找标定，\n自动折出畸变、横向色差与暗角校正；\n找不到库或没命中时只剩手动三项。"))
             .changed()
         {
             if auto {
@@ -1387,7 +1390,7 @@ fn adjust_lens(state: &mut AppState, ui: &mut Ui) -> bool {
             changed = true;
         }
         if ui
-            .button("重配")
+            .button(crate::i18n::t!("重配"))
             .on_hover_text(crate::i18n::t!("按当前 EXIF 重新跑一遍匹配"))
             .clicked()
         {
@@ -1451,7 +1454,7 @@ fn adjust_frame(state: &mut AppState, ui: &mut Ui) {
                     state.set_tool(Tool::Crop);
                 }
                 if (state.user_crop.is_some() || state.rotate != 0.0)
-                    && ui.small_button("取消取景").clicked()
+                    && ui.small_button(crate::i18n::t!("取消取景")).clicked()
                 {
                     state.crop_reset();
                     state.set_rotate(0.0);
@@ -1526,7 +1529,7 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             for &format in formats {
                 if bar_chip(ui, format.cn(), state.render_format == format)
-                    .on_hover_text(format.hint())
+                    .on_hover_text(crate::i18n::tr(format.hint()))
                     .clicked()
                 {
                     state.render_format = format;
@@ -1537,7 +1540,7 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             for space in ColorSpace::ALL {
                 let picked = bar_chip(ui, space.cn(), state.render_color_space == space)
-                    .on_hover_text(space.hint())
+                    .on_hover_text(crate::i18n::tr(space.hint()))
                     .clicked();
                 if picked {
                     state.render_color_space = space;
@@ -1585,11 +1588,11 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             &mut state.render_resume,
             RichText::new(crate::i18n::t!("断点续跑（跳过已导出的帧）")).size(SIZE_SMALL),
         )
-        .on_hover_text(
-            "输出目录里已经写完的帧原样留着，这一趟只补没写出来的那些。\n\
-             跑崩了再点一次就是接着导，不必从头重渲。\n\
-             它不看画面有没有改过：改了参数想重导就别勾，或者先把旧帧删掉。",
-        );
+        // 一条一行写全：Rust 的续行（反斜杠+换行）会把换行与缩进一起吃掉，
+        // 而译文表按字面量原样存键，两边口径对不上就查不到译文。
+        .on_hover_text(crate::i18n::t!(
+            "输出目录里已经写完的帧原样留着，这一趟只补没写出来的那些。\n跑崩了再点一次就是接着导，不必从头重渲。\n它不看画面有没有改过：改了参数想重导就别勾，或者先把旧帧删掉。"
+        ));
         ui.add_space(4.0);
         // 输出锐化是成片级设置：在缩放到最终尺寸之后补的那一刀，预览不看它。
         ui.horizontal_wrapped(|ui| {
@@ -1600,7 +1603,7 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             );
             for &s in &OutputSharpen::ALL {
                 if bar_chip(ui, s.cn(), state.render_sharpen_for == s)
-                    .on_hover_text(s.hint())
+                    .on_hover_text(crate::i18n::tr(s.hint()))
                     .clicked()
                 {
                     state.render_sharpen_for = s;
@@ -1997,13 +2000,15 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             }
         });
         ui.horizontal_wrapped(|ui| {
-            if ui.small_button("反向").clicked() {
+            if ui.small_button(crate::i18n::t!("反向")).clicked() {
                 state.motion_swap();
             }
-            if ui.small_button("铺满").clicked() {
+            if ui.small_button(crate::i18n::t!("铺满")).clicked() {
                 state.motion_fill_box();
             }
-            if state.motion != crop::Motion::default() && ui.small_button("清零").clicked() {
+            if state.motion != crop::Motion::default()
+                && ui.small_button(crate::i18n::t!("清零")).clicked()
+            {
                 state.motion_reset();
             }
         });
@@ -2429,7 +2434,10 @@ fn queue_table(state: &mut AppState, ui: &mut Ui, busy: bool) {
                         remove = Some(index);
                     }
                 }
-                resp.on_hover_text(format!("{}\n{}", item.out, item.note));
+                resp.on_hover_text(crate::i18n::tr_fmt(
+                    "{}\n{}",
+                    &[&item.out, &crate::i18n::tr(&item.note)],
+                ));
             }
         });
     if let Some(index) = remove {
