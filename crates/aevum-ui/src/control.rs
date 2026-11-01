@@ -536,6 +536,12 @@ pub fn command_catalog() -> Vec<CommandSpec> {
             schema: r#"{"type":"object","additionalProperties":false,"properties":{"frames":{"type":"array","items":{"type":"integer","minimum":0},"description":"要拼接的帧下标（0 开始，按接片顺序）；给了就忽略 start/around"},"start":{"type":"integer","minimum":0,"description":"起始帧下标（0 开始）；省略用当前选中帧"},"around":{"type":"integer","minimum":1,"maximum":11,"description":"起始帧之后再接几张（1..11，最多凑成 12 张）；省略=1"},"out_dir":{"type":"string","description":"输出目录，不能是序列根或其上级；省略用序列根下 全景/"},"confirm":{"type":"boolean","description":"批量写操作必须为 true"}},"required":["confirm"]}"#,
         },
         CommandSpec {
+            id: "cull.evaluate",
+            summary: "按四条判据逐帧裁决并给出理由：曝光越界（EV）、与相邻帧的突变、清晰度低于序列中位的比例、读不出来；不吃图、立即返回。apply: true 时把判废的帧直接标成「排除」。",
+            params: "suggest?（用序列自身的 MAD 推曝光区间）、ev_low?、ev_high?、jump_ev?、sharp_ratio?、apply?",
+            schema: r#"{"type":"object","additionalProperties":false,"properties":{"suggest":{"type":"boolean","description":"用序列自身的亮度中位数绝对偏差推曝光区间（3×1.4826×MAD，下限 0.5 EV）；给了则覆盖 ev_low/ev_high"},"ev_low":{"type":"number","minimum":-10,"maximum":0,"description":"曝光下限（EV，相对 18% 中灰）"},"ev_high":{"type":"number","minimum":0,"maximum":10,"description":"曝光上限（EV）"},"jump_ev":{"type":"number","minimum":0,"maximum":10,"description":"与相邻帧的突变阈值（EV）；0 关闭这条判据"},"sharp_ratio":{"type":"number","minimum":0,"maximum":1,"description":"清晰度低于序列中位的这个比例就判废；0 关闭这条判据"},"apply":{"type":"boolean","description":"true 则把判废的帧标成排除（复用已有的旗标，不新增工程字段）"}}}"#,
+        },
+        CommandSpec {
             id: "stack.merge",
             summary: "把同机位的一段帧按统计量合成一张：星轨取最亮、降噪取平均、去卫星取中值、杂散光与热噪点做 σ 截尾（批量写，必须 confirm: true）；会套对齐位移与统一裁切，尺寸对不齐会拒绝。长任务，立即返回，进度用 merge.status 查。",
             params: "frames?（帧下标数组，0 开始）或 center?+around?（默认当前帧±4）；mode?（lighten/average/median/sigma-clip）、clip_sigma?、fill_gaps?、out_dir?；confirm",

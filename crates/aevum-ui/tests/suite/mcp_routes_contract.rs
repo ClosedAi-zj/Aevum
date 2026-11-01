@@ -15,9 +15,9 @@ fn qa_catalog_and_core_table_are_the_same_set_of_ids() {
     let actual: Vec<&str> = catalog.iter().map(|spec| spec.id).collect();
     let core: Vec<&str> = aevum_core::mcp_routes::COMMANDS.to_vec();
 
-    // 1) 条数：两边都必须是 74
-    assert_eq!(core.len(), 74, "core 的 COMMANDS 不是 74 条");
-    assert_eq!(actual.len(), 74, "command_catalog() 不是 74 条");
+    // 1) 条数：两边都必须是 75
+    assert_eq!(core.len(), 75, "core 的 COMMANDS 不是 75 条");
+    assert_eq!(actual.len(), 75, "command_catalog() 不是 75 条");
 
     // 2) 各自内部不能有重复
     let actual_set: BTreeSet<&str> = actual.iter().copied().collect();
@@ -111,9 +111,9 @@ fn qa_system_commands_payload_carries_every_id() {
         .iter()
         .filter_map(|entry| entry.get("id").and_then(|id| id.as_str()))
         .collect();
-    assert_eq!(ids.len(), 74, "system.commands 报的条数不是 74");
+    assert_eq!(ids.len(), 75, "system.commands 报的条数不是 75");
     let got: BTreeSet<&str> = ids.iter().copied().collect();
-    assert_eq!(got.len(), 74, "system.commands 报文里有重复 id");
+    assert_eq!(got.len(), 75, "system.commands 报文里有重复 id");
     for id in aevum_core::mcp_routes::COMMANDS {
         assert!(got.contains(id), "system.commands 报文缺 {id}");
     }

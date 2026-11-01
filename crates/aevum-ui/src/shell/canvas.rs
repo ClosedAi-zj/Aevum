@@ -400,6 +400,22 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui) {
         motion_overlay(state, ui, &p, img, &resp);
     }
 
+    // 逐帧时间戳叠印：左下角一行「帧号 · 拍摄时间 · 机型曝光」。
+    // 药丸底压成半透明黑板，画面再亮也读得出来。
+    //
+    // Per-frame timestamp: one line in the bottom-left corner. The translucent pill keeps it
+    // readable on any frame.
+    if state.stamp_on
+        && let Some(text) = state.stamp_text()
+    {
+        chip_label(
+            &p,
+            Pos2::new(img.left() + 10.0, img.bottom() - 10.0),
+            &text,
+            Align2::LEFT_BOTTOM,
+        );
+    }
+
     if state.grid {
         for k in 1..3 {
             let x = img.left() + img.width() * k as f32 / 3.0;

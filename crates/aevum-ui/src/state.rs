@@ -235,6 +235,7 @@ pub const GROUP_SPECS: &[GroupSpec] = &[
     in_module("seq", Module::Sequence, true),
     in_module("seq-issues", Module::Sequence, true),
     in_module("seq-qa", Module::Sequence, true),
+    in_module("seq-cull", Module::Sequence, false),
     in_module("seq-align", Module::Sequence, false),
     in_module("seq-align-report", Module::Sequence, false),
     in_module("seq-spec", Module::Sequence, false),
@@ -1356,6 +1357,24 @@ pub struct AppState {
     /// view buffer.
     pub tb_last: Option<String>,
     pub tb_error: Option<String>,
+    /// 筛选台的四条判据阈值；纯视图缓冲，不落工程（拒收标记本身落在 `flags` 里）。
+    ///
+    /// The four thresholds of the cull station; pure view buffers, never written to the project
+    /// (the rejection marks themselves live in `flags`).
+    pub cull_ev_low: f64,
+    pub cull_ev_high: f64,
+    pub cull_jump: f64,
+    pub cull_sharp: f64,
+    /// 上一次评估的一句话结论（「12 帧会被判废」/「干净」），分组里回显。
+    ///
+    /// One-line result of the last evaluation ("12 frames would be culled" / "clean"), echoed
+    /// inside the group.
+    pub cull_note: Option<String>,
+    /// 画布上叠印逐帧时间戳（帧号 · 拍摄时间 · 机型曝光）。
+    ///
+    /// Burn the per-frame timestamp onto the canvas (frame number, capture time, camera and
+    /// exposure).
+    pub stamp_on: bool,
     pub resolution: Option<(u32, u32)>,
     /// 首帧读出来的保真度口径，只有 RAW 才有；「信息」面板用它标注预览/传感器两条路。
     ///
@@ -2210,6 +2229,13 @@ impl AppState {
             tb_match: true,
             tb_last: None,
             tb_error: None,
+            // 判据默认值与核心一致：±1 EV 之外判废、相邻突变 1 EV、清晰度不设限。
+            cull_ev_low: -1.0,
+            cull_ev_high: 1.0,
+            cull_jump: 1.0,
+            cull_sharp: 0.0,
+            cull_note: None,
+            stamp_on: false,
             resolution: None,
             source_note: None,
             mask_sel: None,
@@ -2752,6 +2778,40 @@ impl AppState {
 
     pub fn selected_flag(&self) -> i8 {
         self.flag_at(self.selected)
+    }
+
+    /// 一次标一批帧（筛选台用）：整批只记一行历史，不逐帧刷。
+    ///
+    /// Flag a batch of frames at once (the cull station): one history line for the whole batch
+    /// instead of one per frame.
+    pub fn flag_many(&mut self, indices: &[usize], flag: i8) {
+        for i in indices {
+            if flag == 0 {
+                self.flags.remove(i);
+            } else {
+                self.flags.insert(*i, flag.signum());
+            }
+        }
+        if !indices.is_empty() {
+            let verb = if flag < 0 { "排除" } else { "选用" };
+            history::note(
+                "flag",
+                crate::i18n::tr_fmt("{} 帧{}", &[&indices.len(), &crate::i18n::tr(verb)]),
+            );
+        }
+    }
+
+    /// 画布叠印的那一行字：帧号 · 拍摄时间 · 机型与曝光。缺什么省什么。
+    ///
+    /// The line burned onto the canvas: frame number, capture time, camera and exposure.
+    /// Anything missing is simply left out.
+    pub fn stamp_text(&self) -> Option<String> {
+        let total = self.frame_count();
+        if total == 0 {
+            return None;
+        }
+        let index = self.selected.min(total - 1);
+        Some(stamp_line(index, total, self.exif.get(index)))
     }
 
     pub fn set_selected_flag(&mut self, flag: i8) {
@@ -3764,6 +3824,7 @@ impl AppState {
             "export.stills" => (String::new(), "导出静帧".to_owned(), false),
             "hdr.merge" => (String::new(), "HDR 合并".to_owned(), false),
             "pano.merge" => (String::new(), "全景合并".to_owned(), false),
+            "cull.evaluate" => (String::new(), "筛选评估".to_owned(), false),
             "stack.merge" => (String::new(), "星空堆栈".to_owned(), false),
             "timeblend.merge" => (String::new(), "时间合成".to_owned(), false),
             "queue.run" => (String::new(), "批量渲染队列".to_owned(), false),
@@ -3985,6 +4046,7 @@ impl AppState {
             "grade.copy" => self.cmd_grade_copy(args),
             "hdr.merge" => self.cmd_hdr_merge(ctx, args),
             "pano.merge" => self.cmd_pano_merge(ctx, args),
+            "cull.evaluate" => self.cmd_cull_evaluate(args),
             "stack.merge" => self.cmd_stack_merge(ctx, args),
             "timeblend.merge" => self.cmd_timeblend_merge(ctx, args),
             "merge.status" => Ok(self.merge_status_json()),
@@ -5888,6 +5950,102 @@ impl AppState {
             IndicesAnchor::Start => at,
         };
         Ok((from..=at.saturating_add(around).min(n - 1)).collect())
+    }
+
+    /// `cull.evaluate`：按四条判据逐帧裁决，可选直接把判废的帧标成「排除」。
+    ///
+    /// `cull.evaluate`: judge every frame with the four rules, optionally marking the rejected
+    /// ones as excluded right away.
+    fn cmd_cull_evaluate(&mut self, args: &Value) -> Result<Value, String> {
+        let n = self.require_sequence()?.len();
+        if n == 0 {
+            return Err("序列里没有帧".to_owned());
+        }
+        // 判据吃的是导入那趟已经算好的逐帧测光，不再解图：这条命令应当立刻返回。
+        //
+        // The rules live on the per-frame measurements taken during import, so nothing is
+        // decoded here and the call returns at once.
+        let means: Vec<Option<f64>> = self.metrics.iter().map(|m| m.map(|x| x.mean)).collect();
+        let sharp: Vec<Option<f64>> = self.metrics.iter().map(|m| m.map(|x| x.sharp)).collect();
+        let mut rule = aevum_core::cull::CullRule {
+            ev_low: self.cull_ev_low,
+            ev_high: self.cull_ev_high,
+            jump_ev: self.cull_jump,
+            sharp_ratio: self.cull_sharp,
+        };
+        if args
+            .get("suggest")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            let (lo, hi) = aevum_core::cull::suggest_band(&means);
+            rule.ev_low = lo;
+            rule.ev_high = hi;
+        }
+        if let Some(v) = opt_f64(args, "ev_low")? {
+            rule.ev_low = v;
+        }
+        if let Some(v) = opt_f64(args, "ev_high")? {
+            rule.ev_high = v;
+        }
+        if let Some(v) = opt_f64(args, "jump_ev")? {
+            rule.jump_ev = v;
+        }
+        if let Some(v) = opt_f64(args, "sharp_ratio")? {
+            rule.sharp_ratio = v.clamp(0.0, 1.0);
+        }
+        if rule.ev_low > rule.ev_high {
+            return Err(crate::i18n::tr_fmt(
+                "曝光下限 {} 不该高于上限 {}",
+                &[&rule.ev_low, &rule.ev_high],
+            ));
+        }
+        let verdict = aevum_core::cull::evaluate(&means, &sharp, &rule);
+        let frames: Vec<Value> = verdict
+            .frames
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                json!({
+                    "index": i,
+                    "reject": f.reject,
+                    "reason": f.reason.map(|r| r.key()),
+                })
+            })
+            .collect();
+        let apply = args.get("apply").and_then(Value::as_bool).unwrap_or(false);
+        let rejected = verdict.rejected_indices();
+        if apply {
+            self.flag_many(&rejected, -1);
+        }
+        self.cull_ev_low = rule.ev_low;
+        self.cull_ev_high = rule.ev_high;
+        self.cull_jump = rule.jump_ev;
+        self.cull_sharp = rule.sharp_ratio;
+        self.cull_note = Some(if rejected.is_empty() {
+            crate::i18n::tr("这一遍没有帧越界").to_owned()
+        } else {
+            crate::i18n::tr_fmt("{} 帧会被判废", &[&rejected.len()])
+        });
+        self.status = self.cull_note.clone().unwrap_or_default();
+        Ok(json!({
+            "band": [rule.ev_low, rule.ev_high],
+            "rule": {
+                "ev_low": rule.ev_low,
+                "ev_high": rule.ev_high,
+                "jump_ev": rule.jump_ev,
+                "sharp_ratio": rule.sharp_ratio,
+            },
+            "rejected": rejected.len(),
+            "applied": if apply { rejected.len() } else { 0 },
+            "indices": rejected,
+            "jumps": verdict
+                .jumps
+                .iter()
+                .map(|(i, step)| json!({"index": i, "step_ev": step}))
+                .collect::<Vec<Value>>(),
+            "frames": frames,
+        }))
     }
 
     /// `stack.merge`：把一段同机位帧按统计量合成一张（星轨 / 降噪 / 去卫星 / σ 截尾）。
@@ -11308,6 +11466,46 @@ fn clean_copy_name(raw: &str) -> Result<String, String> {
     Ok(name.to_owned())
 }
 
+/// EXIF 的 `2026:11:02 18:24:07` 换成人读得顺的 `2026-11-02 18:24:07`：
+/// 日期段的冒号换短横，时间段原样。长度不够或不像日期就原样返回。
+///
+/// Turn EXIF's `2026:11:02 18:24:07` into the readable `2026-11-02 18:24:07`: the date colons
+/// become dashes and the time part stays. Anything short or unlike a date comes back as is.
+fn pretty_datetime(dt: &str) -> String {
+    match dt.char_indices().nth(10) {
+        Some((cut, _)) if dt.is_char_boundary(cut) && dt[..cut].contains(':') => {
+            format!("{}{}", dt[..cut].replace(':', "-"), &dt[cut..])
+        }
+        _ => dt.to_owned(),
+    }
+}
+
+/// 叠印文字：缺 EXIF 时只出帧号，有就一路补上时间、机型与曝光。
+///
+/// The overlay line: just the frame number without EXIF, extended with the capture time, camera
+/// and exposure when they are there.
+fn stamp_line(index: usize, total: usize, exif: Option<&Exif>) -> String {
+    let mut parts = vec![format!("#{:04}/{}", index + 1, total)];
+    if let Some(e) = exif {
+        if let Some(dt) = e.datetime() {
+            parts.push(pretty_datetime(dt));
+        }
+        if let Some(line) = e.camera_line() {
+            parts.push(line);
+        }
+        if let Some(shutter) = e.shutter_text() {
+            match e.fnum() {
+                Some(f) => parts.push(format!("{shutter} · f/{f:.1}")),
+                None => parts.push(shutter),
+            }
+        }
+        if let Some(iso) = e.iso() {
+            parts.push(format!("ISO {}", iso.round() as i64));
+        }
+    }
+    parts.join("  ·  ")
+}
+
 /// 帧号区间的锚点：包围（当前帧前后各取几张）还是起点（从当前帧往后取几张）。
 ///
 /// Where a frame range is anchored: centred on the current frame, or starting at it.
@@ -15982,6 +16180,104 @@ mod command_tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         panic!("合并任务没收尾");
+    }
+
+    /// 筛选台：只报数不动标记；apply 才写旗标，而且一个素材都不碰。
+    ///
+    /// The cull station: report only by default; `apply` is what writes flags, and it never
+    /// touches a single media file.
+    #[test]
+    fn cull_evaluate_reports_then_marks_on_request() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let dir = stack_frame_dir("cull");
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.display().to_string()}),
+            )
+            .expect("打开序列");
+        // 测光换成手写数据：中间那帧暗了 3 EV，其余两帧在 0 EV。
+        let metrics = |mean: f64| FrameMetrics {
+            mean,
+            median: mean,
+            center: mean,
+            sharp: 100.0,
+        };
+        state.metrics = vec![
+            Some(metrics(0.18)),
+            Some(metrics(0.0225)),
+            Some(metrics(0.18)),
+        ];
+        let before: Vec<Vec<u8>> = (0..3)
+            .map(|i| std::fs::read(dir.join(format!("s{i:03}.png"))).expect("读原帧"))
+            .collect();
+
+        let dry = state
+            .run_ui_command(&ctx, "cull.evaluate", &json!({}))
+            .expect("评估");
+        assert_eq!(dry["rejected"], json!(1), "{dry}");
+        assert_eq!(dry["applied"], json!(0));
+        assert_eq!(dry["indices"], json!([1]));
+        assert_eq!(dry["frames"][1]["reason"], json!("too-dark"));
+        assert_eq!(state.flag_at(1), 0, "只评估不该动旗标");
+
+        // 把区间放到 ±4 EV：那条 −3 EV 的帧就在带内了，一帧都不该判出去
+        // （上一遍判出 1 帧，这一遍 0 帧，才说明阈值真的被吃进去）。
+        let wide = state
+            .run_ui_command(
+                &ctx,
+                "cull.evaluate",
+                &json!({"ev_low": -4.0, "ev_high": 4.0}),
+            )
+            .expect("宽区间评估");
+        assert_eq!(wide["rejected"], json!(0), "{wide}");
+
+        let applied = state
+            .run_ui_command(
+                &ctx,
+                "cull.evaluate",
+                &json!({"apply": true, "ev_low": -1.0, "ev_high": 1.0}),
+            )
+            .expect("评估并标废");
+        assert_eq!(applied["applied"], json!(1));
+        assert_eq!(state.flag_at(1), -1, "判废的帧要落成排除");
+        assert_eq!(state.flag_at(0), 0, "干净的帧不该被标");
+        assert!(state.cull_note.is_some(), "结论要留在面板上");
+
+        // 下限高于上限：直接报错，不许静默换成一个空区间。
+        let reversed = state
+            .run_ui_command(
+                &ctx,
+                "cull.evaluate",
+                &json!({"ev_low": 1.0, "ev_high": -1.0}),
+            )
+            .unwrap_err();
+        assert!(reversed.contains("不该高于上限"), "{reversed}");
+
+        // 素材一个字节都不该变：这条命令只读测光表。
+        for (i, bytes) in before.iter().enumerate() {
+            let now = std::fs::read(dir.join(format!("s{i:03}.png"))).expect("再读原帧");
+            assert_eq!(&now, bytes, "第 {i} 帧被改写了");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 叠印文字：没有 EXIF 时只出帧号；日期按人读得顺的写法换。
+    ///
+    /// The overlay line: frame number only without EXIF, and dates rewritten the readable way.
+    #[test]
+    fn stamp_line_degrades_and_pretty_prints() {
+        assert_eq!(stamp_line(2, 12, None), "#0003/12");
+        let bare = Exif::default();
+        assert_eq!(stamp_line(0, 1, Some(&bare)), "#0001/1");
+        assert_eq!(
+            pretty_datetime("2026:11:02 18:24:07"),
+            "2026-11-02 18:24:07"
+        );
+        assert_eq!(pretty_datetime("garbage"), "garbage");
+        assert_eq!(pretty_datetime(""), "");
     }
 
     /// 没跑任务时 merge.status / merge.cancel 都要答得清楚，不能报错。

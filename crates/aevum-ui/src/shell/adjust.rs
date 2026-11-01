@@ -241,6 +241,109 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
             );
         }
     }
+    if group_header(ui, state, "seq-cull", "筛选台", false) {
+        let n = state.frame_count();
+        let cull_ctx = ui.ctx().clone();
+        let suggest = bar_chip(ui, "按序列推建议区间", false)
+            .on_hover_text(crate::i18n::t!(
+                "用逐帧亮度的中位数绝对偏差推曝光区间（3×1.4826×MAD，下限 0.5 EV），渐变段落不会被误杀"
+            ))
+            .clicked();
+        if suggest && n > 0 {
+            let args = serde_json::json!({"suggest": true});
+            if let Err(e) = state.run_ui_command(&cull_ctx, "cull.evaluate", &args) {
+                state.cull_note = Some(e);
+            }
+        }
+        // 阈值一改，上一遍的结论就不作数了：明说一句，别让旧读数骗人。
+        //
+        // Once a threshold moves, the previous verdict no longer holds; say so instead of
+        // leaving a stale count on screen.
+        let mut tuned = false;
+        tuned |= slider(
+            ui,
+            "cull.ev_low",
+            "曝光下限",
+            &mut state.cull_ev_low,
+            -6.0,
+            0.0,
+            -1.0,
+            2,
+            true,
+        );
+        tuned |= slider(
+            ui,
+            "cull.ev_high",
+            "曝光上限",
+            &mut state.cull_ev_high,
+            0.0,
+            6.0,
+            1.0,
+            2,
+            true,
+        );
+        tuned |= slider(
+            ui,
+            "cull.jump_ev",
+            "相邻突变",
+            &mut state.cull_jump,
+            0.0,
+            6.0,
+            1.0,
+            2,
+            false,
+        );
+        tuned |= slider(
+            ui,
+            "cull.sharp_ratio",
+            "清晰度下限",
+            &mut state.cull_sharp,
+            0.0,
+            1.0,
+            0.0,
+            2,
+            false,
+        );
+        if tuned {
+            state.cull_note = None;
+        }
+        ui.checkbox(
+            &mut state.stamp_on,
+            crate::i18n::t!("叠印时间戳（帧号 · 拍摄时间 · 机型曝光）"),
+        );
+        ui.horizontal(|ui| {
+            let evaluate = bar_primary(ui, "评估")
+                .on_hover_text(crate::i18n::t!(
+                    "按当前阈值逐帧裁决，只报数不改标记；曝光下限/上限、突变、清晰度四条判据"
+                ))
+                .clicked();
+            let apply = bar_button(ui, "标为排除")
+                .on_hover_text(crate::i18n::t!(
+                    "把判废的帧一次性标成排除（复用已有的旗标，时间轴上一眼看得见）"
+                ))
+                .clicked();
+            if n == 0 {
+                return;
+            }
+            let args = serde_json::json!({"apply": apply});
+            if (evaluate || apply)
+                && let Err(e) = state.run_ui_command(&cull_ctx, "cull.evaluate", &args)
+            {
+                state.cull_note = Some(e);
+            }
+        });
+        if let Some(note) = state.cull_note.clone() {
+            ui.label(
+                RichText::new(note)
+                    .size(SIZE_SMALL)
+                    .color(if state.cull_note.is_some() {
+                        accent()
+                    } else {
+                        dim()
+                    }),
+            );
+        }
+    }
     if !state.issues.is_empty() && group_header(ui, state, "seq-issues", "异常帧", false) {
         let items: Vec<(usize, String)> = state.issues.iter().take(6).cloned().collect();
         for (i, msg) in items {
