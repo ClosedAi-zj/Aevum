@@ -1137,6 +1137,21 @@ fn focus_align_hint(state: &AppState) -> Option<String> {
 fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     use aevum_core::focus::Method;
     let busy = state.merge_kind == Some(MergeKind::Focus);
+    // 快照对账：本帧内任何参数或取帧变了，旧深度图预览就地作废——宁可让用户
+    // 再点一次，也不挂一张与当前参数对不上的图误导选区。
+    //
+    // Snapshot reconciliation: if any parameter or the frame selection changed within
+    // this frame, the old depth-map preview is voided on the spot -- asking the user
+    // to press again beats hanging a picture that disagrees with the current
+    // parameters and misleads the selection.
+    let focus_snapshot = (
+        state.focus_around,
+        state.focus_method,
+        state.focus_radius,
+        state.focus_threshold,
+        state.focus_smooth_z,
+        state.focus_feather,
+    );
     // 没对齐就先说一句，并就地给个按钮：让用户自己去别处找「开始对齐」，这句提示
     // 就只是抱怨。
     //
@@ -1281,36 +1296,59 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             state.focus_feather = feather as f32;
         }
     }
-    let go = ui
-        .add_enabled(
-            !busy,
-            egui::Button::new(RichText::new(if busy {
-                crate::i18n::t!("合成中…")
-            } else {
-                crate::i18n::t!("合成")
-            }))
-            .min_size(Vec2::new(0.0, BAR_H))
-            .corner_radius(radius_control()),
-        )
-        .on_hover_text(crate::i18n::t!(
-            "把当前帧起若干帧按所选方法融成一张全景深，写进输出目录"
-        ))
-        .clicked();
-    if go {
-        let args = serde_json::json!({
-            "around": state.focus_around,
-            "method": state.focus_method.key(),
-            "radius": state.focus_radius,
-            "threshold": state.focus_threshold,
-            "smooth_z": state.focus_smooth_z,
-            "feather": state.focus_feather,
-            "confirm": true,
-        });
-        if let Err(e) = state.run_ui_command(ctx, "focus.merge", &args) {
-            state.focus_error = Some(e);
-            state.focus_last = None;
+    ui.horizontal(|ui| {
+        // 预览按钮在合成按钮左边：一个只看不写（前台算降采样归属图），
+        // 一个写文件（后台跑全分辨率）。
+        //
+        // The preview button sits left of the merge button: one looks without writing
+        // (a downsampled ownership map computed in the foreground), one writes files
+        // (full resolution on the background thread).
+        let can_preview = !busy && state.seq.is_some();
+        if ui
+            .add_enabled(
+                can_preview,
+                egui::Button::new(RichText::new(crate::i18n::t!("预览深度图")).size(SIZE_SMALL))
+                    .min_size(Vec2::new(0.0, BAR_H))
+                    .corner_radius(radius_control()),
+            )
+            .on_hover_text(crate::i18n::t!(
+                "按当前取帧与滑杆参数算一张降采样的深度归属图：每帧一种颜色，参考帧是灰色；只算预览，不写文件"
+            ))
+            .clicked()
+        {
+            state.focus_depth_preview(ctx);
         }
-    }
+        let go = ui
+            .add_enabled(
+                !busy,
+                egui::Button::new(RichText::new(if busy {
+                    crate::i18n::t!("合成中…")
+                } else {
+                    crate::i18n::t!("合成")
+                }))
+                .min_size(Vec2::new(0.0, BAR_H))
+                .corner_radius(radius_control()),
+            )
+            .on_hover_text(crate::i18n::t!(
+                "把当前帧起若干帧按所选方法融成一张全景深，写进输出目录"
+            ))
+            .clicked();
+        if go {
+            let args = serde_json::json!({
+                "around": state.focus_around,
+                "method": state.focus_method.key(),
+                "radius": state.focus_radius,
+                "threshold": state.focus_threshold,
+                "smooth_z": state.focus_smooth_z,
+                "feather": state.focus_feather,
+                "confirm": true,
+            });
+            if let Err(e) = state.run_ui_command(ctx, "focus.merge", &args) {
+                state.focus_error = Some(e);
+                state.focus_last = None;
+            }
+        }
+    });
     merge_progress_row(state, ui, MergeKind::Focus);
     if let Some(last) = state.focus_last.clone() {
         ui.label(
@@ -1321,6 +1359,35 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     if let Some(err) = state.focus_error.clone() {
         ui.label(RichText::new(err).size(SIZE_SMALL).color(danger()));
+    }
+    // 深度图预览：按可用宽度缩放、保持纵横比（与时间合成预览同一条路）；
+    // 说明行挂尺寸 / 耗时 / 参考帧，失败时挂原因。
+    if let Some(tex) = state.focus_depth_tex.as_ref() {
+        let size = tex.size_vec2();
+        let avail = ui.available_width();
+        let scale = if size.x > 0.0 && avail > 0.0 {
+            (avail / size.x).min(1.0)
+        } else {
+            1.0
+        };
+        ui.add(egui::Image::new((tex.id(), size * scale)));
+    }
+    if let Some(note) = state.focus_depth_note.clone() {
+        ui.label(RichText::new(note).size(SIZE_SMALL).color(dim()));
+    }
+    // 参数或取帧动了 → 旧预览作废（见函数头的快照对账）。
+    if focus_snapshot
+        != (
+            state.focus_around,
+            state.focus_method,
+            state.focus_radius,
+            state.focus_threshold,
+            state.focus_smooth_z,
+            state.focus_feather,
+        )
+    {
+        state.focus_depth_tex = None;
+        state.focus_depth_note = None;
     }
 }
 

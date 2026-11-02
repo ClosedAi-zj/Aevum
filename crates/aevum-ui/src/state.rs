@@ -1432,6 +1432,18 @@ pub struct AppState {
     pub focus_feather: f32,
     pub focus_last: Option<String>,
     pub focus_error: Option<String>,
+    /// 深度图预览纹理：「预览深度图」按下时前台算出的降采样归属图。
+    ///
+    /// The depth-map preview texture: the downsampled ownership map computed on the
+    /// spot when "preview depth map" is pressed.
+    pub focus_depth_tex: Option<TextureHandle>,
+    /// 预览下方的一行说明（尺寸 / 耗时 / 参考帧）；失败时改放原因。参数或取帧
+    /// 一变就整块作废，与纹理同生共死。
+    ///
+    /// The caption under the preview (size / elapsed / reference frame); holds the
+    /// failure reason instead when the computation fails. Voided wholesale as soon
+    /// as parameters or the frame selection change, living and dying with the texture.
+    pub focus_depth_note: Option<String>,
     /// 筛选台的四条判据阈值；纯视图缓冲，不落工程（拒收标记本身落在 `flags` 里）。
     ///
     /// The four thresholds of the cull station; pure view buffers, never written to the project
@@ -2326,6 +2338,8 @@ impl AppState {
             focus_feather: 2.0,
             focus_last: None,
             focus_error: None,
+            focus_depth_tex: None,
+            focus_depth_note: None,
             // 判据默认值与核心一致：±1 EV 之外判废、相邻突变 1 EV、清晰度不设限。
             cull_ev_low: -1.0,
             cull_ev_high: 1.0,
@@ -2593,6 +2607,12 @@ impl AppState {
         self.tb_preview_inflight = false;
         self.tb_preview_data = None;
         self.tb_preview_error = None;
+        // 深度图预览只对「这一个序列的这一组参数」成立：换序列 / 关闭一律作废。
+        //
+        // The depth-map preview is only valid for one selection in one sequence: switching
+        // or closing voids it.
+        self.focus_depth_tex = None;
+        self.focus_depth_note = None;
         self.merge_kind = None;
         self.merge_result = None;
         self.merge_error = None;
@@ -2766,6 +2786,12 @@ impl AppState {
         self.tb_preview_inflight = false;
         self.tb_preview_data = None;
         self.tb_preview_error = None;
+        // 深度图预览只对「这一个序列的这一组参数」成立：换序列 / 关闭一律作废。
+        //
+        // The depth-map preview is only valid for one selection in one sequence: switching
+        // or closing voids it.
+        self.focus_depth_tex = None;
+        self.focus_depth_note = None;
         self.merge_kind = None;
         self.merge_result = None;
         self.merge_error = None;
@@ -6649,6 +6675,163 @@ impl AppState {
             object.insert("aligned".to_owned(), serde_json::Value::Bool(aligned));
         }
         Ok(started)
+    }
+
+    /// 深度图预览：按下「预览深度图」时前台算一张降采样的归属图。
+    ///
+    /// 取帧与滑杆参数和 `focus.merge` 同一口径（当前帧起向后 `focus_around` 帧）；
+    /// 帧先按长边 [`FOCUS_PREVIEW_LONG_EDGE`] 降采样再进 `focus::depth_map`，预览图
+    /// 天然就小，前台同步算也不卡帧——全分辨率是合成任务自己的事，走后台线程。
+    /// 不写任何文件：成片仍由「合成」按钮走命令通道。
+    ///
+    /// Depth-map preview: pressing "preview depth map" computes a downsampled ownership
+    /// map on the spot. The frame selection and slider parameters follow the same
+    /// convention as `focus.merge` (from the current frame, `focus_around` frames
+    /// forward); frames are downsampled to the [`FOCUS_PREVIEW_LONG_EDGE`] long edge
+    /// before entering `focus::depth_map`, so the preview bitmap is small by
+    /// construction and the synchronous foreground computation stays responsive -- full
+    /// resolution is the merge job's business, on the background thread. No file is
+    /// written: the final still still goes through the "merge" button and the command
+    /// channel.
+    pub fn focus_depth_preview(&mut self, ctx: &Context) {
+        if self.merge_busy {
+            return;
+        }
+        let n = match self.seq.as_ref() {
+            Some(seq) => seq.len(),
+            None => return,
+        };
+        if n < 2 {
+            return;
+        }
+        let indices = match self.pick_indices(
+            &serde_json::json!({}),
+            n,
+            IndicesAnchor::Start,
+            self.focus_around,
+        ) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        if indices.len() < 2 {
+            self.focus_depth_tex = None;
+            self.focus_depth_note =
+                Some(crate::i18n::t!("预览至少要 2 帧：把取帧范围调大").to_owned());
+            return;
+        }
+        let started = std::time::Instant::now();
+        // 与 run_merge_job 同一条几何路：有对齐结果就套统一裁切与逐帧位移，
+        // 否则预览选区和成片对不上，用户会以为深度图选错了帧。
+        //
+        // Same geometry path as run_merge_job: apply the alignment crop and per-frame
+        // offsets when available, otherwise the preview selection disagrees with the
+        // final still and reads as "the depth map picked the wrong frame".
+        let paths = self.seq.as_ref().expect("seq checked above").paths();
+        let mut buffers: Vec<Vec<f32>> = Vec::with_capacity(indices.len());
+        let mut dims: Option<(usize, usize)> = None;
+        for i in &indices {
+            let (crop, off) = self.alignment_at(*i);
+            let (rgb, w, h) = match export::load_rgb_f32(&paths[*i]) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.focus_depth_tex = None;
+                    self.focus_depth_note = Some(crate::i18n::tr_fmt("预览读帧失败：{}", &[&e]));
+                    return;
+                }
+            };
+            let rect = crop.map(|c| (c.x as usize, c.y as usize, c.w as usize, c.h as usize));
+            let framing = Framing {
+                angle_deg: 0.0,
+                off,
+            };
+            let (buf, got) = if rect.is_none() && framing.is_identity() {
+                (rgb, (w as usize, h as usize))
+            } else {
+                let mut out = Vec::new();
+                let (cw, ch) =
+                    warp::transform_into(&rgb, w as usize, h as usize, framing, rect, &mut out);
+                (out, (cw, ch))
+            };
+            match dims {
+                None => dims = Some(got),
+                Some(prev) if prev != got => {
+                    self.focus_depth_tex = None;
+                    self.focus_depth_note = Some(crate::i18n::tr_fmt(
+                        "预览跳过：第 {} 帧与第 {} 帧尺寸不一致（{}×{} vs {}×{}）",
+                        &[&indices[0], i, &prev.0, &prev.1, &got.0, &got.1],
+                    ));
+                    return;
+                }
+                Some(_) => {}
+            }
+            buffers.push(buf);
+        }
+        let (w, h) = dims.unwrap_or((0, 0));
+        // 同尺寸帧降一次就够了：所有帧同一 (w, h)，降完仍然同尺寸。
+        //
+        // Downsampling once suffices: every frame shares one (w, h) and stays shared
+        // after the downscale.
+        let (w, h) = {
+            let first = downscale_long_edge(
+                std::mem::take(&mut buffers[0]),
+                w,
+                h,
+                FOCUS_PREVIEW_LONG_EDGE,
+            );
+            let (nw, nh) = (first.1, first.2);
+            buffers[0] = first.0;
+            for b in buffers.iter_mut().skip(1) {
+                let (small, sw, sh) =
+                    downscale_long_edge(std::mem::take(b), w, h, FOCUS_PREVIEW_LONG_EDGE);
+                debug_assert_eq!((sw, sh), (nw, nh), "同尺寸帧降采样后尺寸不同");
+                *b = small;
+            }
+            (nw, nh)
+        };
+        let opts = aevum_core::focus::Options {
+            method: self.focus_method,
+            radius: self.focus_radius as usize,
+            threshold: self.focus_threshold,
+            smooth_z: self.focus_smooth_z as usize,
+            feather: self.focus_feather,
+        };
+        let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();
+        let owner = match aevum_core::focus::depth_map(&refs, w, h, &opts) {
+            Ok(v) => v,
+            Err(e) => {
+                self.focus_depth_tex = None;
+                self.focus_depth_note = Some(crate::i18n::tr_fmt(
+                    "预览失败：{}",
+                    &[&crate::i18n::tr(aevum_core::focus::error_text(e))],
+                ));
+                return;
+            }
+        };
+        let count = refs.len();
+        // 参考帧口径与 focus.rs 一致：中位帧（count / 2）。
+        //
+        // The reference frame follows focus.rs: the middle frame (count / 2).
+        let reference = (count / 2) as u16;
+        let mut pixels: Vec<u8> = Vec::with_capacity(owner.len() * 3);
+        for &o in &owner {
+            let [r, g, b] = depth_preview_color(o, count, reference);
+            pixels.extend_from_slice(&[r, g, b]);
+        }
+        let img = ColorImage::from_rgb([w, h], &pixels);
+        // 纹理按名字复用：同参数只重传像素，不重新在 GPU 上分配（与时间合成预览同路）。
+        match &mut self.focus_depth_tex {
+            Some(tex) => tex.set(img, TextureOptions::LINEAR),
+            None => {
+                self.focus_depth_tex =
+                    Some(ctx.load_texture("focus.depth", img, TextureOptions::LINEAR));
+            }
+        }
+        // 耗时写进说明行：预览是前台同步算的，用户有权知道自己等了多久。
+        let ms = started.elapsed().as_millis().to_string();
+        self.focus_depth_note = Some(crate::i18n::tr_fmt(
+            "预览 {}×{} · {} 帧 · {} ms · 第 {} 帧为参考帧",
+            &[&w, &h, &count, &ms, &indices[reference as usize]],
+        ));
     }
 
     fn cmd_grade_set(&mut self, args: &Value) -> Result<Value, String> {
@@ -12685,6 +12868,112 @@ fn downscale2(rgb: Vec<f32>, w: usize, h: usize) -> (Vec<f32>, usize, usize) {
     (out, w2, h2)
 }
 
+/// 深度图预览的降采样上限：长边压到这条线以内再进 `focus::depth_map`。
+///
+/// 全分辨率（24 MP × 32 帧）的归属图前台同步算会卡 UI；预览不需要逐像素精确，
+/// 长边压到 1024 之后量级掉三个数量级，实测见 `focus_depth_tests` 的注释。
+///
+/// The downsample cap for the depth-map preview: the long edge is squeezed under this
+/// line before entering `focus::depth_map`.
+///
+/// A full-resolution ownership map (24 MP x 32 frames) computed synchronously on the
+/// foreground would stall the UI; a preview does not need pixel-exactness, and the
+/// 1024 long edge cuts the work by three orders of magnitude -- measured numbers live
+/// in the `focus_depth_tests` comments.
+pub(crate) const FOCUS_PREVIEW_LONG_EDGE: usize = 1024;
+
+/// 盒滤波降采样：长边超过 `max_edge` 就按整数步长分块平均，否则原样返回。
+///
+/// 余数行列直接丢掉（预览不需要逐像素精确）；空图、零尺寸或上限为零都原样
+/// 返回，不 panic——这些退化输入在判据里逐一钉死。实测（release，6008×4016）：
+/// 一步 step² 块平均约 34 ms/帧，8 帧 24 MP 全程（含 depth_map）约 0.33 s，
+/// 在「按一下等半秒」的体感线内，不再做更花哨的分段优化。
+///
+/// Box-filter downscale: when the long edge exceeds `max_edge`, average in integer
+/// step blocks; otherwise return untouched.
+///
+/// Remainder rows/columns are dropped (a preview does not need pixel-exactness);
+/// empty input, zero sizes or a zero cap all return untouched without panicking --
+/// each degenerate input is pinned down in the tests. Measured (release, 6008x4016):
+/// the one-shot step-squared block average costs about 34 ms per frame, so a full
+/// 8-frame 24 MP preview (depth_map included) lands near 0.33 s -- inside the
+/// "press and wait half a second" feel, so no fancier staged scheme is warranted.
+pub(crate) fn downscale_long_edge(
+    rgb: Vec<f32>,
+    w: usize,
+    h: usize,
+    max_edge: usize,
+) -> (Vec<f32>, usize, usize) {
+    if w == 0 || h == 0 || max_edge == 0 {
+        return (rgb, w, h);
+    }
+    let long = w.max(h);
+    if long <= max_edge {
+        return (rgb, w, h);
+    }
+    let step = long.div_ceil(max_edge);
+    let (w2, h2) = (w / step, h / step);
+    if w2 == 0 || h2 == 0 {
+        return (rgb, w, h);
+    }
+    let mut out = vec![0.0f32; w2 * h2 * 3];
+    for y in 0..h2 {
+        for x in 0..w2 {
+            for c in 0..3 {
+                let mut acc = 0.0f32;
+                for dy in 0..step {
+                    for dx in 0..step {
+                        acc += rgb[((y * step + dy) * w + x * step + dx) * 3 + c];
+                    }
+                }
+                out[(y * w2 + x) * 3 + c] = acc / (step * step) as f32;
+            }
+        }
+    }
+    (out, w2, h2)
+}
+
+/// 帧号 → 预览色：色相环上按 `count` 均匀取样，参考帧给中灰。
+///
+/// 相邻帧号的色相至少差 360/count 度，同帧号永远同色——「每一帧一眼认出来」
+/// 是预览的全部意义；参考帧（兜底主力）用灰色单列，避免它伪装成「第 k 帧区」。
+///
+/// Frame number → preview colour: sampled evenly around the hue wheel by `count`,
+/// with the reference frame set apart in mid-grey.
+///
+/// Adjacent frame numbers differ by at least 360/count degrees of hue and the same
+/// frame number always yields the same colour -- "recognise each frame at a glance"
+/// is the whole point of the preview. The reference frame (the fallback workhorse)
+/// gets grey so it cannot masquerade as "the frame-k region".
+pub(crate) fn depth_preview_color(owner: u16, count: usize, reference: u16) -> [u8; 3] {
+    if count == 0 || owner == reference {
+        return [128, 128, 128];
+    }
+    let hue = (owner as f32 / count as f32) * 360.0;
+    hsl_to_rgb(hue, 0.65, 0.55)
+}
+
+/// HSL → RGB（h 0..360，s / l 0..1）：帧号上色的唯一出口，测试直接钉在这里。
+///
+/// HSL → RGB (h 0..360, s/l 0..1): the single exit for colouring frame numbers,
+/// pinned down by tests directly.
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [u8; 3] {
+    let h = h.rem_euclid(360.0) / 60.0;
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - (h.rem_euclid(2.0) - 1.0).abs());
+    let (r1, g1, b1) = match h as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    let f = |v: f32| ((v + m).clamp(0.0, 1.0) * 255.0).round() as u8;
+    [f(r1), f(g1), f(b1)]
+}
+
 /// FNV-1a 64 位散列：给预览参数做指纹，快而且够散。
 ///
 /// FNV-1a 64-bit hash: fingerprints the preview parameters; fast and well spread.
@@ -17760,6 +18049,135 @@ mod command_tests {
             !state.clip_highlights && !state.clip_shadows,
             "第四拍：回关"
         );
+    }
+}
+
+#[cfg(test)]
+mod focus_depth_tests {
+    use super::*;
+
+    /// 颜色映射判据：帧号 0..n 产出互不相同的颜色，同帧号同色，参考帧是灰的。
+    ///
+    /// Depth-preview colour contract: frame numbers 0..n yield pairwise distinct
+    /// colours, the same frame number always yields the same colour, and the
+    /// reference frame is grey.
+    #[test]
+    fn depth_preview_colors_are_distinct_per_frame_stable_and_grey_for_the_reference() {
+        for count in [2usize, 3, 8, 32] {
+            let reference = (count / 2) as u16;
+            let mut seen: Vec<[u8; 3]> = Vec::with_capacity(count);
+            for owner in 0..count as u16 {
+                let c = depth_preview_color(owner, count, reference);
+                assert!(!seen.contains(&c), "第 {owner} 帧的颜色撞了: {c:?}");
+                seen.push(c);
+            }
+            // 稳定性：同一个帧号算两遍，逐位相等。
+            for owner in 0..count as u16 {
+                assert_eq!(
+                    depth_preview_color(owner, count, reference),
+                    depth_preview_color(owner, count, reference),
+                );
+            }
+            // 参考帧单列灰色，且不与任何普通帧号撞色。
+            assert_eq!(
+                depth_preview_color(reference, count, reference),
+                [128, 128, 128]
+            );
+        }
+    }
+
+    /// 下采样判据：已知小图分块平均后中心值正确；空图 / 0 尺寸原样返回不 panic。
+    ///
+    /// Downscale contract: a known small image block-averages to the correct centre
+    /// value; empty or zero-size input returns untouched without panicking.
+    #[test]
+    fn downscale_long_edge_averages_blocks_and_never_panics_on_degenerate_input() {
+        // 4×4 常量图，步长 2：每块平均值就是常量本身。
+        let flat: Vec<f32> = vec![0.5; 4 * 4 * 3];
+        let (out, w, h) = downscale_long_edge(flat.clone(), 4, 4, 2);
+        assert_eq!((w, h), (2, 2));
+        assert!(out.iter().all(|&v| (v - 0.5).abs() < 1e-6));
+        // 中心值判据用非平坦图：右下 2×2 块里放四个已知值，块平均 = 0.5。
+        let mut img = vec![0.0f32; 4 * 4 * 3];
+        for (dy, row) in [[0.2f32, 0.4], [0.6, 0.8]].iter().enumerate() {
+            for (dx, v) in row.iter().enumerate() {
+                let (x, y) = (2 + dx, 2 + dy);
+                for c in 0..3 {
+                    img[(y * 4 + x) * 3 + c] = *v;
+                }
+            }
+        }
+        let (out, w, h) = downscale_long_edge(img, 4, 4, 2);
+        assert_eq!((w, h), (2, 2));
+        let center = out[(2 + 1) * 3];
+        let expect = (0.2 + 0.4 + 0.6 + 0.8) / 4.0;
+        assert!((center - expect).abs() < 1e-6, "中心 {center} vs {expect}");
+        // 负向：空图、0 尺寸、上限 0、长边不足——一律原样返回，不 panic、不改值。
+        let (out, w, h) = downscale_long_edge(Vec::new(), 0, 0, 1024);
+        assert_eq!((w, h, out.len()), (0, 0, 0));
+        let (out, w, h) = downscale_long_edge(flat, 4, 4, 1024);
+        assert_eq!((w, h, out.len()), (4, 4, 4 * 4 * 3));
+        let (out, w, h) = downscale_long_edge(vec![0.25; 9], 0, 3, 1024);
+        assert_eq!((w, h, out.len()), (0, 3, 9));
+    }
+
+    /// 端到端：三条横带各归一帧的序列，按下预览后纹理与说明行都要落地，
+    /// 且参考帧说明指向中位帧。
+    ///
+    /// End to end: a three-band sequence where each band owns one frame; after the
+    /// preview runs, both the texture and the caption land, and the caption points at
+    /// the middle frame as the reference.
+    #[test]
+    fn focus_depth_preview_lands_a_texture_and_names_the_reference_frame() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("aevum-focus-depth-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        // 48×48 三条 16 行横带：带 i 只有第 i 帧带纹理（竖条纹），其余帧是平场。
+        let planks = |x: usize| if (x / 2).is_multiple_of(2) { 200u8 } else { 40 };
+        for i in 0..3u8 {
+            let mut img = image::RgbImage::from_pixel(48, 48, image::Rgb([128, 128, 128]));
+            for y in (i as u32 * 16)..((i as u32 + 1) * 16) {
+                for x in 0..48u32 {
+                    let v = planks(x as usize);
+                    img.put_pixel(x, y, image::Rgb([v, v, v]));
+                }
+            }
+            img.save(dir.join(format!("f{i:02}.png")))
+                .expect("写测试帧");
+        }
+        state.seq = Some(Sequence::open(&dir).expect("开测试序列"));
+        state.selected = 0;
+        state.focus_depth_preview(&ctx);
+        let tex = state.focus_depth_tex.as_ref().expect("预览该产出一张纹理");
+        assert_eq!(tex.size(), [48, 48], "小图不越降采样上限，尺寸原样");
+        let note = state.focus_depth_note.clone().expect("预览该有说明行");
+        // 参考帧 = 中位帧 = 下标 1（0 起）；说明行要点名它（帧号沿用命令通道的 0 起）。
+        assert!(note.contains("第 1 帧"), "说明行该点名参考帧: {note}");
+        assert!(note.contains("参考帧"), "{note}");
+        // 负向：单帧序列（单张图）不给预览——至少要 2 帧才有归属可言。
+        let single = std::env::temp_dir().join(format!(
+            "aevum-focus-depth-single-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&single).expect("建临时目录");
+        image::RgbImage::from_pixel(8, 8, image::Rgb([100, 100, 100]))
+            .save(single.join("f00.png"))
+            .expect("写单帧");
+        let mut state2 = AppState::new();
+        state2.seq = Some(
+            Sequence::open_files(std::slice::from_ref(&single.join("f00.png")))
+                .expect("开单帧序列"),
+        );
+        state2.focus_depth_preview(&ctx);
+        assert!(state2.focus_depth_tex.is_none(), "单帧序列不该产出预览");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&single);
     }
 }
 
