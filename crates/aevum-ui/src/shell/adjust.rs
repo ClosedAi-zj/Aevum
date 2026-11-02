@@ -879,7 +879,7 @@ fn hdr_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let busy = state.merge_kind == Some(MergeKind::Hdr);
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(crate::i18n::t!("当前帧前后各"))
+            RichText::new(crate::i18n::t!("从当前帧起，前后各取"))
                 .size(SIZE_SMALL)
                 .color(dim()),
         );
@@ -890,7 +890,7 @@ fn hdr_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .speed(0.2),
         );
         ui.label(
-            RichText::new(crate::i18n::t!("帧"))
+            RichText::new(both_sides_caption(state.hdr_around))
                 .size(SIZE_SMALL)
                 .color(dim()),
         );
@@ -992,7 +992,7 @@ fn stack_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let busy = state.merge_kind == Some(MergeKind::Stack);
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(crate::i18n::t!("当前帧前后各"))
+            RichText::new(crate::i18n::t!("从当前帧起，前后各取"))
                 .size(SIZE_SMALL)
                 .color(dim()),
         );
@@ -1003,7 +1003,7 @@ fn stack_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .speed(0.2),
         );
         ui.label(
-            RichText::new(crate::i18n::t!("帧"))
+            RichText::new(both_sides_caption(state.stack_around))
                 .size(SIZE_SMALL)
                 .color(dim()),
         );
@@ -1084,9 +1084,52 @@ fn stack_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
 }
 
-/// 「时间合成」分组：天地合成或时间切片，一次把不同时刻铺进一张。
+/// 取帧行里「这个数到底代表几帧」的括号说明：前后各取。
 ///
-/// Time-blending group: sky-ground or time slice, laying several moments into one frame.
+/// The caption that says how many frames a span figure really means: both sides.
+fn both_sides_caption(around: u32) -> String {
+    // 前后各 N 帧 = 当前帧 + 两侧各 N，共 2N+1。写清楚，省得用户按 N 去算。
+    crate::i18n::tr_fmt("帧（共 {} 帧）", &[&(around * 2 + 1)])
+}
+
+/// 取帧行里「这个数到底代表几帧」的括号说明：只往后取，带硬上限。
+///
+/// The caption that says how many frames a span figure really means: forward only, with
+/// the hard cap.
+fn forward_caption(around: u32, cap: usize) -> String {
+    // 只往后取 N 帧 = 当前帧 + 之后 N 帧，共 N+1；超过 cap 就得分段。
+    crate::i18n::tr_fmt("帧（共 {} 帧，上限 {}）", &[&(around + 1), &cap])
+}
+
+/// 焦点组的「先对齐」提示：序列开着、还没对齐、且这一组帧够长时才值得提醒。
+///
+/// 手持拍的对焦包围常有几像素位移：不对齐直接融，过渡带上会出现重影，而重影看起来
+/// 恰恰像「深度图选错了帧」——先提一句，省得用户去拧 radius 和 threshold。
+///
+/// The focus group's "align first" hint: only when a sequence is open, it has not been
+/// aligned yet, and the bracket is long enough for the drift to matter.
+///
+/// A handheld focus bracket usually drifts a few pixels. Fusing without aligning leaves
+/// ghosting across the transition band, and ghosting looks exactly like "the depth map
+/// picked the wrong frame" -- say it here instead of letting the user chase `radius` and
+/// `threshold`.
+fn focus_align_hint(state: &AppState) -> Option<String> {
+    if state.seq.is_none() || state.align_report.is_some() {
+        return None;
+    }
+    // 2 帧谈不上过渡带：不对齐的代价要 3 帧起才看得出来。
+    if state.focus_around < 2 {
+        return None;
+    }
+    // 文案在这里就翻好：调用点只负责上屏，别再各自包一层。
+    //
+    // The text is translated right here; call sites only put it on screen.
+    Some(crate::i18n::tr_fmt(
+        "这组帧还没对齐：手持拍的焦包围常有几像素位移，直接融会在过渡带留下重影。先跑一次对齐再合成。",
+        &[],
+    ))
+}
+
 /// 焦点合成：一组不同对焦距离的帧融成一张全景深。
 ///
 /// Focus stacking: fuse a bracket taken at different focus distances into one all-in-focus
@@ -1094,6 +1137,34 @@ fn stack_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
 fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     use aevum_core::focus::Method;
     let busy = state.merge_kind == Some(MergeKind::Focus);
+    // 没对齐就先说一句，并就地给个按钮：让用户自己去别处找「开始对齐」，这句提示
+    // 就只是抱怨。
+    //
+    // Say it up front, with the button right here: a hint that only complains would send
+    // the user hunting for the align control elsewhere in the panel.
+    if let Some(hint) = focus_align_hint(state) {
+        ui.add(egui::Label::new(RichText::new(hint).size(SIZE_SMALL).color(accent())).wrap());
+        let aligning = state.align_busy;
+        if ui
+            .add_enabled(
+                !aligning && !busy,
+                egui::Button::new(
+                    RichText::new(if aligning {
+                        crate::i18n::t!("正在对齐…")
+                    } else {
+                        crate::i18n::t!("先对齐序列")
+                    })
+                    .size(SIZE_SMALL),
+                ),
+            )
+            .on_hover_text(crate::i18n::t!(
+                "对齐估出每帧位移与统一裁切，焦点合成会自动套上；不对齐直接融，过渡带会出重影"
+            ))
+            .clicked()
+        {
+            state.run_align(ui.ctx());
+        }
+    }
     ui.horizontal_wrapped(|ui| {
         for method in Method::ALL {
             let picked = bar_chip(ui, method.cn(), state.focus_method == method)
@@ -1113,7 +1184,7 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     });
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(crate::i18n::t!("从当前帧起"))
+            RichText::new(crate::i18n::t!("从当前帧起，向后多取"))
                 .size(SIZE_SMALL)
                 .color(dim()),
         );
@@ -1124,9 +1195,12 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .speed(0.2),
         );
         ui.label(
-            RichText::new(crate::i18n::t!("帧之后"))
-                .size(SIZE_SMALL)
-                .color(dim()),
+            RichText::new(forward_caption(
+                state.focus_around,
+                aevum_core::focus::MAX_FRAMES,
+            ))
+            .size(SIZE_SMALL)
+            .color(dim()),
         );
     });
     // 测度半径与无细节阈值是深度图法的两根主梁，各挂一句口径说明。
@@ -1250,6 +1324,9 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
 }
 
+/// 「时间合成」分组：天地合成或时间切片，一次把不同时刻铺进一张。
+///
+/// Time-blending group: sky-ground or time slice, laying several moments into one frame.
 fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     use aevum_core::timeblend::Layout;
     let busy = state.merge_kind == Some(MergeKind::TimeBlend);
@@ -1270,7 +1347,7 @@ fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     });
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(crate::i18n::t!("从当前帧起"))
+            RichText::new(crate::i18n::t!("从当前帧起，向后多取"))
                 .size(SIZE_SMALL)
                 .color(dim()),
         );
@@ -1281,9 +1358,12 @@ fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .speed(0.2),
         );
         ui.label(
-            RichText::new(crate::i18n::t!("帧之后"))
-                .size(SIZE_SMALL)
-                .color(dim()),
+            RichText::new(forward_caption(
+                state.tb_around,
+                aevum_core::timeblend::MAX_FRAMES,
+            ))
+            .size(SIZE_SMALL)
+            .color(dim()),
         );
     });
     if state.tb_layout == Layout::Bands {
@@ -3494,5 +3574,101 @@ mod gradient_rail_tests {
         }
         assert!(!state.collapsed.contains("color"), "滚到顶了还折着");
         assert!(state.dock_focus.is_none(), "焦点没被消费，会每帧推一次");
+    }
+}
+
+#[cfg(test)]
+/// 焦点组的「先对齐」提示与取帧说明的算术。
+mod focus_hint_tests {
+    use super::*;
+    use aevum_core::align::{AlignReport, CropRect};
+
+    /// 一张 48×48 的临时序列，够焦点组合成用。
+    fn open_three_frames(state: &mut AppState, ctx: &Context, tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("aevum-hint-{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        for i in 0..3u32 {
+            let img = image::RgbImage::from_fn(48, 48, |x, _y| {
+                let v = if (x / 2).is_multiple_of(2) { 200u8 } else { 60 };
+                image::Rgb([v, v, v.wrapping_add(i as u8)])
+            });
+            img.save(dir.join(format!("f{i:03}.png"))).expect("写帧");
+        }
+        state
+            .run_ui_command(
+                ctx,
+                "sequence.open",
+                &serde_json::json!({"root": dir.display().to_string()}),
+            )
+            .expect("打开序列");
+        dir
+    }
+
+    /// 该提示的时候提示，不该提示的时候闭嘴：没序列、只取 2 帧、已经对齐过。
+    ///
+    /// The hint shows exactly when it should: no sequence, a two-frame bracket and an
+    /// already-aligned sequence all stay quiet.
+    #[test]
+    fn the_align_hint_shows_only_for_a_real_unaligned_bracket() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        // 新状态：没有序列 → 什么都不说。
+        assert!(state.seq.is_none(), "新状态本来就没有序列");
+        assert!(focus_align_hint(&state).is_none(), "没有序列时不该提对齐");
+        // 挂上序列、还没对齐、默认 around = 7（共 8 帧）→ 该提示。
+        let dir = open_three_frames(&mut state, &ctx, "hint");
+        let hint = focus_align_hint(&state).expect("没对齐就该提示");
+        assert!(hint.contains("对齐"), "提示里得说清该干什么：{hint}");
+        // 只取 2 帧：谈不上过渡带。
+        state.focus_around = 1;
+        assert!(focus_align_hint(&state).is_none(), "2 帧也提示，是噪音");
+        // 对齐过了就别再提。
+        state.focus_around = 7;
+        state.align_report = Some(AlignReport {
+            size: [48, 48],
+            offsets: vec![[0.0, 0.0]; 3],
+            scores: vec![1.0; 3],
+            issues: Vec::new(),
+            crop: CropRect {
+                x: 0,
+                y: 0,
+                w: 48,
+                h: 48,
+            },
+            elapsed_secs: 0.0,
+        });
+        assert!(focus_align_hint(&state).is_none(), "对齐过了还在提示");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 取帧说明必须把这个数换算成真正的帧数：前后各 N 是 2N+1，只往后 N 是 N+1。
+    ///
+    /// The caption must turn the knob value into the real frame count: both sides is
+    /// 2N+1, forward only is N+1.
+    #[test]
+    fn the_span_caption_states_the_real_frame_count() {
+        let both = both_sides_caption(4);
+        assert!(both.contains('9'), "前后各 4 帧共 9 帧：{both}");
+        assert!(!both.contains("上限"), "前后各取没有硬上限：{both}");
+        let forward = forward_caption(7, aevum_core::focus::MAX_FRAMES);
+        assert!(forward.contains('8'), "往后 7 帧共 8 帧：{forward}");
+        assert!(
+            forward.contains(&aevum_core::focus::MAX_FRAMES.to_string()),
+            "说明里要带上硬上限：{forward}"
+        );
+        // 负向对照：把常见误读（把旋钮值当帧数）写进去就会露馅。
+        //
+        // Negative control: the usual misreading -- taking the knob value for the frame
+        // count -- would show up right here.
+        assert_ne!(
+            forward_caption(7, aevum_core::focus::MAX_FRAMES),
+            forward_caption(8, aevum_core::focus::MAX_FRAMES),
+            "不同帧数必须给出不同说明"
+        );
     }
 }

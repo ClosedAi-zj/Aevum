@@ -6638,7 +6638,17 @@ impl AppState {
             feather,
         });
         let job = self.build_merge_job(kind, indices, &out_dir, spec)?;
-        Ok(self.start_merge(ctx, job))
+        let mut started = self.start_merge(ctx, job);
+        // 这次到底套没套对齐位移，调用方（面板与脚本）都该直接读到，而不是回头去查
+        // 对齐报告再猜。
+        //
+        // Whether this run applied the alignment offsets belongs in the reply, so both
+        // the panel and a script can read it instead of consulting the align report.
+        let aligned = self.align_report.is_some();
+        if let Some(object) = started.as_object_mut() {
+            object.insert("aligned".to_owned(), serde_json::Value::Bool(aligned));
+        }
+        Ok(started)
     }
 
     fn cmd_grade_set(&mut self, args: &Value) -> Result<Value, String> {
@@ -17071,7 +17081,7 @@ mod command_tests {
         //
         // One output folder per run: the same folder and filename would overwrite the
         // previous still.
-        let run = |state: &mut AppState, extra: &Value, sub: &str| {
+        let run = |state: &mut AppState, extra: &Value, sub: &str, aligned: bool| {
             let mut a = json!({
                 "frames": [0, 1, 2],
                 "out_dir": dir.join(sub).display().to_string(),
@@ -17088,6 +17098,15 @@ mod command_tests {
                 .run_ui_command(&ctx2(&ctx), "focus.merge", &a)
                 .expect("启动焦点合成");
             assert_eq!(started["kind"], json!("focus"), "任务种类应是 focus");
+            // 这次套没套对齐位移，返回里就得说清楚，别让人去翻对齐报告。
+            //
+            // Whether the alignment offsets were applied belongs in the reply; nobody
+            // should have to dig through the align report for it.
+            assert_eq!(
+                started["aligned"],
+                json!(aligned),
+                "返回里的 aligned 与序列的对齐状态不符"
+            );
             wait_merge(state, &ctx2(&ctx));
             state.merge_result.clone().expect("合成结果落账")["path"]
                 .as_str()
@@ -17097,7 +17116,7 @@ mod command_tests {
         fn ctx2(ctx: &Context) -> Context {
             ctx.clone()
         }
-        let sharp = run(&mut state, &json!({"threshold": 0}), "焦点合成-默认");
+        let sharp = run(&mut state, &json!({"threshold": 0}), "焦点合成-默认", false);
         let img = image::open(&sharp).expect("读回成片").to_rgb8();
         let at = |x: u32, y: u32| img.get_pixel(x, y)[0];
         // 第一条带：x=0 亮纹 200、x=2 暗纹 60——只有帧 0 在这里清晰。
@@ -17114,13 +17133,46 @@ mod command_tests {
         //
         // Negative check: a 100th-percentile fallback treats everything as featureless, so
         // the whole image returns to the reference frame (frame 1) and band one goes flat 128.
-        let fallback = run(&mut state, &json!({"threshold": 100}), "焦点合成-兜底");
+        let fallback = run(
+            &mut state,
+            &json!({"threshold": 100}),
+            "焦点合成-兜底",
+            false,
+        );
         let img2 = image::open(&fallback).expect("读回兜底成片").to_rgb8();
         let v = img2.get_pixel(0, 8)[0];
         assert!(
             (v as i32 - 128).abs() <= 2,
             "兜底后第一条带应是参考帧的平场 128，实际 {v}"
         );
+        // 对齐过之后再跑一趟：返回里的 aligned 要翻成 true，成片照样出。
+        //
+        // Once the sequence is aligned the reply must flip to true, and the still still
+        // gets written.
+        state.align_report = Some(AlignReport {
+            size: [48, 48],
+            offsets: vec![[0.0, 0.0]; 3],
+            scores: vec![1.0; 3],
+            issues: Vec::new(),
+            crop: CropRect {
+                x: 0,
+                y: 0,
+                w: 48,
+                h: 48,
+            },
+            elapsed_secs: 0.0,
+        });
+        let aligned_path = run(
+            &mut state,
+            &json!({"threshold": 0}),
+            "焦点合成-已对齐",
+            true,
+        );
+        assert!(
+            std::path::Path::new(&aligned_path).is_file(),
+            "已对齐时也该出片：{aligned_path}"
+        );
+        state.align_report = None;
         let _ = std::fs::remove_dir_all(&dir);
     }
 
