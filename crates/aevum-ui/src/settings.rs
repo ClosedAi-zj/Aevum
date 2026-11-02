@@ -115,6 +115,98 @@ pub struct Settings {
     /// it still on. `None` = older file without the field, treated as off (the default, or
     /// everyone would see slightly dimmed whites on first launch).
     pub hdr_preview: Option<bool>,
+    /// 合并面板的滑杆参数（HDR / 堆栈 / 时间合成 / 焦点合成），全局偏好：换序列不清、
+    /// 重启还在。枚举字段存的是 key 串（`stack_mode` = "lighten"，`tb_layout` =
+    /// "sky-ground"，`focus_method` = "depthmap"），读回来解析不了就落默认值。
+    /// 结果态（上次成片路径、报错、预览纹理）不在这里——那是会话的事。
+    ///
+    /// The merge panels' slider parameters (HDR / stack / time-blend / focus stacking),
+    /// a global preference: cleared by no sequence switch, survives a restart. Enum
+    /// fields store their key strings (`stack_mode` = "lighten", `tb_layout` =
+    /// "sky-ground", `focus_method` = "depthmap"); anything unparsable falls back to
+    /// the defaults on load. Result state (the last output path, errors, preview
+    /// textures) does not live here -- that is session business.
+    pub merge: MergeParams,
+}
+
+/// 合并面板滑杆参数的落盘形状。字段与 `AppState` 的 `hdr_` / `stack_` / `tb_` /
+/// `focus_` 可调参数一一对应；老 settings.json 没有这一节时整块落默认值
+/// （容器级 `#[serde(default)]`），单个字段缺失也一样。
+///
+/// The persisted shape of the merge panels' slider parameters. Fields map one-to-one
+/// onto `AppState`'s adjustable `hdr_` / `stack_` / `tb_` / `focus_` parameters; an
+/// old settings.json without this section lands on the defaults wholesale (the
+/// container-level `#[serde(default)]`), and so does any single missing field.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MergeParams {
+    /// HDR 包围：当前帧前后各取几帧。
+    ///
+    /// HDR bracket: frames taken on each side of the current one.
+    pub hdr_around: u32,
+    /// 堆栈：中心前后各取几帧 / 统计量 key / σ 倍数 / 补洞。
+    ///
+    /// Stacking: frames on each side of the centre / the statistic's key / the sigma
+    /// multiplier / gap fill.
+    pub stack_around: u32,
+    pub stack_mode: String,
+    pub stack_sigma: f32,
+    pub stack_fill: bool,
+    /// 时间合成：起始帧后取几帧 / 布局 key / 带数 / 羽化比例 / 地平线 / 自动地平线 /
+    /// 去鬼影阈值 / 曝光匹配。
+    ///
+    /// Time blending: frames after the start / layout key / band count / feather
+    /// fraction / horizon / auto horizon / deghost threshold / exposure matching.
+    pub tb_around: u32,
+    pub tb_layout: String,
+    pub tb_bands: u32,
+    pub tb_feather: f32,
+    pub tb_horizon: f32,
+    pub tb_horizon_auto: bool,
+    pub tb_deghost: f32,
+    pub tb_match: bool,
+    /// 焦点合成：起始帧后取几帧 / 方法 key / 测度半径 / 无细节阈值 / 去斑 / 羽化。
+    ///
+    /// Focus stacking: frames after the start / method key / measure radius /
+    /// featureless threshold / despeckle / feather.
+    pub focus_around: u32,
+    pub focus_method: String,
+    pub focus_radius: u32,
+    pub focus_threshold: f32,
+    pub focus_smooth_z: u32,
+    pub focus_feather: f32,
+}
+
+impl Default for MergeParams {
+    /// 默认值与 `AppState::new()` 的初始参数逐项一致：两处必须同步改，
+    /// 否则「没存过的用户」与「存过默认值的用户」看到的首次合成不同。
+    ///
+    /// Defaults match `AppState::new()`'s initial parameters item by item; the two
+    /// sites must change together, or users who never saved and users who saved the
+    /// defaults would see different first merges.
+    fn default() -> Self {
+        Self {
+            hdr_around: 1,
+            stack_around: 4,
+            stack_mode: "lighten".to_owned(),
+            stack_sigma: 3.0,
+            stack_fill: true,
+            tb_around: 7,
+            tb_layout: "sky-ground".to_owned(),
+            tb_bands: 8,
+            tb_feather: 0.04,
+            tb_horizon: 0.5,
+            tb_horizon_auto: false,
+            tb_deghost: 0.5,
+            tb_match: true,
+            focus_around: 7,
+            focus_method: "depthmap".to_owned(),
+            focus_radius: 2,
+            focus_threshold: 0.0,
+            focus_smooth_z: 1,
+            focus_feather: 2.0,
+        }
+    }
 }
 
 /// 把落盘的窗口坐标夹回当前视口，保证整窗可见。
@@ -306,5 +398,48 @@ mod tests {
         // 视口比窗口还小 → 退回视口左上，不是负的可用宽度。
         let small = [0.0f32, 0.0, 300.0, 200.0];
         assert_eq!(clamp_win_pos([100.0, 100.0], win, small), [0.0, 0.0]);
+    }
+
+    /// 合并参数的往返：存、读、逐项相等；老格式 JSON（没有 merge 节）整块落默认值。
+    ///
+    /// Merge-parameter round trip: save, load, compare item by item; an old-format JSON
+    /// (no merge section) lands on the defaults wholesale.
+    #[test]
+    fn merge_params_survive_the_round_trip_and_old_files_load_with_defaults() {
+        let merge = MergeParams {
+            hdr_around: 3,
+            stack_mode: "sigma-clip".to_owned(),
+            stack_sigma: 2.5,
+            stack_fill: false,
+            tb_layout: "bands".to_owned(),
+            tb_bands: 12,
+            tb_deghost: 0.0,
+            focus_method: "weighted".to_owned(),
+            focus_threshold: 12.5,
+            focus_feather: 8.0,
+            ..MergeParams::default()
+        };
+        let s = Settings {
+            merge,
+            ..Settings::default()
+        };
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(s, back);
+        // 老版本文件没有 merge 节：读进来必须是整块默认值，不能报错。
+        let old: Settings = serde_json::from_str(r#"{"appearance":{"theme":"light"}}"#).unwrap();
+        assert_eq!(old.merge, MergeParams::default());
+        // 单个字段缺失也一样：serde default 逐字段兜底，解析不了的枚举 key 回默认。
+        let partial: Settings = serde_json::from_str(
+            r#"{"merge":{"hdr_around":2,"focus_radius":9,"stack_mode":"nope"}}"#,
+        )
+        .unwrap();
+        assert_eq!(partial.merge.hdr_around, 2);
+        assert_eq!(partial.merge.focus_radius, 9);
+        // stack_mode 是裸 String，坏值原样存进来；坏 key 的清洗在 adopt_settings。
+        assert_eq!(partial.merge.stack_mode, "nope");
+        assert_eq!(
+            partial.merge.stack_around,
+            MergeParams::default().stack_around
+        );
     }
 }

@@ -877,6 +877,8 @@ fn copies_group(state: &mut AppState, ui: &mut Ui) {
 fn hdr_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let mut go = false;
     let busy = state.merge_kind == Some(MergeKind::Hdr);
+    // 快照对账：参数真的变了才置落盘脏标记（见 stack_group 的说明）。
+    let before_around = state.hdr_around;
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(crate::i18n::t!("从当前帧起，前后各取"))
@@ -914,6 +916,9 @@ fn hdr_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             state.hdr_error = Some(e);
             state.hdr_last = None;
         }
+    }
+    if state.hdr_around != before_around {
+        state.settings_dirty = true;
     }
     // 合并是后台任务：结果与失败原因由 `Msg::Merged` 写回 hdr_last / hdr_error。
     merge_progress_row(state, ui, MergeKind::Hdr);
@@ -990,6 +995,19 @@ fn pano_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
 fn stack_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     use aevum_core::stack::Mode;
     let busy = state.merge_kind == Some(MergeKind::Stack);
+    // 快照对账：合并参数是全局偏好（settings.json），本帧内真的变了才置落盘脏
+    // 标记——帧尾的单一出口统一写文件，没变就不写，免得把 settings.json 当草稿纸。
+    //
+    // Snapshot reconciliation: the merge parameters are a global preference
+    // (settings.json), and the dirty flag goes up only when something actually changed
+    // within this frame -- the single frame-end exit writes the file, so an unchanged
+    // frame never turns settings.json into scratch paper.
+    let snapshot = (
+        state.stack_around,
+        state.stack_mode,
+        state.stack_sigma,
+        state.stack_fill,
+    );
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(crate::i18n::t!("从当前帧起，前后各取"))
@@ -1081,6 +1099,16 @@ fn stack_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     if let Some(err) = state.stack_error.clone() {
         ui.label(RichText::new(err).size(SIZE_SMALL).color(danger()));
+    }
+    if snapshot
+        != (
+            state.stack_around,
+            state.stack_mode,
+            state.stack_sigma,
+            state.stack_fill,
+        )
+    {
+        state.settings_dirty = true;
     }
 }
 
@@ -1375,7 +1403,8 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     if let Some(note) = state.focus_depth_note.clone() {
         ui.label(RichText::new(note).size(SIZE_SMALL).color(dim()));
     }
-    // 参数或取帧动了 → 旧预览作废（见函数头的快照对账）。
+    // 参数或取帧动了 → 旧预览作废（见函数头的快照对账）；合并参数是全局偏好，
+    // 真的变了就置落盘脏标记（与 stack_group 同一口径）。
     if focus_snapshot
         != (
             state.focus_around,
@@ -1388,6 +1417,7 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     {
         state.focus_depth_tex = None;
         state.focus_depth_note = None;
+        state.settings_dirty = true;
     }
 }
 
@@ -1397,6 +1427,17 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
 fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     use aevum_core::timeblend::Layout;
     let busy = state.merge_kind == Some(MergeKind::TimeBlend);
+    // 快照对账：合并参数是全局偏好，本帧内真的变了才置落盘脏标记（stack_group 有口径说明）。
+    let snapshot = (
+        state.tb_around,
+        state.tb_layout,
+        state.tb_bands,
+        state.tb_feather,
+        state.tb_horizon,
+        state.tb_horizon_auto,
+        state.tb_deghost,
+        state.tb_match,
+    );
     ui.horizontal_wrapped(|ui| {
         for layout in Layout::ALL {
             let picked = bar_chip(ui, layout.cn(), state.tb_layout == layout)
@@ -1533,6 +1574,20 @@ fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     if let Some(err) = state.tb_error.clone() {
         ui.label(RichText::new(err).size(SIZE_SMALL).color(danger()));
+    }
+    if snapshot
+        != (
+            state.tb_around,
+            state.tb_layout,
+            state.tb_bands,
+            state.tb_feather,
+            state.tb_horizon,
+            state.tb_horizon_auto,
+            state.tb_deghost,
+            state.tb_match,
+        )
+    {
+        state.settings_dirty = true;
     }
     // 预览：参数或帧选择变了就自动在后台重算一张半分辨率小图，按可用宽度缩放展示。
     state.timeblend_preview_tick(ctx);

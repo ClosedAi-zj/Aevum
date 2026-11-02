@@ -2104,13 +2104,35 @@ impl AppState {
             hdr_preview: Some(self.hdr_preview),
             preset_order: Some(self.preset_order.iter().map(|k| (*k).to_owned()).collect()),
             win_pos: (!self.win_pos.is_empty()).then(|| self.win_pos.clone()),
+            // 合并参数是全局偏好：结果态（*_last / *_error / 预览纹理）不进来。
+            merge: crate::settings::MergeParams {
+                hdr_around: self.hdr_around,
+                stack_around: self.stack_around,
+                stack_mode: self.stack_mode.key().to_owned(),
+                stack_sigma: self.stack_sigma,
+                stack_fill: self.stack_fill,
+                tb_around: self.tb_around,
+                tb_layout: self.tb_layout.key().to_owned(),
+                tb_bands: self.tb_bands,
+                tb_feather: self.tb_feather,
+                tb_horizon: self.tb_horizon,
+                tb_horizon_auto: self.tb_horizon_auto,
+                tb_deghost: self.tb_deghost,
+                tb_match: self.tb_match,
+                focus_around: self.focus_around,
+                focus_method: self.focus_method.key().to_owned(),
+                focus_radius: self.focus_radius,
+                focus_threshold: self.focus_threshold,
+                focus_smooth_z: self.focus_smooth_z,
+                focus_feather: self.focus_feather,
+            },
         }
     }
 
-    /// 启动时把落盘的偏好灌回来。不动任何图像状态，只改外观与布局。
+    /// 启动时把落盘的偏好灌回来。不动任何图像状态，只改外观、布局与合并面板参数。
     ///
     /// Pour the persisted preferences back in at startup. Touches no image state, only
-    /// appearance and layout.
+    /// appearance, layout and the merge panels' parameters.
     pub fn adopt_settings(&mut self, s: crate::settings::Settings) {
         self.appearance = s.appearance;
         self.layout = s.layout;
@@ -2128,6 +2150,51 @@ impl AppState {
         self.win_pos = s.win_pos.unwrap_or_default();
         self.hdr_preview = s.hdr_preview.unwrap_or(false);
         self.preset_order = normalise_preset_order(&s.preset_order.unwrap_or_default());
+        // 合并参数是全局偏好：坏 key / 越界值当场夹回默认，不让手改过的
+        // settings.json 把首轮合成带进一个不存在的模式。
+        //
+        // Merge parameters are a global preference: unparsable keys / out-of-range
+        // values are clamped back to the defaults here, so a hand-edited settings.json
+        // cannot drag the first merge into a mode that does not exist.
+        let m = &s.merge;
+        self.hdr_around = m.hdr_around.clamp(1, 4);
+        self.stack_around = m.stack_around.clamp(1, 32);
+        self.stack_mode = aevum_core::stack::Mode::parse(&m.stack_mode)
+            .unwrap_or(aevum_core::stack::Mode::Lighten);
+        self.stack_sigma = if m.stack_sigma.is_finite() && m.stack_sigma > 0.0 {
+            m.stack_sigma.clamp(1.0, 8.0)
+        } else {
+            3.0
+        };
+        self.stack_fill = m.stack_fill;
+        self.tb_around = m.tb_around.clamp(1, 31);
+        self.tb_layout = aevum_core::timeblend::Layout::parse(&m.tb_layout)
+            .unwrap_or(aevum_core::timeblend::Layout::SkyGround);
+        self.tb_bands = m.tb_bands.clamp(1, 32);
+        self.tb_feather = m.tb_feather.clamp(0.0, 0.5);
+        self.tb_horizon = m.tb_horizon.clamp(0.0, 1.0);
+        self.tb_horizon_auto = m.tb_horizon_auto;
+        self.tb_deghost = if m.tb_deghost.is_finite() {
+            m.tb_deghost.clamp(0.0, 4.0)
+        } else {
+            0.5
+        };
+        self.tb_match = m.tb_match;
+        self.focus_around = m.focus_around.clamp(1, 31);
+        self.focus_method = aevum_core::focus::Method::parse(&m.focus_method)
+            .unwrap_or(aevum_core::focus::Method::DepthMap);
+        self.focus_radius = m.focus_radius.min(32);
+        self.focus_threshold = if m.focus_threshold.is_finite() {
+            m.focus_threshold.clamp(0.0, 100.0)
+        } else {
+            0.0
+        };
+        self.focus_smooth_z = m.focus_smooth_z.min(16);
+        self.focus_feather = if m.focus_feather.is_finite() {
+            m.focus_feather.clamp(0.0, 64.0)
+        } else {
+            2.0
+        };
     }
 
     /// 把某一节拖到第 `to` 位。越界夹住、原地不动就不置脏。
@@ -18178,6 +18245,122 @@ mod focus_depth_tests {
         assert!(state2.focus_depth_tex.is_none(), "单帧序列不该产出预览");
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&single);
+    }
+}
+
+#[cfg(test)]
+mod merge_settings_tests {
+    use super::*;
+
+    /// 落盘的合并参数灌回 AppState：逐项到位；坏 key / 越界值夹回默认，
+    /// 不会把手改过的 settings.json 带进一个不存在的模式。
+    ///
+    /// Persisted merge parameters pour back into AppState item by item; unparsable
+    /// keys / out-of-range values clamp back to the defaults, so a hand-edited
+    /// settings.json cannot bring up a mode that does not exist.
+    #[test]
+    fn adopt_settings_applies_merge_params_and_sanitises_bad_values() {
+        let good: crate::settings::Settings = serde_json::from_str(
+            json!({
+                "merge": {
+                    "hdr_around": 3,
+                    "stack_around": 9,
+                    "stack_mode": "median",
+                    "stack_sigma": 2.0,
+                    "stack_fill": false,
+                    "tb_around": 15,
+                    "tb_layout": "bands",
+                    "tb_bands": 6,
+                    "tb_feather": 0.2,
+                    "tb_horizon": 0.3,
+                    "tb_horizon_auto": true,
+                    "tb_deghost": 1.5,
+                    "tb_match": false,
+                    "focus_around": 11,
+                    "focus_method": "weighted",
+                    "focus_radius": 8,
+                    "focus_threshold": 30.0,
+                    "focus_smooth_z": 4,
+                    "focus_feather": 12.0,
+                }
+            })
+            .to_string()
+            .as_str(),
+        )
+        .unwrap();
+        let mut state = AppState::new();
+        state.adopt_settings(good);
+        assert_eq!(state.hdr_around, 3);
+        assert_eq!(state.stack_around, 9);
+        assert_eq!(state.stack_mode, aevum_core::stack::Mode::Median);
+        assert_eq!(state.stack_sigma, 2.0);
+        assert!(!state.stack_fill);
+        assert_eq!(state.tb_around, 15);
+        assert_eq!(state.tb_layout, aevum_core::timeblend::Layout::Bands);
+        assert_eq!(state.tb_bands, 6);
+        assert_eq!(state.tb_feather, 0.2);
+        assert_eq!(state.tb_horizon, 0.3);
+        assert!(state.tb_horizon_auto);
+        assert_eq!(state.tb_deghost, 1.5);
+        assert!(!state.tb_match);
+        assert_eq!(state.focus_around, 11);
+        assert_eq!(state.focus_method, aevum_core::focus::Method::Weighted);
+        assert_eq!(state.focus_radius, 8);
+        assert_eq!(state.focus_threshold, 30.0);
+        assert_eq!(state.focus_smooth_z, 4);
+        assert_eq!(state.focus_feather, 12.0);
+
+        // 坏值：未知方法 key 落回深度图，越界数全部夹回合法区间。
+        let bad: crate::settings::Settings = serde_json::from_str(
+            json!({
+                "merge": {
+                    "focus_method": "pyramid",
+                    "focus_radius": 999,
+                    "focus_threshold": 500.0,
+                    "tb_feather": 9.0,
+                    "hdr_around": 0,
+                    "stack_sigma": -1.0,
+                }
+            })
+            .to_string()
+            .as_str(),
+        )
+        .unwrap();
+        let mut state2 = AppState::new();
+        state2.adopt_settings(bad);
+        assert_eq!(state2.focus_method, aevum_core::focus::Method::DepthMap);
+        assert_eq!(state2.focus_radius, 32);
+        assert_eq!(state2.focus_threshold, 100.0);
+        assert_eq!(state2.tb_feather, 0.5);
+        assert_eq!(state2.hdr_around, 1);
+        assert_eq!(state2.stack_sigma, 3.0);
+    }
+
+    /// settings() 收账：面板参数进 Settings.merge；结果态（上次成片 / 报错 / 预览）
+    /// 不进。另外新状态的参数必须与 MergeParams::default() 逐项一致——两处默认
+    /// 不同步，「没存过的用户」和「存过默认值的用户」会看到不同的首次合成。
+    ///
+    /// settings() collects the bill: panel parameters land in Settings.merge; result
+    /// state (last output / errors / previews) does not. Also, a fresh state's
+    /// parameters must match MergeParams::default() item by item -- out-of-sync
+    /// defaults would give "never saved" and "saved the defaults" users different
+    /// first merges.
+    #[test]
+    fn settings_carries_merge_params_but_not_result_state() {
+        // 新状态与默认表逐项一致（默认同步的不变量）。
+        let fresh = AppState::new();
+        assert_eq!(
+            fresh.settings().merge,
+            crate::settings::MergeParams::default()
+        );
+        // 改过的参数进收账，结果态不进。
+        let mut state = AppState::new();
+        state.focus_radius = 9;
+        state.stack_mode = aevum_core::stack::Mode::SigmaClip;
+        state.focus_last = Some("out/focus.png".to_owned());
+        let s = state.settings();
+        assert_eq!(s.merge.focus_radius, 9);
+        assert_eq!(s.merge.stack_mode, "sigma-clip");
     }
 }
 
