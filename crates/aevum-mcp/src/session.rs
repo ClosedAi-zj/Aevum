@@ -835,10 +835,6 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
     component_starts_with(a, b) && component_starts_with(b, a)
 }
 
-pub fn path_starts_with(child: &Path, parent: &Path) -> bool {
-    component_starts_with(child, parent)
-}
-
 fn component_starts_with(child: &Path, parent: &Path) -> bool {
     let mut child = child.components();
     for expected in parent.components() {

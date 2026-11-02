@@ -1214,6 +1214,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("输出模式", "Output mode"),
     ("输出目录不能是序列根目录的上级", "The output folder cannot be the parent of the sequence root"),
     ("输出目录不能是序列根目录，会污染源帧", "The output folder cannot be the sequence root: it would contaminate the source frames"),
+    ("输出目录透过符号链接或 junction 落到了别处：换成真实路径再导出", "The output folder resolves through a symlink or junction to somewhere else: export to the real path instead"),
     ("输出目录里已经写完的帧原样留着，这一趟只补没写出来的那些。\n跑崩了再点一次就是接着导，不必从头重渲。\n它不看画面有没有改过：改了参数想重导就别勾，或者先把旧帧删掉。", "Frames already written to the output directory stay as they are; this pass fills in only the missing ones.\nCrashed? Click again and it picks up where it left off, no re-render from scratch.\nIt does not check whether the picture changed: if you changed settings and want a full re-export, uncheck it or delete the old frames first."),
     ("输出色域", "Output colour space"),
     ("输出规格、目录、格式与色彩空间。", "Output size, folder, format, and colour space."),

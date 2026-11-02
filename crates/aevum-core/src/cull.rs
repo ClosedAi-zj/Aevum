@@ -39,6 +39,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::paths::canonical_loose;
+
 use serde::{Deserialize, Serialize};
 
 /// 筛选规则。数值一律用 EV（相对中位数）与比例，不用绝对亮度。
@@ -386,35 +388,6 @@ impl TargetError {
             Self::InsideSource => "目标不能是源序列根或其内部",
             Self::DriveRoot => "目标不能是盘符根或没有父目录的路径",
             Self::NotEmpty => "目标目录已存在且非空：换一个目录，或先清空它",
-        }
-    }
-}
-
-/// 宽松规范化：目标多半还不存在，`canonicalize` 会失败——找到最深的存在祖先
-/// 规范化（消掉 `\\?\` 前缀、短名与大小写差异），其余段原样接回去。
-///
-/// Loose normalisation: the target usually does not exist yet and `canonicalize` fails -- walk
-/// down to the deepest existing ancestor, canonicalise it (settling the `\\?\` prefix, short
-/// names and case), then append the remaining segments as they were.
-fn canonical_loose(p: &Path) -> PathBuf {
-    let mut cur = p.to_path_buf();
-    let mut suffix: Vec<std::ffi::OsString> = Vec::new();
-    loop {
-        match cur.canonicalize() {
-            Ok(c) => {
-                let mut out = c;
-                for seg in suffix.iter().rev() {
-                    out.push(seg);
-                }
-                return out;
-            }
-            Err(_) => match (cur.file_name(), cur.parent()) {
-                (Some(name), Some(parent)) if !name.is_empty() => {
-                    suffix.push(name.to_owned());
-                    cur = parent.to_path_buf();
-                }
-                _ => return p.to_path_buf(),
-            },
         }
     }
 }

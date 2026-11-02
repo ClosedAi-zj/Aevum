@@ -46,6 +46,7 @@ pub mod mcp_routes;
 pub mod measures;
 pub mod metrics;
 pub mod pano;
+pub mod paths;
 pub mod plugin;
 pub mod plugin_host;
 pub mod preview;

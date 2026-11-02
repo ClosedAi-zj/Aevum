@@ -52,7 +52,7 @@ use serde_json::{Value, json};
 use crate::Command;
 use crate::session::{
     JobKind, JobOutcome, JobShared, MAX_LONG_SIDE, MAX_SERIES, MEASURE_LONG_SIDE, STAGE_ENCODE,
-    STAGE_FRAMES, Session, measure_paths, normalize, path_starts_with, same_path,
+    STAGE_FRAMES, Session, measure_paths, normalize,
 };
 
 /// 核心类型都实现了 serde，这里统一把序列化错误翻成工具错误。
@@ -812,7 +812,7 @@ fn export_stills(session: &mut Session, args: &Value) -> Result<Value, String> {
         side
     };
     require_batch_confirm(args, "aevum_export_stills")?;
-    ensure_out_dir_safe(&root, &out_dir)?;
+    aevum_core::paths::ensure_out_dir_safe(&root, &out_dir)?;
 
     let paths = session.require_seq()?.paths();
     // copy：这一次导出改用某套副本的调色；省略就是会话当前这套。
@@ -924,7 +924,7 @@ fn hdr_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
         Some(dir) => absolute(Path::new(dir))?,
         None => root.join("HDR"),
     };
-    ensure_out_dir_safe(&root, &out_dir)?;
+    aevum_core::paths::ensure_out_dir_safe(&root, &out_dir)?;
     fs::create_dir_all(&out_dir)
         .map_err(|e| format!("建输出目录失败：{}", clip_echo(&e.to_string())))?;
 
@@ -1045,7 +1045,7 @@ fn pano_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
         Some(dir) => absolute(Path::new(dir))?,
         None => root.join("全景"),
     };
-    ensure_out_dir_safe(&root, &out_dir)?;
+    aevum_core::paths::ensure_out_dir_safe(&root, &out_dir)?;
     fs::create_dir_all(&out_dir)
         .map_err(|e| format!("建输出目录失败：{}", clip_echo(&e.to_string())))?;
 
@@ -1158,7 +1158,7 @@ fn export_video(session: &mut Session, args: &Value) -> Result<Value, String> {
     let keep_frames = opt_bool(args, "keep_frames")?.unwrap_or(false);
     let resume = opt_bool(args, "resume")?.unwrap_or(false);
     require_batch_confirm(args, "aevum_export_video")?;
-    ensure_out_dir_safe(&root, &out_dir)?;
+    aevum_core::paths::ensure_out_dir_safe(&root, &out_dir)?;
     if session.is_source(&video_out) {
         return Err(format!("拒绝覆盖源图：{}", video_out.display()));
     }
@@ -2482,19 +2482,6 @@ fn target_size_arg(args: &Value) -> Result<Option<(u32, u32)>, String> {
         (None, None) => Ok(None),
         _ => Err("width 与 height 需同时给出（或都不给）".to_owned()),
     }
-}
-
-fn ensure_out_dir_safe(root: &Path, out: &Path) -> Result<(), String> {
-    let root = normalize(root);
-    let out = normalize(out);
-    if same_path(&out, &root) {
-        return Err("输出目录不能是序列根目录，会污染源帧".to_owned());
-    }
-    // 输出到根的上级更危险：批量写 + 收尾清理可能碰到源目录。
-    if path_starts_with(&root, &out) {
-        return Err("输出目录不能是序列根目录的上级".to_owned());
-    }
-    Ok(())
 }
 
 fn absolute(path: &Path) -> Result<PathBuf, String> {

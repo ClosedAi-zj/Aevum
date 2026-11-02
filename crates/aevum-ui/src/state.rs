@@ -12430,23 +12430,24 @@ fn lexical(path: &Path) -> PathBuf {
     out
 }
 
+/// 词法比较两个路径是否指向同一处（不碰文件系统）。
+///
+/// 只做词法——穿不过符号链接 / junction，所以**不能**用来判「输出目录安不安全」；
+/// 那条判定在 `aevum_core::paths`（会比较规范化后的真实路径）。这里留着它是因为
+/// 界面别处只关心「这两个路径字符串是不是同一个文件」（源帧比对、工程落点比对）。
+///
+/// Whether two paths point at the same place, compared lexically (touches no filesystem).
+///
+/// Lexical only -- it cannot see through a symlink or junction, so it must **not** be used
+/// to decide whether an output folder is safe; that judgement lives in
+/// `aevum_core::paths`, which compares resolved real paths. It stays here because other UI
+/// sites only care whether two path strings name the same file (source-frame checks, the
+/// project landing spot).
 fn path_eq(a: &Path, b: &Path) -> bool {
     let (a, b) = (lexical(a), lexical(b));
     let a: Vec<_> = a.components().collect();
     let b: Vec<_> = b.components().collect();
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| component_eq(*x, *y))
-}
-
-fn path_starts_with(child: &Path, parent: &Path) -> bool {
-    let (child, parent) = (lexical(child), lexical(parent));
-    let mut child = child.components();
-    for expected in parent.components() {
-        match child.next() {
-            Some(actual) if component_eq(actual, expected) => {}
-            _ => return false,
-        }
-    }
-    true
 }
 
 #[cfg(windows)]
@@ -12461,23 +12462,21 @@ fn component_eq(a: Component<'_>, b: Component<'_>) -> bool {
     a == b
 }
 
-/// 导出目录不得是序列根，也不得是根的上级：批量写与收尾清理都可能碰到源帧。
+/// 导出目录安全检查：转调 `aevum_core::paths`（一份实现，headless 与界面共用），
+/// 只在这里多加一层 i18n。
 ///
-/// 两句都要过 i18n：英文界面下原来直接露中文（`t!` 只收字面量，键就是中文原文）。
+/// 判定本身（含符号链接 / junction 的规范化比较）不在这里——两份拷贝已经删了；
+/// 这里剩下的唯一职责是把 core 给出的中文错误串过一遍当前语言的表。
 ///
-/// The export folder must be neither the sequence root nor an ancestor of it: batch writes
-/// and the cleanup pass can both reach the source frames.
+/// Export-folder safety check: delegates to `aevum_core::paths` (one implementation shared
+/// with the headless side) and only adds the i18n layer here.
 ///
-/// Both sentences go through i18n: an English UI used to show the Chinese verbatim (`t!`
-/// only takes literals, and the Chinese original is the key).
+/// The judgement itself (including the resolved-path comparison across symlinks and
+/// junctions) is not here -- the second copy is gone. All that remains is running core's
+/// Chinese error string through the current language's table.
 fn ensure_out_dir_safe(root: &Path, out: &Path) -> Result<(), String> {
-    if path_eq(out, root) {
-        return Err(crate::i18n::t!("输出目录不能是序列根目录，会污染源帧").to_owned());
-    }
-    if path_starts_with(root, out) {
-        return Err(crate::i18n::t!("输出目录不能是序列根目录的上级").to_owned());
-    }
-    Ok(())
+    aevum_core::paths::ensure_out_dir_safe(root, out)
+        .map_err(|msg| crate::i18n::tr(&msg).to_owned())
 }
 
 /// 后台合并任务：逐帧读盘（报进度、可取消），再走各自的核心算法写一张静帧。
