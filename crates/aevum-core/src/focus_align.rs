@@ -465,6 +465,12 @@ pub fn chain_offsets(fields: &[BlockField]) -> Vec<[f64; 2]> {
 /// 相邻帧之间被问一次（大图上这一步不便宜），返回 `None` 表示调用方要求放弃。
 /// 只估计、不碰帧、不写盘——三态里只有 `Adopted` 值得上层去 warp。
 ///
+/// 两边现在怎么传：UI 传真的取消标志（面板上的取消按钮真的会把它置位，因为 UI 是
+/// 轮询式重绘）；MCP 传 `&|| false`，**不是偷懒**——`aevum_focus_merge` 是同步调用，
+/// 阻塞 stdio 主循环，`aevum_cancel` 那一行在它跑完之前根本读不进来，而且它也没注册成
+/// 后台 job，`cancel()` 找的是注册过的 job。所以在这条路径上接真旗标只是装饰。要让它
+/// 真能取消，得先把它改成后台 job（`background: true` + `session.start_background`）。
+///
 /// The complete estimate: proxies -> neighbour-chained grid field -> gain statistics ->
 /// three-state decision.
 ///
@@ -473,6 +479,14 @@ pub fn chain_offsets(fields: &[BlockField]) -> Vec<[f64; 2]> {
 /// is not cheap on a large frame), and `None` means the caller asked to give up. It only
 /// estimates -- no frame is modified and nothing is written; only `Adopted` is worth warping
 /// for upstream.
+///
+/// What each side passes today: the UI passes its real cancel flag (the panel's cancel
+/// button does set it, because the UI redraws on a poll); the MCP passes `&|| false`, and
+/// that is **not laziness** -- `aevum_focus_merge` is a synchronous call that blocks the
+/// stdio main loop, so `aevum_cancel` is never even read until it finishes, and it is not
+/// registered as a background job either, which is what `cancel()` looks for. Wiring a real
+/// flag into this path would be decoration. Making it genuinely cancellable means turning it
+/// into a background job first (`background: true` plus `session.start_background`).
 pub fn estimate(
     frames: &[&[f32]],
     w: usize,

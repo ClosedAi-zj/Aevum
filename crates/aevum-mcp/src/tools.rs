@@ -1133,8 +1133,19 @@ fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
         let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();
         // 手动序列对齐的位移不叠（拍板 ⑥）：只保留它的裁切框，位移完全由本次估计给出。
         //
+        // 取消闭包恒为 false 是**故意的**，不是没接：`focus_merge` 走同步调用，
+        // 跑完才回包，`aevum_cancel` 那一行在它跑完之前读不进来；它也不是后台 job，
+        // `cancel()` 找的是注册过的 job。在这条路径上接真旗标只是装饰。要真能取消，
+        // 得先把它改成 `background: true` + `session.start_background`。
+        //
         // Manual sequence-alignment offsets are never stacked on top (ruling 6): only its
         // crop rectangle survives, and the offsets come entirely from this estimate.
+        //
+        // The always-false cancel closure is **deliberate**, not unwired: `focus_merge` is
+        // synchronous and only replies when it finishes, so `aevum_cancel` is never read
+        // before then; nor is it a background job, which is what `cancel()` looks for. A
+        // real flag on this path would be decoration. Genuine cancellation requires moving
+        // it to `background: true` + `session.start_background` first.
         let report = aevum_core::focus_align::estimate(&refs, w, h, opts.radius, crop, &|| false)
             .ok_or_else(|| "自动对齐被要求中止".to_owned())?;
         align_status = report.status.key();
