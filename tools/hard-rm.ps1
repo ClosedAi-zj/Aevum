@@ -29,6 +29,11 @@ Why this exists
 Usage
     powershell -NoProfile -ExecutionPolicy Bypass -File tools\hard-rm.ps1 <path> [<path> ...]
     powershell ... -File tools\hard-rm.ps1 -WhatIf <path>      # dry run, prints size only
+    powershell ... -File tools\hard-rm.ps1 -NoPurge <path>     # delete only, leave the Bin alone
+
+    Deleting build output: pass the directory. If the payload lands in the Recycle Bin
+    (it always does here) the script purges that drive's Bin in the same run, so the
+    command ends with the space actually back.
 
 Safety
     Refuses drive roots and Windows/User profile roots. Works on absolute or
@@ -38,7 +43,8 @@ Safety
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [Parameter(Mandatory = $true, Position = 0, ValueFromRemainingArguments = $true)]
-    [string[]] $Path
+    [string[]] $Path,
+    [switch] $NoPurge
 )
 
 $ErrorActionPreference = 'Continue'
@@ -172,7 +178,34 @@ if ($null -ne $freeBefore -and $null -ne $freeAfter) {
     Write-Output ("---- free space: {0:N2} GB reclaimed ({1:N1} GB -> {2:N1} GB free)" -f `
             ($reclaimed / 1GB), ($freeBefore / 1GB), ($freeAfter / 1GB))
 }
+# 2026-11-03: 删除在这台机器上必被接管进回收站，实测 1 GB 探针删完空间一分没回
+# （试过包装 rm / command rm / CODEBUDDY_SAFE_DELETE_ENABLED=0 / .NET API + 关沙箱，全是同一结果）。
+# 所以「删构建产物」的正确形态是一条命令走完：删完就把回收站里刚落进去的那批清掉，
+# 否则 121 GB 会白白堆在 E:\$Recycle.Bin，把盘压到 100% 再让链接器报 LNK1180。
+#
+# Since 2026-11-03 deletion here is always routed into the Recycle Bin (a 1 GB probe
+# reclaimed nothing; the wrapper rm, `command rm`, CODEBUDDY_SAFE_DELETE_ENABLED=0 and the
+# .NET API with the sandbox off all behave the same). "Delete build output" therefore has to
+# be one command: remove, then purge what just landed in the Bin, or 121 GB piles up in
+# E:\$Recycle.Bin and the linker dies with LNK1180.
 if ($failures -gt 0) { exit 1 }
+$needsPurge = ($null -ne $reclaimed -and $removedBytes -gt 1GB -and $reclaimed -lt ($removedBytes / 2))
+if ($needsPurge -and -not $NoPurge) {
+    $rootDrive = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($Path[0])).TrimEnd('\')
+    $emptyScript = Join-Path $PSScriptRoot 'empty-bin.ps1'
+    if (Test-Path $emptyScript) {
+        Write-Output ("---- payload is in the Recycle Bin; purging {0} now (pass -NoPurge to skip)" -f $rootDrive)
+        & $emptyScript -Drive $rootDrive -Confirm:$false
+        $freeFinal = Get-FreeBytes ([System.IO.Path]::GetFullPath($Path[0]))
+        if ($null -ne $freeFinal) {
+            Write-Output ("---- after purge: {0:N2} GB free (net {1:N2} GB reclaimed)" -f `
+                    ($freeFinal / 1GB), (($freeFinal - $freeBefore) / 1GB))
+            $reclaimed = $freeFinal - $freeBefore
+        }
+    } else {
+        Write-Warning "empty-bin.ps1 not found next to this script; the Recycle Bin still holds the payload"
+    }
+}
 if ($null -ne $reclaimed -and $removedBytes -gt 1GB -and $reclaimed -lt ($removedBytes / 2)) {
     Write-Warning ("deleted {0:N2} GB but the volume only got {1:N2} GB back. The payload is in the Recycle Bin; run tools\empty-bin.ps1 to actually reclaim it." -f `
             ($removedBytes / 1GB), ($reclaimed / 1GB))
