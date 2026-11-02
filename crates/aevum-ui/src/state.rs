@@ -18639,13 +18639,23 @@ mod focus_align_wiring_tests {
         );
         assert_eq!(result_false["align_status"], json!("off"), "显式关应是 off");
         assert_eq!(result_off["align_gain"], json!(0.0), "off 时增益必须是 0");
-        // 中文 reason 一律不外发（MCP / 脚本没有 i18n 漏斗）；字段本身也不该存在。
+        // 结果 JSON 里**不许**出现任何带「reason」的键：中文模板键一律不外发
+        // （MCP / 脚本没有 i18n 漏斗），而报告结构里的那个 reason 字段已经整个删掉了。
+        // 这里按「键名含 reason」扫而不是写死一个键名——写死只挡得住叫那个名字的字段，
+        // 换个名字（`note`、`why`）就绕过去了。
         //
-        // The Chinese reason is never emitted (MCP and scripts have no i18n funnel), and
-        // the field itself must not exist either.
+        // No key containing "reason" may appear in the result JSON: Chinese template keys
+        // are never emitted (MCP and scripts have no i18n funnel), and the report's reason
+        // field is gone entirely. Scanning for the substring "reason" rather than one hard
+        // coded key stops a field that merely renames itself (`note`, `why`) from slipping by.
+        let stray = result_off
+            .as_object()
+            .expect("结果 JSON 是对象")
+            .keys()
+            .find(|k| k.contains("reason"));
         assert!(
-            result_off.get("align_reason").is_none(),
-            "结果 JSON 不该再有 align_reason：{result_off}"
+            stray.is_none(),
+            "结果 JSON 不该有任何 reason 字段：{stray:?}"
         );
         // 机器键必须与 `AlignStatus::key()` 逐字一致，且整段 JSON 里不许有汉字——
         // 这份 JSON 会经 attached MCP 原样送到前端，中文模板键漏出去就等于把中文塞给

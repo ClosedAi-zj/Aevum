@@ -1140,9 +1140,20 @@ fn focus_merge_recovers_each_band_from_the_frame_that_holds_its_texture() {
         !text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
         "焦点合成结果 JSON 含中文：{text}"
     );
+    // 结果里**不许**出现任何带「reason」的键。按子串扫而不是写死键名：写死只挡得住
+    // 叫那个名字的字段，换个名字（`note`、`why`）就绕过去了。
+    //
+    // No key containing "reason" may appear in the result. Scanning for the substring rather
+    // than one hard coded key stops a field that merely renames itself from slipping by.
+    let stray = merged
+        .as_object()
+        .expect("结果 JSON 是对象")
+        .keys()
+        .find(|k| k.contains("reason"))
+        .cloned();
     assert!(
-        merged.get("align_reason").is_none(),
-        "结果 JSON 不该有中文 reason 字段：{text}"
+        stray.is_none(),
+        "结果 JSON 不该有任何 reason 字段：{stray:?}"
     );
     // 状态键若存在，只能是 key() 那三个之一（或 off）；这里 headless 路径不跑自动对齐，
     // 因此不该出现任何非 off 的值——出现就说明有人把 align 结果接歪了。

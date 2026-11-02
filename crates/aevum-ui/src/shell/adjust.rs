@@ -3956,14 +3956,23 @@ mod focus_hint_tests {
             "HDR 的结果不该借用这一行"
         );
 
+        // 夹具里**不再**放一个独立的 reason 字段：`FocusAlignReport` 早就不带它了，
+        // 结果 JSON 也不发它，面板是从 `align_status` 选整句、从 `align_gain` 取数字。
+        // 夹具里留着那个字段会让后来的人以为面板读它——QA 做过实验，把字段全删掉这几条
+        // 判据仍然全绿，说明它一直是摆设。
+        //
+        // The fixtures deliberately carry **no** separate reason field: the report has not
+        // carried one for a while, the result JSON never emits one, and the panel picks a
+        // whole sentence from `align_status` plus a number from `align_gain`. Keeping that
+        // field in the fixture would teach the next reader that the panel reads it; QA
+        // deleted them and every assertion here still passed, so it was decoration.
         state.merge_result = Some(serde_json::json!({
-            "kind": "focus", "align_status": "off", "align_gain": 0.0, "align_reason": "",
+            "kind": "focus", "align_status": "off", "align_gain": 0.0,
         }));
         assert!(focus_align_status_row(&state).is_none(), "off 不该出行");
 
         state.merge_result = Some(serde_json::json!({
             "kind": "focus", "align_status": "adopted", "align_gain": 1.110231,
-            "align_reason": "已采用",
         }));
         let (text, colour) = focus_align_status_row(&state).expect("adopted 必须出行");
         assert!(text.contains("已采用"), "文案要说清采用了：{text}");
@@ -3972,7 +3981,7 @@ mod focus_hint_tests {
 
         state.merge_result = Some(serde_json::json!({
             "kind": "focus", "align_status": "reverted_insufficient_gain",
-            "align_gain": -0.018796, "align_reason": "收益不足已回退",
+            "align_gain": -0.018796,
         }));
         let (text, colour) = focus_align_status_row(&state).expect("回退必须出行");
         assert!(text.contains("回退"), "文案要说清回退了：{text}");
@@ -3981,7 +3990,6 @@ mod focus_hint_tests {
 
         state.merge_result = Some(serde_json::json!({
             "kind": "focus", "align_status": "failed", "align_gain": 0.0,
-            "align_reason": "估计失败",
         }));
         let (text, colour) = focus_align_status_row(&state).expect("失败必须出行");
         assert!(text.contains("失败"), "失败要直说：{text}");

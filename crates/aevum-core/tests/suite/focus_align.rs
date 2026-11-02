@@ -556,7 +556,6 @@ fn a_c4_low_texture_failure_is_visible() {
         GRID_COLS * GRID_ROWS,
         "平场全部 48 块都该判失败"
     );
-    assert_eq!(p.report.reason, focus_align::REASON_FAILED);
     assert!(
         p.report
             .offsets
@@ -662,6 +661,26 @@ fn a_c5_breathing_grid_beats_global_translation() {
 #[test]
 fn decide_pins_the_gain_floor_and_the_failure_ratio_by_construction() {
     use aevum_core::focus_align::{DecideInput, GAIN_MIN};
+
+    // 契约钉：`GAIN_MIN` 的字面值必须还是 PRD ALN-2 的 0.5%。
+    //
+    // 这条**不是**行为判据——下面那几条才是。行为判据只能把阈值夹在 (0.003, 0.01] 这个
+    // 区间里：0.004 也好 0.006 也好，行为判据全绿，只有契约本身变了才能红。而 PRD 里
+    // 写的「收益不足 0.5% 就回退」是**对用户**的承诺，改它必须同时改判据、改文档、
+    // 改面板 hover、改 MCP schema 描述，所以这里直接把字面值钉住，让改动者一次踩到全部。
+    //
+    // Contract pin: `GAIN_MIN`'s literal must still be PRD ALN-2's 0.5%.
+    //
+    // This is **not** a behaviour assertion -- the ones below are. Behaviour assertions only
+    // bracket the threshold into (0.003, 0.01]: 0.004 and 0.006 both pass them, so only a
+    // change to the contract itself can turn this red. And "revert when the gain is under
+    // 0.5%" is a promise made **to users**, so changing it must change the tests, the docs,
+    // the panel hover text and the MCP schema description in one go -- pinning the literal
+    // here makes the next person trip over all of them at once.
+    assert!(
+        (GAIN_MIN - 0.005).abs() < 1e-9,
+        "GAIN_MIN 是 PRD ALN-2 的 0.5% 契约，改它必须同时改判据与文档（现值 {GAIN_MIN}）"
+    );
 
     let input = |mean_aligned: f32, mean_unaligned: f32, failed: usize| DecideInput {
         mean_aligned,

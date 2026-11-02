@@ -87,18 +87,6 @@ pub const PROXY_LUMA_MAX_SIDE: usize = 2048;
 ///
 /// Long-side cap (px) of the eighth-size RGB proxy.
 pub const PROXY_RGB_MAX_SIDE: usize = 800;
-/// 「已采用」的可翻译模板键。
-///
-/// Translatable template key for "adopted".
-pub const REASON_ADOPTED: &str = "已采用";
-/// 「收益不足已回退」的可翻译模板键。
-///
-/// Translatable template key for "reverted: gain too small".
-pub const REASON_REVERTED: &str = "收益不足已回退";
-/// 「估计失败」的可翻译模板键。
-///
-/// Translatable template key for "estimation failed".
-pub const REASON_FAILED: &str = "估计失败";
 
 /// 对齐结果的三态。
 ///
@@ -113,17 +101,22 @@ pub enum AlignStatus {
 impl AlignStatus {
     /// 稳定的机器键，命令面与结果 JSON 用它（**不要**手写字面量，改枚举时这里编译报错）。
     ///
-    /// 与 [`crate::focus_align::REASON_ADOPTED`] 的中文模板键分开：那些是给人看的译文键，
-    /// 这些是给脚本与 MCP 客户端判读的短串。MCP 侧没有 i18n 漏斗，把中文模板键原样
-    /// 透传出去英文用户必见中文，所以对外一律走这一组。
+    /// 这一组是给脚本与 MCP 客户端判读的短串，**唯一**的对外表达。报告结构里原先还有
+    /// 一个 `reason: &'static str` 字段装中文模板键，本意是给人看的译文键，但生产侧
+    /// 一个消费者都没有：结果 JSON 不外发它，面板按 `status` 选整句，只有测试在断言它。
+    /// 留着它等于给下次「顺手透传出去」留了个入口，字段与那三个常量已一并删除。要加
+    /// 人话，加在 UI 侧按 `status` 分支，不要给报告结构加字段。
     ///
     /// Stable machine key, used by the command surface and the result JSON (**never** hand
     /// write these literals -- changing the enum should break compilation here).
     ///
-    /// Kept apart from the Chinese template keys ([`crate::focus_align::REASON_ADOPTED`]):
-    /// those are translation keys for humans, these are short strings for scripts and MCP
-    /// clients. MCP has no i18n funnel, so leaking a Chinese template key there would show
-    /// Chinese to English users; everything outward-facing goes through this set.
+    /// These short strings are for scripts and MCP clients and are the **only** outward
+    /// expression. The report used to carry a `reason: &'static str` field holding a Chinese
+    /// template key, meant as a human-facing translation key, but nothing in production
+    /// consumed it: the result JSON never emitted it, the panel picks a whole sentence from
+    /// `status`, and only tests asserted it. Keeping it was an open door for "just pass it
+    /// through" next time, so the field and its three constants are gone. Human sentences
+    /// belong in the UI, branched on `status` -- never as a new field on the report.
     pub fn key(self) -> &'static str {
         match self {
             Self::Adopted => "adopted",
@@ -162,10 +155,6 @@ pub struct FocusAlignReport {
     ///
     /// Largest failed-block count among the neighbour pairs.
     pub failed_blocks: usize,
-    /// 可翻译模板键：已采用 / 收益不足已回退 / 估计失败。
-    ///
-    /// Translatable template key: adopted / reverted / failed.
-    pub reason: &'static str,
 }
 
 /// 1/2 分辨率单通道 luma 代理。
@@ -504,7 +493,6 @@ pub fn estimate(
             h: h as u32,
         })),
         failed_blocks: GRID_COLS * GRID_ROWS,
-        reason: REASON_FAILED,
     };
     if frames.len() < 2 || w == 0 || h == 0 {
         return Some(failed());
@@ -646,11 +634,6 @@ pub fn decide(input: &DecideInput) -> FocusAlignReport {
     } else {
         AlignStatus::Adopted
     };
-    let reason = match status {
-        AlignStatus::Adopted => REASON_ADOPTED,
-        AlignStatus::RevertedInsufficientGain => REASON_REVERTED,
-        AlignStatus::Failed => REASON_FAILED,
-    };
     FocusAlignReport {
         status,
         gain,
@@ -658,7 +641,6 @@ pub fn decide(input: &DecideInput) -> FocusAlignReport {
         blocks: input.blocks.clone(),
         crop: input.crop,
         failed_blocks: input.failed_blocks,
-        reason,
     }
 }
 
