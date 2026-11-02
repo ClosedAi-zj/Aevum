@@ -32,6 +32,7 @@ use aevum_core::export::{
     self, Codec, JobProgress, OutputDynamic, OutputMode, OutputSharpen, RenderOptions,
     SharpenStrength, Stage, StillFormat,
 };
+use aevum_core::focus_align::{self, AlignStatus, BlockField, DecideInput};
 use aevum_core::grade::{self, GradeParams, PRESET_NAMES};
 use aevum_core::interp;
 use aevum_core::journal;
@@ -829,6 +830,13 @@ struct MergeJob {
     dst: PathBuf,
     options: RenderOptions,
     spec: MergeSpec,
+    /// 焦点合成是否先做**合成前自动对齐**（估计 focus breathing 位移场）。
+    /// 默认关闭；只有 `focus.merge` 带 `align: true` 时才为真，其余合并种类恒为假。
+    ///
+    /// Whether this focus merge first runs **pre-fusion auto alignment** (estimating the
+    /// focus-breathing shift field). Off by default; true only when `focus.merge` is called
+    /// with `align: true`, and always false for the other merge kinds.
+    align: bool,
 }
 
 /// 插件后台任务往界面线程送的消息：进度心跳，或最终结果。
@@ -5818,7 +5826,11 @@ impl AppState {
             )
         })?;
 
-        let job = self.build_merge_job(kind, indices, &out_dir, MergeSpec::Plain)?;
+        // HDR / 全景不做合成前自动对齐：HDR 是同场景多曝光，全景几何交给拼接。
+        //
+        // HDR / panorama never run pre-fusion alignment: HDR is one scene at several
+        // exposures, and panorama geometry belongs to the stitcher.
+        let job = self.build_merge_job(kind, indices, &out_dir, MergeSpec::Plain, false)?;
         Ok(self.start_merge(ctx, job))
     }
 
@@ -5845,6 +5857,7 @@ impl AppState {
         indices: Vec<usize>,
         out_dir: &Path,
         spec: MergeSpec,
+        align: bool,
     ) -> Result<MergeJob, String> {
         // 调用方大多先过 require_sequence，但 MCP 通道可能绕过：缺序列就
         // 报错返回，而不是在后台线程里 panic（panic 只会静默吞掉任务）。
@@ -5858,6 +5871,18 @@ impl AppState {
             // 全景靠特征点自己求单应，几何全交给拼接，不套对齐位移；
             // 其余三种都是同机位叠帧，对齐位移与统一裁切必须套上，否则星点会拖成双线。
             MergeKind::Pano => indices.iter().map(|_| (None, [0.0, 0.0])).collect(),
+            // 开了合成前自动对齐的焦点合成走另一套几何（拍板 ⑥「不叠加」）：手动
+            // 序列对齐的位移一律不套，只保留它的裁切框；位移完全由本次估计给出。
+            // 估计就在这个已裁切的坐标系里做。
+            //
+            // A focus merge with pre-fusion auto alignment uses a different geometry
+            // (ruling 6, "no stacking"): manual sequence-alignment offsets are never
+            // applied, only its crop rectangle survives; the offsets come entirely from
+            // this run's estimate, which therefore works in the already-cropped frame.
+            MergeKind::Focus if align => indices
+                .iter()
+                .map(|i| (self.alignment_at(*i).0, [0.0, 0.0]))
+                .collect(),
             _ => indices.iter().map(|i| self.alignment_at(*i)).collect(),
         };
         let options = self.frame_render_options();
@@ -5876,6 +5901,7 @@ impl AppState {
             dst,
             options,
             spec,
+            align,
         })
     }
 
@@ -6168,7 +6194,11 @@ impl AppState {
             )
         })?;
 
-        let job = self.build_merge_job(kind, indices, &out_dir, MergeSpec::Plain)?;
+        // HDR / 全景不做合成前自动对齐：HDR 是同场景多曝光，全景几何交给拼接。
+        //
+        // HDR / panorama never run pre-fusion alignment: HDR is one scene at several
+        // exposures, and panorama geometry belongs to the stitcher.
+        let job = self.build_merge_job(kind, indices, &out_dir, MergeSpec::Plain, false)?;
         Ok(self.start_merge(ctx, job))
     }
 
@@ -6455,7 +6485,11 @@ impl AppState {
             clip_sigma,
             fill_gaps,
         });
-        let job = self.build_merge_job(kind, indices, &out_dir, spec)?;
+        // 堆栈不做合成前自动对齐：同机位叠帧，几何由序列对齐负责。
+        //
+        // Stacking never runs pre-fusion alignment: fixed-camera frames, geometry belongs
+        // to sequence alignment.
+        let job = self.build_merge_job(kind, indices, &out_dir, spec, false)?;
         Ok(self.start_merge(ctx, job))
     }
 
@@ -6648,7 +6682,11 @@ impl AppState {
             deghost,
             match_exposure,
         });
-        let job = self.build_merge_job(kind, indices, &out_dir, spec)?;
+        // 时间合成不做合成前自动对齐：天地/星轨的位移是内容，不能被"对齐掉"。
+        //
+        // Time blending never runs pre-fusion alignment: motion is the content here, and
+        // aligning it away would destroy the very thing the user is composing.
+        let job = self.build_merge_job(kind, indices, &out_dir, spec, false)?;
         Ok(self.start_merge(ctx, job))
     }
 
@@ -6710,6 +6748,18 @@ impl AppState {
         if !feather.is_finite() || !(0.0..=64.0).contains(&feather) {
             return Err("feather 要在 0..=64 之间（px；小于 0.5 视为硬切）".to_owned());
         }
+        // 合成前自动对齐：缺省关；给了但不是布尔值就当场报错，别把 "true" 字符串
+        // 静默当成假（那会让脚本以为开了对齐，实际没开）。
+        //
+        // Pre-fusion auto alignment: off by default; a non-boolean value errors out
+        // immediately instead of being read as false, which would let a script believe
+        // alignment ran when it did not.
+        let align = match args.get("align") {
+            None | Some(Value::Null) => false,
+            Some(value) => value.as_bool().ok_or_else(|| {
+                crate::i18n::tr_fmt("{} 要布尔值（true / false）", &[&"align"]).to_owned()
+            })?,
+        };
         let root = self
             .seq
             .as_ref()
@@ -6733,7 +6783,7 @@ impl AppState {
             // The UI does not expose levels; 0 = auto (see focus::Options).
             levels: 0,
         });
-        let job = self.build_merge_job(kind, indices, &out_dir, spec)?;
+        let job = self.build_merge_job(kind, indices, &out_dir, spec, align)?;
         let mut started = self.start_merge(ctx, job);
         // 这次到底套没套对齐位移，调用方（面板与脚本）都该直接读到，而不是回头去查
         // 对齐报告再猜。
@@ -6743,6 +6793,11 @@ impl AppState {
         let aligned = self.align_report.is_some();
         if let Some(object) = started.as_object_mut() {
             object.insert("aligned".to_owned(), serde_json::Value::Bool(aligned));
+            // 自动对齐请求也回一句：`aligned` 说的是**手动**序列对齐，两者不是一个东西。
+            //
+            // Also echo the auto-alignment request: `aligned` talks about **manual**
+            // sequence alignment, which is a different thing.
+            object.insert("align".to_owned(), serde_json::Value::Bool(align));
         }
         Ok(started)
     }
@@ -12750,6 +12805,128 @@ fn ensure_out_dir_safe(root: &Path, out: &Path) -> Result<(), String> {
 /// HDR 与全景共用这条读帧循环：全景的 `framing` 是全幅零位移，走的是同一段
 /// 恒等分支，真正分岔只在最后一步（曝光融合 vs 特征点拼接）。取消只在两帧之间
 /// 检查一次——核心算法是一整块，中途打断没有意义。
+/// 一次焦点自动对齐的估计结果，供接线层出图与结果 JSON 使用。
+///
+/// One focus auto-alignment estimate, consumed by the wiring layer for the image and the
+/// result JSON.
+struct FocusAlignPass {
+    /// `"adopted"` / `"reverted_insufficient_gain"` / `"failed"`，与结果 JSON 同字面量。
+    ///
+    /// `"adopted"` / `"reverted_insufficient_gain"` / `"failed"`, the same literals as the
+    /// result JSON.
+    status: &'static str,
+    /// 相对增益（0.012 = +1.2%）。
+    ///
+    /// Relative gain (0.012 means +1.2%).
+    gain: f32,
+    /// 可翻译模板键：已采用 / 收益不足已回退 / 估计失败。
+    ///
+    /// Translatable template key: adopted / reverted / failed.
+    reason: &'static str,
+    /// 逐帧全局位移（全分辨率 px），采用时才用来 warp。
+    ///
+    /// Per-frame global offsets in full-resolution px; used for warping only when adopted.
+    offsets: Vec<[f64; 2]>,
+    /// 自动裁切（采用且没有手动裁切框时给出）。
+    ///
+    /// Automatic crop (supplied when adopted and there is no manual crop rectangle).
+    crop: CropRect,
+}
+
+/// 焦点合成的前置估计：代理 → 邻居链式网格场 → 收益校验 → 三态。
+///
+/// 纯估计，**不改帧、不写盘**：三态里只有 `adopted` 才值得上层去 warp；`failed` 与
+/// 收益不足都原样退未对齐几何。估计前后各查一次取消（大图上这一步不便宜）。
+///
+/// The estimate in front of a focus merge: proxies -> neighbour-chained grid field -> gain
+/// check -> three states.
+///
+/// It only estimates -- no frame is modified and nothing is written: only `adopted` is worth
+/// warping for; `failed` and "insufficient gain" both fall back to the unaligned geometry.
+/// Cancellation is checked before and after (this step is not cheap on a large frame).
+fn focus_align_pass(
+    frames: &[(Vec<f32>, usize, usize)],
+    w: usize,
+    h: usize,
+    radius: usize,
+    manual_crop: Option<CropRect>,
+    cancel: &AtomicBool,
+) -> Result<FocusAlignPass, String> {
+    let failed = |reason: &'static str| FocusAlignPass {
+        status: "failed",
+        gain: 0.0,
+        reason,
+        offsets: Vec::new(),
+        crop: CropRect {
+            x: 0,
+            y: 0,
+            w: w as u32,
+            h: h as u32,
+        },
+    };
+    if frames.len() < 2 || w == 0 || h == 0 {
+        return Ok(failed(focus_align::REASON_FAILED));
+    }
+    if cancel.load(Ordering::SeqCst) {
+        return Err("已取消：还没开始估计自动对齐".to_owned());
+    }
+    // 代理按 1/2 分辨率建（长边封顶 2048），相邻两帧同时驻留即可链式累计。
+    //
+    // Proxies are built at half resolution (long side capped at 2048); keeping two
+    // neighbouring frames resident is enough for chained accumulation.
+    let proxies: Vec<focus_align::MonoProxy> = frames
+        .iter()
+        .map(|(buf, _, _)| focus_align::proxy_luma(buf, w, h))
+        .collect();
+    let mut fields: Vec<BlockField> = Vec::with_capacity(proxies.len());
+    fields.push(BlockField::zeros());
+    for k in 1..proxies.len() {
+        if cancel.load(Ordering::SeqCst) {
+            return Err("已取消：自动对齐估到一半".to_owned());
+        }
+        fields.push(focus_align::block_shifts(
+            &proxies[k - 1],
+            &proxies[k],
+            radius,
+        ));
+    }
+    let offsets = focus_align::chain_offsets(&fields);
+    let blocks = focus_align::chain_blocks(&fields);
+    let failed_blocks = fields.iter().skip(1).map(|f| f.failed).max().unwrap_or(0);
+    let refs: Vec<&[f32]> = frames.iter().map(|(b, _, _)| b.as_slice()).collect();
+    let (mean_aligned, mean_unaligned) = focus_align::gain_stats(&refs, w, h, &offsets, radius);
+    let crop = manual_crop.unwrap_or_else(|| focus_align::auto_crop(&offsets, w as u32, h as u32));
+    let report = focus_align::decide(&DecideInput {
+        mean_aligned,
+        mean_unaligned,
+        failed_blocks,
+        total_blocks: focus_align::GRID_COLS * focus_align::GRID_ROWS,
+        offsets,
+        blocks,
+        crop: Some(crop),
+    });
+    if cancel.load(Ordering::SeqCst) {
+        return Err("已取消：自动对齐估完了，还没开始融合".to_owned());
+    }
+    let status = match report.status {
+        AlignStatus::Adopted => "adopted",
+        AlignStatus::RevertedInsufficientGain => "reverted_insufficient_gain",
+        AlignStatus::Failed => "failed",
+    };
+    let offsets = if report.status == AlignStatus::Adopted {
+        report.offsets.clone()
+    } else {
+        Vec::new()
+    };
+    Ok(FocusAlignPass {
+        status,
+        gain: report.gain,
+        reason: report.reason,
+        offsets,
+        crop: report.crop.unwrap_or(crop),
+    })
+}
+
 fn run_merge_job(
     job: &MergeJob,
     done: &AtomicUsize,
@@ -12809,6 +12986,14 @@ fn run_merge_job(
         return Err("已取消：读完了帧，还没开始算".to_owned());
     }
 
+    // 自动对齐的三态结果：`align:false`（以及其余合并种类）恒为 `off` / 0 / 空。
+    //
+    // The three-state outcome of auto alignment: `off` / 0 / empty when `align: false`
+    // (and for every other merge kind).
+    let mut align_status = "off";
+    let mut align_gain = 0.0f32;
+    let mut align_reason = "";
+
     let (mut pixels, ow, oh) = match job.kind {
         MergeKind::Hdr => {
             let (w, h) = dims.unwrap_or((0, 0));
@@ -12846,23 +13031,79 @@ fn run_merge_job(
         // the measure only reads texture, so frame order carries no direction.
         MergeKind::Focus => {
             let (w, h) = dims.unwrap_or((0, 0));
-            let refs: Vec<&[f32]> = frames.iter().map(|(b, _, _)| b.as_slice()).collect();
             let opts = match &job.spec {
                 MergeSpec::Focus(o) => o.clone(),
                 _ => aevum_core::focus::Options::default(),
             };
+            // 合成前自动对齐（默认关闭）：任一帧都没读进来之前不碰任何代理，所以
+            // `align: false` 这条路的成片与 1.4.0 逐点一致（X-C1）。
+            //
+            // Pre-fusion auto alignment (off by default): no proxy is built unless asked,
+            // so the `align: false` path stays point-for-point identical to 1.4.0 (X-C1).
+            let mut work = frames;
+            let (mut ow, mut oh) = (w, h);
+            if job.align {
+                if cancel.load(Ordering::SeqCst) {
+                    return Err("已取消：还没开始估计自动对齐".to_owned());
+                }
+                let manual_crop = job.framing.first().and_then(|(c, _)| *c);
+                let outcome = focus_align_pass(&work, w, h, opts.radius, manual_crop, cancel)?;
+                align_status = outcome.status;
+                align_gain = outcome.gain;
+                align_reason = outcome.reason;
+                // 估计失败与收益不足都**照样出图**，用未对齐几何：不许伪装成功，
+                // 也不许让整个任务失败（三态处置见设计 §1.2）。
+                //
+                // Both a failed estimate and insufficient gain still produce an image, on
+                // the unaligned geometry: never pretend success, and never fail the job
+                // (the three-state handling is in design section 1.2).
+                if outcome.status == "adopted" {
+                    let window = if manual_crop.is_some() {
+                        // 读帧循环已经按手动裁切框裁过，输出窗口就是整幅。
+                        //
+                        // The read loop already cropped to the manual rectangle, so the
+                        // output window is the whole frame.
+                        None
+                    } else {
+                        let c = outcome.crop;
+                        Some((c.x as usize, c.y as usize, c.w as usize, c.h as usize))
+                    };
+                    let mut warped: Vec<(Vec<f32>, usize, usize)> = Vec::with_capacity(work.len());
+                    for (i, (buf, _, _)) in work.iter().enumerate() {
+                        if cancel.load(Ordering::SeqCst) {
+                            return Err("已取消：自动对齐已完成，还没开始融合".to_owned());
+                        }
+                        let mut out = Vec::new();
+                        let framing = Framing {
+                            angle_deg: 0.0,
+                            off: outcome.offsets[i],
+                        };
+                        let (nw, nh) = warp::transform_into(buf, w, h, framing, window, &mut out);
+                        warped.push((out, nw, nh));
+                    }
+                    if let Some((nw, nh)) = warped.first().map(|(_, nw, nh)| (*nw, *nh)) {
+                        if nw == 0 || nh == 0 {
+                            return Err("自动对齐的裁切窗口是空的：检查对齐位移是否异常".to_owned());
+                        }
+                        ow = nw;
+                        oh = nh;
+                    }
+                    work = warped;
+                }
+            }
+            let refs: Vec<&[f32]> = work.iter().map(|(b, _, _)| b.as_slice()).collect();
             // 焦点合成有自己的错误语境：`StackError` 的 `cn()` 说的是「堆栈」，
             // 对焦包围的用户看到那句会莫名其妙（见 `focus::error_text`）。
             //
             // Focus stacking has its own error context: `StackError`'s `cn()` talks about a
             // "stack", which reads wrong for a focus bracket (see `focus::error_text`).
-            let out = aevum_core::focus::focus_stack(&refs, w, h, &opts).map_err(|e| {
+            let out = aevum_core::focus::focus_stack(&refs, ow, oh, &opts).map_err(|e| {
                 crate::i18n::tr_fmt(
                     "焦点合成失败：{}",
                     &[&crate::i18n::tr(aevum_core::focus::error_text(e))],
                 )
             })?;
-            (out, w, h)
+            (out, ow, oh)
         }
         // 全景按每张自己的尺寸求单应，混尺寸也能接。
         MergeKind::Pano => {
@@ -12901,6 +13142,15 @@ fn run_merge_job(
         "indices": job.indices,
         "width": ow,
         "height": oh,
+        // 自动对齐的三态、增益与原因。`align:false` 时为 "off" / 0 / 空串：调用方
+        // 看状态就知道这次到底跑没跑，不用去猜「gain 是 0 还是没算」。
+        //
+        // The three states, gain and reason of auto alignment. With `align: false` these
+        // are "off" / 0 / an empty string, so a caller can tell "not run" from "ran and
+        // gained nothing" without guessing.
+        "align_status": align_status,
+        "align_gain": align_gain,
+        "align_reason": align_reason,
     }))
 }
 
@@ -18255,6 +18505,301 @@ mod focus_depth_tests {
         assert!(state2.focus_depth_tex.is_none(), "单帧序列不该产出预览");
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&single);
+    }
+}
+
+#[cfg(test)]
+mod focus_align_wiring_tests {
+    use super::*;
+
+    /// 确定性像素哈希，返回 0..1（与 core 判据 `focus_align.rs` 同一口径）。
+    ///
+    /// Deterministic per-pixel hash in 0..1 (same convention as the core assertions in
+    /// `focus_align.rs`).
+    fn hash01(x: u32, y: u32, seed: u64) -> f32 {
+        let mut n = (x as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ (y as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+            ^ seed.wrapping_mul(0x1656_67B1_9E37_79F9);
+        n ^= n >> 30;
+        n = n.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        n ^= n >> 27;
+        (((n >> 40) & 0xFFFF) as f32) / 65535.0
+    }
+
+    /// 白噪声底图按双线性位移采样后量化成 8bit（`dst = src(x - off)`）。
+    ///
+    /// A white-noise base sampled at a bilinear offset and quantised to 8 bit
+    /// (`dst = src(x - off)`).
+    fn shifted_noise(w: u32, h: u32, seed: u64, off: [f64; 2]) -> image::RgbImage {
+        image::RgbImage::from_fn(w, h, |x, y| {
+            let sx = x as f64 - off[0];
+            let sy = y as f64 - off[1];
+            let fx = sx.floor();
+            let fy = sy.floor();
+            let tx = (sx - fx) as f32;
+            let ty = (sy - fy) as f32;
+            let x0 = (fx as i64).clamp(0, w as i64 - 1) as u32;
+            let y0 = (fy as i64).clamp(0, h as i64 - 1) as u32;
+            let xa = (x0 + 1).min(w - 1);
+            let ya = (y0 + 1).min(h - 1);
+            let p00 = hash01(x0, y0, seed);
+            let p10 = hash01(xa, y0, seed);
+            let p01 = hash01(x0, ya, seed);
+            let p11 = hash01(xa, ya, seed);
+            let top = p00 + (p10 - p00) * tx;
+            let bottom = p01 + (p11 - p01) * tx;
+            let v = (top + (bottom - top) * ty).clamp(0.0, 1.0);
+            let c = (v * 255.0).round() as u8;
+            image::Rgb([c, c, c])
+        })
+    }
+
+    /// 写一段序列：`frames` 是每帧的双线性位移。
+    ///
+    /// Write a sequence, one bilinear offset per frame.
+    fn write_sequence(root: &Path, w: u32, h: u32, seed: u64, frames: &[[f64; 2]]) {
+        std::fs::create_dir_all(root).expect("建序列目录");
+        for (i, off) in frames.iter().enumerate() {
+            shifted_noise(w, h, seed, *off)
+                .save(root.join(format!("f{i:03}.png")))
+                .expect("写帧");
+        }
+    }
+
+    fn temp_root(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("aevum-align-{tag}-{}-{nanos}", std::process::id()))
+    }
+
+    /// 等合并收尾（与 `command_tests` 里那份同构；那边是私有 helper，不跨模块借）。
+    ///
+    /// Wait for the merge to finish (same shape as the private helper in `command_tests`,
+    /// which cannot be borrowed across modules).
+    fn wait_merge(state: &mut AppState, ctx: &Context) {
+        for _ in 0..4000 {
+            state.poll(ctx);
+            if !state.merge_busy {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("合并任务没收尾");
+    }
+
+    /// 跑一次 `focus.merge`，返回（启动回执, 结果 JSON, 成片路径）。
+    ///
+    /// Run one `focus.merge`, returning (start reply, result JSON, still path).
+    fn run_focus(
+        state: &mut AppState,
+        ctx: &Context,
+        dir: &Path,
+        sub: &str,
+        extra: Value,
+    ) -> (Value, Value, PathBuf) {
+        let mut args = json!({
+            "frames": [0, 1, 2],
+            "out_dir": dir.join(sub).display().to_string(),
+            "confirm": true,
+            "threshold": 0.0,
+            "feather": 0.0,
+        });
+        if let (Some(dst), Some(src)) = (args.as_object_mut(), extra.as_object()) {
+            for (k, v) in src {
+                dst.insert(k.clone(), v.clone());
+            }
+        }
+        let started = state
+            .run_ui_command(ctx, "focus.merge", &args)
+            .expect("启动焦点合成");
+        wait_merge(state, ctx);
+        let result = state.merge_result.clone().expect("合并结果落账");
+        let path = PathBuf::from(result["path"].as_str().expect("成片路径"));
+        (started, result, path)
+    }
+
+    fn read_rgb(path: &Path) -> image::RgbImage {
+        image::open(path).expect("读回成片").to_rgb8()
+    }
+
+    /// X-C1：`focus.merge` 省略 `align` 与写 `align: false` 逐点一致，且不套任何自动对齐。
+    /// 反向对照：真正的错位栈在 `align: true` 下会走另一条几何（A-C2 覆盖）。
+    ///
+    /// X-C1: omitting `align` in `focus.merge` is point-for-point identical to writing
+    /// `align: false`, and applies no auto alignment at all.
+    #[test]
+    fn omitting_align_is_the_same_as_align_false_and_touches_nothing() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let dir = temp_root("x-c1");
+        // 三个帧里有一处 8 px 错位：如果代码偷偷跑了估计，输出几何就会变。
+        //
+        // One of the three frames is 8 px off: if the code secretly estimated anything,
+        // the output geometry would change.
+        write_sequence(
+            &dir.join("src"),
+            512,
+            512,
+            7,
+            &[[0.0, 0.0], [8.0, 0.0], [0.0, -8.0]],
+        );
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.join("src").display().to_string()}),
+            )
+            .expect("打开序列");
+
+        let (started_off, result_off, path_off) =
+            run_focus(&mut state, &ctx, &dir, "省略", json!({}));
+        let (started_false, result_false, path_false) =
+            run_focus(&mut state, &ctx, &dir, "显式关", json!({"align": false}));
+
+        assert_eq!(started_off["align"], json!(false), "省略 align 应回 false");
+        assert_eq!(started_false["align"], json!(false), "显式关应回 false");
+        assert_eq!(
+            result_off["align_status"],
+            json!("off"),
+            "省略 align 应是 off"
+        );
+        assert_eq!(result_false["align_status"], json!("off"), "显式关应是 off");
+        assert_eq!(result_off["align_gain"], json!(0.0), "off 时增益必须是 0");
+        assert_eq!(result_off["align_reason"], json!(""), "off 时原因是空串");
+
+        let a = read_rgb(&path_off);
+        let b = read_rgb(&path_false);
+        assert_eq!((a.width(), a.height()), (512, 512), "align:false 不该裁切");
+        assert_eq!((b.width(), b.height()), (512, 512), "align:false 不该裁切");
+        let mut diff = 0i64;
+        let mut max_d = 0i32;
+        for (p, q) in a.pixels().zip(b.pixels()) {
+            for c in 0..3 {
+                let d = (p[c] as i32 - q[c] as i32).abs();
+                if d != 0 {
+                    diff += 1;
+                }
+                max_d = max_d.max(d);
+            }
+        }
+        eprintln!("X-C1 省略 vs 显式 false：不同通道数 {diff}，max|Δ| = {max_d}");
+        assert_eq!(diff, 0, "省略 align 与 align:false 必须逐点一致");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A-C2：8 px 错位栈（白噪声底图）在 `align: true` 下报 `adopted`，且增益达阈值。
+    ///
+    /// A-C2: an 8 px-offset stack on white noise reports `adopted` under `align: true`, with
+    /// gain at or above the threshold.
+    #[test]
+    fn align_true_adopts_a_shifted_stack() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let dir = temp_root("a-c2");
+        write_sequence(
+            &dir.join("src"),
+            512,
+            512,
+            7,
+            &[[0.0, 0.0], [8.0, 0.0], [0.0, -8.0]],
+        );
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.join("src").display().to_string()}),
+            )
+            .expect("打开序列");
+        let (started, result, path) =
+            run_focus(&mut state, &ctx, &dir, "对齐", json!({"align": true}));
+        let gain = result["align_gain"].as_f64().expect("增益是数");
+        eprintln!(
+            "A-C2 align_status={} align_gain={gain:.6} reason={} size={}x{}",
+            result["align_status"], result["align_reason"], result["width"], result["height"],
+        );
+        assert_eq!(started["align"], json!(true), "启动回执应回 true");
+        assert_eq!(result["align_status"], json!("adopted"), "错位栈应被采用");
+        assert!(
+            gain >= f64::from(focus_align::GAIN_MIN),
+            "增益 {gain} 未达阈值 {}",
+            focus_align::GAIN_MIN
+        );
+        // 采用后按估计位移裁到公共窗口：比原图小，且成片仍然合法。
+        //
+        // After adoption the output is cropped to the common window: smaller than the
+        // input, and still a legal image.
+        let w = result["width"].as_u64().expect("宽");
+        let h = result["height"].as_u64().expect("高");
+        assert!(w < 512 && h < 512, "采用后应裁掉错位边界：{w}x{h}");
+        let img = read_rgb(&path);
+        assert_eq!((img.width() as u64, img.height() as u64), (w, h));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A-C3：干净栈（0.5 px 级抖动）在 `align: true` 下报收益不足并回退，成片与
+    /// `align: false` 逐点一致。
+    ///
+    /// A-C3: a clean stack (0.5 px-class jitter) reports insufficient gain and reverts
+    /// under `align: true`; the still is point-for-point identical to `align: false`.
+    #[test]
+    fn align_true_reverts_a_clean_stack_without_touching_a_pixel() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let dir = temp_root("a-c3");
+        write_sequence(
+            &dir.join("src"),
+            512,
+            512,
+            13,
+            &[[0.0, 0.0], [0.5, 0.0], [0.0, -0.5]],
+        );
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.join("src").display().to_string()}),
+            )
+            .expect("打开序列");
+        let (_, off, path_off) = run_focus(&mut state, &ctx, &dir, "关", json!({"align": false}));
+        let (_, on, path_on) = run_focus(&mut state, &ctx, &dir, "开", json!({"align": true}));
+        let gain = on["align_gain"].as_f64().expect("增益是数");
+        eprintln!(
+            "A-C3 align_status={} align_gain={gain:.6} size={}x{}",
+            on["align_status"], on["width"], on["height"],
+        );
+        assert_eq!(
+            on["align_status"],
+            json!("reverted_insufficient_gain"),
+            "干净栈应因收益不足回退"
+        );
+        assert!(
+            gain < f64::from(focus_align::GAIN_MIN),
+            "干净栈增益 {gain} 不该达标"
+        );
+        assert_eq!(off["align_status"], json!("off"));
+        // 回退就是不碰：尺寸不变、逐点一致。
+        //
+        // Reverting means touching nothing: same size, same pixels.
+        assert_eq!(on["width"], off["width"], "回退不该改宽");
+        assert_eq!(on["height"], off["height"], "回退不该改高");
+        let a = read_rgb(&path_off);
+        let b = read_rgb(&path_on);
+        let mut diff = 0i64;
+        let mut max_d = 0i32;
+        for (p, q) in a.pixels().zip(b.pixels()) {
+            for c in 0..3 {
+                let d = (p[c] as i32 - q[c] as i32).abs();
+                if d != 0 {
+                    diff += 1;
+                }
+                max_d = max_d.max(d);
+            }
+        }
+        eprintln!("A-C3 开 vs 关：不同通道数 {diff}，max|Δ| = {max_d}");
+        assert_eq!(diff, 0, "回退后成片必须与 align:false 逐点一致");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

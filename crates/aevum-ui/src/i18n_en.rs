@@ -194,6 +194,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("{} 秒", "{} s"),
     ("{} 等 {} 张", "{} and {} more"),
     ("{} 要在 0..{}（相对输出尺寸的百分比）", "{} must be within 0..{} (percent of the output size)"),
+    ("{} 要布尔值（true / false）", "{} must be a boolean (true / false)"),
     ("{} 解码器内部出错，这张先跳过（不是你的文件坏了）", "The {} decoder hit an internal error; skipping this frame (your file is not corrupt)"),
     ("{} 解码器内部出错，这张先跳过（不是你的文件坏了）：{}", "The {} decoder hit an internal error; skipping this frame (your file is not corrupt): {}"),
     ("{} 超出画面范围（0..{}）", "{} is outside the frame (0..{})"),
