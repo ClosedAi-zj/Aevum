@@ -124,7 +124,7 @@ closure) acknowledge it with `AssertUnwindSafe`, for the same reason.
 
 | Situation | Error | What the user reads | Next step |
 |---|---|---|---|
-| Suffix recognized, no decoder in this version (HEIC/HEIF + 15 vendor RAW suffixes) | `RawError::UnsupportedFormat { ext }` | "`heic` is not supported yet; dropping a sample into `samples/cameras/` lets a later release add it" | convert the file, or send us the sample |
+| Suffix recognized, no decoder in this version (HEIC/HEIF + 17 vendor RAW suffixes) | `RawError::UnsupportedFormat { ext }` | "`heic` is not supported yet; dropping a sample into `samples/cameras/` lets a later release add it" | convert the file, or send us the sample |
 | Decoder panicked internally (caught by the guard) | `RawError::DecoderPanic { backend, detail }` | "The rawler decoder hit an internal error; skipping this frame (your file is not corrupt)" | skip this frame, carry on |
 | Container/compression not decodable | `NotTiff` / `Rawler` / `Image` ... | each with its own specific structural description | fall back to the preview, or skip |
 | Layout not understood (capability boundary) | whichever `soft_fallback()` returns true for | -- | **fall back to the embedded preview**, labelled honestly via `RawPath` |
@@ -168,15 +168,23 @@ Four items, ordered by "what happens if the defence breaks":
    samples" is normal and must not turn the gate red on another machine (that trains everyone
    to ignore red). But "there is a sample and it does not pass" is always red.
 4. **The consequence of a panic is defined.** A worker-thread panic no longer equals "one
-   silently dirty slot": either the guard turns it into an error, or the outermost layer lets
-   that frame be skipped. **There is no third possibility.**
+   silently dirty slot": a panic that escapes the decoder has only two outcomes -- the guard
+   turns it into an error, or the outermost layer catches it and turns it into an error (that
+   frame is skipped, everything else carries on). Be precise about the scope, though: **"we
+   cannot see it" is a third shape**. This round's DNG is exactly that -- rawler 0.8.0 swallows
+   the worker thread's panic inside itself and returns `Ok`, so the outer `catch_unwind` never
+   gets a chance to intervene. Self-swallowing inside a third party cannot be defended at the
+   call site; the only defence is **pinning the dependency version and watching upstream
+   behaviour**, which is precisely why the ledger records each degradation's cause (`DecodeFailed`
+   or `DecoderPanic`, sensor data or the embedded preview): the next upgrade has to walk that
+   table again instead of assuming the guard covers every shape.
 
 ## 5. Known unsupported list (as of this round)
 
 | Item | State | Evidence |
 |---|---|---|
 | HEIC / HEIF | rejected by name (`UnsupportedFormat`) | assertion `heic_is_rejected_by_name_not_guessed` |
-| Fujifilm RAF, Pentax PEF, Samsung SRW, Hasselblad 3FR/FFF, Phase One IIQ, Minolta MRW, Kodak KDC/DCR/DCS/DC2, Sigma X3F, Canon CRW, Mamiya MEF, Leaf MOS, GoPro GPR | rejected by name (same table, 19 suffixes) | `raw::UNSUPPORTED_EXTENSIONS` |
+| Fujifilm RAF, Pentax PEF, Samsung SRW, Hasselblad 3FR/FFF, Phase One IIQ, Minolta MRW/MDC, Kodak KDC/DCR/DCS/DC2, Sigma X3F, Canon CRW, Mamiya MEF, Leaf MOS, GoPro GPR | rejected by name (same table, 19 suffixes = HEIC/HEIF plus the 17 above) | `raw::UNSUPPORTED_EXTENSIONS` |
 | Sony `arw6` (e.g. A7V) model profile | unknown to rawler 0.8 → falls back to the embedded preview | measured in `samples/cameras` |
 | Nikon HighEfficiencyStar compression | unsupported by rawler 0.8 → falls back to the embedded preview | same |
 | iPhone LinearRaw DNG | rawler panics internally (caught by itself) → falls back to the embedded preview | same; this incident's crime scene |
@@ -214,4 +222,5 @@ Conclusion (and the basis for this round's trade-offs):
 through `catch_unwind`; errors split into three classes (unsupported yet / decoder internal
 error / specific structural problem); ten real samples plus two matrix assertions; input
 hardening (1 MB plugin-manifest cap, 65535 per-side cap for plain images, TOML and serde_json
-recursion limits confirmed in force).
+recursion limits confirmed in force; the first two have assertions, the last is an
+implementation-level judgement that was not independently re-verified).

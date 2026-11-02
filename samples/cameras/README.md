@@ -23,14 +23,18 @@ SHA256 由 `sha256sum` 现算（换机后先核一遍，确认拿到的是同一
 | `IMG_1159.HEIC` | iPhone（HEIC 容器） | — | 2,214,202 | `b7ad723562bd3d8b16bde1c62ce866bc71d1c3004843bff075fc3e7b962e3eba` | **UnsupportedFormat**（按后缀具名拒绝，符合预期） |
 | `IMG_1381.DNG` | iPhone（LinearRaw） | 4032×3024 | 12,776,150 | `dda4e93555cc3ce8f6978a9a3283a6df4ca8a33231847c30136fc25059a6bf6a` | **OK，但走内嵌预览**：rawler 0.8.0 内部 panic 被它自己兜住并报「possibly corrupt image」，路由降级到内置路径，解出的是机身 JPEG 预览（`RawPath::Preview`）。进程不崩、不返回脏数据 |
 | `IMG_9590.ARW` | Sony（1.7 MB 小尺寸变体） | — | 1,700,212 | `b5730ac0499335501eb46ccfa951d6906e522fb6a951b4487dbfda764899b3a4` | **DecodeFailed**：不是 TIFF 家族容器（`NotTiff`），rawler 也认不出机型。缩略图能出——容器里有一段完整 JPEG，走预览扫描 |
-| `Nikon - Z6_3 - 8bit compressed (3_2).NEF` | Nikon Z6III | 3984×2656 | 9,169,408 | `1c7be7b9081fcbd8bb75b28a8432531fae4dc56acda6b7f41a32625fb2555600` | **OK，走内嵌预览**：rawler 报 `NEF compression HighEfficencyStar is not supported`，降级内置路径 |
+| `Nikon - Z6_3 - 8bit compressed (3_2).NEF` | Nikon Z6III | 3984×2656 | 9,169,408 | `1c7be7b9081fcbd8bb75b28a8432531fae4dc56acda6b7f41a32625fb2555600` | **OK，走内嵌预览**：rawler 报 `… NEF compression Some(HighEfficencyStar) is not supported`，降级内置路径 |
 | `PANA0001.RW2` | Panasonic | 6000×4000 | 29,946,368 | `8f89fbd6b52254052b36ea074262c16ad50e38ece42c52806e55938414a5c061` | **OK**，rawler 传感器直解 |
 | `PANA0198.JPG` | Panasonic | 6000×4000 | 12,360,704 | `31940d4244df4fbb322da39d4e486b244583396bdbb768772cd7bdb30952511f` | **OK**，普通图片路径（`image` crate） |
 | `PANA0450.RW2` | Panasonic | 6000×4000 | 27,850,752 | `1a635cd69b945e729006b5c5e084ddb924e154ca95c5287cda045126df46c140` | **OK**，rawler 传感器直解 |
 | `PANA1631.RW2` | Panasonic（竖拍） | 6000×4000 | 29,060,096 | `061f9c513a307aa387a3a4aee66c33ee9061c0355d7a3bff30a7d63ec23f3c0e` | **OK**，rawler 传感器直解（方向按 EXIF 转正） |
-| `Sony - ILCE-7M5 - 14bit (3_2).ARW` | Sony A7V | 4608×3072 | 12,103,680 | `8315af2a9889709f4c836dbaadc23d226847e5a0630fda212a9f896d5fe0569f` | **OK，走内嵌预览**：rawler 报 `Unknown camera, model 'ILCE-7M5', mode: 'arw6'`（还没有这台机的配置），降级内置路径 |
+| `Sony - ILCE-7M5 - 14bit (3_2).ARW` | Sony A7V | 4608×3072 | 12,103,680 | `8315af2a9889709f4c836dbaadc23d226847e5a0630fda212a9f896d5fe0569f` | **OK，走内嵌预览**：rawler 报 `… Unknown camera, model 'ILCE-7M5', make: 'SONY', mode: 'arw6'`（还没有这台机的配置），降级内置路径 |
 
 复核方法：`cd samples/cameras && sha256sum *`，与本表逐行对照。
+
+表中引用上游报错时，`…` 表示我省略了它的固定前缀（NEF 那条是
+`Failed to decode image, possibly corrupt image: `，机型那条是 `Error: `）；
+省略号前后的文字是 `rawler 0.8.0` 的原文，逐字未改。
 
 ## 每组样张测什么
 

@@ -108,7 +108,7 @@ panic 之后没有任何半成品被复用。少数持有 `&mut` 的适配器（
 
 | 情况 | 错误 | 用户看到的话 | 下一步 |
 |---|---|---|---|
-| 后缀认得、这一版没有解码器（HEIC/HEIF + 15 个厂商 RAW 后缀） | `RawError::UnsupportedFormat { ext }` | 「`heic` 格式暂不支持；把样张放进 `samples/cameras/` 可以在后续版本适配」 | 转格式，或把样张给我们 |
+| 后缀认得、这一版没有解码器（HEIC/HEIF + 17 个厂商 RAW 后缀） | `RawError::UnsupportedFormat { ext }` | 「`heic` 格式暂不支持；把样张放进 `samples/cameras/` 可以在后续版本适配」 | 转格式，或把样张给我们 |
 | 解码器内部 panic（被守卫收住） | `RawError::DecoderPanic { backend, detail }` | 「rawler 解码器内部出错，这张先跳过（不是你的文件坏了）」 | 跳过这一帧，其余照常 |
 | 容器/压缩解不动 | `NotTiff` / `Rawler` / `Image` … | 各自具体的结构描述 | 退预览，或跳过 |
 | 布局不认识（能力边界） | `soft_fallback()` 为真的一批 | —— | **退内嵌预览**，`RawPath` 如实标注 |
@@ -146,14 +146,20 @@ image crate 的措辞焊进判据，上游改一句话就要改测试；锁分�
    不能因为换台机器就把门槛搞红（那会训练所有人忽略红色）。但「有样张却不通过」
    永远是红。
 4. **panic 的后果被定义过**。工作线程 panic 不再等于「一格静默的脏数据」：
-   要么被守卫收成错误，要么由最外层兜住让这一帧跳过。**没有第三种可能**。
+   逃得出解码器的 panic 只有两种下场——被守卫收成错误，或被最外层捕获后转成错误
+   （这一帧跳过，其余照常）。但要把话说到位：**「我们看不见」是第三种形态**。
+   本轮 DNG 的真实机理就是它——rawler 0.8.0 在自己内部吞掉工作线程的 panic，
+   然后返回 `Ok`，外层 `catch_unwind` 根本没有机会介入。这种「第三方自吞」无法
+   在调用点防守，防线只能是**钉住依赖版本 + 盯着上游行为**；这也正是台账逐条
+   记录降级原因（`DecodeFailed` 还是 `DecoderPanic`、走传感器还是退预览）的意义
+   ——下次升级要对着那张表重看一遍，而不是以为守卫已经把全部形态覆盖了。
 
 ## 5. 已知不支持清单（截至本轮）
 
 | 项 | 现状 | 依据 |
 |---|---|---|
 | HEIC / HEIF | 具名拒绝（`UnsupportedFormat`） | 判据 `heic_is_rejected_by_name_not_guessed` |
-| Fujifilm RAF、Pentax PEF、Samsung SRW、Hasselblad 3FR/FFF、Phase One IIQ、Minolta MRW、Kodak KDC/DCR/DCS/DC2、Sigma X3F、Canon CRW、Mamiya MEF、Leaf MOS、GoPro GPR | 具名拒绝（同一张表，19 个后缀） | `raw::UNSUPPORTED_EXTENSIONS` |
+| Fujifilm RAF、Pentax PEF、Samsung SRW、Hasselblad 3FR/FFF、Phase One IIQ、Minolta MRW/MDC、Kodak KDC/DCR/DCS/DC2、Sigma X3F、Canon CRW、Mamiya MEF、Leaf MOS、GoPro GPR | 具名拒绝（同一张表，19 个后缀 = HEIC/HEIF 2 个 + 上列 17 个） | `raw::UNSUPPORTED_EXTENSIONS` |
 | Sony `arw6`（如 A7V）机型配置 | rawler 0.8 不认识 → 退内嵌预览 | `samples/cameras` 实测 |
 | Nikon HighEfficiencyStar 压缩 | rawler 0.8 不支持 → 退内嵌预览 | 同上 |
 | iPhone LinearRaw DNG | rawler 内部 panic（已自兜）→ 退内嵌预览 | 同上，本事故现场 |
@@ -185,4 +191,5 @@ ACR 能「什么都能开」，靠的不是「把每种容器都写一遍」，�
 
 `rawler` 0.7.2 → 0.8.0；五条不可信解码边界 + 一层最外层全部过 `catch_unwind`；
 错误分三级（暂不支持 / 解码器内部出错 / 具体结构问题）；10 张真实样张 + 两条矩阵判据；
-输入加固（插件清单 1 MB 上限、普通图单边 65535 上限、TOML/serde_json 递归限制已确认在）。
+输入加固（插件清单 1 MB 上限、普通图单边 65535 上限、TOML/serde_json 递归限制已确认在；
+前两条有判据，最后一条是实现判定、未独立复验）。

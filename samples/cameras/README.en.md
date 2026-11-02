@@ -27,14 +27,18 @@ this round**, not copied from a plan.
 | `IMG_1159.HEIC` | iPhone (HEIC container) | — | 2,214,202 | `b7ad723562bd3d8b16bde1c62ce866bc71d1c3004843bff075fc3e7b962e3eba` | **UnsupportedFormat** (rejected by name, as intended) |
 | `IMG_1381.DNG` | iPhone (LinearRaw) | 4032×3024 | 12,776,150 | `dda4e93555cc3ce8f6978a9a3283a6df4ca8a33231847c30136fc25059a6bf6a` | **OK, but via the embedded preview**: rawler 0.8.0 catches its own panic and reports "possibly corrupt image", routing falls back to the built-in path, which yields the camera JPEG preview (`RawPath::Preview`). No crash, no dirty data |
 | `IMG_9590.ARW` | Sony (small 1.7 MB variant) | — | 1,700,212 | `b5730ac0499335501eb46ccfa951d6906e522fb6a951b4487dbfda764899b3a4` | **DecodeFailed**: not a TIFF-family container (`NotTiff`) and rawler does not recognize the model. The thumbnail still works -- the container carries one complete JPEG, found by the preview scan |
-| `Nikon - Z6_3 - 8bit compressed (3_2).NEF` | Nikon Z6III | 3984×2656 | 9,169,408 | `1c7be7b9081fcbd8bb75b28a8432531fae4dc56acda6b7f41a32625fb2555600` | **OK, via the embedded preview**: rawler reports `NEF compression HighEfficencyStar is not supported`, so the built-in path takes over |
+| `Nikon - Z6_3 - 8bit compressed (3_2).NEF` | Nikon Z6III | 3984×2656 | 9,169,408 | `1c7be7b9081fcbd8bb75b28a8432531fae4dc56acda6b7f41a32625fb2555600` | **OK, via the embedded preview**: rawler reports `… NEF compression Some(HighEfficencyStar) is not supported`, so the built-in path takes over |
 | `PANA0001.RW2` | Panasonic | 6000×4000 | 29,946,368 | `8f89fbd6b52254052b36ea074262c16ad50e38ece42c52806e55938414a5c061` | **OK**, rawler sensor decode |
 | `PANA0198.JPG` | Panasonic | 6000×4000 | 12,360,704 | `31940d4244df4fbb322da39d4e486b244583396bdbb768772cd7bdb30952511f` | **OK**, plain image path (`image` crate) |
 | `PANA0450.RW2` | Panasonic | 6000×4000 | 27,850,752 | `1a635cd69b945e729006b5c5e084ddb924e154ca95c5287cda045126df46c140` | **OK**, rawler sensor decode |
 | `PANA1631.RW2` | Panasonic (portrait) | 6000×4000 | 29,060,096 | `061f9c513a307aa387a3a4aee66c33ee9061c0355d7a3bff30a7d63ec23f3c0e` | **OK**, rawler sensor decode (orientation applied from EXIF) |
-| `Sony - ILCE-7M5 - 14bit (3_2).ARW` | Sony A7V | 4608×3072 | 12,103,680 | `8315af2a9889709f4c836dbaadc23d226847e5a0630fda212a9f896d5fe0569f` | **OK, via the embedded preview**: rawler reports `Unknown camera, model 'ILCE-7M5', mode: 'arw6'` (no profile for this body yet), so the built-in path takes over |
+| `Sony - ILCE-7M5 - 14bit (3_2).ARW` | Sony A7V | 4608×3072 | 12,103,680 | `8315af2a9889709f4c836dbaadc23d226847e5a0630fda212a9f896d5fe0569f` | **OK, via the embedded preview**: rawler reports `… Unknown camera, model 'ILCE-7M5', make: 'SONY', mode: 'arw6'` (no profile for this body yet), so the built-in path takes over |
 
 To re-check: `cd samples/cameras && sha256sum *` and compare row by row.
+
+Where the table quotes an upstream error, `…` marks the fixed prefix I left out (for the NEF
+row it is `Failed to decode image, possibly corrupt image: `, for the model row it is
+`Error: `); the text before and after the ellipsis is `rawler 0.8.0`'s own wording, verbatim.
 
 ## What each sample uniquely tests
 
