@@ -141,10 +141,7 @@ fn open_sequence(session: &mut Session, args: &Value) -> Result<Value, String> {
     // means shipping the input back, and an agent's tool result ends up 20 KB wide.
     // Clip at 256 characters -- the head is enough to locate the problem.
     if !root.is_dir() {
-        return Err(format!(
-            "不是文件夹：{}",
-            clip_echo(&root.display().to_string())
-        ));
+        return Err(format!("不是文件夹：{}", echo_path(&root)));
     }
     // 内层这条同样来自 IO：`read_dir` 的 `io::Error` 在 Windows 上会带上路径，
     // 一并截断，别让同一类回显从后门漏出去。
@@ -762,10 +759,10 @@ fn render_preview(session: &mut Session, args: &Value) -> Result<Value, String> 
         return Err("out 必须以 .png 结尾".to_owned());
     }
     if session.is_source(&out) {
-        return Err(format!("拒绝覆盖源图：{}", out.display()));
+        return Err(format!("拒绝覆盖源图：{}", echo_path(&out)));
     }
     if out.exists() && !confirm(args) {
-        return Err(format!("目标已存在，需 confirm: true：{}", out.display()));
+        return Err(format!("目标已存在，需 confirm: true：{}", echo_path(&out)));
     }
 
     let rgb = metrics::decode_rgb(&source[frame], side).map_err(|e| format!("读图失败：{e}"))?;
@@ -1332,7 +1329,7 @@ fn export_video(session: &mut Session, args: &Value) -> Result<Value, String> {
         Some(raw) => {
             let path = absolute(Path::new(raw))?;
             if !path.is_file() {
-                return Err(format!("音频文件不存在：{}", path.display()));
+                return Err(format!("音频文件不存在：{}", echo_path(&path)));
             }
             Some(path)
         }
@@ -1344,12 +1341,12 @@ fn export_video(session: &mut Session, args: &Value) -> Result<Value, String> {
     require_batch_confirm(args, "aevum_export_video")?;
     aevum_core::paths::ensure_out_dir_safe(&root, &out_dir)?;
     if session.is_source(&video_out) {
-        return Err(format!("拒绝覆盖源图：{}", video_out.display()));
+        return Err(format!("拒绝覆盖源图：{}", echo_path(&video_out)));
     }
     if video_out.exists() && !confirm(args) {
         return Err(format!(
             "目标已存在，需 confirm: true：{}",
-            video_out.display()
+            echo_path(&video_out)
         ));
     }
     // 先找 ffmpeg：缺了就别白跑一遍逐帧渲染。
@@ -2388,7 +2385,7 @@ fn journal_list(session: &Session, args: &Value) -> Result<Value, String> {
 fn xmp_read(args: &Value) -> Result<Value, String> {
     let path = absolute(Path::new(arg_str(args, "path")?))?;
     if !path.is_file() {
-        return Err(format!("文件不存在：{}", path.display()));
+        return Err(format!("文件不存在：{}", echo_path(&path)));
     }
     let params = xmp::read(&path).map_err(|e| format!("读 XMP 失败：{e}"))?;
     Ok(json!({
@@ -2407,10 +2404,13 @@ fn xmp_write(session: &mut Session, args: &Value) -> Result<Value, String> {
         return Err("path 必须以 .xmp 结尾".to_owned());
     }
     if session.is_source(&path) {
-        return Err(format!("拒绝覆盖源图：{}", path.display()));
+        return Err(format!("拒绝覆盖源图：{}", echo_path(&path)));
     }
     if path.exists() && !confirm(args) {
-        return Err(format!("目标已存在，需 confirm: true：{}", path.display()));
+        return Err(format!(
+            "目标已存在，需 confirm: true：{}",
+            echo_path(&path)
+        ));
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
@@ -2426,7 +2426,7 @@ fn xmp_write(session: &mut Session, args: &Value) -> Result<Value, String> {
 fn cube_import(session: &mut Session, args: &Value) -> Result<Value, String> {
     let path = absolute(Path::new(arg_str(args, "path")?))?;
     if !path.is_file() {
-        return Err(format!("文件不存在：{}", path.display()));
+        return Err(format!("文件不存在：{}", echo_path(&path)));
     }
     let key = path.to_string_lossy().into_owned();
     let lut = cube::refresh(&key).map_err(|e| format!("读 .cube 失败：{e}"))?;
@@ -2459,7 +2459,10 @@ fn cube_export(session: &Session, args: &Value) -> Result<Value, String> {
         return Err("path 必须以 .cube 结尾".to_owned());
     }
     if path.exists() && !confirm(args) {
-        return Err(format!("目标已存在，需 confirm: true：{}", path.display()));
+        return Err(format!(
+            "目标已存在，需 confirm: true：{}",
+            echo_path(&path)
+        ));
     }
     let size = opt_u32(args, "size")?.unwrap_or(cube::DEFAULT_SIZE as u32) as usize;
     if !(cube::MIN_SIZE..=cube::MAX_SIZE).contains(&size) {
@@ -2666,6 +2669,22 @@ fn target_size_arg(args: &Value) -> Result<Option<(u32, u32)>, String> {
         (None, None) => Ok(None),
         _ => Err("width 与 height 需同时给出（或都不给）".to_owned()),
     }
+}
+
+/// 把路径塞进错误串的唯一写法：先显示成字符串，再截到 `MAX_ECHO_CHARS`。
+///
+/// 为什么要有这个漏斗：路径来自调用方，可以长到几十 KB。`format!("…：{}", path.display())`
+/// 这种写法在 1.4.0 之前散在十来个地方，改一处漏一处；收成一个函数之后，新代码要么用它，
+/// 要么一眼就能在看 diff 时被发现。
+///
+/// The one way to put a path into an error string: render it, then clip it to
+/// `MAX_ECHO_CHARS`.
+///
+/// Why a funnel: paths come from the caller and can be tens of KB long. Before 1.4.0 the
+/// `format!("...: {}", path.display())` shape was scattered over a dozen sites and every fix
+/// missed one; with a single function, new code either calls it or stands out in review.
+fn echo_path(path: &Path) -> String {
+    clip_echo(&path.display().to_string())
 }
 
 fn absolute(path: &Path) -> Result<PathBuf, String> {

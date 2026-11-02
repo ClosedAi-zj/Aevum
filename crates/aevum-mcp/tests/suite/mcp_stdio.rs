@@ -211,6 +211,60 @@ fn ok_json(result: &Value) -> Value {
     serde_json::from_str(text).unwrap_or_else(|e| panic!("工具输出不是 JSON：{e}\n{text}"))
 }
 
+/// 一个工具调用失败时取出错误文案，顺带断言里面该有某个词。
+///
+/// Pull the error text out of a failed tool call, asserting it mentions `needle`.
+fn error_text(result: &Value, needle: &str) -> String {
+    assert_eq!(result["isError"], json!(true), "{result}");
+    let text = result["content"][0]["text"]
+        .as_str()
+        .expect("错误文案不是字符串")
+        .to_owned();
+    assert!(
+        text.contains(needle),
+        "该报的是「{needle}」：{}",
+        head(&text)
+    );
+    text
+}
+
+/// 断言里能打印的那一段：开头 60 字。
+///
+/// 漏出去时原文是两万字，照抄进 panic 消息会把 CI 日志刷爆——判据自己也得守这条。
+///
+/// The printable head: 60 characters. When something leaks the raw string is 20 KB, and
+/// copying it into the panic message would flood the CI log, so the assertion obeys the
+/// same rule it enforces.
+fn head(text: &str) -> String {
+    let mut out: String = text.chars().take(60).collect();
+    if text.chars().count() > 60 {
+        out.push('…');
+    }
+    out
+}
+
+/// 错误文案必须有界：截断后 264 字上下，没截断就是两万字，差一个量级。
+///
+/// `clipped` 说明这一条本来就该被截（路径够长），顺手也钉住「短路径别凭空多出省略号」。
+///
+/// The error text must stay bounded: about 264 characters clipped, 20 000 unclipped.
+/// `clipped` says whether this one is long enough to be cut, which also pins the other
+/// direction: a short path must not grow an ellipsis out of nowhere.
+fn assert_bounded(text: &str, clipped: bool) {
+    let width = text.chars().count();
+    assert!(
+        width < 400,
+        "路径被原样回显了，{width} 字符：{}",
+        head(text)
+    );
+    assert_eq!(
+        text.contains('…'),
+        clipped,
+        "省略号该不该有对不上：{}",
+        head(text)
+    );
+}
+
 #[test]
 fn stdio_session_end_to_end() {
     let temp = TempDir::new("e2e");
@@ -1062,29 +1116,75 @@ fn a_huge_sequence_path_is_clipped_in_the_error_text() {
     // A 20 KB path that does not exist: `is_dir()` rejects it without touching the disk,
     // so this runs anywhere.
     let long = format!("Z:/{}/x", "a".repeat(20_000));
-    let refused = server.call("aevum_open_sequence", json!({"root": long}));
-    assert_eq!(refused["isError"], json!(true), "{refused}");
-    let text = refused["content"][0]["text"].as_str().expect("错误文案");
-    assert!(
-        text.contains("不是文件夹"),
-        "该报的是「不是文件夹」：{text}"
+    let text = error_text(
+        &server.call("aevum_open_sequence", json!({"root": long})),
+        "不是文件夹",
     );
-    // 截断后是 256 字 + 前缀；没截断就是两万字往上，两条差一个量级。
+    assert_bounded(&text, true);
+}
+
+/// 同一类回显扫一遍：路径进错误串一律截断，不管它从哪个工具漏出来。
+///
+/// 为什么要有第二处：`display()` 进错误串的写法原先散在十来个地方，一处一处补就是
+/// 打地鼠。这里走两条真实的 stdio 分支，钉住「新工具照抄老写法」会立刻红。
+///
+/// One sweep for the whole family: a path entering an error string is always clipped, no
+/// matter which tool leaks it.
+///
+/// Why a second site: the `display()`-into-error-string shape used to sit in a dozen
+/// places, and patching them one at a time is whack-a-mole. This walks two real stdio
+/// branches so that a new tool copying an old shape turns red immediately.
+#[test]
+fn every_tool_clips_the_path_it_echoes_in_an_error() {
+    let temp = TempDir::new("echo");
+    let seq_dir = temp.path().join("frames");
+    make_sequence(&seq_dir, 3);
+    let mut server = Server::start();
+    server.request(
+        "initialize",
+        json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
+    );
+    server.notify("notifications/initialized");
+    ok_json(&server.call(
+        "aevum_open_sequence",
+        json!({"root": seq_dir.display().to_string()}),
+    ));
+
+    // ① 「音频文件不存在」：20 000 字的不存在路径，`is_file()` 当场否掉，不碰盘。
+    //    这条能同时钉住「截断」与「留省略号」。
     //
-    // Clipped it is 256 characters plus the prefix; unclipped it is 20 000 -- an order of
-    // magnitude apart.
-    let width = text.chars().count();
-    // 失败信息本身也得有界：真漏出去时这里是两万字，CI 日志会被刷爆。
+    // "Audio file not found": a 20 000-character path that does not exist, rejected by
+    // `is_file()` without touching the disk. This one pins both the cut and the ellipsis.
+    let out_dir = temp.path().join("out");
+    let long = format!("Z:/{}/a.wav", "a".repeat(20_000));
+    let text = error_text(
+        &server.call(
+            "aevum_export_video",
+            json!({
+                "out_dir": out_dir.display().to_string(),
+                "video_out": out_dir.join("v.mp4").display().to_string(),
+                "audio": long
+            }),
+        ),
+        "音频文件不存在",
+    );
+    assert_bounded(&text, true);
+
+    // ② 「拒绝覆盖源图」：拿序列里真实的一帧当输出口。这条路径是短的（`is_source`
+    //    要求与真实帧逐段相等，20 KB 的文件名在盘上根本存不下），所以它钉的是
+    //    「同一个函数没把短文案改坏」——不该凭空多出省略号。
     //
-    // The failure message must stay bounded too: when it does leak, this string is 20 KB
-    // and would flood the CI log.
-    assert!(
-        width < 400,
-        "路径被原样回显了，{width} 字符：{}…",
-        text.chars().take(60).collect::<String>()
+    // "Refusing to overwrite a source frame": point the output at a real frame. This path
+    // is short (the check compares against real frame paths, and a 20 KB file name cannot
+    // exist on disk), so it pins the other direction: the shared helper must not add an
+    // ellipsis to a short path.
+    let frame0 = seq_dir.join("f00.png");
+    let text = error_text(
+        &server.call(
+            "aevum_render_preview",
+            json!({"out": frame0.display().to_string()}),
+        ),
+        "拒绝覆盖源图",
     );
-    assert!(
-        text.contains('…'),
-        "截断要留省略号，让人知道后面还有：{text}"
-    );
+    assert_bounded(&text, false);
 }
