@@ -175,6 +175,11 @@ pub struct MergeParams {
     pub focus_threshold: f32,
     pub focus_smooth_z: u32,
     pub focus_feather: f32,
+    /// 合成前自动对齐（默认关）：与 `AppState::focus_align` 同步，两处默认值必须一致。
+    ///
+    /// Pre-fusion auto alignment (off by default): kept in step with
+    /// `AppState::focus_align`; the two defaults must agree.
+    pub focus_align: bool,
 }
 
 impl Default for MergeParams {
@@ -205,6 +210,7 @@ impl Default for MergeParams {
             focus_threshold: 0.0,
             focus_smooth_z: 1,
             focus_feather: 2.0,
+            focus_align: false,
         }
     }
 }
