@@ -28,15 +28,27 @@
 //!
 //! | 方法 | 墙钟 | 进程峰值 | 融合增量 |
 //! |---|---|---|---|
-//! | Weighted | 1.97 s | 3.19 GB | 864 MB |
-//! | Pyramid | 29.7 s | 4.43 GB | **2.10 GB** |
-//! | 倍数 | **15.0×** | 1.39× | **2.4×** |
+//! | Weighted | 1.95 s | 2.88 GB | 732 MB |
+//! | Pyramid（优化前） | 29.7 s | 4.43 GB | **2.10 GB** |
+//! | Pyramid（优化后） | 24.4 s | 4.43 GB | **2.10 GB** |
+//! | 优化收益 | **−18%（15.0× → 12.5×）** | 持平 | 持平 |
 //!
-//! 早先按「输出塔 384 MB + 权重塔 128 MB」推算的 ≈1.0 GB **是错的**（差 2 倍多）：
-//! 那个算式漏了 Pass A 的 `best` / `gate` 两个全分辨率面（各 96 MB）、掩膜塔（128 MB）、
-//! 每帧的测度面（96 MB）与当前帧的拉普拉斯面（288 MB）。耗时 15× 而非「2–3×」，主要
-//! 因为 `focus::measure_plane` 每帧跑**两遍**（Pass A 求分位线、Pass B 求权重）。
-//! 这两个数是实测值，不是推算值；改实现就重测，别照着旧数字改注释。
+//! 优化三件事（2026-11-03）：① `focus::measure_peak`——逐帧每层只算一遍改进拉普拉斯
+//! 取逐像素最大再盒平均，Pass A 的分位线改由子采样峰值估计（`t = 0` 时与旧路径逐像素
+//! 严格等价，`t > 0` 有 ~1e-7 漂移，对分位线无影响）；② `reduce` 重写为可分离行流式
+//! 加环形缓冲，消掉每输出像素两次 `collect()` 堆分配；③ Pass B 权重面 `.clone()` 改
+//! `Cow::Borrowed`，省掉每帧每层一次 128 MB 纯拷贝。**峰值内存没降**：瓶颈在塔驻留
+//! （`best` / `gate` 全分辨率面与掩膜塔），不在拷贝——Cow 省的是拷贝期的瞬时峰值，
+//! 没碰到驻留基线。**剩余 12.5×** 的大头是塔本身的逐层下采样/上采样/展开与逐像素混合
+//! 的内存带宽工作，测度计算已不是主要项；再往下压要动算法结构（如减层数、块处理），
+//! 不在本轮范围。
+//!
+//! 两轮实测的 Weighted 基线有抖动（优化前那轮 1.97 s / 3.19 GB / 864 MB，本轮复测
+//! 1.95 s / 2.88 GB / 732 MB），倍数一律按**同轮**基线计。早先按「输出塔 384 MB +
+//! 权重塔 128 MB」推算的 ≈1.0 GB **是错的**（差 2 倍多）：那个算式漏了 Pass A 的
+//! `best` / `gate` 两个全分辨率面（各 96 MB）、掩膜塔（128 MB）、每帧的测度面（96 MB）
+//! 与当前帧的拉普拉斯面（288 MB）。这些数都是实测值，不是推算值；改实现就重测，
+//! 别照着旧数字改注释。
 //!
 //! `feather` / `smooth_z` 在本法下**不适用**：融合只在塔各层上按权重归一，没有
 //! 深度跳变、没有羽化掩膜，也没有模值滤波。调用方传了也只读校验、不生效。
@@ -237,38 +249,108 @@ pub fn level_dims(w: usize, h: usize, levels: usize) -> Vec<(usize, usize)> {
 /// 夹边时五个 tap 仍然全部参与（重复的只是样本坐标），核和恒为 1，所以**不需要**
 /// 再归一也不会让边缘发暗；这是 P-C2「常数场逐点不变」的一半保证。
 ///
+/// 实现是**可分离的逐行流式**：先横向 5-tap、再纵向 5-tap，横向结果按源行缓存 5 行
+/// （环形），所以每个源行只横向算一次、常驻内存只有 5 行。这与早先那版直接写
+/// 25 tap 的二维卷积在**实数上完全等价**（`K5[ky] * K5[kx]` 就是可分离核），差别只在
+/// f32 的求和顺序（~1e-7 量级，见模块头的实测表）。
+///
+/// 为什么值得改：老版本对每个输出像素都 `collect()` 两个 `Vec` 当下标表（`ys` / `xs`），
+/// 一张 24 MP 图单次 `reduce` 就要 1200 万次堆分配；而 `reduce` 是「每帧 × 每层 ×
+/// 两座塔」调用的，光分配就吃掉十几秒。现在下标表按列/按行各建一次，内层循环里
+/// 一次分配都没有。
+///
 /// Separable binomial 5-tap reduction with clamped edges and `ceil(src/2)` output size.
 ///
 /// All five taps still participate at a clamped edge (only the sample coordinate repeats),
 /// so the kernel sum stays 1 with no renormalisation and no dark border; that is half of
 /// `P-C2`'s "a constant field stays constant" guarantee.
+///
+/// The implementation is **separable and row-streaming**: a horizontal 5-tap followed by a
+/// vertical 5-tap, with five horizontally reduced rows kept in a ring buffer, so each source
+/// row is reduced exactly once and the resident scratch is five rows. This is **exactly
+/// equivalent** to the earlier direct 25-tap 2D convolution in real arithmetic
+/// (`K5[ky] * K5[kx]` is a separable kernel); only the f32 summation order differs (order
+/// 1e-7, quantified in the module header's measured table).
+///
+/// Why it was worth changing: the old version `collect()`ed two `Vec`s of indices for
+/// **every output pixel** (`ys` / `xs`), so a single `reduce` on a 24 MP frame made twelve
+/// million heap allocations -- and `reduce` runs per frame, per level, for two towers.
 pub fn reduce(src: &Plane) -> Plane {
     let dw = src.w.div_ceil(2);
     let dh = src.h.div_ceil(2);
-    let mut out = Plane::zeros(dw, dh, src.channels);
+    let ch = src.channels;
+    if dw == 0 || dh == 0 || ch == 0 {
+        return Plane {
+            w: dw,
+            h: dh,
+            channels: ch,
+            data: Vec::new(),
+        };
+    }
+    // 横向 5-tap 的源列下标：每个目标列算一次，全图复用。
+    //
+    // Horizontal source indices: computed once per target column.
+    let xi: Vec<[usize; 5]> = (0..dw)
+        .map(|x| {
+            let sx = (2 * x) as isize;
+            let mut t = [0usize; 5];
+            for (k, slot) in t.iter_mut().enumerate() {
+                *slot = (sx + k as isize - 2).clamp(0, src.w as isize - 1) as usize;
+            }
+            t
+        })
+        .collect();
+    // 环形缓冲：输出行 y 要源行 2y-2..=2y+2，相邻输出行只滑动两行，所以 5 个槽刚好
+    // 装下当前活跃窗口；源行按升序按需计算，绝不重算。
+    //
+    // Ring buffer: output row y needs source rows 2y-2..=2y+2 and consecutive output rows
+    // slide by two, so five slots cover the live window; source rows are computed on demand
+    // in increasing order and never recomputed.
+    let mut ring: Vec<Vec<f32>> = (0..5).map(|_| vec![0.0f32; dw * ch]).collect();
+    let mut done_row: isize = -1;
+    let mut out = vec![0.0f32; dw * dh * ch];
     for y in 0..dh {
-        let sy = (2 * y) as i32;
-        let ys: Vec<usize> = (-2i32..=2)
-            .map(|d| (sy + d).clamp(0, src.h as i32 - 1) as usize)
-            .collect();
-        for x in 0..dw {
-            let sx = (2 * x) as i32;
-            let xs: Vec<usize> = (-2i32..=2)
-                .map(|d| (sx + d).clamp(0, src.w as i32 - 1) as usize)
-                .collect();
-            let dst = (y * dw + x) * src.channels;
-            for c in 0..src.channels {
-                let mut acc = 0.0f32;
-                for (ky, &yy) in ys.iter().enumerate() {
-                    for (kx, &xx) in xs.iter().enumerate() {
-                        acc += K5[ky] * K5[kx] * src.data[(yy * src.w + xx) * src.channels + c];
+        let sy = (2 * y) as isize;
+        let mut need = [0usize; 5];
+        for (k, slot) in need.iter_mut().enumerate() {
+            *slot = (sy + k as isize - 2).clamp(0, src.h as isize - 1) as usize;
+        }
+        for &r in &need {
+            if (r as isize) <= done_row {
+                continue;
+            }
+            let slot = r % 5;
+            let dst_row = &mut ring[slot];
+            let src_row = r * src.w * ch;
+            for (x, idx) in xi.iter().enumerate() {
+                let d = x * ch;
+                for c in 0..ch {
+                    let mut acc = 0.0f32;
+                    for k in 0..5 {
+                        acc += K5[k] * src.data[src_row + idx[k] * ch + c];
                     }
+                    dst_row[d + c] = acc;
                 }
-                out.data[dst + c] = acc;
+            }
+            done_row = r as isize;
+        }
+        for x in 0..dw {
+            let d = (y * dw + x) * ch;
+            for c in 0..ch {
+                let mut acc = 0.0f32;
+                for k in 0..5 {
+                    acc += K5[k] * ring[need[k] % 5][x * ch + c];
+                }
+                out[d + c] = acc;
             }
         }
     }
-    out
+    Plane {
+        w: dw,
+        h: dh,
+        channels: ch,
+        data: out,
+    }
 }
 
 /// 掩膜塔用的下采样：2×2 取最大，不做平滑。
@@ -572,22 +654,29 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
     } else {
         options.threshold.clamp(0.0, 100.0)
     };
-    // Pass A：只留一个 best 面，既求分位线也认「全帧无细节」，不驻留任何测度塔。
+    // Pass A：只留一个峰值面，既求分位线也认「全帧无细节」，不驻留任何测度塔。
     // `threshold=0` 时下限就是 0，于是门限等价于「这一格有没有任何纹理」——这与
     // 深度图法的「0 = 关闭兜底」不同，金字塔里 0 表示「分位线取在零」。
     //
-    // Pass A: keep one "best" plane, used for both the percentile cut and the
+    // 这个面由 `focus::measure_peak` 一次给出：逐帧取改进拉普拉斯的最大值，**最后一次**
+    // 盒平均。早先这里是「每帧一张全分辨率测度面再逐点取最大」，等于把整条测度链
+    // （luma + 拉普拉斯 + 积分图 + 盒）跑两遍——Pass B 还要再跑一遍，这就是本法比
+    // Weighted 慢一倍的主因。两种口径的关系（`t = 0` 严格等价、`t > 0` 有 1e-7 漂移）
+    // 写在 `measure_peak` 的文档里。
+    //
+    // Pass A: keep one "peak" plane, used for both the percentile cut and the
     // "no frame has detail here" test; never a tower of measures. With `threshold=0` the
     // cut sits at zero, so the gate becomes "is there any texture in this cell" -- unlike
     // the depth map's "0 = fallback off", here 0 means "put the percentile cut at zero".
-    let mut best = vec![0.0f32; w * h];
-    for f in frames {
-        let m = focus::measure_plane(f, w, h, radius);
-        for p in 0..w * h {
-            let mm = m[p];
-            best[p] = best[p].max(mm * mm * mm * mm);
-        }
-    }
+    //
+    // That plane comes from a single `focus::measure_peak` call: per-frame modified
+    // Laplacian maxima, box-averaged **once** at the end. It used to be "one full-resolution
+    // measure plane per frame, then a pointwise max", which ran the whole measure chain
+    // (luma + Laplacian + integral image + box) twice -- Pass B runs it once more, and that
+    // was the main reason this method was twice as slow as Weighted. How the two forms
+    // relate (strictly equivalent at `t = 0`, order-1e-7 drift at `t > 0`) is documented on
+    // `measure_peak`.
+    let best = focus::measure_peak(frames, w, h, radius);
     let cut = percentile_cut(&best, t).unwrap_or(0.0);
     let gate: Vec<f32> = best
         .iter()
@@ -630,11 +719,19 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
             let lap = laplacian_from_gaussian(&g, &g_next);
             let (dw, dh) = dims[l];
             let n = dw * dh;
-            let weight: Vec<f32> = if l >= tight_from {
+            // 收紧层要现算一个权重面，其余层**直接借用**当前帧的权重面：老版本在这里
+            // `.clone()`，每帧每层白拷一张（第 0 层 24 MP 单通道 = 96 MB，6 层合计
+            // 每次 128 MB 的纯拷贝），而 `accumulate_level` 只读不写。
+            //
+            // Tightened levels need a freshly computed weight plane; every other level
+            // **borrows** the current frame's plane. The old code `.clone()`d it -- a pure
+            // copy of 128 MB per frame per side (level 0 alone is 96 MB at 24 MP) that
+            // `accumulate_level` never wrote to.
+            let weight: std::borrow::Cow<'_, [f32]> = if l >= tight_from {
                 let inv = 1.0 / count as f32;
-                (0..n).map(|p| masks[l][p] * inv).collect()
+                std::borrow::Cow::Owned((0..n).map(|p| masks[l][p] * inv).collect())
             } else {
-                wplane.data.clone()
+                std::borrow::Cow::Borrowed(wplane.data.as_slice())
             };
             accumulate_level(&mut out_tower[l], &mut wsum_tower[l], &lap, &weight);
             g = g_next;

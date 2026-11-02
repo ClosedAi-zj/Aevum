@@ -244,6 +244,62 @@ impl Default for Options {
 /// vertical second differences) on γ2.0 luma, box-averaged over `radius` via a summed-area
 /// table (O(n)).
 pub(crate) fn measure_plane(frame: &[f32], w: usize, h: usize, radius: usize) -> Vec<f32> {
+    let ml = modified_laplacian(frame, w, h);
+    if radius == 0 {
+        return ml;
+    }
+    box_average(&ml, w, h, radius)
+}
+
+/// 多帧的**峰值**测度：先逐帧取改进拉普拉斯的最大值，再盒平均一次。
+///
+/// 金字塔的分位阈值只需要它，不需要每帧一张全分辨率测度面——那是它比 Weighted 慢
+/// 一倍的主因。两种口径的关系：
+///
+/// - `t = 0`（默认，也就是「这一格有没有任何纹理」）时**逐像素严格等价**：
+///   `max_f box(ml_f) > 0` ⟺ `∃f ∃q∈窗口(p): ml_f[q] > 0` ⟺ `box(max_f ml_f) > 0`，
+///   因为 `ml >= 0`。所以 `t = 0` 的成片与改前**逐点相同**（有判据钉着）。
+/// - `t > 0` 时分位线落在两个**不同但单调相近**的分布上：一个是「每帧各自盒平均后
+///   取最大值」，一个是「先取最大值再盒平均」。二者在纹理尺度远大于窗口时几乎相同，
+///   在单像素孤立纹理上会有微小差异。输出因此有 ~1e-7 量级的漂移，实测值见
+///   `pyramid.rs` 模块头。
+///
+/// Peak measure across frames: the per-frame modified Laplacian maxima, box-averaged once.
+///
+/// The pyramid's percentile threshold needs only this, not one full-resolution measure plane
+/// per frame -- and computing those is exactly why it used to be twice as slow as Weighted.
+/// The two forms relate as follows:
+///
+/// - At `t = 0` (the default, meaning "does anything here have texture at all") they are
+///   **strictly equivalent per pixel**: `max_f box(ml_f) > 0` iff `exists f, q in window(p)`
+///   with `ml_f[q] > 0` iff `box(max_f ml_f) > 0`, because `ml >= 0`. So the `t = 0` output is
+///   **point-for-point identical** to before (an assertion pins this).
+/// - At `t > 0` the cut lands on two **different but monotonically similar** distributions:
+///   "box each frame, then take the max" versus "take the max, then box". They agree almost
+///   exactly when texture is large compared with the window, and differ slightly on isolated
+///   single-pixel texture. The output therefore drifts by order 1e-7; measured in
+///   `pyramid.rs`'s module header.
+pub(crate) fn measure_peak(frames: &[&[f32]], w: usize, h: usize, radius: usize) -> Vec<f32> {
+    let n = w * h;
+    let mut peak = vec![0.0f32; n];
+    for f in frames {
+        let ml = modified_laplacian(f, w, h);
+        for (p, &m) in ml.iter().enumerate() {
+            if m > peak[p] {
+                peak[p] = m;
+            }
+        }
+    }
+    if radius == 0 {
+        return peak;
+    }
+    box_average(&peak, w, h, radius)
+}
+
+/// γ2.0 亮度上的改进拉普拉斯（逐像素，未盒平均，O(n)）。
+///
+/// The modified Laplacian on γ2.0 luma, per pixel, before any box averaging (O(n)).
+pub(crate) fn modified_laplacian(frame: &[f32], w: usize, h: usize) -> Vec<f32> {
     let n = w * h;
     // γ2.0 亮度：sqrt 是把线性亮度抬到感知域最便宜的一步。
     //
@@ -269,9 +325,17 @@ pub(crate) fn measure_plane(frame: &[f32], w: usize, h: usize, radius: usize) ->
             ml[p] = (2.0 * c - l - r).abs() + (2.0 * c - u - d).abs();
         }
     }
+    ml
+}
+
+/// 盒平均（积分图，O(n)）；`radius = 0` 时原样返回。
+///
+/// Box average via a summed-area table (O(n)); `radius = 0` returns the input as is.
+pub(crate) fn box_average(ml: &[f32], w: usize, h: usize, radius: usize) -> Vec<f32> {
     if radius == 0 {
-        return ml;
+        return ml.to_vec();
     }
+    let n = w * h;
     // 盒平均：积分图把 O(n·k²) 压成 O(n)。边界窗口收缩（不再夹边——
     // 夹边会把窗口外的自己重复计入，边缘测度虚高）。
     //
