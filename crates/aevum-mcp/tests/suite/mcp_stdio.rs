@@ -1043,3 +1043,48 @@ fn focus_merge_recovers_each_band_from_the_frame_that_holds_its_texture() {
     );
     assert_eq!(into_root["isError"], json!(true), "{into_root}");
 }
+
+/// 20 KB 的路径不许原样回显：错误串是给人（和 agent）读的，不是把输入搬回来的通道。
+///
+/// A 20 KB path must not be echoed verbatim: an error string is there to be read, not to
+/// carry the input back.
+#[test]
+fn a_huge_sequence_path_is_clipped_in_the_error_text() {
+    let mut server = Server::start();
+    server.request(
+        "initialize",
+        json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
+    );
+    server.notify("notifications/initialized");
+    // 20 KB 的不存在路径：`is_dir()` 当场否掉，不会真去碰盘，所以这条判据在任何
+    // 机器上都跑得出来。
+    //
+    // A 20 KB path that does not exist: `is_dir()` rejects it without touching the disk,
+    // so this runs anywhere.
+    let long = format!("Z:/{}/x", "a".repeat(20_000));
+    let refused = server.call("aevum_open_sequence", json!({"root": long}));
+    assert_eq!(refused["isError"], json!(true), "{refused}");
+    let text = refused["content"][0]["text"].as_str().expect("错误文案");
+    assert!(
+        text.contains("不是文件夹"),
+        "该报的是「不是文件夹」：{text}"
+    );
+    // 截断后是 256 字 + 前缀；没截断就是两万字往上，两条差一个量级。
+    //
+    // Clipped it is 256 characters plus the prefix; unclipped it is 20 000 -- an order of
+    // magnitude apart.
+    let width = text.chars().count();
+    // 失败信息本身也得有界：真漏出去时这里是两万字，CI 日志会被刷爆。
+    //
+    // The failure message must stay bounded too: when it does leak, this string is 20 KB
+    // and would flood the CI log.
+    assert!(
+        width < 400,
+        "路径被原样回显了，{width} 字符：{}…",
+        text.chars().take(60).collect::<String>()
+    );
+    assert!(
+        text.contains('…'),
+        "截断要留省略号，让人知道后面还有：{text}"
+    );
+}

@@ -134,10 +134,25 @@ fn open_sequence(session: &mut Session, args: &Value) -> Result<Value, String> {
         return Err("有后台任务正在运行，先调用 aevum_cancel 并等它停下再换序列".to_owned());
     }
     let root = absolute(Path::new(arg_str(args, "root")?))?;
+    // 路径是用户给的，可能长到几十 KB：错误串里原样回显等于把输入搬一遍，
+    // agent 那边一次工具调用能收到两万字。截到 256 字符，看得见开头就够定位。
+    //
+    // The path comes from the caller and can be tens of KB long: echoing it verbatim
+    // means shipping the input back, and an agent's tool result ends up 20 KB wide.
+    // Clip at 256 characters -- the head is enough to locate the problem.
     if !root.is_dir() {
-        return Err(format!("不是文件夹：{}", root.display()));
+        return Err(format!(
+            "不是文件夹：{}",
+            clip_echo(&root.display().to_string())
+        ));
     }
-    let seq = Sequence::open(&root).map_err(|e| format!("打开序列失败：{e}"))?;
+    // 内层这条同样来自 IO：`read_dir` 的 `io::Error` 在 Windows 上会带上路径，
+    // 一并截断，别让同一类回显从后门漏出去。
+    //
+    // The inner one is IO-borne too: `read_dir`'s `io::Error` carries the path on
+    // Windows, so clip it as well rather than letting the same echo out the back door.
+    let seq = Sequence::open(&root)
+        .map_err(|e| format!("打开序列失败：{}", clip_echo(&e.to_string())))?;
     let count = seq.len();
     let name = seq.name();
     let first = seq.frames.first().map(|f| f.path.display().to_string());
