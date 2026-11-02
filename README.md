@@ -103,7 +103,7 @@ scripts/             package.sh（绿色包）· shots.sh（界面截图）· mi
 
 ## 构建与运行
 
-要求：Rust 1.88+（MSRV）、ffmpeg（可选，导出视频用；查找顺序 `AEVUM_FFMPEG` → exe 同目录 → `tools/` → `PATH`）。
+要求：Rust 1.89+（MSRV）、ffmpeg（可选，导出视频用；查找顺序 `AEVUM_FFMPEG` → exe 同目录 → `tools/` → `PATH`）。
 
 ```bash
 cargo build --release -p aevum-studio

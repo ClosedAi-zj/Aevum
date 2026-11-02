@@ -120,7 +120,7 @@ Per-version notes and downloads are on GitHub Releases.)
 
 ## Build & run
 
-Requirements: Rust 1.88+ (MSRV); ffmpeg optional (video export; lookup order
+Requirements: Rust 1.89+ (MSRV); ffmpeg optional (video export; lookup order
 `AEVUM_FFMPEG` → next to the exe → `tools/` → `PATH`).
 
 ```bash
