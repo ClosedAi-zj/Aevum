@@ -438,13 +438,10 @@ pub fn check_target(source_root: &Path, target: &Path) -> Result<(), TargetError
     if dst.starts_with(&src) {
         return Err(TargetError::InsideSource);
     }
-    match std::fs::read_dir(target) {
-        Ok(mut it) => {
-            if it.next().is_some() {
-                return Err(TargetError::NotEmpty);
-            }
-        }
-        Err(_) => {}
+    if let Ok(mut it) = std::fs::read_dir(target)
+        && it.next().is_some()
+    {
+        return Err(TargetError::NotEmpty);
     }
     Ok(())
 }
