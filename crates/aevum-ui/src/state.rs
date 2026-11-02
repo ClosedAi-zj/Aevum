@@ -18311,10 +18311,12 @@ mod merge_settings_tests {
         assert_eq!(state.focus_feather, 12.0);
 
         // 坏值：未知方法 key 落回深度图，越界数全部夹回合法区间。
+        // 这里的未知 key 不能用 "pyramid"：它是下一版（金字塔法）的合法方法名，
+        // 那时这条断言会从「未知 key 回落」变成「合法值被误判」，测试就失去了它要守的语义。
         let bad: crate::settings::Settings = serde_json::from_str(
             json!({
                 "merge": {
-                    "focus_method": "pyramid",
+                    "focus_method": "laplacian",
                     "focus_radius": 999,
                     "focus_threshold": 500.0,
                     "tb_feather": 9.0,
