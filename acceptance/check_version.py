@@ -18,6 +18,10 @@
        这两处必须是完整的当前版本号，占位形式不认。
      1.0.0（无 beta 后缀）天然兼容：页首直写 `1.0.0` 时四处都按完整版本号比对。
   4. CHANGELOG.md 第一个 `## vX.Y.Z — 日期` 标题与真源一致。
+  5. MSRV：Cargo.toml 的 `rust-version` 与 README 中英两处的「Rust X.Y+（MSRV）」/
+     「Rust X.Y+ (MSRV)」一致，两处各恰好命中 1 次。改 MSRV 通常是被某个依赖逼的
+     （rawler 0.8 要求 1.89 就是这么来的），改完只动 Cargo.toml 极其自然，README
+     不会自己跟着动——1.4.0 的 RAW 加固里就漏过一次。
 
 四处语境的措辞会随对外承诺演进（B6 那轮把「beta 期不承诺」换成了 1.x 的四类兼容
 承诺，页首那两处 `beta 阶段（…）` 也就跟着改成了 `**当前版本**：…`）。改措辞时**只
@@ -91,6 +95,28 @@ COMMAND_COUNT_PATTERNS = [
     ("README.en.md", "「all N GUI commands」", re.compile(r"all (\d+) GUI commands")),
 ]
 
+# ---- MSRV：README 里写的「Rust X.Y+」必须等于 Cargo.toml 的 rust-version ----
+# 为什么也要在这一关查：MSRV 是用户动手编译之前必须知道的下限，写错了不是排版问题，
+# 是让人拿 1.88 去编一个要求 1.89 的工程、然后对着 E0658 发呆。
+#
+# 真实漏过一次（1.4.0 的 RAW 加固）：`rawler` 0.8 要求 rustc 1.89，Cargo.toml 的
+# rust-version 当天就跟着改了，README 中英两处却还写着「1.88+」——本关当时只比对
+# 版本号，谁也没拦住，直到人工核验才发现。所以这一条和上面两个数字放在同一关：
+# 都是「Cargo.toml 是真源、README 是承诺」，要在提交时对账，而不是等发版当天。
+#
+# 口径同版本号四处：每个文件恰好命中 1 次（改措辞会让命中数变成 0，照样红），
+# 命中值必须与真源逐字相等——MSRV 没有 beta 占位形式，不需要放行任何变体。
+MSRV_SOURCE = "Cargo.toml"
+
+MSRV_PATTERNS = [
+    ("README.md", "「要求：Rust X.Y+（MSRV）」", re.compile(r"Rust (\d+\.\d+)\+（MSRV）")),
+    (
+        "README.en.md",
+        "「Requirements: Rust X.Y+ (MSRV)」",
+        re.compile(r"Rust (\d+\.\d+)\+ \(MSRV\)"),
+    ),
+]
+
 # 中英两册 CHANGELOG 的最新节都要对齐真源。少查一册，就等于「英文册可以随便落后」。
 CHANGELOGS = ("CHANGELOG.md", "CHANGELOG.en.md")
 
@@ -124,6 +150,33 @@ def command_count() -> int:
     if not m:
         raise SystemExit("check_version: mcp_routes.rs 里找不到 COMMANDS 数组")
     return len(re.findall(r'"([a-z0-9_.]+)"', m.group(1)))
+
+
+def msrv() -> str:
+    """读 Cargo.toml 的 `rust-version`（workspace 真源；各成员是 `.workspace = true`）。"""
+    m = re.search(r'^rust-version\s*=\s*"([^"]+)"', read(MSRV_SOURCE), re.MULTILINE)
+    if not m:
+        raise SystemExit('check_version: Cargo.toml 里找不到 rust-version = "…"')
+    return m.group(1)
+
+
+def check_msrv(problems: list[str]) -> str:
+    """README 中英两处的 MSRV 声明各恰好 1 次，且与真源逐字相等。返回真源值。"""
+    want = msrv()
+    for rel, label, pat in MSRV_PATTERNS:
+        text = read(rel)
+        hits = list(pat.finditer(text))
+        if len(hits) != 1:
+            extra = f"，首处在第 {_line_of(text, hits[0].start())} 行" if hits else ""
+            problems.append(f"{rel}：{label} 命中 {len(hits)} 处（应为 1）{extra}")
+            continue
+        got = hits[0].group(1)
+        if got != want:
+            problems.append(
+                f"{rel}:{_line_of(text, hits[0].start())}：{label} 写的是 {got}，"
+                f"Cargo.toml 的 rust-version 是 {want}"
+            )
+    return want
 
 
 def check_number(rel: str, label: str, pat: re.Pattern[str], want: int, problems: list[str]) -> None:
@@ -191,17 +244,25 @@ def main() -> int:
     for rel, label, pat in COMMAND_COUNT_PATTERNS:
         check_number(rel, label, pat, commands, problems)
 
+    # ---- MSRV：README 中英两处必须等于 Cargo.toml 的 rust-version ----
+    msrv_ver = check_msrv(problems)
+
     if problems:
-        print("版本号漂移，以下各处与 Cargo.toml 的真源不一致：", file=sys.stderr)
+        print("版本号或 MSRV 漂移，以下各处与 Cargo.toml 的真源不一致：", file=sys.stderr)
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
-        print(f"\n真源：Cargo.toml version = {cur}。请同步上面列出的位置后再提交。", file=sys.stderr)
+        print(
+            f"\n真源：Cargo.toml version = {cur} / rust-version = {msrv_ver}。"
+            f"请同步上面列出的位置后再提交。",
+            file=sys.stderr,
+        )
         return 1
     print(
         f"版本一致：{cur}（Cargo.toml / Cargo.lock×{len(LOCK_MEMBERS)} / "
         f"README 中英各 2 / CHANGELOG 中英各 1）；"
         f"命令面：{commands} 条命令 / {tools} 个直连工具（README 中英共 "
-        f"{len(TOOL_COUNT_PATTERNS) + len(COMMAND_COUNT_PATTERNS)} 处）"
+        f"{len(TOOL_COUNT_PATTERNS) + len(COMMAND_COUNT_PATTERNS)} 处）；"
+        f"MSRV：{msrv_ver}（Cargo.toml rust-version，README 中英共 {len(MSRV_PATTERNS)} 处）"
     )
     return 0
 
