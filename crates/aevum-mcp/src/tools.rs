@@ -547,7 +547,7 @@ fn merge_params(base: &GradeParams, partial: &Value) -> Result<GradeParams, Stri
     }
     if !unknown.is_empty() {
         unknown.sort();
-        return Err(format!("未知调色字段：{}", unknown.join(", ")));
+        return Err(format!("未知调色字段：{}", echo_text(&unknown.join(", "))));
     }
     serde_json::from_value(current).map_err(|e| format!("参数格式不对：{e}"))
 }
@@ -556,7 +556,8 @@ fn grade_preset(session: &mut Session, args: &Value) -> Result<Value, String> {
     let name = arg_str(args, "name")?;
     if !PRESET_NAMES.contains(&name) {
         return Err(format!(
-            "未知预设 {name}；可用：{}",
+            "未知预设 {}；可用：{}",
+            echo_text(name),
             PRESET_NAMES.join("、")
         ));
     }
@@ -597,9 +598,10 @@ fn grade_copy(session: &mut Session, args: &Value) -> Result<Value, String> {
             let keyframes = session.keyframes.clone();
             let index =
                 session.with_copies(|copies| match copies.iter().position(|c| c.name == name) {
-                    Some(_) if !overwrite => {
-                        Err(format!("副本「{name}」已存在；要覆盖给 overwrite: true"))
-                    }
+                    Some(_) if !overwrite => Err(format!(
+                        "副本「{}」已存在；要覆盖给 overwrite: true",
+                        echo_text(&name)
+                    )),
                     Some(i) => {
                         copies[i].params = params.clone();
                         copies[i].keyframes = keyframes.clone();
@@ -622,7 +624,7 @@ fn grade_copy(session: &mut Session, args: &Value) -> Result<Value, String> {
         }
         "apply" => {
             let Some(copy) = session.copies().into_iter().find(|c| c.name == name) else {
-                return Err(format!("没有叫 {name} 的副本"));
+                return Err(format!("没有叫 {} 的副本", echo_text(&name)));
             };
             session.params = copy.params;
             session.keyframes = copy.keyframes;
@@ -633,7 +635,7 @@ fn grade_copy(session: &mut Session, args: &Value) -> Result<Value, String> {
             check_name(&name)?;
             let removed = session.with_copies(|copies| copies.iter().position(|c| c.name == name));
             let Some(i) = removed else {
-                return Err(format!("没有叫 {name} 的副本"));
+                return Err(format!("没有叫 {} 的副本", echo_text(&name)));
             };
             session.with_copies(|copies| {
                 copies.remove(i);
@@ -651,10 +653,10 @@ fn grade_copy(session: &mut Session, args: &Value) -> Result<Value, String> {
             check_name(&to)?;
             session.with_copies(|copies| {
                 if copies.iter().any(|c| c.name == to) {
-                    return Err(format!("副本「{to}」已存在"));
+                    return Err(format!("副本「{}」已存在", echo_text(&to)));
                 }
                 let Some(slot) = copies.iter_mut().find(|c| c.name == name) else {
-                    return Err(format!("没有叫 {name} 的副本"));
+                    return Err(format!("没有叫 {} 的副本", echo_text(&name)));
                 };
                 slot.name = to.clone();
                 Ok(())
@@ -662,7 +664,8 @@ fn grade_copy(session: &mut Session, args: &Value) -> Result<Value, String> {
             Ok(json!({"renamed": to, "copies": session.copies().len()}))
         }
         other => Err(format!(
-            "未知 op {other}；可用 list / save / apply / delete / rename"
+            "未知 op {}；可用 list / save / apply / delete / rename",
+            echo_text(other)
         )),
     }
 }
@@ -1309,7 +1312,8 @@ fn export_video(session: &mut Session, args: &Value) -> Result<Value, String> {
     let preset = opt_str(args, "preset")?.unwrap_or("medium").to_owned();
     if !X264_PRESETS.contains(&preset.as_str()) {
         return Err(format!(
-            "未知编码 preset {preset}；可用：{}",
+            "未知编码 preset {}；可用：{}",
+            echo_text(&preset),
             X264_PRESETS.join("、")
         ));
     }
@@ -1778,14 +1782,14 @@ fn queue_add(session: &mut Session, args: &Value) -> Result<Value, String> {
     {
         "h264" | "264" | "avc" => "h264",
         "h265" | "265" | "hevc" => "h265",
-        other => return Err(format!("未知编码 {other}；可用 h264 / h265")),
+        other => return Err(format!("未知编码 {}；可用 h264 / h265", echo_text(other))),
     };
     let preset = opt_str(args, "preset")?
         .unwrap_or("medium")
         .trim()
         .to_owned();
     if !queue::PRESETS.contains(&preset.as_str()) {
-        return Err(format!("未知编码预设 {preset}"));
+        return Err(format!("未知编码预设 {}", echo_text(&preset)));
     }
     let keep_frames = opt_bool(args, "keep_frames")?.unwrap_or(false);
     let resume = opt_bool(args, "resume")?.unwrap_or(false);
@@ -2627,7 +2631,10 @@ fn audio_options(args: &Value) -> Result<AudioOptions, String> {
     }
     if let Some(codec) = opt_str(args, "acodec")? {
         opts.acodec = AudioCodec::parse(codec).ok_or_else(|| {
-            format!("未知 acodec {codec}；可用 auto / copy / aac128 / aac192 / aac256 / aac320")
+            format!(
+                "未知 acodec {}；可用 auto / copy / aac128 / aac192 / aac256 / aac320",
+                echo_text(codec)
+            )
         })?;
     }
     Ok(opts)
@@ -2671,6 +2678,14 @@ fn target_size_arg(args: &Value) -> Result<Option<(u32, u32)>, String> {
     }
 }
 
+/// 把用户给的字符串塞进错误串的唯一写法：截到 `MAX_ECHO_CHARS`。
+///
+/// The one way to put a caller-supplied string into an error string: clip it to
+/// `MAX_ECHO_CHARS`.
+pub(crate) fn echo_text(text: &str) -> String {
+    clip_echo(text)
+}
+
 /// 把路径塞进错误串的唯一写法：先显示成字符串，再截到 `MAX_ECHO_CHARS`。
 ///
 /// 为什么要有这个漏斗：路径来自调用方，可以长到几十 KB。`format!("…：{}", path.display())`
@@ -2684,7 +2699,7 @@ fn target_size_arg(args: &Value) -> Result<Option<(u32, u32)>, String> {
 /// `format!("...: {}", path.display())` shape was scattered over a dozen sites and every fix
 /// missed one; with a single function, new code either calls it or stands out in review.
 fn echo_path(path: &Path) -> String {
-    clip_echo(&path.display().to_string())
+    echo_text(&path.display().to_string())
 }
 
 fn absolute(path: &Path) -> Result<PathBuf, String> {
@@ -2698,7 +2713,7 @@ fn parse_format(name: &str) -> Result<StillFormat, String> {
     StillFormat::parse(name).ok_or_else(|| {
         format!(
             "未知格式 {}；可用 {}",
-            name.trim(),
+            echo_text(name.trim()),
             StillFormat::ALL
                 .iter()
                 .map(|f| f.key())
@@ -2730,13 +2745,21 @@ fn opt_quality(args: &Value) -> Result<u8, String> {
 /// 输出锐化两个档：默认 `off`，无头导出与 GUI 面板的缺省一致。
 fn opt_sharpen(args: &Value) -> Result<(OutputSharpen, SharpenStrength), String> {
     let for_ = match opt_str(args, "sharpen_for")? {
-        Some(raw) => OutputSharpen::parse(raw)
-            .ok_or_else(|| format!("未知锐化用途 {raw}；可用 off / screen / glossy / matte"))?,
+        Some(raw) => OutputSharpen::parse(raw).ok_or_else(|| {
+            format!(
+                "未知锐化用途 {}；可用 off / screen / glossy / matte",
+                echo_text(raw)
+            )
+        })?,
         None => OutputSharpen::Off,
     };
     let strength = match opt_str(args, "sharpen_strength")? {
-        Some(raw) => SharpenStrength::parse(raw)
-            .ok_or_else(|| format!("未知锐化强度 {raw}；可用 low / standard / high"))?,
+        Some(raw) => SharpenStrength::parse(raw).ok_or_else(|| {
+            format!(
+                "未知锐化强度 {}；可用 low / standard / high",
+                echo_text(raw)
+            )
+        })?,
         None => SharpenStrength::Standard,
     };
     Ok((for_, strength))
@@ -2746,7 +2769,7 @@ fn opt_sharpen(args: &Value) -> Result<(OutputSharpen, SharpenStrength), String>
 fn opt_color_space(args: &Value) -> Result<ColorSpace, String> {
     match opt_str(args, "color_space")? {
         Some(raw) => ColorSpace::parse(raw)
-            .ok_or_else(|| format!("未知色域 {raw}；可用 srgb / p3 / rec2020")),
+            .ok_or_else(|| format!("未知色域 {}；可用 srgb / p3 / rec2020", echo_text(raw))),
         None => Ok(ColorSpace::default()),
     }
 }
@@ -2764,7 +2787,7 @@ fn opt_color_space(args: &Value) -> Result<ColorSpace, String> {
 fn opt_dynamic(args: &Value) -> Result<OutputDynamic, String> {
     match opt_str(args, "dynamic")? {
         Some(raw) => OutputDynamic::parse(raw)
-            .ok_or_else(|| format!("未知动态范围 {raw}；可用 sdr / hdr-pq")),
+            .ok_or_else(|| format!("未知动态范围 {}；可用 sdr / hdr-pq", echo_text(raw))),
         None => Ok(OutputDynamic::default()),
     }
 }
@@ -2787,7 +2810,7 @@ fn parse_codec(name: &str) -> Result<Codec, String> {
     match name.trim().to_ascii_lowercase().as_str() {
         "h264" | "264" | "avc" => Ok(Codec::H264),
         "h265" | "265" | "hevc" => Ok(Codec::H265),
-        other => Err(format!("未知编码 {other}；可用 h264 / h265")),
+        other => Err(format!("未知编码 {}；可用 h264 / h265", echo_text(other))),
     }
 }
 
@@ -2795,7 +2818,10 @@ fn parse_estimator(name: &str) -> Result<Estimator, String> {
     match name.trim().to_ascii_lowercase().as_str() {
         "template" | "tpl" => Ok(Estimator::Template),
         "phase" => Ok(Estimator::Phase),
-        other => Err(format!("未知 estimator {other}；可用 template / phase")),
+        other => Err(format!(
+            "未知 estimator {}；可用 template / phase",
+            echo_text(other)
+        )),
     }
 }
 

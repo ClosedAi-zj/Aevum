@@ -245,16 +245,18 @@ fn head(text: &str) -> String {
 
 /// 错误文案必须有界：截断后 264 字上下，没截断就是两万字，差一个量级。
 ///
-/// `clipped` 说明这一条本来就该被截（路径够长），顺手也钉住「短路径别凭空多出省略号」。
+/// `clipped` 说明这一条本来就该被截（路径或名字够长），顺手也钉住「短文案别凭空多出
+/// 省略号」。路径与 agent 传来的名字走的是同一套判据，所以文案里说的是「输入」。
 ///
 /// The error text must stay bounded: about 264 characters clipped, 20 000 unclipped.
 /// `clipped` says whether this one is long enough to be cut, which also pins the other
-/// direction: a short path must not grow an ellipsis out of nowhere.
+/// direction: a short message must not grow an ellipsis out of nowhere. Paths and the
+/// names an agent sends share this assertion, hence the generic wording.
 fn assert_bounded(text: &str, clipped: bool) {
     let width = text.chars().count();
     assert!(
         width < 400,
-        "路径被原样回显了，{width} 字符：{}",
+        "输入被原样回显了，{width} 字符：{}",
         head(text)
     );
     assert_eq!(
@@ -1187,4 +1189,68 @@ fn every_tool_clips_the_path_it_echoes_in_an_error() {
         "拒绝覆盖源图",
     );
     assert_bounded(&text, false);
+}
+
+/// 同一类回显的另一半：agent 传进来的**字符串**（不是路径）也不许原样回传。
+///
+/// 为什么不是十五处各来一条：`echo_text` 是个漏斗，逐点写判据只会让用例越长越没人看。
+/// 这里挑两条真经 stdio 走到的分支——20 000 字的未知调色字段名（`tools.rs` 那一族）与
+/// 20 000 字的未知工具名（`server.rs`）——任何一处把 `echo_text` 摘掉，文案当场涨回两万字。
+///
+/// The other half of the same family: a **string** an agent sent in (not a path) must not
+/// come back verbatim either.
+///
+/// Why not one case per site: `echo_text` is a funnel, and fifteen near-identical
+/// assertions would only make this file longer. Two branches that really travel over stdio
+/// — a 20 000-character unknown grade field name (the `tools.rs` family) and a 20 000
+/// character unknown tool name (`server.rs`) — turn the message back into 20 KB the moment
+/// either clip is taken out.
+#[test]
+fn every_name_the_agent_sends_is_clipped_in_the_error_text() {
+    let mut server = Server::start();
+    server.request(
+        "initialize",
+        json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
+    );
+    server.notify("notifications/initialized");
+
+    // ① 未知调色字段：20 000 字的键名。`merge_params` 只拿它做字符串比较，不碰盘，
+    //    所以这条在任何机器上都跑得出来。它钉的是工具返回里的 `isError` 文案。
+    //
+    // Unknown grade field: a 20 000-character key. `merge_params` only compares it as a
+    // string and never touches the disk, so this runs anywhere. It pins the `isError` text
+    // a tool hands back.
+    let long_key = format!("k{}", "a".repeat(20_000));
+    let mut partial = serde_json::Map::new();
+    partial.insert(long_key, json!(1));
+    let text = error_text(
+        &server.call("aevum_grade_set", json!({"params": Value::Object(partial)})),
+        "未知调色字段",
+    );
+    assert_bounded(&text, true);
+
+    // ② 未知工具名：走 JSON-RPC 的 -32602，文案在 `error.message` 里而不是 `content`。
+    //    这条钉的是协议层自己的报错——它连工具都没进，agent 更容易撞上。
+    //
+    // Unknown tool name: the JSON-RPC -32602 path, whose text lives in `error.message`
+    // rather than `content`. This pins the protocol layer's own message, which an agent
+    // hits before any tool runs.
+    let long_tool = format!("aevum_{}", "b".repeat(20_000));
+    let bad = server.request("tools/call", json!({"name": long_tool, "arguments": {}}));
+    assert_eq!(
+        bad["error"]["code"],
+        json!(-32602),
+        "错误码该是 -32602：{}",
+        head(&bad.to_string())
+    );
+    let text = bad["error"]["message"]
+        .as_str()
+        .expect("错误消息不是字符串")
+        .to_owned();
+    assert!(
+        text.contains("未知工具"),
+        "该报的是「未知工具」：{}",
+        head(&text)
+    );
+    assert_bounded(&text, true);
 }

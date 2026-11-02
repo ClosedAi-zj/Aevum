@@ -181,7 +181,11 @@ fn call_tool<W: Write + Send + 'static>(id: Value, params: &Value, out: &Arc<Mut
     // 于是旧名走的是与新名完全相同的一条路，响应体因此逐字节相同。
     let name = aevum_core::brand::canonical_tool(name);
     if !commands().iter().any(|command| command.id == name.as_ref()) {
-        return error_response(id, -32602, &format!("未知工具：{name}"));
+        return error_response(
+            id,
+            -32602,
+            &format!("未知工具：{}", crate::tools::echo_text(&name)),
+        );
     }
     let arguments = params
         .get("arguments")
