@@ -268,6 +268,8 @@ pub const GROUP_SPECS: &[GroupSpec] = &[
     // 星空堆栈与时间合成也都是「一次合一张图」的文件级工具，和 HDR / 全景同一档。
     in_module("stack", Module::Develop, false),
     in_module("timeblend", Module::Develop, false),
+    // 焦点合成与它们同一档：一组帧进来、一张成片出去。
+    in_module("focus", Module::Develop, false),
     // ── 构图 ────────────────────────────────────────────────────────────
     // 这一屏只有两组，且辅助线只是三个勾选框：没有折叠的必要。
     in_module("frame", Module::Frame, true),
@@ -16937,6 +16939,130 @@ mod command_tests {
             "停在 50% 时行 19 应更亮：auto {} vs manual {}",
             at(&auto, 19),
             at(&manual, 19)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 焦点合成端到端：三帧各管一条横带，成片每带取到持有清晰纹理的那帧；
+    /// 兜底开到 100 分位后整幅退回参考帧（负向验证）；未知方法与缺 confirm 都在起任务前被拒。
+    ///
+    /// Focus stacking end to end: three frames owning one band each, the still takes every
+    /// band from the frame holding its texture; a 100th-percentile fallback sends the whole
+    /// image back to the reference frame (negative check); an unknown method and a missing
+    /// confirm are both refused before a job starts.
+    #[test]
+    fn focus_merge_takes_each_band_from_the_frame_that_holds_the_texture() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("aevum-focus-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        // 48×48，三条 16 行横带：带 i 只有第 i 帧带纹理，其余帧是 128 平场。
+        // 竖条纹周期 4（两列 200 / 两列 60），横条纹同参数；第三条带整体错开 2 px，
+        // 这样它不会被误判成第一条带的帧。
+        //
+        // 48x48, three 16-row bands: only frame i carries texture in band i, the others are a
+        // flat 128 there. Vertical straps have a 4 px period (two columns 200 / two 60) and the
+        // horizontal ones match; band three is shifted by 2 px so it cannot pass for frame 0.
+        let vpos = |x: u32| if (x / 2).is_multiple_of(2) { 200u8 } else { 60 };
+        let hpos = |y: u32| if (y / 2).is_multiple_of(2) { 200u8 } else { 60 };
+        for i in 0..3u32 {
+            let img = image::RgbImage::from_fn(48, 48, |x, y| {
+                let band = y / 16;
+                let v = if band == i {
+                    if i == 1 {
+                        hpos(y)
+                    } else if i == 0 {
+                        vpos(x)
+                    } else {
+                        vpos(x + 2)
+                    }
+                } else {
+                    128
+                };
+                image::Rgb([v, v, v])
+            });
+            img.save(dir.join(format!("f{i:03}.png"))).expect("写帧");
+        }
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.display().to_string()}),
+            )
+            .expect("打开序列");
+        // 参数错与缺 confirm 先拦：错误该在起任务之前出来。
+        //
+        // A bad parameter and a missing confirm are stopped first: the error must surface
+        // before any job starts.
+        let bad = state
+            .run_ui_command(
+                &ctx,
+                "focus.merge",
+                &json!({"method": "pyramid", "confirm": true}),
+            )
+            .unwrap_err();
+        assert!(bad.contains("depthmap"), "{bad}");
+        let no_confirm = state
+            .run_ui_command(&ctx, "focus.merge", &json!({"frames": [0, 1, 2]}))
+            .unwrap_err();
+        assert!(no_confirm.contains("confirm"), "{no_confirm}");
+        // 两趟各用各的输出目录：同目录同名会把上一趟的成片覆盖掉。
+        //
+        // One output folder per run: the same folder and filename would overwrite the
+        // previous still.
+        let run = |state: &mut AppState, extra: &Value, sub: &str| {
+            let mut a = json!({
+                "frames": [0, 1, 2],
+                "out_dir": dir.join(sub).display().to_string(),
+                "confirm": true,
+            });
+            if let Some(obj) = a.as_object_mut()
+                && let Some(map) = extra.as_object()
+            {
+                for (k, v) in map {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+            let started = state
+                .run_ui_command(&ctx2(&ctx), "focus.merge", &a)
+                .expect("启动焦点合成");
+            assert_eq!(started["kind"], json!("focus"), "任务种类应是 focus");
+            wait_merge(state, &ctx2(&ctx));
+            state.merge_result.clone().expect("合成结果落账")["path"]
+                .as_str()
+                .expect("成片路径")
+                .to_owned()
+        };
+        fn ctx2(ctx: &Context) -> Context {
+            ctx.clone()
+        }
+        let sharp = run(&mut state, &json!({"threshold": 0}), "焦点合成-默认");
+        let img = image::open(&sharp).expect("读回成片").to_rgb8();
+        let at = |x: u32, y: u32| img.get_pixel(x, y)[0];
+        // 第一条带：x=0 亮纹 200、x=2 暗纹 60——只有帧 0 在这里清晰。
+        assert_eq!(at(0, 8), 200, "第一条带应取帧 0 的亮纹");
+        assert_eq!(at(2, 8), 60, "第一条带应取帧 0 的暗纹");
+        // 第二条带：y=24 亮纹、y=26 暗纹——只有帧 1 在这里清晰。
+        assert_eq!(at(8, 24), 200, "第二条带应取帧 1 的亮纹");
+        assert_eq!(at(8, 26), 60, "第二条带应取帧 1 的暗纹");
+        // 第三条带：错开 2 px 的竖条纹，x=0 暗、x=2 亮——取的是帧 2，不是帧 0。
+        assert_eq!(at(0, 40), 60, "第三条带应取帧 2（错位条纹）的暗纹");
+        assert_eq!(at(2, 40), 200, "第三条带应取帧 2 的亮纹");
+        // 负向验证：兜底开到 100 分位＝全图都算无细节 → 整幅退回参考帧（帧 1），
+        // 第一条带于是变成 128 平场。
+        //
+        // Negative check: a 100th-percentile fallback treats everything as featureless, so
+        // the whole image returns to the reference frame (frame 1) and band one goes flat 128.
+        let fallback = run(&mut state, &json!({"threshold": 100}), "焦点合成-兜底");
+        let img2 = image::open(&fallback).expect("读回兜底成片").to_rgb8();
+        let v = img2.get_pixel(0, 8)[0];
+        assert!(
+            (v as i32 - 128).abs() <= 2,
+            "兜底后第一条带应是参考帧的平场 128，实际 {v}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

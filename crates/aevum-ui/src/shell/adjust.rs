@@ -1087,6 +1087,169 @@ fn stack_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
 /// 「时间合成」分组：天地合成或时间切片，一次把不同时刻铺进一张。
 ///
 /// Time-blending group: sky-ground or time slice, laying several moments into one frame.
+/// 焦点合成：一组不同对焦距离的帧融成一张全景深。
+///
+/// Focus stacking: fuse a bracket taken at different focus distances into one all-in-focus
+/// image.
+fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
+    use aevum_core::focus::Method;
+    let busy = state.merge_kind == Some(MergeKind::Focus);
+    ui.horizontal_wrapped(|ui| {
+        for method in Method::ALL {
+            let picked = bar_chip(ui, method.cn(), state.focus_method == method)
+                .on_hover_text(crate::i18n::tr(match method {
+                    Method::DepthMap => {
+                        "逐像素取测度最强的帧；测度低于阈值的平坦区整块用参考帧兜底，过渡带羽化——保色彩、不出斑块"
+                    }
+                    Method::Weighted => {
+                        "测度四次方当权重直接加权；最简单，低噪栈表现好，强纹理处可能轻微发糊"
+                    }
+                }))
+                .clicked();
+            if picked && !busy {
+                state.focus_method = method;
+            }
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(crate::i18n::t!("从当前帧起"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
+        ui.add_enabled(
+            !busy,
+            egui::DragValue::new(&mut state.focus_around)
+                .range(1..=31)
+                .speed(0.2),
+        );
+        ui.label(
+            RichText::new(crate::i18n::t!("帧之后"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
+    });
+    // 测度半径与无细节阈值是深度图法的两根主梁，各挂一句口径说明。
+    //
+    // The measure radius and the featureless threshold are the two girders of the depth-map
+    // method, each with its stated convention.
+    let mut radius = state.focus_radius as f64;
+    if slider_row(
+        ui,
+        "focus_radius",
+        "测度半径",
+        &mut radius,
+        0.0,
+        32.0,
+        2.0,
+        0,
+        false,
+        "px",
+        None,
+        false,
+        "焦点测度的分析窗口半径：越大越不受噪点干扰，越小越能分辨紧挨着的前后景；0 = 逐像素原始响应",
+    ) {
+        state.focus_radius = radius as u32;
+    }
+    let mut threshold = state.focus_threshold as f64;
+    if slider_row(
+        ui,
+        "focus_threshold",
+        "无细节阈值",
+        &mut threshold,
+        0.0,
+        100.0,
+        0.0,
+        0,
+        false,
+        "%",
+        None,
+        false,
+        "全图最佳测度的分位数：低于这条线的像素整块判给参考帧（序列中位帧）。表盘、天空、抛光面这类平坦区就靠它不出斑块；0 = 关闭兜底",
+    ) {
+        state.focus_threshold = threshold as f32;
+    }
+    if state.focus_method == Method::DepthMap {
+        let mut smooth = state.focus_smooth_z as f64;
+        if slider_row(
+            ui,
+            "focus_smooth_z",
+            "深度去斑",
+            &mut smooth,
+            0.0,
+            16.0,
+            1.0,
+            0,
+            false,
+            "px",
+            None,
+            false,
+            "深度图的模值滤波半径：把孤立的深度点并进周围多数派，免得单点噪点切出一小块另一帧",
+        ) {
+            state.focus_smooth_z = smooth as u32;
+        }
+        let mut feather = state.focus_feather as f64;
+        if slider_row(
+            ui,
+            "focus_feather",
+            "过渡羽化",
+            &mut feather,
+            0.0,
+            64.0,
+            2.0,
+            1,
+            false,
+            "px",
+            None,
+            false,
+            "深度跳变处两张素材按高斯权重交叠的宽度；小于 0.5 px 视为硬切",
+        ) {
+            state.focus_feather = feather as f32;
+        }
+    }
+    let go = ui
+        .add_enabled(
+            !busy,
+            egui::Button::new(RichText::new(if busy {
+                crate::i18n::t!("合成中…")
+            } else {
+                crate::i18n::t!("合成")
+            }))
+            .min_size(Vec2::new(0.0, BAR_H))
+            .corner_radius(radius_control()),
+        )
+        .on_hover_text(crate::i18n::t!(
+            "把当前帧起若干帧按所选方法融成一张全景深，写进输出目录"
+        ))
+        .clicked();
+    if go {
+        let args = serde_json::json!({
+            "around": state.focus_around,
+            "method": state.focus_method.key(),
+            "radius": state.focus_radius,
+            "threshold": state.focus_threshold,
+            "smooth_z": state.focus_smooth_z,
+            "feather": state.focus_feather,
+            "confirm": true,
+        });
+        if let Err(e) = state.run_ui_command(ctx, "focus.merge", &args) {
+            state.focus_error = Some(e);
+            state.focus_last = None;
+        }
+    }
+    merge_progress_row(state, ui, MergeKind::Focus);
+    if let Some(last) = state.focus_last.clone() {
+        ui.label(
+            RichText::new(crate::i18n::tr_fmt("已写出 {}", &[&last]))
+                .size(SIZE_SMALL)
+                .color(accent()),
+        );
+    }
+    if let Some(err) = state.focus_error.clone() {
+        ui.label(RichText::new(err).size(SIZE_SMALL).color(danger()));
+    }
+}
+
 fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     use aevum_core::timeblend::Layout;
     let busy = state.merge_kind == Some(MergeKind::TimeBlend);
@@ -1362,6 +1525,9 @@ fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     }
     if group_header(ui, state, "timeblend", "时间合成", false) {
         timeblend_group(state, ui, &ctx);
+    }
+    if group_header(ui, state, "focus", "焦点合成", false) {
+        focus_group(state, ui, &ctx);
     }
     if changed {
         state.preview_dirty = true;
