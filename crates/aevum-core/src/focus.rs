@@ -39,12 +39,36 @@
 
 use crate::stack::StackError;
 
-/// 一次融合最多吃多少帧。内存按「全部帧驻留」计：32 帧 24MP 线性 f32 约 2.3 GB，
-/// 更深的栈先分段再合（与星空堆栈同一个建议）。
+/// 一次融合最多吃多少帧。这个上限是**按帧驻留内存**定的：融合期全部帧同时驻留，
+/// 而内存主体正是帧本身，不是测度平面（测度平面已经边算边比，不整批留）。
 ///
-/// The most frames one fusion accepts. Memory assumes every frame is resident: 32 frames
-/// of 24 MP linear f32 is roughly 2.3 GB; stack deeper sequences in passes (the same
-/// advice the star-field stacker gives).
+/// 实测口径（24 MP 一帧 = 2400 万像素 × 3 通道 × 4 B = 288 MB）：
+///
+/// * 32 帧 24 MP 峰值约 **9.6 GB**：帧自身 9.22 GB 是主体，融合期只多三个面
+///   （输出面 + 归一化面 + 一张羽化掩膜，各 96 MB 上下）；
+/// * 32 帧 6 MP 才约 2.3 GB——早先这里写的 2.3 GB 是 **6 MP** 的数，按它给
+///   24 MP 栈挑机器会低估 5.6 倍，16 GB 机器直接换页。
+///
+/// 估算式：`帧数 × 像素数 × 12 B + 输出三个面`。库调用方拿它自查——24 MP 栈需要
+/// 10 GB 以上空闲内存；更深的栈先分段再合（与星空堆栈同一个建议）。
+///
+/// The most frames one fusion accepts. The cap is set by **frame residency memory**:
+/// every frame must be resident during the fusion, and the frames themselves, not the
+/// measure planes, are the bulk of the bill (the planes are compared on the fly and never
+/// held as a batch).
+///
+/// Measured on 24 MP (24 Mpx x 3 channels x 4 B = 288 MB per frame):
+///
+/// * 32 frames of 24 MP peak at about **9.6 GB**: the frames' own 9.22 GB is the bulk,
+///   and fusion adds only three planes (output, normalisation and one feathered mask,
+///   roughly 96 MB each);
+/// * 32 frames of 6 MP is only about 2.3 GB -- the 2.3 GB this note used to claim was the
+///   **6 MP** figure, and sizing a 24 MP stack by it underestimates by 5.6x, which pages
+///   on a 16 GB machine.
+///
+/// Estimate: `frames x pixels x 12 B + three output planes`. Library callers can check
+/// their own case with it: a 24 MP stack needs more than 10 GB free, and deeper sequences
+/// should be fused in passes (the same advice the star-field stacker gives).
 pub const MAX_FRAMES: usize = 32;
 
 /// 融合方式。
@@ -218,35 +242,32 @@ fn measure_plane(frame: &[f32], w: usize, h: usize, radius: usize) -> Vec<f32> {
 /// 深度图：每像素测度最强的帧号；`threshold` 分位线以下的像素改判参考帧；
 /// 再做一轮模值滤波把孤立深度点并进周围多数派。
 ///
+/// 测度平面**边算边比**，不整批留着：24 MP × 32 帧全留就是 3.07 GB，而调用方
+/// 一个平面都用不上（只认帧号）。单趟比较的并列语义与「先存全部平面再逐像素取
+/// argmax」完全一致——严格大于、先到的（帧号小的）赢。
+///
 /// The depth map: per pixel the frame with the strongest measure; pixels below the
 /// `threshold` percentile are re-assigned to the reference frame; a mode filter then folds
 /// isolated depth points into the surrounding majority.
-fn compute_owner_map(
-    frames: &[&[f32]],
-    w: usize,
-    h: usize,
-    options: &Options,
-) -> (Vec<u16>, Vec<Vec<f32>>) {
+///
+/// The measure planes are **compared as they are computed** rather than kept as a batch:
+/// 24 MP x 32 frames would be 3.07 GB of planes the caller never reads (it only wants the
+/// frame index). The tie semantics of the single pass match "store every plane, then take
+/// the argmax per pixel" exactly -- strictly greater wins, so the earlier (smaller) frame
+/// index keeps a tie.
+fn compute_owner_map(frames: &[&[f32]], w: usize, h: usize, options: &Options) -> Vec<u16> {
     let n = w * h;
     let count = frames.len();
     let mut best = vec![0.0f32; n];
     let mut owner = vec![0u16; n];
-    let mut planes: Vec<Vec<f32>> = Vec::with_capacity(count);
-    for f in frames {
+    for (i, f) in frames.iter().enumerate() {
         let m = measure_plane(f, w, h, options.radius);
-        planes.push(m);
-    }
-    for p in 0..n {
-        let mut bi = 0u16;
-        let mut bv = planes[0][p];
-        for (i, m) in planes.iter().enumerate().skip(1) {
-            if m[p] > bv {
-                bv = m[p];
-                bi = i as u16;
+        for p in 0..n {
+            if m[p] > best[p] {
+                best[p] = m[p];
+                owner[p] = i as u16;
             }
         }
-        best[p] = bv;
-        owner[p] = bi;
     }
     // 分位数兜底：直方图 4096 桶，避免对几百万像素排序。
     //
@@ -317,21 +338,40 @@ fn compute_owner_map(
         }
         owner = filtered;
     }
-    (owner, planes)
+    owner
 }
 
 /// 一帧的 one-hot 选中掩膜做高斯模糊（σ = feather，边界夹边）。
-/// feather < 0.5 时退回硬掩膜（零开销路径）。
+/// feather < 0.5（含 NaN）时退回硬掩膜（零开销路径）。
+///
+/// 两条护栏，`Options` 是 `pub` 的、库调用方真会踩：
+///
+/// * 半径 `clamp(1, 1024)`：`feather = 1e9` 时内核半径按 1e9 建，
+///   `d * d` 在 `i32` 上先溢出——实测 panic（`attempt to multiply with overflow`）；
+///   `f32 → usize` 的 `as` 转换是饱和的，NaN 落到 0，再由 clamp 兜到 1；
+/// * 早退判据写成 `feather.is_nan() || feather < 0.5`：NaN 与任何数比较恒
+///   false，只写 `feather < 0.5` 会让 NaN 溜进卷积分支，除出全 NaN 掩膜。
 ///
 /// Gaussian-blur one frame's one-hot selection mask (σ = feather, clamped edges).
-/// A feather below 0.5 degenerates to the hard mask (the zero-overhead path).
+/// A feather below 0.5 (NaN included) degenerates to the hard mask (the zero-overhead
+/// path).
+///
+/// Two guard rails, because `Options` is `pub` and library callers do hit them:
+///
+/// * the radius is `clamp(1, 1024)`: with `feather = 1e9` the kernel radius follows
+///   `1e9` and `d * d` overflows `i32` first -- measured panic (`attempt to multiply
+///   with overflow`); `f32 -> usize` casts saturate, so NaN lands on 0 and the clamp
+///   lifts it to 1;
+/// * the early-out is written `feather.is_nan() || feather < 0.5` rather than a bare
+///   `feather < 0.5`: NaN compares false against everything, so the bare form let NaN
+///   into the convolution branch and divided its way to an all-NaN mask.
 fn feather_mask(onehot: &[u8], w: usize, h: usize, feather: f32) -> Vec<f32> {
     let n = w * h;
-    if feather < 0.5 {
+    if feather.is_nan() || feather < 0.5 {
         return onehot.iter().map(|&v| v as f32).collect();
     }
     let sigma = feather;
-    let k = (feather.ceil() as usize).max(1);
+    let k = (feather.ceil() as usize).clamp(1, 1024);
     let mut kernel = Vec::with_capacity(2 * k + 1);
     for d in -(k as i32)..=(k as i32) {
         kernel.push((-((d * d) as f32) / (2.0 * sigma * sigma)).exp());
@@ -397,7 +437,7 @@ pub fn focus_stack(
 
     match options.method {
         Method::DepthMap => {
-            let (owner, _planes) = compute_owner_map(frames, w, h, options);
+            let owner = compute_owner_map(frames, w, h, options);
             // 每帧一张 one-hot 掩膜 → 羽化 → 直接累加输出；归一化面同步累加。
             // 内存峰值 = 输出面 + 归一化面 + 一张羽化掩膜。
             //
@@ -500,7 +540,7 @@ pub fn depth_map(
     if frames.len() == 1 {
         return Ok(vec![0u16; w * h]);
     }
-    let (owner, _) = compute_owner_map(frames, w, h, options);
+    let owner = compute_owner_map(frames, w, h, options);
     Ok(owner)
 }
 
@@ -841,6 +881,39 @@ mod tests {
             "纹理区不该是糊成一团的平均值，实际 {}",
             out[sharp_px]
         );
+    }
+
+    #[test]
+    fn an_oversized_feather_does_not_panic() {
+        // `Options` 是 `pub` 的：`feather` 可以来自工程文件、命令面或库调用方。
+        // 1e9 与 NaN 都必须返回 Ok——不许 panic，也不许把 NaN 漏进成片。
+        //
+        // 负向验证：去掉 `feather_mask` 里的 `.clamp(1, 1024)` 重跑，1e9 那一路会在
+        // `d * d` 上整数溢出 panic（`attempt to multiply with overflow`），这条立刻红。
+        //
+        // `Options` is public: `feather` can arrive from a project file, the command
+        // surface or a library caller. Both 1e9 and NaN must return Ok -- no panic, and no
+        // NaN leaking into the output.
+        //
+        // Negative check: drop the `.clamp(1, 1024)` in `feather_mask` and rerun; the 1e9
+        // path overflows `i32` on `d * d` (`attempt to multiply with overflow`) and this
+        // test goes red immediately.
+        let a = planks();
+        let b = planks_h();
+        for feather in [1e9f32, f32::NAN] {
+            let opts = Options {
+                feather,
+                smooth_z: 0,
+                ..Options::default()
+            };
+            let out = focus_stack(&[&a, &b], W, H, &opts)
+                .unwrap_or_else(|e| panic!("feather={feather} 应返回 Ok，实得 {e:?}"));
+            assert_eq!(out.len(), W * H * 3);
+            assert!(
+                out.iter().all(|v| v.is_finite()),
+                "feather={feather} 时成片里有非有限值"
+            );
+        }
     }
 
     #[test]
