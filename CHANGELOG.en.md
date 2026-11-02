@@ -80,6 +80,14 @@ out the real frame count (N either side -> 2N+1 frames; N forward -> N+1 frames,
    result.
 4. A headless session has no "current frame": `aevum_focus_merge` starts from the sequence's
    **middle frame** when `start` is omitted; pass `start` or `frames` to pick another span.
+5. **There is no built-in auto-alignment**: run "Align sequence" before fusing. The focus
+   group says so and offers an "Align the sequence first" button right there; skipping it
+   leaves ghosting across the transition band (which looks like "the wrong frame was
+   picked").
+6. **Merge parameters are not persisted**: focus stacking's `method` / `radius` /
+   `threshold` / `smooth_z` / `feather` live only in the current session and fall back to
+   their defaults after a restart or a sequence switch. Star stacking and time blending
+   behave the same way.
 
 ### Compatibility
 
