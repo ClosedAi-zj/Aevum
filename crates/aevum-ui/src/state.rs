@@ -6729,6 +6729,9 @@ impl AppState {
             threshold,
             smooth_z,
             feather,
+            // 界面不暴露 levels，0 = auto（见 focus::Options）。
+            // The UI does not expose levels; 0 = auto (see focus::Options).
+            levels: 0,
         });
         let job = self.build_merge_job(kind, indices, &out_dir, spec)?;
         let mut started = self.start_merge(ctx, job);
@@ -6861,6 +6864,9 @@ impl AppState {
             threshold: self.focus_threshold,
             smooth_z: self.focus_smooth_z as usize,
             feather: self.focus_feather,
+            // 深度图预览不需要塔，0 = auto。
+            // The depth-map preview needs no tower; 0 = auto.
+            levels: 0,
         };
         let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();
         let owner = match aevum_core::focus::depth_map(&refs, w, h, &opts) {
@@ -17421,11 +17427,15 @@ mod command_tests {
         //
         // A bad parameter and a missing confirm are stopped first: the error must surface
         // before any job starts.
+        // 坏值不能用 "pyramid"：1.5 起它是合法方法名，会让这条「未知 key 必须报错」的语义失效。
+        //
+        // The bad value cannot be "pyramid": from 1.5 it is a legal method key, which
+        // would invalidate this "unknown key must error" assertion.
         let bad = state
             .run_ui_command(
                 &ctx,
                 "focus.merge",
-                &json!({"method": "pyramid", "confirm": true}),
+                &json!({"method": "laplacian", "confirm": true}),
             )
             .unwrap_err();
         assert!(bad.contains("depthmap"), "{bad}");

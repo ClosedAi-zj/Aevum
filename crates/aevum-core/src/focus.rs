@@ -2,8 +2,9 @@
 //!
 //! 逆向调研（`docs/焦点合成-调研.md`）定下的口径：商业工具的三条路里，
 //! **深度图法**质量上限最接近标杆且保色彩（不做金字塔重构，没有对比度/色彩漂移），
-//! **加权平均**实现最简单、低噪栈质量好，金字塔暂缓（反转光晕与色彩漂移让金标难定）。
-//! 两条都在这里。
+//! **加权平均**实现最简单、低噪栈质量好，1.4.0 里只落了这两条；1.5 起补上
+//! **金字塔法**（`pyramid.rs`）：多尺度融合自带过渡，代价是低频层可能出现反转
+//! 光晕，所以最粗两层改成等权底图，且它**不替代**深度图法作为默认值。三条都在这里。
 //!
 //! 设计里最重要的一条是**无细节区兜底**：焦点测度只在有纹理处有意义，
 //! 表盘、天空、抛光面这类平坦区，argmax 只是放大噪声——所有测度驱动的工具
@@ -21,8 +22,11 @@
 //! among the three families shipped by commercial tools, the **depth map** method has
 //! the quality ceiling closest to the benchmark and preserves colour (no pyramid
 //! reconstruction, hence no contrast/colour drift), **weighted average** is the simplest
-//! and good on low-noise stacks, and the pyramid is deferred (inversion halos and colour
-//! drift make golden tests hard). Both are here.
+//! and good on low-noise stacks, and 1.4.0 shipped only those two. From 1.5 the
+//! **pyramid method** (`pyramid.rs`) joins them: multi-scale fusion transitions on its own,
+//! at the price of possible inversion halos in the low frequencies, so its two coarsest
+//! levels use equal weights as a base and it does **not** replace the depth map as the
+//! default. All three live here.
 //!
 //! The single most important design decision is the **featureless fallback**: a focus
 //! measure only means something where texture exists -- watch faces, skies and polished
@@ -95,6 +99,19 @@ pub fn error_text(e: StackError) -> &'static str {
 /// Estimate: `frames x pixels x 12 B + three output planes`. Library callers can check
 /// their own case with it: a 24 MP stack needs more than 10 GB free, and deeper sequences
 /// should be fused in passes (the same advice the star-field stacker gives).
+///
+/// 金字塔法的增量口径**不同**：它不把 32 帧的完整塔一起驻留，而是逐帧流式下采样、
+/// 边算边融，常驻的是输出塔（RGB ≈ 384 MB）+ 权重和塔（单通道 ≈ 128 MB），当前帧
+/// 手里只有相邻两层。24 MP 峰值约 1.0 GB（推算值，实测由 T10 替换）；塌缩原地，
+/// 不另开全分辨率缓冲。所以这条上限仍是**帧自身**定的，金字塔不会把 9.6 GB 再翻一倍。
+///
+/// The pyramid method's increment is **different**: it never holds all 32 full towers at
+/// once, reducing and folding frame by frame. What stays resident is the output tower
+/// (RGB, about 384 MB) plus the weight-sum tower (mono, about 128 MB), and each frame keeps
+/// only two adjacent planes. A 24 MP peak is about 1.0 GB (an estimate, to be replaced by
+/// T10's measurement); collapse is in place, with no extra full-resolution buffer. The cap
+/// is therefore still set by the **frames themselves** -- the pyramid does not double the
+/// 9.6 GB again.
 pub const MAX_FRAMES: usize = 32;
 
 /// 融合方式。
@@ -112,13 +129,21 @@ pub enum Method {
     /// Weighted average: the measure is the weight (raised to the 4th power to spread
     /// the field), blended across every frame.
     Weighted,
+    /// 金字塔：Burt–Adelson 拉普拉斯塔按层融合，细层取清晰细节、最粗两层等权当底图。
+    /// 多尺度自带过渡，`feather` / `smooth_z` 不适用；`levels = 1` 严格退化为加权平均。
+    ///
+    /// Pyramid: Burt-Adelson Laplacian fusion per level -- fine levels take the sharp
+    /// detail, the two coarsest levels use equal weights as the base. Multi-scale fusion
+    /// transitions on its own, so `feather` / `smooth_z` do not apply; `levels = 1`
+    /// degenerates strictly to the weighted average.
+    Pyramid,
 }
 
 impl Method {
     /// 全部方法，界面按它铺按钮。
     ///
     /// Every method, in the order the UI lays out its buttons.
-    pub const ALL: [Method; 2] = [Method::DepthMap, Method::Weighted];
+    pub const ALL: [Method; 3] = [Method::DepthMap, Method::Weighted, Method::Pyramid];
 
     /// 稳定的短键，落盘与命令面用它。
     ///
@@ -127,6 +152,7 @@ impl Method {
         match self {
             Method::DepthMap => "depthmap",
             Method::Weighted => "weighted",
+            Method::Pyramid => "pyramid",
         }
     }
 
@@ -137,6 +163,7 @@ impl Method {
         match self {
             Method::DepthMap => "深度图",
             Method::Weighted => "加权平均",
+            Method::Pyramid => "金字塔",
         }
     }
 
@@ -185,6 +212,16 @@ pub struct Options {
     /// Transition feather radius (px): across a depth jump the two sources overlap with
     /// Gaussian weights; below 0.5 the cut is hard. Only [`Method::DepthMap`] uses it.
     pub feather: f32,
+    /// 金字塔层数：`0 = auto`（`clamp(floor(log2(min(w,h)/32)), 3, 8)`），显式值
+    /// 夹紧到 `1..=12`。只对 [`Method::Pyramid`] 生效；**界面与 MCP 不暴露**，
+    /// 判据与库调用方才能设。`levels = 1` 时金字塔严格退化为 [`Method::Weighted`]。
+    ///
+    /// Pyramid level count: `0 = auto`
+    /// (`clamp(floor(log2(min(w,h)/32)), 3, 8)`), explicit values clamp into `1..=12`.
+    /// Only [`Method::Pyramid`] reads it; the UI and MCP do **not** expose it, only
+    /// assertions and library callers may set it. `levels = 1` degenerates strictly to
+    /// [`Method::Weighted`].
+    pub levels: usize,
 }
 
 impl Default for Options {
@@ -195,6 +232,7 @@ impl Default for Options {
             threshold: 0.0,
             smooth_z: 1,
             feather: 2.0,
+            levels: 0,
         }
     }
 }
@@ -205,7 +243,7 @@ impl Default for Options {
 /// One focus-measure plane per frame: the modified Laplacian (absolute horizontal plus
 /// vertical second differences) on γ2.0 luma, box-averaged over `radius` via a summed-area
 /// table (O(n)).
-fn measure_plane(frame: &[f32], w: usize, h: usize, radius: usize) -> Vec<f32> {
+pub(crate) fn measure_plane(frame: &[f32], w: usize, h: usize, radius: usize) -> Vec<f32> {
     let n = w * h;
     // γ2.0 亮度：sqrt 是把线性亮度抬到感知域最便宜的一步。
     //
@@ -539,6 +577,17 @@ pub fn focus_stack(
                 }
             }
             Ok(out)
+        }
+        Method::Pyramid => {
+            // 这里**不读** `options.feather` 与 `options.smooth_z`：金字塔按层归一自带
+            // 过渡，没有深度跳变，也没有 one-hot 掩膜可羽化。命令面照旧校验它们，
+            // 传了不影响输出（X-C3）。层数、测度半径与阈值由 `levels/radius/threshold` 管。
+            //
+            // `options.feather` and `options.smooth_z` are **not read** here: per-level
+            // normalisation transitions on its own, with no depth jump and no one-hot mask
+            // to feather. The command surface still validates them, and passing them does
+            // not change the output (X-C3). `levels/radius/threshold` govern this path.
+            Ok(crate::pyramid::fuse_pyramid(frames, w, h, options))
         }
     }
 }

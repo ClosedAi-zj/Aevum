@@ -1021,11 +1021,16 @@ fn focus_merge_recovers_each_band_from_the_frame_that_holds_its_texture() {
     assert!(!out_dir.exists(), "被拦下的调用不该建目录");
 
     // 未知融合方式要报错，不能悄悄落到缺省值上。
+    // 坏值不能用 "pyramid"：1.5 起它是合法的金字塔方法名，
+    // 用它会把这条「未知 key 必须报错」的语义验成值法。
+    //
+    // The bad value cannot be "pyramid": from 1.5 it is a legal pyramid-method key,
+    // which would turn this "unknown key must error" assertion into a legal-value check.
     let unknown = server.call(
         "aevum_focus_merge",
         json!({
             "frames": [0, 1, 2],
-            "method": "pyramid",
+            "method": "laplacian",
             "out_dir": out_dir.display().to_string(),
             "confirm": true
         }),

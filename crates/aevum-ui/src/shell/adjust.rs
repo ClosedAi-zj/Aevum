@@ -1218,6 +1218,9 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     Method::Weighted => {
                         "测度四次方当权重直接加权；最简单，低噪栈表现好，强纹理处可能轻微发糊"
                     }
+                    Method::Pyramid => {
+                        "拉普拉斯塔按层融合：细层取清晰细节，最粗两层等权当底图；多尺度自带过渡，羽化在金字塔法下不适用"
+                    }
                 }))
                 .clicked();
             if picked && !busy {

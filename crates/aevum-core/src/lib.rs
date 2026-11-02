@@ -51,6 +51,7 @@ pub mod plugin;
 pub mod plugin_host;
 pub mod preview;
 pub mod project;
+pub mod pyramid;
 pub mod qa;
 pub mod queue;
 pub mod raw;

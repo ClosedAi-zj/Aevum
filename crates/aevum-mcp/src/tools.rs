@@ -1183,6 +1183,9 @@ fn focus_options(args: &Value) -> Result<aevum_core::focus::Options, String> {
         threshold: (opt_f64(args, "threshold")?.unwrap_or(0.0) as f32).clamp(0.0, 100.0),
         smooth_z: (opt_u32(args, "smooth_z")?.unwrap_or(1) as usize).min(16),
         feather: (opt_f64(args, "feather")?.unwrap_or(2.0) as f32).clamp(0.0, 64.0),
+        // 命令面不暴露 levels，0 = auto（见 focus::Options）。
+        // The command surface does not expose levels; 0 = auto (see focus::Options).
+        levels: 0,
     })
 }
 
