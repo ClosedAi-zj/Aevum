@@ -15,6 +15,71 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.5.0 — 2026-11-03
+
+Feature release: focus-stacking batch two -- the **pyramid method** and
+**align-before-fusion**. The MCP and command-surface contracts stay "add only, never change":
+`focus_merge`'s `method` enum gains a third value and an optional `align` parameter; the
+command catalogue is still 77 entries and the MCP tool set still 35 direct tools. The project
+file format is unchanged; the app settings file (settings.json) gains one defaulted field that
+older files simply lack.
+
+### Focus fusion: the pyramid method (a third method)
+
+`method = "pyramid"`: multi-scale Burt–Adelson fusion on a Laplacian pyramid. Depth-map and
+weighted-average blend the whole frame with **one** weight plane, so low frequencies (base
+tone, broad gradients) follow that same weight and inverted halos appear just outside texture
+boundaries. The pyramid splits the blend across scales -- fine levels decide only which frame
+supplies a small detail, coarse levels decide only the base tone -- and neither leaks into the
+other, cutting the main halo source. Levels follow the resolution automatically
+(`clamp(floor(log2(h/32)), 3, 8)`), with the two coarsest levels weighted equally.
+
+The cost, stated honestly: at 24 MP x 8 frames the pyramid measures **24.4 s / 4.43 GB peak**
+(weighted average: 1.95 s / 2.88 GB) -- an order of magnitude slower and about 1.5x the peak,
+in exchange for suppressing low-frequency halos. The UI default stays depth-map / weighted,
+and the panel hover text spells out the trade-off. `feather` / `smooth_z` do not apply to the
+pyramid: passing them passes validation but has no effect.
+
+### Focus fusion: align before fusing
+
+`focus_merge` gains an optional `align` (default `false`; omitting it is pixel-for-pixel
+identical to passing `false`). When enabled, fusion first runs a focus-specific per-block
+alignment: a block-wise shift field is estimated, each frame is warped per block, and only
+then blended; if the gain is below threshold it reverts silently and blends the raw frames.
+The panel gains an "align before fusing" toggle with a three-state status line, and that
+preference **persists** to `merge.focus_align` in settings.json. Known-limitation items 2
+(two methods only), 5 (no built-in alignment) and 6 (merge parameters not persisted) from 1.4.0
+are thereby closed.
+
+### Measured performance and one optimisation round
+
+The pyramid first measured 29.7 s; after one optimisation round (measure computed once,
+streaming reduce, copy-free weight planes) it measures **24.4 s** with the peak unchanged --
+the bulk is the tower's own memory-bandwidth work. QA's independent re-run measured 26.4 s:
+absolute values jitter with machine and build configuration (within ±20%), so judge by the
+same-session ratio. Measurement protocol and the before/after comparison are in
+`docs/焦点合成-调研.en.md`, section 5.
+
+### Known limitations
+
+1. Focus fusion still takes at most **32 frames**; the pyramid uses more memory -- 8 frames at
+   24 MP measured a 2.10 GB fusion delta (weighted: 732 MB).
+2. GPU (OpenCL) remains unimplemented; the panel still offers no depth-map / assignment preview.
+3. Headless sessions still have no "current frame": omitting `start` still starts from the
+   median frame.
+4. Two assertion gaps stay honestly open (`docs/遗留台账.en.md`): an end-to-end assertion on
+   the per-block shift field, and an assertion anchor for the pyramid measure's box-average
+   window semantics.
+
+### Compatibility
+
+- Project files, presets and parameters, command-line arguments: identical to 1.4.0; old
+  projects open as-is.
+- MCP tool set: `focus_merge`'s `method` enum gains `pyramid` (additive); new optional `align`
+  (default `false`, not in `required`); tool count unchanged (35).
+- settings.json gains `merge.focus_align` (serde default `false`): 1.4 settings files lack the
+  field, read back as `false`, behaviour identical to 1.4.
+
 ## v1.4.0 — 2026-11-02
 
 The pre-release audit pass: closing the gaps focus stacking left behind -- a headless
