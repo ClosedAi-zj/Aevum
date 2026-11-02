@@ -122,7 +122,34 @@ fn load(root: &Path, long_side: u32) -> BTreeMap<String, Entry> {
     }
 }
 
-/// 先写临时文件再替换；Windows 的 rename 不能覆盖已存在的目标。
+/// 落盘：先写临时文件，再**原子替换**。
+///
+/// `std::fs::rename` 在 Windows 上走 `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)`，
+/// **能覆盖已存在的目标**——本机实测：目标内容被换成源内容、源消失、返回 `Ok(())`。
+/// 早先那句注释「Windows 的 rename 不能覆盖已存在的目标」是错的，于是代码先
+/// `remove_file` 再 `rename`，两步之间留下一个「文件不存在」的窗口：读者一边
+/// （`cull::extract` 携带测光缓存）`is_file()` 通过、`copy()` 撞上窗口就报
+/// `os error 2`，整次导出失败——一个可选缓存把导出拖下水。
+///
+/// 现在只 rename，覆盖交给它，窗口消失。失败重试一次（10 ms 后）：真正的失败源是
+/// 共享冲突——有读者正握着这个文件（Windows 不允许替换被打开的文件），等一会儿
+/// 通常就过了。仍失败就放弃：缓存是加速层，丢了只意味着下一次全量重测。
+///
+/// Persist: write a temp file, then **replace atomically**.
+///
+/// `std::fs::rename` uses `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)` on Windows and
+/// **does overwrite an existing target** -- measured locally: the target takes the source's
+/// contents, the source disappears, and it returns `Ok(())`. The old note claiming otherwise
+/// was wrong, so the code did `remove_file` and then `rename`, leaving a "file does not
+/// exist" window in between: a reader (`cull::extract` carrying the metering cache) passed
+/// `is_file()`, hit that window in `copy()` and reported `os error 2`, failing the whole
+/// export -- an optional cache sinking the export.
+///
+/// Now it only renames, and the window is gone. A failure is retried once 10 ms later: the
+/// real failure mode is a sharing violation -- a reader holds the file open and Windows
+/// refuses to replace an open file -- which usually clears after a moment. A second failure
+/// is abandoned: the cache is an acceleration layer, and losing it only costs one full
+/// re-measure.
 fn save(root: &Path, long_side: u32, frames: BTreeMap<String, Entry>) {
     let path = cache_path(root);
     let Some(dir) = path.parent() else { return };
@@ -140,10 +167,17 @@ fn save(root: &Path, long_side: u32, frames: BTreeMap<String, Entry>) {
     if std::fs::write(&tmp, text).is_err() {
         return;
     }
-    if path.exists() && std::fs::remove_file(&path).is_err() {
+    if std::fs::rename(&tmp, &path).is_ok() {
         return;
     }
-    let _ = std::fs::rename(&tmp, &path);
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    if std::fs::rename(&tmp, &path).is_err() {
+        // 两次都替换不了（多半是有读者一直握着它）：放弃这一份，别把 .tmp 留在护带目录里。
+        //
+        // Two failed replacements (likely a long-held reader): drop this copy, and do not
+        // leave the .tmp behind in the guard directory.
+        let _ = std::fs::remove_file(&tmp);
+    }
 }
 
 /// `metrics::measure_many` 的带缓存版本，返回的形状与它完全一致。
@@ -284,5 +318,104 @@ mod tests {
         let file: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(cache_path(&dir)).unwrap()).unwrap();
         assert_eq!(file["side"], 256);
+    }
+
+    /// 后台测光线程不停重写缓存的同时，`cull::extract` 必须一轮都不失败。
+    ///
+    /// 这是那条偶发红的复现：缓存落盘先 `remove_file` 再 `rename` 时，两步之间有个
+    /// 「文件不存在」的窗口，读者 `is_file()` 通过、`copy()` 撞窗口就报 `os error 2`，
+    /// 一个可选缓存把整次导出拖下水。现在落盘只 `rename`（Windows 上能覆盖），
+    /// 提取侧再对 `NotFound` 重试，两头都不该再让导出失败。
+    ///
+    /// 负向验证：把 `save` 的 `remove_file` 加回去、再去掉 `carry_metering_cache` 的
+    /// 重试，这条必红。
+    ///
+    /// While the background metering thread keeps rewriting the cache, `cull::extract` must
+    /// not fail a single round.
+    ///
+    /// This reproduces that intermittent red: when persisting did `remove_file` and then
+    /// `rename`, a "file does not exist" window sat between the two, and a reader that passed
+    /// `is_file()` then hit it in `copy()` reported `os error 2`, an optional cache sinking
+    /// the export. Persisting now only renames (which does overwrite on Windows) and the
+    /// extraction side retries `NotFound`, so neither end should fail an export again.
+    ///
+    /// Negative check: put `save`'s `remove_file` back and drop `carry_metering_cache`'s
+    /// retry, and this goes red.
+    #[test]
+    fn a_concurrent_cache_write_never_fails_an_extraction() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let dir = temp_dir("race");
+        let paths: Vec<PathBuf> = (0..3).map(|i| dir.join(format!("f{i:02}.png"))).collect();
+        for (i, p) in paths.iter().enumerate() {
+            write_frame(p, 16, 12, [i as u8 * 80, 60, 40]);
+        }
+        let (_, _, issues) = measure_sequence(&dir, &paths, 512);
+        assert!(issues.is_empty(), "先量一遍写出一份缓存：{issues:?}");
+        assert!(
+            cache_path(&dir).is_file(),
+            "缓存要真的落盘，否则这条压测没意义"
+        );
+
+        let target = std::env::temp_dir().join(format!(
+            "aevum-race-out-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        // 写线程：不停重写同一份缓存，正是后台测光线程干的事（不 sleep，把窗口尽量撞满）。
+        //
+        // The writer: keeps rewriting the same cache, exactly what the background metering
+        // thread does (no sleep, to hit the window as often as possible).
+        let stop = Arc::new(AtomicBool::new(false));
+        let writer = {
+            let root = dir.clone();
+            let stop = Arc::clone(&stop);
+            let frames = load(&dir, 512);
+            std::thread::spawn(move || {
+                let mut rounds = 0u64;
+                while !stop.load(Ordering::Relaxed) {
+                    save(&root, 512, frames.clone());
+                    rounds += 1;
+                }
+                rounds
+            })
+        };
+
+        // 主线程：同一根上提取 100 轮，每轮都要 Ok。
+        //
+        // The main thread: 100 extractions on the same root, every one of them Ok.
+        let mut failures: Vec<String> = Vec::new();
+        for round in 0..100 {
+            if let Err(e) = crate::cull::extract(&dir, &paths[..2], &target) {
+                failures.push(format!("第 {round} 轮：{e:?}"));
+            }
+            let _ = std::fs::remove_dir_all(&target);
+        }
+        stop.store(true, Ordering::Relaxed);
+        let rounds = writer.join().expect("写线程不该 panic");
+
+        assert!(rounds > 0, "写线程一轮都没跑，压测没压到东西");
+        assert!(
+            failures.is_empty(),
+            "并发重写缓存时提取失败了 {} 轮（写线程跑了 {rounds} 轮）：\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+
+        // 正常路径没被「跳过」逻辑顺手跳掉：缓存确实带过去了。
+        //
+        // The normal path was not skipped along with the retry: the cache really came over.
+        crate::cull::extract(&dir, &paths[..2], &target).expect("再提取一次");
+        assert!(
+            cache_path(&target).is_file(),
+            "缓存没带到目标序列：跳过逻辑把正常路径也跳了"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&target);
     }
 }

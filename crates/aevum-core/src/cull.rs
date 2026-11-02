@@ -478,21 +478,62 @@ pub fn extract(source_root: &Path, kept: &[PathBuf], target: &Path) -> Result<u6
             .map_err(ExtractError::Io)?;
         written += meta.len();
     }
-    // 测光缓存整份带走：键是相对路径 + (mtime, len)，平铺且保留了 mtime 的
-    // 情况下新序列直接命中；子目录素材的键对不上，退化为一次全量重测，无害。
-    //
-    // The metering cache comes along whole: keys are relative paths plus (mtime, len), so a
-    // flat layout with preserved mtimes hits directly; sub-folder material misses and degrades
-    // to one full re-measure, which is harmless.
-    let cache = crate::measures::cache_path(source_root);
-    if cache.is_file() {
-        let dst = crate::measures::cache_path(target);
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent).map_err(ExtractError::Io)?;
-        }
-        std::fs::copy(&cache, &dst).map_err(ExtractError::Io)?;
-    }
+    carry_metering_cache(source_root, target)?;
     Ok(written)
+}
+
+/// 把测光缓存整份带到目标序列：**缓存只是加速层，缺失不算失败**。
+///
+/// 键是相对路径 + (mtime, len)，平铺且保留了 mtime 时新序列直接命中；子目录素材的键
+/// 对不上，退化为一次全量重测，同样无害。所以这条路上任何一种「带不过去」都不该让
+/// 整次导出失败——早先它是硬 `copy`，撞上后台测光线程的替换窗口就报 `os error 2`，
+/// 一个可选加速层把导出拖下水（实测偶发，日志里是「复制失败：系统找不到指定的文件」）。
+///
+/// 做法：`NotFound` 重试三次（每次 10 ms，窗口是微秒级，等一轮基本就过了），仍然
+/// `NotFound` 就跳过；其它 IO 错误（权限、磁盘满）照旧往上抛，那是真问题。
+///
+/// Carry the metering cache over to the target sequence: **the cache is only an
+/// acceleration layer, so a missing one is not a failure**.
+///
+/// Keys are relative paths plus (mtime, len), so a flat layout with preserved mtimes hits
+/// directly, and sub-folder material misses and degrades to one full re-measure -- equally
+/// harmless. Nothing on this path should fail the export, then: it used to be a hard `copy`
+/// that hit the background metering thread's replace window and reported `os error 2`, an
+/// optional accelerator sinking the export (observed intermittently; the log says "copy
+/// failed: the system cannot find the file specified").
+///
+/// So: `NotFound` is retried three times 10 ms apart (the window is microseconds, so one
+/// wait usually clears it) and then skipped; every other IO error (permissions, a full
+/// disk) still propagates -- those are real problems.
+fn carry_metering_cache(source_root: &Path, target: &Path) -> Result<(), ExtractError> {
+    // 源上没有缓存：没什么可带的，也不必在目标里建一个空护带目录。
+    //
+    // No cache at the source: nothing to carry, and no empty guard directory to create.
+    let cache = crate::measures::cache_path(source_root);
+    if !cache.is_file() {
+        return Ok(());
+    }
+    let dst = crate::measures::cache_path(target);
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).map_err(ExtractError::Io)?;
+    }
+    let mut retries = 0u32;
+    loop {
+        match std::fs::copy(&cache, &dst) {
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // 撞上「写临时文件 → 替换」之间的窗口，或缓存被删了。
+                //
+                // The replace window, or the cache really is gone.
+                if retries >= 3 {
+                    return Ok(());
+                }
+                retries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(e) => return Err(ExtractError::Io(e)),
+        }
+    }
 }
 
 #[cfg(test)]
