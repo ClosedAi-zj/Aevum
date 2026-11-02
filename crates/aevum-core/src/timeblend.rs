@@ -125,6 +125,13 @@ pub struct Spec {
     ///
     /// Horizon position as a fraction from the top (only for [`Layout::SkyGround`]).
     pub horizon: f32,
+    /// 自动推地平线：忽略 `horizon`，混合前按行亮度梯度找天空与地面的分界
+    /// （找不到就用 `horizon` 兜底）。
+    ///
+    /// Suggest the horizon automatically: ignore `horizon` and find the sky-ground boundary
+    /// from the per-row brightness gradient before blending (falling back to `horizon` when
+    /// nothing is found).
+    pub horizon_auto: bool,
     /// 混合前是否把来源帧的亮度对齐到参考帧。
     ///
     /// Whether to align each source frame's brightness to the reference before blending.
@@ -147,6 +154,7 @@ impl Default for Spec {
             bands: 8,
             feather: 0.04,
             horizon: 0.5,
+            horizon_auto: false,
             match_exposure: true,
             deghost: 0.5,
         }
@@ -250,6 +258,83 @@ fn match_gain(source: f32, reference: f32) -> f32 {
         return 1.0;
     }
     (reference / source).clamp(0.25, 4.0)
+}
+
+/// 自动推地平线：把所有帧逐行平均成一条亮度剖面，平滑后找相邻行差最大的地方——
+/// 天空通常整片亮、地面整片暗，最强的纵向台阶就是地平线。返回从顶部算起的比例。
+///
+/// 找不到（画面太平、太小、没有帧）返回 `None`，调用方退回手动值。搜索窗口限制在
+/// 画面高度的 10%–90%：贴边的台阶多半是暗角或裁切边，不是地平线。
+///
+/// Suggest the horizon: average every frame into one per-row brightness profile, smooth it,
+/// and take the strongest step between adjacent rows -- sky is uniformly bright and ground
+/// uniformly dark, so the strongest vertical step is the horizon. Returns the fraction from
+/// the top, or `None` when nothing suggests one (flat frames, tiny frames, no frames) and the
+/// caller falls back to the manual value. The search window is limited to 10%-90% of the
+/// height: a step hugging the border is a vignette or a crop edge, not a horizon.
+pub fn suggest_horizon(frames: &[&[f32]], w: usize, h: usize) -> Option<f32> {
+    if frames.is_empty() || w == 0 || h < 8 {
+        return None;
+    }
+    if frames.iter().any(|f| f.len() != w * h * 3) {
+        return None;
+    }
+    // 逐行平均亮度（跨帧再平均，物影与单帧噪声被摊掉）。
+    //
+    // Per-row mean luma (averaged across frames too, so subject shadows and single-frame
+    // noise wash out).
+    let mut profile = vec![0.0f64; h];
+    for f in frames {
+        for y in 0..h {
+            let row = y * w * 3;
+            let mut sum = 0.0f64;
+            for j in (row..row + w * 3).step_by(3) {
+                sum += (f[j] + f[j + 1] + f[j + 2]) as f64;
+            }
+            profile[y] += sum / (w as f64);
+        }
+    }
+    for v in profile.iter_mut() {
+        *v /= frames.len() as f64;
+    }
+    // 平滑（半径 2 的滑动平均）：单行噪声不该赢过整片天与地之间的台阶。
+    //
+    // Smooth (a radius-2 moving average): one noisy row must not beat the sky-ground step.
+    let smooth: Vec<f64> = (0..h)
+        .map(|y| {
+            let lo = y.saturating_sub(2);
+            let hi = (y + 3).min(h);
+            let n = (hi - lo) as f64;
+            profile[lo..hi].iter().sum::<f64>() / n
+        })
+        .collect();
+    let lo = (h / 10).max(1);
+    let hi = h * 9 / 10;
+    if lo >= hi {
+        return None;
+    }
+    let (best_y, best_step) = (lo..hi)
+        .map(|y| (y, (smooth[y + 1] - smooth[y]).abs()))
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))?;
+    // 两条门槛，都不过就交回 None 让调用方用手动值：
+    // ① 完美台阶经半径 2 平滑后，相邻行差最多是总动态的 1/5；真实分界至少要拿到
+    //   理想值的一半，否则这只是噪声在赢。
+    // ② 天与地之间至少要差 0.5 EV——阴天平光画面里没有可用的分界。
+    //
+    // Two gates, both required before handing back None for the manual value:
+    // (1) a perfect step smoothed at radius 2 spreads into adjacent diffs of at most 1/5 the
+    //     total dynamic range; a real boundary must carry at least half of that ideal, or this
+    //     is just noise winning;
+    // (2) sky and ground must differ by at least 0.5 EV -- flat overcast has no usable
+    //     boundary.
+    let hi = smooth.iter().cloned().fold(f64::MIN, f64::max);
+    let lo = smooth.iter().cloned().fold(f64::MAX, f64::min);
+    let dynamic = hi - lo;
+    let contrast_ok = hi.max(1e-9) / lo.max(1e-9) >= 2f64.powf(0.5);
+    if dynamic <= 0.0 || best_step < dynamic / 5.0 * 0.5 || !contrast_ok {
+        return None;
+    }
+    Some((best_y + 1) as f32 / h as f32)
 }
 
 /// 鬼影标签的分块边长（像素）：太大定位不准，太小会被噪声与压缩伪影骗到。
@@ -551,7 +636,17 @@ pub fn time_slice(
             }
         }
         Layout::SkyGround => {
-            let horizon = spec.horizon.clamp(0.0, 1.0) * h as f32;
+            // 自动地平线：按行亮度梯度找天与地的分界，找不到退回手动值。
+            //
+            // Auto horizon: find the sky-ground boundary from the per-row brightness gradient,
+            // falling back to the manual value when nothing is found.
+            let horizon_frac = if spec.horizon_auto {
+                suggest_horizon(frames, w, h).unwrap_or(spec.horizon)
+            } else {
+                spec.horizon
+            }
+            .clamp(0.0, 1.0);
+            let horizon = horizon_frac * h as f32;
             for y in 0..h {
                 // 天空权重：地平线以上 1、以下 0，交界羽化。
                 //
@@ -571,11 +666,11 @@ mod tests {
     use super::*;
 
     /// 线性域里 1 EV 就是 ×2。/ One stop is ×2 in the linear domain.
-    fn lin(ev_above_mid: f32) -> f32 {
+    pub(super) fn lin(ev_above_mid: f32) -> f32 {
         0.18 * 2f32.powf(ev_above_mid)
     }
 
-    fn flat(w: usize, h: usize, v: f32) -> Vec<f32> {
+    pub(super) fn flat(w: usize, h: usize, v: f32) -> Vec<f32> {
         vec![v; w * h * 3]
     }
 
@@ -909,5 +1004,98 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, plain);
+    }
+}
+
+#[cfg(test)]
+mod horizon_tests {
+    use super::tests::{flat, lin};
+    use super::*;
+
+    /// 亮天压着暗地：建议的地平线应落在真实分界附近（一行以内）。
+    ///
+    /// Bright sky over dark ground: the suggested horizon lands within a row of the real
+    /// boundary.
+    #[test]
+    fn the_suggested_horizon_finds_a_bright_sky_over_dark_ground() {
+        let w = 8;
+        let h = 48;
+        let split = 15usize; // 行 0..15 是天，15..48 是地 / rows 0..15 sky, 15..48 ground
+        let mut img = vec![lin(-2.0); w * h * 3];
+        for y in 0..split {
+            for j in (y * w * 3)..((y + 1) * w * 3) {
+                img[j] = lin(1.5);
+            }
+        }
+        let got = suggest_horizon(&[&img], w, h).expect("应该找得到地平线");
+        let want = split as f32 / h as f32;
+        assert!(
+            (got - want).abs() < 1.0 / h as f32,
+            "建议 {got} 应贴着真实分界 {want}"
+        );
+    }
+
+    /// 平光画面（阴天、纯天空）没有分界：返回 None 让调用方退回手动值，
+    /// 而不是瞎指一条线。贴边的台阶（暗角、裁切边）不在搜索窗口里，同样交回 None。
+    ///
+    /// A flat frame (overcast, pure sky) has no boundary: None, so the caller keeps the manual
+    /// value instead of pointing at nothing. A step hugging the border (vignette, crop edge)
+    /// sits outside the search window: None again.
+    #[test]
+    fn a_flat_frame_suggests_nothing() {
+        let img = flat(8, 48, lin(0.2));
+        assert_eq!(suggest_horizon(&[&img], 8, 48), None);
+        let mut edged = flat(8, 48, lin(0.0));
+        for j in 0..8 * 3 {
+            edged[j] = lin(3.0);
+        }
+        assert_eq!(suggest_horizon(&[&edged], 8, 48), None);
+    }
+
+    /// 自动地平线找到后，天地合成的分界真的落在那里：素材在 30% 处有天/地分界，
+    /// 输出在 30% 之上应是天、50% 附近应是地——而不是围着默认的 50% 转。
+    ///
+    /// With the horizon found automatically, the split really lands there: on a scene whose
+    /// boundary sits at 30%, the output is sky above 30% and ground near 50% -- not centred on
+    /// the default 50%.
+    #[test]
+    fn auto_horizon_moves_the_split_to_the_detected_boundary() {
+        let w = 8;
+        let h = 40;
+        let split = 12usize; // 30%
+        let mut scene = vec![lin(-1.0); w * h * 3];
+        for y in 0..split {
+            for j in (y * w * 3)..((y + 1) * w * 3) {
+                scene[j] = lin(1.5);
+            }
+        }
+        let out = time_slice(
+            &[&scene, &scene],
+            w,
+            h,
+            &Spec {
+                layout: Layout::SkyGround,
+                horizon_auto: true,
+                feather: 0.05,
+                match_exposure: false,
+                ..Spec::default()
+            },
+        )
+        .unwrap();
+        let at = |row: usize| out[row * w * 3];
+        assert!(at(6) > lin(1.0), "30% 之上应是天：{}", at(6));
+        assert!(at(20) < lin(0.0), "50% 附近应是地：{}", at(20));
+    }
+
+    /// 退化输入不 panic、不瞎指。
+    ///
+    /// Degenerate inputs neither panic nor point at anything.
+    #[test]
+    fn degenerate_horizon_inputs_return_none() {
+        let a = flat(8, 4, lin(0.3));
+        assert_eq!(suggest_horizon(&[], 8, 48), None);
+        assert_eq!(suggest_horizon(&[&a], 8, 4), None, "图太小，剖面立不起来");
+        let wrong = flat(7, 48, lin(0.3));
+        assert_eq!(suggest_horizon(&[&wrong], 8, 48), None);
     }
 }
