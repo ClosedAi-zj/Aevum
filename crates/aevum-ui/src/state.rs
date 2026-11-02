@@ -1438,6 +1438,13 @@ pub struct AppState {
     pub focus_threshold: f32,
     pub focus_smooth_z: u32,
     pub focus_feather: f32,
+    /// 合成前自动对齐（默认关）：先估每帧 8×6 网格位移、再逐块补偿，最后按 0.5% 的收益
+    /// 门槛决定采用还是回退。只影响 `focus.merge`，其余合并种类一律不用。
+    ///
+    /// Pre-fusion auto alignment (off by default): estimate each frame's 8x6 grid shift,
+    /// compensate block by block, then adopt or revert against a 0.5% gain floor. Only
+    /// `focus.merge` reads it; the other merge kinds never do.
+    pub focus_align: bool,
     pub focus_last: Option<String>,
     pub focus_error: Option<String>,
     /// 深度图预览纹理：「预览深度图」按下时前台算出的降采样归属图。
@@ -2405,12 +2412,14 @@ impl AppState {
             tb_preview_data: None,
             tb_preview_error: None,
             // 焦点合成默认 8 帧（±7 从起始帧往后铺）、深度图法、半径 2、兜底关、3×3 去斑、2 px 羽化。
+            // 合成前自动对齐默认关（与 `MergeParams::default()` 同步）。
             focus_around: 7,
             focus_method: aevum_core::focus::Method::DepthMap,
             focus_radius: 2,
             focus_threshold: 0.0,
             focus_smooth_z: 1,
             focus_feather: 2.0,
+            focus_align: false,
             focus_last: None,
             focus_error: None,
             focus_depth_tex: None,
@@ -19059,6 +19068,122 @@ mod focus_align_wiring_tests {
         }
         eprintln!("A-C3 开 vs 关：不同通道数 {diff}，max|Δ| = {max_d}");
         assert_eq!(diff, 0, "回退后成片必须与 align:false 逐点一致");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// X-C2（面板侧）：方法 chip 恰好三个、中文名逐字固定、`method=pyramid` 被命令面
+    /// 接受。三项缺一都会让「面板选了但命令不认识」或「命令接受但面板没有入口」复活。
+    ///
+    /// X-C2 (panel side): exactly three method chips, their Chinese names fixed verbatim,
+    /// and `method=pyramid` accepted by the command surface. Losing any one of the three
+    /// would revive either "the panel picked it but the command does not know it" or "the
+    /// command takes it but the panel has no entry".
+    #[test]
+    fn panel_offers_exactly_three_focus_methods_and_the_command_takes_pyramid() {
+        use aevum_core::focus::Method;
+        assert_eq!(Method::ALL.len(), 3, "方法 chip 必须恰好三个");
+        let names: Vec<&str> = Method::ALL.iter().map(|m| m.cn()).collect();
+        assert_eq!(names, ["深度图", "加权平均", "金字塔"], "中文名逐字固定");
+        let keys: Vec<&str> = Method::ALL.iter().map(|m| m.key()).collect();
+        assert_eq!(keys, ["depthmap", "weighted", "pyramid"]);
+        for m in Method::ALL {
+            assert_eq!(Method::parse(m.key()), Some(m), "key 必须能解析回自身");
+        }
+
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let dir = temp_root("x-c2");
+        write_sequence(
+            &dir.join("src"),
+            64,
+            64,
+            5,
+            &[[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+        );
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.join("src").display().to_string()}),
+            )
+            .expect("打开序列");
+        let started = state
+            .run_ui_command(
+                &ctx,
+                "focus.merge",
+                &json!({
+                    "frames": [0, 1, 2],
+                    "out_dir": dir.join("金字塔").display().to_string(),
+                    "method": "pyramid",
+                    "confirm": true,
+                }),
+            )
+            .expect("命令面必须接受 method=pyramid");
+        assert_eq!(started["kind"], json!("focus"));
+        wait_merge(&mut state, &ctx);
+        let result = state.merge_result.clone().expect("合并结果落账");
+        assert_eq!(result["kind"], json!("focus"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// X-C3：`method=pyramid` 时传 `feather` 不报错，且输出与不传 `feather` **逐点一致**
+    /// ——金字塔的融合按层归一，羽化在这里不适用（不读、不报错、不影响）。
+    ///
+    /// X-C3: with `method=pyramid`, passing `feather` neither errors nor changes the output
+    /// **point for point** -- pyramid fusion normalises per level, so feathering does not
+    /// apply here (not read, not rejected, not influential).
+    #[test]
+    fn pyramid_ignores_feather_without_erroring_or_changing_a_pixel() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let dir = temp_root("x-c3");
+        write_sequence(
+            &dir.join("src"),
+            96,
+            72,
+            29,
+            &[[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+        );
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.join("src").display().to_string()}),
+            )
+            .expect("打开序列");
+        let (_, _, plain) = run_focus(
+            &mut state,
+            &ctx,
+            &dir,
+            "不传羽化",
+            json!({"method": "pyramid"}),
+        );
+        let (_, _, feathered) = run_focus(
+            &mut state,
+            &ctx,
+            &dir,
+            "传羽化",
+            json!({"method": "pyramid", "feather": 12.0}),
+        );
+        let a = read_rgb(&plain);
+        let b = read_rgb(&feathered);
+        assert_eq!((a.width(), a.height()), (b.width(), b.height()));
+        let mut max_d = 0i32;
+        let mut diff = 0i64;
+        for (p, q) in a.pixels().zip(b.pixels()) {
+            for c in 0..3 {
+                let d = (p[c] as i32 - q[c] as i32).abs();
+                if d != 0 {
+                    diff += 1;
+                }
+                max_d = max_d.max(d);
+            }
+        }
+        eprintln!("X-C3 pyramid 传 feather 12 vs 不传：不同通道数 {diff}，max|Δ| = {max_d}");
+        assert_eq!(
+            max_d, 0,
+            "金字塔法下 feather 必须不影响输出，实测 max|Δ|={max_d}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

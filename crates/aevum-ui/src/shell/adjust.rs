@@ -1158,6 +1158,53 @@ fn focus_align_hint(state: &AppState) -> Option<String> {
     ))
 }
 
+/// 自动对齐的三态状态行：`(文案, 颜色)`，没有可交代的就返回 `None`。
+///
+/// 数据源是最近一次合并的结果 JSON（`kind == "focus"` 时才看）：增益与状态都是当时
+/// 真实算出来的，面板只做格式转换——**不重算、不推断、不美化**。`"off"` 与字段缺失
+/// 都不出行，因为「没跑」不值得占一行。
+///
+/// The three-state status line of auto alignment: `(text, colour)`, or `None` when there is
+/// nothing to report.
+///
+/// The data comes from the most recent merge result JSON (only read when `kind == "focus"`):
+/// both the status and the gain were computed for real back then, and the panel only formats
+/// them -- it never recomputes, infers or prettifies. `"off"` and a missing field both emit
+/// no row, because "it did not run" does not deserve a line.
+fn focus_align_status_row(state: &AppState) -> Option<(String, egui::Color32)> {
+    let result = state.merge_result.as_ref()?;
+    if result.get("kind").and_then(|v| v.as_str()) != Some("focus") {
+        return None;
+    }
+    let status = result.get("align_status").and_then(|v| v.as_str())?;
+    let gain = result.get("align_gain").and_then(|v| v.as_f64());
+    let percent = |g: f64| format!("{:+.1}%", g * 100.0);
+    match status {
+        "adopted" => Some((
+            crate::i18n::tr_fmt(
+                "自动对齐：已采用（增益 {}）",
+                &[&gain.map(percent).unwrap_or_else(|| "—".to_owned())],
+            ),
+            accent(),
+        )),
+        "reverted_insufficient_gain" => Some((
+            crate::i18n::tr_fmt(
+                "自动对齐：收益不足已回退（{}），按未对齐几何出图",
+                &[&gain.map(percent).unwrap_or_else(|| "—".to_owned())],
+            ),
+            dim(),
+        )),
+        "failed" => Some((
+            crate::i18n::t!(
+                "自动对齐：估计失败，已按未对齐几何出图；建议用三脚架重拍，或关闭自动对齐后重试"
+            )
+            .to_owned(),
+            danger(),
+        )),
+        _ => None,
+    }
+}
+
 /// 焦点合成：一组不同对焦距离的帧融成一张全景深。
 ///
 /// Focus stacking: fuse a bracket taken at different focus distances into one all-in-focus
@@ -1179,6 +1226,13 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         state.focus_threshold,
         state.focus_smooth_z,
         state.focus_feather,
+        // 自动对齐也是「影响成片」的参数：改了就要置落盘脏标记、并作废旧深度图预览
+        // （预览走的是未对齐几何，勾上对齐后它就不再代表成片了）。
+        //
+        // Auto alignment also changes the delivered image: flipping it must mark the
+        // settings dirty and void the stale depth-map preview (that preview follows the
+        // unaligned geometry and no longer represents the still once alignment is on).
+        state.focus_align,
     );
     // 没对齐就先说一句，并就地给个按钮：让用户自己去别处找「开始对齐」，这句提示
     // 就只是抱怨。
@@ -1224,10 +1278,34 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 }))
                 .clicked();
             if picked && !busy {
+                // 切到金字塔法时深度图预览已无意义（它不产生深度图）：就地清掉纹理与
+                // 说明，而不是等本帧末的快照比对——那会让旧图在同一帧里闪一下就消失。
+                //
+                // Switching to the pyramid method makes the depth-map preview meaningless
+                // (it produces no depth map): clear the texture and caption right here
+                // instead of waiting for the end-of-frame snapshot comparison, which would
+                // flash the stale image for the rest of this frame.
+                if method == Method::Pyramid && state.focus_method != Method::Pyramid {
+                    state.focus_depth_tex = None;
+                    state.focus_depth_note = None;
+                }
                 state.focus_method = method;
             }
         }
     });
+    // 合成前自动对齐（默认关）：breathing 补偿是「多一步、贵一点、可能回退」的事，
+    // 不能替用户默认打开；勾上才做，且做没做、收益多少都会在状态行如实交代。
+    //
+    // Pre-fusion auto alignment (off by default): breathing compensation costs an extra
+    // pass and may well revert, so it is never turned on behind the user's back. Whether it
+    // ran and how much it gained is reported honestly below.
+    ui.add_enabled(
+        !busy,
+        egui::Checkbox::new(&mut state.focus_align, crate::i18n::t!("合成前自动对齐")),
+    )
+    .on_hover_text(crate::i18n::t!(
+        "先估每帧的 8×6 网格位移，再逐块补偿：对焦时的呼吸式轻微缩放也能压住。收益不足 0.5% 会自动回退成不做（成片与关闭时逐点一致）；估计失败照样出图，只是按未对齐几何。默认关闭"
+    ));
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(crate::i18n::t!("从当前帧起，向后多取"))
@@ -1326,6 +1404,23 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         ) {
             state.focus_feather = feather as f32;
         }
+    } else if state.focus_method == Method::Pyramid {
+        // 切到金字塔法时这两根滑杆会整块消失：不给一句交代，用户会以为功能丢了
+        // （PRD PYR-2 要求「显式说明不适用」，不许静默）。
+        //
+        // Switching to the pyramid method makes both sliders disappear wholesale; leaving it
+        // unsaid reads as "the feature vanished" (PRD PYR-2 demands an explicit "not
+        // applicable" statement, never silence).
+        ui.add(
+            egui::Label::new(
+                RichText::new(crate::i18n::t!(
+                    "深度去斑与过渡羽化：金字塔法不适用（多尺度融合自带过渡）"
+                ))
+                .size(SIZE_SMALL)
+                .color(dim()),
+            )
+            .wrap(),
+        );
     }
     ui.horizontal(|ui| {
         // 预览按钮在合成按钮左边：一个只看不写（前台算降采样归属图），
@@ -1334,7 +1429,13 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         // The preview button sits left of the merge button: one looks without writing
         // (a downsampled ownership map computed in the foreground), one writes files
         // (full resolution on the background thread).
-        let can_preview = !busy && state.seq.is_some();
+        // 金字塔法不产生深度图：按钮置灰，而不是让用户点完发现没反应（PRD PYR-2 的
+        // 「禁止伪预览」）。
+        //
+        // The pyramid method produces no depth map: disable the button instead of letting the
+        // user click and see nothing (PRD PYR-2's "no fake preview").
+        let pyramid = state.focus_method == Method::Pyramid;
+        let can_preview = !busy && state.seq.is_some() && !pyramid;
         if ui
             .add_enabled(
                 can_preview,
@@ -1348,6 +1449,17 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             .clicked()
         {
             state.focus_depth_preview(ctx);
+        }
+        // 置灰的原因必须写在按钮旁边，不能只靠「按不下去」让人猜。
+        //
+        // The reason for the greyed-out state belongs right next to the button; "it does not
+        // respond" is not an explanation.
+        if pyramid {
+            ui.label(
+                RichText::new(crate::i18n::t!("金字塔法不产生深度图"))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
+            );
         }
         let go = ui
             .add_enabled(
@@ -1372,6 +1484,13 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 "threshold": state.focus_threshold,
                 "smooth_z": state.focus_smooth_z,
                 "feather": state.focus_feather,
+                // 面板把勾选状态**显式**传下去：命令面的缺省值仍是 false（X-C1 红线，
+                // 脚本面必须确定），不靠「缺省即面板意图」这种隐式约定。
+                //
+                // The panel passes the checkbox state **explicitly**: the command's default
+                // stays false (X-C1's red line -- scripts need determinism), so this never
+                // leans on an implicit "the default is whatever the panel wants".
+                "align": state.focus_align,
                 "confirm": true,
             });
             if let Err(e) = state.run_ui_command(ctx, "focus.merge", &args) {
@@ -1388,12 +1507,27 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .color(accent()),
         );
     }
+    // 自动对齐的三态如实上屏：面板**不重算**增益、也不把失败显示成成功。
+    //
+    // The three states of auto alignment go on screen as they are: the panel never recomputes
+    // the gain and never dresses a failure up as success.
+    if let Some((text, colour)) = focus_align_status_row(state) {
+        ui.add(egui::Label::new(RichText::new(text).size(SIZE_SMALL).color(colour)).wrap());
+    }
     if let Some(err) = state.focus_error.clone() {
         ui.label(RichText::new(err).size(SIZE_SMALL).color(danger()));
     }
     // 深度图预览：按可用宽度缩放、保持纵横比（与时间合成预览同一条路）；
-    // 说明行挂尺寸 / 耗时 / 参考帧，失败时挂原因。
-    if let Some(tex) = state.focus_depth_tex.as_ref() {
+    // 说明行挂尺寸 / 耗时 / 参考帧，失败时挂原因。金字塔法下不画（它不产生深度图，
+    // 残留纹理只会误导），这是「禁止伪预览」的最后一道兜底。
+    //
+    // Depth-map preview: scaled to the available width, aspect preserved (the same path as
+    // the time-blend preview); the caption carries size / elapsed / reference frame, or the
+    // failure reason. Nothing is drawn under the pyramid method (it produces no depth map,
+    // and a leftover texture only misleads) -- the last guard of "no fake preview".
+    if state.focus_method != Method::Pyramid
+        && let Some(tex) = state.focus_depth_tex.as_ref()
+    {
         let size = tex.size_vec2();
         let avail = ui.available_width();
         let scale = if size.x > 0.0 && avail > 0.0 {
@@ -1416,6 +1550,7 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             state.focus_threshold,
             state.focus_smooth_z,
             state.focus_feather,
+            state.focus_align,
         )
     {
         state.focus_depth_tex = None;
@@ -3795,5 +3930,62 @@ mod focus_hint_tests {
             forward_caption(8, aevum_core::focus::MAX_FRAMES),
             "不同帧数必须给出不同说明"
         );
+    }
+
+    /// 三态状态行：只说真话、只说一次。
+    ///
+    /// `off` 与缺字段一律不出行（没跑不值得占一行）；`adopted` 用强调色并给出带符号的
+    /// 百分比；回退用次要色；**失败必须是危险色**——把失败画成成功是这条判据守的东西。
+    ///
+    /// The three-state row tells the truth, once: `off` and a missing field emit nothing
+    /// ("it did not run" is not worth a line); `adopted` uses the accent colour and a signed
+    /// percentage; a revert uses the secondary colour; **a failure must be the danger
+    /// colour** -- dressing a failure as success is exactly what this assertion guards.
+    #[test]
+    fn the_status_row_reports_three_states_and_stays_silent_when_off() {
+        let mut state = AppState::new();
+        // 没有结果 → 不出行。
+        assert!(focus_align_status_row(&state).is_none(), "没结果不该出行");
+        // 非焦点合并的结果 → 也不出行（同一个 `merge_result` 字段被五种合并共用）。
+        //
+        // A non-focus result emits nothing either: all five merge kinds share one
+        // `merge_result` field.
+        state.merge_result = Some(serde_json::json!({"kind": "hdr", "align_status": "adopted"}));
+        assert!(
+            focus_align_status_row(&state).is_none(),
+            "HDR 的结果不该借用这一行"
+        );
+
+        state.merge_result = Some(serde_json::json!({
+            "kind": "focus", "align_status": "off", "align_gain": 0.0, "align_reason": "",
+        }));
+        assert!(focus_align_status_row(&state).is_none(), "off 不该出行");
+
+        state.merge_result = Some(serde_json::json!({
+            "kind": "focus", "align_status": "adopted", "align_gain": 1.110231,
+            "align_reason": "已采用",
+        }));
+        let (text, colour) = focus_align_status_row(&state).expect("adopted 必须出行");
+        assert!(text.contains("已采用"), "文案要说清采用了：{text}");
+        assert!(text.contains("+111.0%"), "增益要带符号保留一位小数：{text}");
+        assert_eq!(colour, accent(), "采用是好事，用强调色");
+
+        state.merge_result = Some(serde_json::json!({
+            "kind": "focus", "align_status": "reverted_insufficient_gain",
+            "align_gain": -0.018796, "align_reason": "收益不足已回退",
+        }));
+        let (text, colour) = focus_align_status_row(&state).expect("回退必须出行");
+        assert!(text.contains("回退"), "文案要说清回退了：{text}");
+        assert!(text.contains("-1.9%"), "负增益也要带符号：{text}");
+        assert_eq!(colour, dim(), "回退是中性结果，不用危险色");
+
+        state.merge_result = Some(serde_json::json!({
+            "kind": "focus", "align_status": "failed", "align_gain": 0.0,
+            "align_reason": "估计失败",
+        }));
+        let (text, colour) = focus_align_status_row(&state).expect("失败必须出行");
+        assert!(text.contains("失败"), "失败要直说：{text}");
+        assert_eq!(colour, danger(), "失败必须是危险色，不许画成成功");
+        assert_ne!(colour, accent(), "危险色不能与强调色相同");
     }
 }
