@@ -12825,19 +12825,15 @@ fn ensure_out_dir_safe(root: &Path, out: &Path) -> Result<(), String> {
 /// One focus auto-alignment estimate, consumed by the wiring layer for the image and the
 /// result JSON.
 struct FocusAlignPass {
-    /// `"adopted"` / `"reverted_insufficient_gain"` / `"failed"`，与结果 JSON 同字面量。
+    /// 三态本体。结果 JSON 的字符串由 [`AlignStatus::key`] 给出，不在这里手写。
     ///
-    /// `"adopted"` / `"reverted_insufficient_gain"` / `"failed"`, the same literals as the
-    /// result JSON.
-    status: &'static str,
+    /// The three states themselves. The result JSON's string comes from
+    /// [`AlignStatus::key`]; no literal is hand-written here.
+    status: AlignStatus,
     /// 相对增益（0.012 = +1.2%）。
     ///
     /// Relative gain (0.012 means +1.2%).
     gain: f32,
-    /// 可翻译模板键：已采用 / 收益不足已回退 / 估计失败。
-    ///
-    /// Translatable template key: adopted / reverted / failed.
-    reason: &'static str,
     /// 逐帧 8×6 累计位移场（全分辨率 px），采用时逐块 warp 用。
     ///
     /// Per-frame accumulated 8x6 shift field in full-resolution px, used by the per-block
@@ -12868,10 +12864,9 @@ fn focus_align_pass(
     manual_crop: Option<CropRect>,
     cancel: &AtomicBool,
 ) -> Result<FocusAlignPass, String> {
-    let failed = |reason: &'static str| FocusAlignPass {
-        status: "failed",
+    let failed = || FocusAlignPass {
+        status: AlignStatus::Failed,
         gain: 0.0,
-        reason,
         blocks: Vec::new(),
         crop: CropRect {
             x: 0,
@@ -12881,7 +12876,7 @@ fn focus_align_pass(
         },
     };
     if frames.len() < 2 || w == 0 || h == 0 {
-        return Ok(failed(focus_align::REASON_FAILED));
+        return Ok(failed());
     }
     if cancel.load(Ordering::SeqCst) {
         return Err("已取消：还没开始估计自动对齐".to_owned());
@@ -12924,11 +12919,7 @@ fn focus_align_pass(
     if cancel.load(Ordering::SeqCst) {
         return Err("已取消：自动对齐估完了，还没开始融合".to_owned());
     }
-    let status = match report.status {
-        AlignStatus::Adopted => "adopted",
-        AlignStatus::RevertedInsufficientGain => "reverted_insufficient_gain",
-        AlignStatus::Failed => "failed",
-    };
+    let status = report.status;
     let blocks = if report.status == AlignStatus::Adopted {
         report.blocks.clone()
     } else {
@@ -12937,7 +12928,6 @@ fn focus_align_pass(
     Ok(FocusAlignPass {
         status,
         gain: report.gain,
-        reason: report.reason,
         blocks,
         crop: report.crop.unwrap_or(crop),
     })
@@ -13211,7 +13201,6 @@ fn run_merge_job(
     // (and for every other merge kind).
     let mut align_status = "off";
     let mut align_gain = 0.0f32;
-    let mut align_reason = "";
 
     let (mut pixels, ow, oh) = match job.kind {
         MergeKind::Hdr => {
@@ -13267,16 +13256,15 @@ fn run_merge_job(
                 }
                 let manual_crop = job.framing.first().and_then(|(c, _)| *c);
                 let outcome = focus_align_pass(&work, w, h, opts.radius, manual_crop, cancel)?;
-                align_status = outcome.status;
+                align_status = outcome.status.key();
                 align_gain = outcome.gain;
-                align_reason = outcome.reason;
                 // 估计失败与收益不足都**照样出图**，用未对齐几何：不许伪装成功，
                 // 也不许让整个任务失败（三态处置见设计 §1.2）。
                 //
                 // Both a failed estimate and insufficient gain still produce an image, on
                 // the unaligned geometry: never pretend success, and never fail the job
                 // (the three-state handling is in design section 1.2).
-                if outcome.status == "adopted" {
+                if outcome.status == AlignStatus::Adopted {
                     let window = if manual_crop.is_some() {
                         // 读帧循环已经按手动裁切框裁过，输出窗口就是整幅。
                         //
@@ -13363,15 +13351,23 @@ fn run_merge_job(
         "indices": job.indices,
         "width": ow,
         "height": oh,
-        // 自动对齐的三态、增益与原因。`align:false` 时为 "off" / 0 / 空串：调用方
-        // 看状态就知道这次到底跑没跑，不用去猜「gain 是 0 还是没算」。
+        // 自动对齐的三态与增益。`align:false` 时为 "off" / 0：调用方看状态就知道这次
+        // 到底跑没跑，不用去猜「gain 是 0 还是没算」。
         //
-        // The three states, gain and reason of auto alignment. With `align: false` these
-        // are "off" / 0 / an empty string, so a caller can tell "not run" from "ran and
-        // gained nothing" without guessing.
+        // **不外发中文 reason**：MCP 与脚本没有 i18n 漏斗，中文模板键原样出去英文用户
+        // 必见中文。状态键已经够判读，给人看的整句由各端自己按状态选（面板走 i18n 表，
+        // MCP 只报机器键）。
+        //
+        // The three states and the gain of auto alignment. With `align: false` these are
+        // "off" / 0, so a caller can tell "not run" from "ran and gained nothing" without
+        // guessing.
+        //
+        // The Chinese reason is **never** emitted: MCP and scripts have no i18n funnel, and
+        // shipping a Chinese template key would show Chinese to English users. The status
+        // key is enough to branch on; the human sentence is chosen per front end (the panel
+        // goes through the i18n table, MCP only sees the machine keys).
         "align_status": align_status,
         "align_gain": align_gain,
-        "align_reason": align_reason,
     }))
 }
 
@@ -18888,7 +18884,40 @@ mod focus_align_wiring_tests {
         );
         assert_eq!(result_false["align_status"], json!("off"), "显式关应是 off");
         assert_eq!(result_off["align_gain"], json!(0.0), "off 时增益必须是 0");
-        assert_eq!(result_off["align_reason"], json!(""), "off 时原因是空串");
+        // 中文 reason 一律不外发（MCP / 脚本没有 i18n 漏斗）；字段本身也不该存在。
+        //
+        // The Chinese reason is never emitted (MCP and scripts have no i18n funnel), and
+        // the field itself must not exist either.
+        assert!(
+            result_off.get("align_reason").is_none(),
+            "结果 JSON 不该再有 align_reason：{result_off}"
+        );
+        // 机器键必须与 `AlignStatus::key()` 逐字一致，且整段 JSON 里不许有汉字——
+        // 这份 JSON 会经 attached MCP 原样送到前端，中文模板键漏出去就等于把中文塞给
+        // 英文用户。
+        //
+        // The machine key must match `AlignStatus::key()` verbatim, and the whole JSON must
+        // contain no CJK -- it travels through attached MCP to clients as-is, so a leaked
+        // Chinese template key would put Chinese in front of English users.
+        // 状态键本身必须是纯 ASCII 机器键（整段 JSON 的汉字检查放在 MCP 侧那条判据：
+        // 这里的成片路径带着中文输出目录名，整段扫汉字会假红）。
+        //
+        // The status key itself must be a pure-ASCII machine key (the whole-JSON CJK check
+        // lives in the MCP-side assertion: this fixture's output path carries a Chinese
+        // directory name, so scanning the entire JSON would false-red here).
+        let status = result_off["align_status"].as_str().expect("状态键是字符串");
+        assert!(status.is_ascii(), "状态键必须是 ASCII 机器键：{status}");
+        assert!(
+            [
+                AlignStatus::Adopted,
+                AlignStatus::RevertedInsufficientGain,
+                AlignStatus::Failed
+            ]
+            .iter()
+            .any(|s| s.key() == status)
+                || status == "off",
+            "状态键只能来自 key() 或 off：{status}"
+        );
 
         let a = read_rgb(&path_off);
         let b = read_rgb(&path_false);
@@ -18937,11 +18966,15 @@ mod focus_align_wiring_tests {
             run_focus(&mut state, &ctx, &dir, "对齐", json!({"align": true}));
         let gain = result["align_gain"].as_f64().expect("增益是数");
         eprintln!(
-            "A-C2 align_status={} align_gain={gain:.6} reason={} size={}x{}",
-            result["align_status"], result["align_reason"], result["width"], result["height"],
+            "A-C2 align_status={} align_gain={gain:.6} size={}x{}",
+            result["align_status"], result["width"], result["height"],
         );
         assert_eq!(started["align"], json!(true), "启动回执应回 true");
-        assert_eq!(result["align_status"], json!("adopted"), "错位栈应被采用");
+        assert_eq!(
+            result["align_status"],
+            json!(AlignStatus::Adopted.key()),
+            "状态键必须来自 AlignStatus::key()，不是手写串"
+        );
         assert!(
             gain >= f64::from(focus_align::GAIN_MIN),
             "增益 {gain} 未达阈值 {}",
@@ -19046,7 +19079,7 @@ mod focus_align_wiring_tests {
         );
         assert_eq!(
             on["align_status"],
-            json!("reverted_insufficient_gain"),
+            json!(AlignStatus::RevertedInsufficientGain.key()),
             "干净栈应因收益不足回退"
         );
         assert!(

@@ -110,6 +110,29 @@ pub enum AlignStatus {
     Failed,
 }
 
+impl AlignStatus {
+    /// 稳定的机器键，命令面与结果 JSON 用它（**不要**手写字面量，改枚举时这里编译报错）。
+    ///
+    /// 与 [`crate::focus_align::REASON_ADOPTED`] 的中文模板键分开：那些是给人看的译文键，
+    /// 这些是给脚本与 MCP 客户端判读的短串。MCP 侧没有 i18n 漏斗，把中文模板键原样
+    /// 透传出去英文用户必见中文，所以对外一律走这一组。
+    ///
+    /// Stable machine key, used by the command surface and the result JSON (**never** hand
+    /// write these literals -- changing the enum should break compilation here).
+    ///
+    /// Kept apart from the Chinese template keys ([`crate::focus_align::REASON_ADOPTED`]):
+    /// those are translation keys for humans, these are short strings for scripts and MCP
+    /// clients. MCP has no i18n funnel, so leaking a Chinese template key there would show
+    /// Chinese to English users; everything outward-facing goes through this set.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Adopted => "adopted",
+            Self::RevertedInsufficientGain => "reverted_insufficient_gain",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 /// 一次焦点对齐的完整报告，供接线层出图与面板显示。
 ///
 /// Full report of one focus-alignment pass, consumed by the wiring layer and the panel.

@@ -1057,6 +1057,41 @@ fn focus_merge_recovers_each_band_from_the_frame_that_holds_its_texture() {
     assert_eq!(merged["frames"], 3);
     assert_eq!(merged["width"], 48);
     assert_eq!(merged["height"], 48);
+    // 结果 JSON 不许夹带中文：这份 JSON 会原样送到 MCP 客户端，那边没有 i18n 漏斗，
+    // 一个中文模板键就是一个英文用户看不懂的字段。对齐三态只走机器键。
+    //
+    // The result JSON must carry no Chinese: it goes to MCP clients as-is, and there is no
+    // i18n funnel on that side -- one Chinese template key is one field an English user
+    // cannot read. The alignment states travel as machine keys only.
+    let text = merged.to_string();
+    assert!(
+        !text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+        "焦点合成结果 JSON 含中文：{text}"
+    );
+    assert!(
+        merged.get("align_reason").is_none(),
+        "结果 JSON 不该有中文 reason 字段：{text}"
+    );
+    // 状态键若存在，只能是 key() 那三个之一（或 off）；这里 headless 路径不跑自动对齐，
+    // 因此不该出现任何非 off 的值——出现就说明有人把 align 结果接歪了。
+    //
+    // If a status key is present it must be one of the three `key()` values (or "off");
+    // the headless path does not run auto alignment here, so anything but "off" would mean
+    // the align result got wired in wrong.
+    if let Some(status) = merged.get("align_status").and_then(|v| v.as_str()) {
+        use aevum_core::focus_align::AlignStatus;
+        let legal = [
+            AlignStatus::Adopted,
+            AlignStatus::RevertedInsufficientGain,
+            AlignStatus::Failed,
+        ]
+        .iter()
+        .any(|s| s.key() == status)
+            || status == "off";
+        assert!(legal, "align_status 不是 key() 产出的机器键：{status}");
+        assert!(status.is_ascii(), "align_status 必须是 ASCII：{status}");
+    }
+
     let path = merged["path"].as_str().expect("成片路径");
     assert!(
         path.ends_with("focus_000000_3f.png"),
