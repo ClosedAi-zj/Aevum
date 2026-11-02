@@ -37,6 +37,8 @@
 //! The result is always a **suggestion**: whether it lands on `flags` is the UI's decision, so a
 //! wrong call costs one undo instead of silently editing the user's sequence.
 
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 /// 筛选规则。数值一律用 EV（相对中位数）与比例，不用绝对亮度。
@@ -329,6 +331,200 @@ fn median(v: &mut [f64]) -> Option<f64> {
     })
 }
 
+/// 剔除成子序列：把没被拒收的帧复制成一条新序列。
+///
+/// Extract a subsequence: copy every frame that was not rejected into a new sequence.
+///
+/// 路径安全（[`check_target`]）先于一切 IO；复制时保留 mtime，这样测光缓存
+/// 的 `(mtime, len)` 键在新序列里继续命中，几百帧的账不用重算。
+///
+/// Path safety ([`check_target`]) comes before any IO; copies preserve mtime so the metering
+/// cache's `(mtime, len)` keys keep hitting in the new sequence and a few hundred frames of
+/// measurements are not recomputed.
+pub struct ExtractPlan {
+    /// 会复制哪些帧（源绝对路径，按传入顺序）。
+    ///
+    /// Which frames would be copied (source absolute paths, in the given order).
+    pub kept: Vec<PathBuf>,
+    /// 这些帧的总字节数（体积预估的依据）。
+    ///
+    /// Total bytes of those frames (the size estimate).
+    pub bytes: u64,
+}
+
+/// 目标路径不安全的原因。
+///
+/// Why a target path is unsafe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TargetError {
+    /// 目标就是源序列根，或落在源序列根里面——往自己肚子里复制只会越滚越大。
+    ///
+    /// The target is the source root or inside it -- copying into itself only grows.
+    InsideSource,
+    /// 目标是盘符根或没有父目录——整盘根目录不是一个序列该待的地方。
+    ///
+    /// The target is a drive root or has no parent -- a drive root is no home for a sequence.
+    DriveRoot,
+    /// 目标已存在且非空——不覆盖任何东西，让用户换一个目录。
+    ///
+    /// The target exists and is non-empty -- nothing gets overwritten; pick another folder.
+    NotEmpty,
+}
+
+/// 抽取失败的原因：目标不安全，或复制途中 IO 出错。
+///
+/// Why an extraction failed: an unsafe target, or an IO error mid-copy.
+#[derive(Debug)]
+pub enum ExtractError {
+    Target(TargetError),
+    Io(std::io::Error),
+}
+
+impl TargetError {
+    pub fn cn(self) -> &'static str {
+        match self {
+            Self::InsideSource => "目标不能是源序列根或其内部",
+            Self::DriveRoot => "目标不能是盘符根或没有父目录的路径",
+            Self::NotEmpty => "目标目录已存在且非空：换一个目录，或先清空它",
+        }
+    }
+}
+
+/// 宽松规范化：目标多半还不存在，`canonicalize` 会失败——找到最深的存在祖先
+/// 规范化（消掉 `\\?\` 前缀、短名与大小写差异），其余段原样接回去。
+///
+/// Loose normalisation: the target usually does not exist yet and `canonicalize` fails -- walk
+/// down to the deepest existing ancestor, canonicalise it (settling the `\\?\` prefix, short
+/// names and case), then append the remaining segments as they were.
+fn canonical_loose(p: &Path) -> PathBuf {
+    let mut cur = p.to_path_buf();
+    let mut suffix: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        match cur.canonicalize() {
+            Ok(c) => {
+                let mut out = c;
+                for seg in suffix.iter().rev() {
+                    out.push(seg);
+                }
+                return out;
+            }
+            Err(_) => match (cur.file_name(), cur.parent()) {
+                (Some(name), Some(parent)) if !name.is_empty() => {
+                    suffix.push(name.to_owned());
+                    cur = parent.to_path_buf();
+                }
+                _ => return p.to_path_buf(),
+            },
+        }
+    }
+}
+
+/// 目标路径安全检查：不是源内部、不是盘根、不存在或为空。
+///
+/// Target path safety: not inside the source, not a drive root, absent or empty.
+pub fn check_target(source_root: &Path, target: &Path) -> Result<(), TargetError> {
+    // 盘根（`E://`）与无父目录的路径都不收。
+    //
+    // Drive roots (`E://`) and parentless paths are both refused.
+    if target
+        .parent()
+        .map(|p| p.as_os_str().is_empty())
+        .unwrap_or(true)
+    {
+        return Err(TargetError::DriveRoot);
+    }
+    let src = canonical_loose(source_root);
+    let dst = canonical_loose(target);
+    if dst.starts_with(&src) {
+        return Err(TargetError::InsideSource);
+    }
+    match std::fs::read_dir(target) {
+        Ok(mut it) => {
+            if it.next().is_some() {
+                return Err(TargetError::NotEmpty);
+            }
+        }
+        Err(_) => {}
+    }
+    Ok(())
+}
+
+/// 体积预估：保留帧的个数与总字节，一个字节都不写。
+///
+/// Size estimate: how many frames would be copied and their total bytes, without writing
+/// anything.
+pub fn plan_extract(kept: &[PathBuf]) -> ExtractPlan {
+    let bytes = kept
+        .iter()
+        .filter_map(|p| std::fs::metadata(p).ok())
+        .map(|m| m.len())
+        .sum();
+    ExtractPlan {
+        kept: kept.to_vec(),
+        bytes,
+    }
+}
+
+/// 执行复制：帧进目标根（平铺，重名直接报错），测光缓存跟着走。
+/// 返回实际写入的字节数。源序列一个字节都不动。
+///
+/// Run the copy: frames land flat in the target root (duplicate names are an error) and the
+/// metering cache comes along. Returns the bytes actually written. The source is never
+/// touched.
+pub fn extract(source_root: &Path, kept: &[PathBuf], target: &Path) -> Result<u64, ExtractError> {
+    check_target(source_root, target).map_err(ExtractError::Target)?;
+    std::fs::create_dir_all(target).map_err(ExtractError::Io)?;
+    let mut written = 0u64;
+    let mut seen = std::collections::BTreeSet::new();
+    for src in kept {
+        let name = src
+            .file_name()
+            .ok_or_else(|| {
+                ExtractError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "frame without a file name",
+                ))
+            })?
+            .to_owned();
+        if !seen.insert(name.clone()) {
+            return Err(ExtractError::Io(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("duplicate file name {name:?}"),
+            )));
+        }
+        let dst = target.join(&name);
+        let meta = std::fs::metadata(src).map_err(ExtractError::Io)?;
+        let modified = meta.modified().map_err(ExtractError::Io)?;
+        std::fs::copy(src, &dst).map_err(ExtractError::Io)?;
+        // mtime 原样带过去：测光缓存按 (mtime, len) 记账，时间一变整册重测。
+        //
+        // Carry the mtime over: the metering cache keys on (mtime, len), and a new time would
+        // force a full re-measure.
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&dst)
+            .map_err(ExtractError::Io)?;
+        f.set_times(std::fs::FileTimes::new().set_modified(modified))
+            .map_err(ExtractError::Io)?;
+        written += meta.len();
+    }
+    // 测光缓存整份带走：键是相对路径 + (mtime, len)，平铺且保留了 mtime 的
+    // 情况下新序列直接命中；子目录素材的键对不上，退化为一次全量重测，无害。
+    //
+    // The metering cache comes along whole: keys are relative paths plus (mtime, len), so a
+    // flat layout with preserved mtimes hits directly; sub-folder material misses and degrades
+    // to one full re-measure, which is harmless.
+    let cache = crate::measures::cache_path(source_root);
+    if cache.is_file() {
+        let dst = crate::measures::cache_path(target);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent).map_err(ExtractError::Io)?;
+        }
+        std::fs::copy(&cache, &dst).map_err(ExtractError::Io)?;
+    }
+    Ok(written)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,5 +712,144 @@ mod tests {
         assert_eq!(v.frames[0].reason, Some(Reason::Unreadable));
         assert_eq!(v.frames[1].reason, Some(Reason::Unreadable));
         assert!(!v.frames[2].reject);
+    }
+
+    /// 抽取：保留帧逐份复制、mtime 原样、测光缓存跟着走，源序列一个字节不动。
+    ///
+    /// Extraction: kept frames copied one by one, mtimes preserved, the metering cache along,
+    /// and the source not touched by a single byte.
+    #[test]
+    fn extract_copies_kept_frames_and_carries_the_metering_cache() {
+        let base = std::env::temp_dir().join(format!(
+            "aevum-extract-core-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let src = base.join("src");
+        std::fs::create_dir_all(src.join(".aevum")).expect("建源序列");
+        let mut src_bytes = Vec::new();
+        for (i, v) in [10u8, 20, 30].iter().enumerate() {
+            let img = image::RgbImage::from_fn(4, 4, |_, _| image::Rgb([*v, *v, *v]));
+            let p = src.join(format!("s{i:03}.png"));
+            img.save(&p).expect("写源帧");
+            src_bytes.push(std::fs::read(&p).expect("读源帧"));
+        }
+        // 源序列留一份测光缓存，抽取后必须原样出现在目标。
+        //
+        // Leave a metering cache in the source; it must reappear unchanged in the target.
+        std::fs::write(src.join(".aevum/measures.json"), b"{\"version\":1}").expect("写缓存");
+
+        let kept = vec![src.join("s000.png"), src.join("s002.png")];
+        let plan = plan_extract(&kept);
+        assert_eq!(plan.kept.len(), 2);
+        assert!(plan.bytes > 0, "体积预估要拿到实际字节");
+
+        let dst = base.join("dst");
+        let written = extract(&src, &kept, &dst).expect("抽取");
+        // 目标帧数 = 保留数，且内容逐字节一致（加 .aevum 目录一共三项）。
+        //
+        // Target frame count = kept count, contents match byte for byte (two frames plus the
+        // .aevum folder).
+        let names: Vec<_> = std::fs::read_dir(&dst)
+            .expect("列目标")
+            .map(|e| e.expect("条目").file_name())
+            .collect();
+        assert_eq!(names.len(), 3);
+        for name in ["s000.png", "s002.png"] {
+            let copied = std::fs::read(dst.join(name)).expect("读复制帧");
+            let want = &src_bytes[if name == "s000.png" { 0 } else { 2 }];
+            assert_eq!(&copied, want, "{name} 内容不一致");
+        }
+        // mtime 原样：测光缓存的 (mtime, len) 键要继续命中。
+        //
+        // The mtime carries over: the cache's (mtime, len) keys must keep hitting.
+        for name in ["s000.png", "s002.png"] {
+            let a = std::fs::metadata(src.join(name))
+                .expect("源元数据")
+                .modified()
+                .expect("源 mtime");
+            let b = std::fs::metadata(dst.join(name))
+                .expect("目标元数据")
+                .modified()
+                .expect("目标 mtime");
+            assert_eq!(a, b, "{name} 的 mtime 没保留");
+        }
+        // 测光缓存跟着走。
+        //
+        // The metering cache comes along.
+        assert_eq!(
+            std::fs::read(dst.join(".aevum/measures.json")).expect("读目标缓存"),
+            b"{\"version\":1}"
+        );
+        assert!(written > 0);
+        // 源序列一个字节都不动。
+        //
+        // The source is untouched.
+        for (i, bytes) in src_bytes.iter().enumerate() {
+            assert_eq!(
+                &std::fs::read(src.join(format!("s{i:03}.png"))).expect("再读源帧"),
+                bytes,
+                "第 {i} 帧被改写了"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 目标路径安全：源内部、盘根、非空目录都拒绝，且拒绝发生在任何写入之前。
+    ///
+    /// Target safety: inside the source, a drive root and a non-empty folder are all refused,
+    /// before anything is written.
+    #[test]
+    fn extract_refuses_unsafe_targets() {
+        let base = std::env::temp_dir().join(format!(
+            "aevum-extract-guard-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).expect("建源");
+        let img = image::RgbImage::from_fn(4, 4, |_, _| image::Rgb([8, 8, 8]));
+        img.save(src.join("s000.png")).expect("写帧");
+
+        // 源内部（包括源根本身）。
+        //
+        // Inside the source (including the root itself).
+        assert_eq!(
+            check_target(&src, &src.join("sub")),
+            Err(TargetError::InsideSource)
+        );
+        assert_eq!(check_target(&src, &src), Err(TargetError::InsideSource));
+        // 盘根：`E:////` 没有更上层的父目录。
+        //
+        // A drive root: `E:////` has no parent above it.
+        assert_eq!(
+            check_target(&src, std::path::Path::new("E:////")),
+            Err(TargetError::DriveRoot)
+        );
+        // 非空目录。
+        //
+        // A non-empty folder.
+        let occupied = base.join("occupied");
+        std::fs::create_dir_all(&occupied).expect("建占用目录");
+        std::fs::write(occupied.join("x.txt"), b"x").expect("占位");
+        assert_eq!(check_target(&src, &occupied), Err(TargetError::NotEmpty));
+        // 占用目录里一个文件都不该被写出来。
+        //
+        // Not a single file may appear inside the occupied folder.
+        assert_eq!(std::fs::read_dir(&occupied).expect("列占用").count(), 1);
+        // 空目录与不存在的目录都放行。
+        //
+        // Empty and absent folders both pass.
+        let empty = base.join("empty");
+        std::fs::create_dir_all(&empty).expect("建空目录");
+        assert_eq!(check_target(&src, &empty), Ok(()));
+        assert_eq!(check_target(&src, &base.join("absent")), Ok(()));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

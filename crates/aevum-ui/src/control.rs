@@ -542,6 +542,12 @@ pub fn command_catalog() -> Vec<CommandSpec> {
             schema: r#"{"type":"object","additionalProperties":false,"properties":{"suggest":{"type":"boolean","description":"用序列自身的亮度中位数绝对偏差推曝光区间（3×1.4826×MAD，下限 0.5 EV）；给了则覆盖 ev_low/ev_high"},"ev_low":{"type":"number","minimum":-10,"maximum":0,"description":"曝光下限（EV，相对 18% 中灰）"},"ev_high":{"type":"number","minimum":0,"maximum":10,"description":"曝光上限（EV）"},"jump_ev":{"type":"number","minimum":0,"maximum":10,"description":"与相邻帧的突变阈值（EV）；0 关闭这条判据"},"sharp_ratio":{"type":"number","minimum":0,"maximum":1,"description":"清晰度低于序列中位的这个比例就判废；0 关闭这条判据"},"apply":{"type":"boolean","description":"true 则把判废的帧标成排除（复用已有的旗标，不新增工程字段）"}}}"#,
         },
         CommandSpec {
+            id: "cull.extract",
+            summary: "把没被拒收的帧复制成一条新序列（剔除成子序列）：路径安全检查先行（不能是源内部、盘根或非空目录），复制保留 mtime、测光缓存一并带走（新序列不用重测）；开发参数属于源工程、不跟过去。dry_run: true 只报帧数与体积，不写任何东西。",
+            params: "target（目标目录，绝对路径）、dry_run?（只预估）、confirm（非 dry_run 必须 true）",
+            schema: r#"{"type":"object","additionalProperties":false,"properties":{"target":{"type":"string","description":"目标目录（绝对路径）；不能是源序列根或其内部、盘符根、已存在且非空的目录"},"dry_run":{"type":"boolean","description":"true 只报会复制几帧、共多少字节，不写任何东西"},"confirm":{"type":"boolean","description":"非 dry_run 时必须为 true"}},"required":["target"]}"#,
+        },
+        CommandSpec {
             id: "stack.merge",
             summary: "把同机位的一段帧按统计量合成一张：星轨取最亮、降噪取平均、去卫星取中值、杂散光与热噪点做 σ 截尾（批量写，必须 confirm: true）；会套对齐位移与统一裁切，尺寸对不齐会拒绝。长任务，立即返回，进度用 merge.status 查。",
             params: "frames?（帧下标数组，0 开始）或 center?+around?（默认当前帧±4）；mode?（lighten/average/median/sigma-clip）、clip_sigma?、fill_gaps?、out_dir?；confirm",

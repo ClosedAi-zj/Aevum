@@ -333,6 +333,47 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
                 state.cull_note = Some(e);
             }
         });
+        ui.separator();
+        // 剔除成子序列：目标目录 + 预估 / 导出。路径安全与体积预估都在命令层。
+        //
+        // Extract a subsequence: target folder plus estimate / export. Path safety and the size
+        // estimate live in the command layer.
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(crate::i18n::t!("子序列目录"))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
+            );
+            ui.add_enabled(
+                !state.cull_target.is_empty() || n > 0,
+                egui::TextEdit::singleline(&mut state.cull_target)
+                    .hint_text(crate::i18n::t!("D:////精选////日落"))
+                    .desired_width(220.0),
+            );
+        });
+        ui.horizontal(|ui| {
+            let estimate = bar_button(ui, "预估")
+                .on_hover_text(crate::i18n::t!("只报会复制几帧、共多少字节，不写任何东西"))
+                .clicked();
+            let export = bar_primary(ui, "导出子序列")
+                .on_hover_text(crate::i18n::t!(
+                    "把没被拒收的帧复制成一条新序列：保留 mtime、测光缓存一并带走；开发参数属于源工程、不跟过去"
+                ))
+                .clicked();
+            if (estimate || export)
+                && let Err(e) = state.run_ui_command(
+                    &cull_ctx,
+                    "cull.extract",
+                    &serde_json::json!({
+                        "target": state.cull_target,
+                        "dry_run": estimate,
+                        "confirm": !estimate,
+                    }),
+                )
+            {
+                state.cull_note = Some(e);
+            }
+        });
         if let Some(note) = state.cull_note.clone() {
             ui.label(
                 RichText::new(note)

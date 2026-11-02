@@ -1380,6 +1380,11 @@ pub struct AppState {
     /// One-line result of the last evaluation ("12 frames would be culled" / "clean"), echoed
     /// inside the group.
     pub cull_note: Option<String>,
+    /// 「剔除成子序列」的目标目录输入框缓冲；纯视图缓冲，不落工程。
+    ///
+    /// The target-folder input buffer of the subsequence extraction; a pure view buffer, never
+    /// written to the project.
+    pub cull_target: String,
     /// 画布上叠印逐帧时间戳（帧号 · 拍摄时间 · 机型曝光）。
     ///
     /// Burn the per-frame timestamp onto the canvas (frame number, capture time, camera and
@@ -2247,6 +2252,7 @@ impl AppState {
             cull_jump: 1.0,
             cull_sharp: 0.0,
             cull_note: None,
+            cull_target: String::new(),
             stamp_on: false,
             resolution: None,
             source_note: None,
@@ -3837,6 +3843,7 @@ impl AppState {
             "hdr.merge" => (String::new(), "HDR 合并".to_owned(), false),
             "pano.merge" => (String::new(), "全景合并".to_owned(), false),
             "cull.evaluate" => (String::new(), "筛选评估".to_owned(), false),
+            "cull.extract" => (String::new(), "剔除成子序列".to_owned(), false),
             "stack.merge" => (String::new(), "星空堆栈".to_owned(), false),
             "timeblend.merge" => (String::new(), "时间合成".to_owned(), false),
             "queue.run" => (String::new(), "批量渲染队列".to_owned(), false),
@@ -4059,6 +4066,7 @@ impl AppState {
             "hdr.merge" => self.cmd_hdr_merge(ctx, args),
             "pano.merge" => self.cmd_pano_merge(ctx, args),
             "cull.evaluate" => self.cmd_cull_evaluate(args),
+            "cull.extract" => self.cmd_cull_extract(args),
             "stack.merge" => self.cmd_stack_merge(ctx, args),
             "timeblend.merge" => self.cmd_timeblend_merge(ctx, args),
             "merge.status" => Ok(self.merge_status_json()),
@@ -6057,6 +6065,79 @@ impl AppState {
                 .map(|(i, step)| json!({"index": i, "step_ev": step}))
                 .collect::<Vec<Value>>(),
             "frames": frames,
+        }))
+    }
+
+    /// `cull.extract`：把没被拒收的帧复制成一条新序列（剔除成子序列）。
+    ///
+    /// `cull.extract`: copy every frame that was not rejected into a new sequence.
+    fn cmd_cull_extract(&mut self, args: &Value) -> Result<Value, String> {
+        let seq = self.require_sequence()?;
+        if seq.is_empty() {
+            return Err("序列里没有帧".to_owned());
+        }
+        let target = args
+            .get("target")
+            .and_then(Value::as_str)
+            .filter(|t| !t.trim().is_empty())
+            .ok_or_else(|| "target 要是目标目录的绝对路径".to_owned())?;
+        let target = std::path::PathBuf::from(target);
+        let root = seq.root.clone();
+        let dry_run = args
+            .get("dry_run")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !dry_run && !confirm(args) {
+            return Err(
+                "cull.extract 是批量写操作，需参数 confirm: true（只看体积用 dry_run: true）"
+                    .to_owned(),
+            );
+        }
+        // 路径安全先行：源内部、盘根、非空目录都在写任何东西之前拒绝。
+        //
+        // Path safety first: inside the source, a drive root and a non-empty folder are all
+        // refused before anything is written.
+        aevum_core::cull::check_target(&root, &target)
+            .map_err(|e| crate::i18n::tr(e.cn()).to_owned())?;
+        let paths = seq.paths();
+        let kept: Vec<PathBuf> = (0..paths.len())
+            .filter(|i| self.flag_at(*i) != -1)
+            .map(|i| paths[i].clone())
+            .collect();
+        if kept.is_empty() {
+            return Err("每一帧都被判废了：没有可保留的帧".to_owned());
+        }
+        if dry_run {
+            let plan = aevum_core::cull::plan_extract(&kept);
+            return Ok(json!({
+                "dry_run": true,
+                "frames": plan.kept.len(),
+                "bytes": plan.bytes,
+                "excluded": paths.len() - plan.kept.len(),
+                "target": target.display().to_string(),
+            }));
+        }
+        let bytes = aevum_core::cull::extract(&root, &kept, &target).map_err(|e| match e {
+            aevum_core::cull::ExtractError::Target(t) => crate::i18n::tr(t.cn()).to_owned(),
+            aevum_core::cull::ExtractError::Io(e) => crate::i18n::tr_fmt("复制失败：{}", &[&e]),
+        })?;
+        let note = crate::i18n::tr_fmt(
+            "已导出 {} 帧到 {}",
+            &[&kept.len(), &target.display().to_string()],
+        );
+        history::note("cull.extract", note.clone());
+        self.status = note.clone();
+        // 开发参数不跟过去（它们属于源序列的工程）；测光缓存已按 mtime 带走，
+        // 新序列打开时直接命中，不用重测。
+        //
+        // Develop settings do not follow (they belong to the source project); the metering
+        // cache was carried with mtimes, so the new sequence opens without a re-measure.
+        Ok(json!({
+            "copied": kept.len(),
+            "excluded": paths.len() - kept.len(),
+            "bytes": bytes,
+            "target": target.display().to_string(),
+            "note": note,
         }))
     }
 
@@ -16317,6 +16398,96 @@ mod command_tests {
             at(&manual, 19)
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 剔除成子序列：dry_run 只报数不写盘，confirm 复制保留帧；目标在源内部被拒。
+    ///
+    /// Extraction: a dry run only reports without writing, confirm copies the kept frames, and
+    /// a target inside the source is refused.
+    #[test]
+    fn cull_extract_reports_on_dry_run_and_copies_on_confirm() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let dir = stack_frame_dir("extract");
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.display().to_string()}),
+            )
+            .expect("打开序列");
+        // 中间那帧标成排除：保留帧应为 2。
+        //
+        // Mark the middle frame excluded: two frames should be kept.
+        state.flag_many(&[1], -1);
+        // 源序列放一份测光缓存，导出后必须原样出现在目标（不用重测）。
+        //
+        // Leave a metering cache in the source; it must reappear unchanged in the target (no
+        // re-measure).
+        std::fs::create_dir_all(dir.join(".aevum")).expect("建护带");
+        std::fs::write(dir.join(".aevum/measures.json"), b"{\"version\":1}").expect("写缓存");
+        let inside = dir.join("子序列");
+        let need_target = state
+            .run_ui_command(&ctx, "cull.extract", &json!({}))
+            .unwrap_err();
+        assert!(need_target.contains("target"), "{need_target}");
+        let refused = state
+            .run_ui_command(
+                &ctx,
+                "cull.extract",
+                &json!({"target": inside.display().to_string(), "dry_run": true}),
+            )
+            .unwrap_err();
+        assert!(refused.contains("源序列根"), "{refused}");
+        // dry_run：只报数，目标目录不许被创建。
+        //
+        // Dry run: report only, and the target folder must not be created.
+        let target = dir
+            .parent()
+            .unwrap()
+            .join(format!("aevum-extract-out-{}", std::process::id()));
+        let dry = state
+            .run_ui_command(
+                &ctx,
+                "cull.extract",
+                &json!({"target": target.display().to_string(), "dry_run": true}),
+            )
+            .expect("预估");
+        assert_eq!(dry["dry_run"], json!(true));
+        assert_eq!(dry["frames"], json!(2));
+        assert_eq!(dry["excluded"], json!(1));
+        assert!(dry["bytes"].as_u64().expect("体积") > 0);
+        assert!(!target.exists(), "dry_run 不许写盘");
+        // 没 confirm 的真复制被拒。
+        //
+        // A real copy without confirm is refused.
+        let no_confirm = state
+            .run_ui_command(
+                &ctx,
+                "cull.extract",
+                &json!({"target": target.display().to_string()}),
+            )
+            .unwrap_err();
+        assert!(no_confirm.contains("confirm"), "{no_confirm}");
+        let ok = state
+            .run_ui_command(
+                &ctx,
+                "cull.extract",
+                &json!({"target": target.display().to_string(), "confirm": true}),
+            )
+            .expect("导出");
+        assert_eq!(ok["copied"], json!(2));
+        let got: Vec<_> = std::fs::read_dir(&target)
+            .expect("列目标")
+            .map(|e| e.expect("条目").file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(got.len(), 3, "两帧 + .aevum：{got:?}");
+        assert!(
+            std::fs::read(dir.join("s001.png")).is_ok(),
+            "被排除的帧也要留在源序列里（源只读）"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&target);
     }
 
     /// 单测没有界面帧，等后台合并收尾只能自己把消息队列抽干。
