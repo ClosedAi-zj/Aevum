@@ -267,7 +267,7 @@ const FALLBACK_TOOLS: &[(&str, &str)] = &[
     ),
     (
         "timeblend.merge",
-        "把不同时刻的帧合成为一张（sky-ground 天取末帧地取首帧，bands 横向分带一带一帧；批量写，必须 confirm: true；长任务，立即返回，进度用 merge.status）。参数：frames?（帧下标数组，0 开始，升序=时间顺序）或 start?+around?（默认当前帧起 8 帧）/ layout?（sky-ground|bands）/ bands? / feather? / horizon? / match_exposure? / out_dir?（默认序列根下 时间合成/）/ confirm: true。",
+        "把不同时刻的帧合成为一张（sky-ground 天取末帧地取首帧，bands 横向分带一带一帧；批量写，必须 confirm: true；长任务，立即返回，进度用 merge.status）。参数：frames?（帧下标数组，0 开始，升序=时间顺序）或 start?+around?（默认当前帧起 8 帧）/ layout?（sky-ground|bands）/ bands? / feather? / horizon? / horizon_auto?（自动推地平线）/ deghost?（去鬼影阈值 EV，0 = 关，默认 0.5）/ match_exposure? / out_dir?（默认序列根下 时间合成/）/ confirm: true。",
     ),
     (
         "merge.status",

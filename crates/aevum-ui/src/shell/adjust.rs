@@ -10,6 +10,7 @@ use super::common::in_field;
 use super::common::kv;
 use super::common::note;
 use super::common::slider;
+use super::common::slider_row;
 use super::common::spec_slider;
 use super::dialogs::choose_audio;
 use super::dialogs::codec_label;
@@ -1096,10 +1097,40 @@ fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             );
         });
     } else {
-        let mut h = state.tb_horizon as f64;
-        if slider(ui, "tb_horizon", "地平线", &mut h, 0.0, 1.0, 0.5, 2, false) {
-            state.tb_horizon = h as f32;
+        ui.checkbox(
+            &mut state.tb_horizon_auto,
+            crate::i18n::t!("自动地平线：按行亮度梯度找天与地的分界"),
+        )
+        .on_hover_text(crate::i18n::t!(
+            "把所有帧逐行平均成亮度剖面，找最强的纵向台阶；找不到（阴天平光、纯天空）退回手动值"
+        ));
+        if !state.tb_horizon_auto {
+            let mut h = state.tb_horizon as f64;
+            if slider(ui, "tb_horizon", "地平线", &mut h, 0.0, 1.0, 0.5, 2, false) {
+                state.tb_horizon = h as f32;
+            }
         }
+    }
+    // 去鬼影走 slider_row：提示语挂在滑杆上（tip 参数），0 = 关闭。
+    //
+    // Deghosting goes through slider_row so the tip rides on the slider itself; 0 = off.
+    let mut dg = state.tb_deghost as f64;
+    if slider_row(
+        ui,
+        "tb_deghost",
+        "去鬼影",
+        &mut dg,
+        0.0,
+        2.0,
+        0.5,
+        2,
+        false,
+        "",
+        None,
+        false,
+        "0 = 关闭。羽化区里云、树、车流这类移动物会拖成两份；某帧某块与自己邻域的偏离超过这个值（EV）就被剔掉，换干净帧顶上",
+    ) {
+        state.tb_deghost = dg as f32;
     }
     let mut f = state.tb_feather as f64;
     if slider(ui, "tb_feather", "羽化", &mut f, 0.0, 0.5, 0.04, 3, false) {
@@ -1131,6 +1162,8 @@ fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             "bands": state.tb_bands,
             "feather": state.tb_feather,
             "horizon": state.tb_horizon,
+            "horizon_auto": state.tb_horizon_auto,
+            "deghost": state.tb_deghost,
             "match_exposure": state.tb_match,
             "confirm": true,
         });

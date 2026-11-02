@@ -1350,6 +1350,16 @@ pub struct AppState {
     pub tb_bands: u32,
     pub tb_feather: f32,
     pub tb_horizon: f32,
+    /// 自动推地平线（B7）：按行亮度梯度找天与地的分界，找不到退回 `tb_horizon`。
+    ///
+    /// Auto horizon (B7): find the sky-ground boundary from the per-row brightness gradient,
+    /// falling back to `tb_horizon` when nothing is found.
+    pub tb_horizon_auto: bool,
+    /// 去鬼影阈值（EV，0 = 关，B6）：羽化区里移动物不再拖成两份。
+    ///
+    /// Deghosting threshold (EV, 0 = off, B6): moving subjects stop doubling up in the feather
+    /// zone.
+    pub tb_deghost: f32,
     pub tb_match: bool,
     /// 最近一次时间合成写出的路径 / 报错，分组里回显一行；纯视图缓冲。
     ///
@@ -2226,6 +2236,8 @@ impl AppState {
             tb_bands: 8,
             tb_feather: 0.04,
             tb_horizon: 0.5,
+            tb_horizon_auto: false,
+            tb_deghost: 0.5,
             tb_match: true,
             tb_last: None,
             tb_error: None,
@@ -6153,7 +6165,11 @@ impl AppState {
             None => self.tb_layout,
         };
         let bands = opt_u32(args, "bands")?.unwrap_or(self.tb_bands) as usize;
-        if bands == 0 || bands > indices.len() {
+        // bands 只对时间切片有意义：天地合成不用它，不该被面板的默认值卡住。
+        //
+        // bands only matters for the time slice: sky-ground ignores it and must not be blocked
+        // by the panel's default.
+        if layout == aevum_core::timeblend::Layout::Bands && (bands == 0 || bands > indices.len()) {
             return Err(crate::i18n::tr_fmt(
                 "bands 要在 1..={} 之间（等于帧数时一带一帧）",
                 &[&indices.len()],
@@ -6163,10 +6179,20 @@ impl AppState {
             .map(|v| v as f32)
             .unwrap_or(self.tb_feather)
             .clamp(0.0, 0.5);
+        let horizon_auto = args
+            .get("horizon_auto")
+            .and_then(Value::as_bool)
+            .unwrap_or(self.tb_horizon_auto);
         let horizon = opt_f64(args, "horizon")?
             .map(|v| v as f32)
             .unwrap_or(self.tb_horizon)
             .clamp(0.0, 1.0);
+        let deghost = opt_f64(args, "deghost")?
+            .map(|v| v as f32)
+            .unwrap_or(self.tb_deghost);
+        if !deghost.is_finite() || deghost < 0.0 || deghost > 4.0 {
+            return Err("deghost 要在 0..=4 之间（EV；0 = 关闭去鬼影）".to_owned());
+        }
         let match_exposure = args
             .get("match_exposure")
             .and_then(Value::as_bool)
@@ -6185,6 +6211,8 @@ impl AppState {
             bands,
             feather,
             horizon,
+            horizon_auto,
+            deghost,
             match_exposure,
         });
         let job = self.build_merge_job(kind, indices, &out_dir, spec)?;
@@ -16129,7 +16157,10 @@ mod command_tests {
             .run_ui_command(
                 &ctx,
                 "timeblend.merge",
-                &json!({"frames": [0, 1], "bands": 9, "confirm": true}),
+                // bands 只对时间切片校验，所以这条要显式带上 layout。
+                //
+                // bands is only validated for the time slice, so pass the layout explicitly.
+                &json!({"frames": [0, 1], "layout": "bands", "bands": 9, "confirm": true}),
             )
             .unwrap_err();
         assert!(bad_bands.contains("bands 要在"), "{bad_bands}");
@@ -16167,6 +16198,124 @@ mod command_tests {
         assert!(top < 60, "上半幅应来自首帧：{top}");
         assert!(bottom > 150, "下半幅应来自末帧：{bottom}");
         assert_eq!(state.tb_last.as_deref(), Some(path));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 自动地平线：素材在 30% 处有天/地分界，开自动后分界真的搬过去；
+    /// 顺带验 deghost 越界要被拒。
+    ///
+    /// Auto horizon: the scene carries a sky-ground boundary at 30%, and with auto on the
+    /// split really moves there; also checks that an out-of-range deghost is refused.
+    #[test]
+    fn timeblend_auto_horizon_moves_the_split_and_deghost_is_guarded() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("aevum-tbauto-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        // 40×40，行 0..12 是天（30%）：早晚帧的天与地亮度都不同——
+        // 否则 30%–50% 之间的行读不出选了哪帧。
+        //
+        // 40×40 with rows 0..12 as sky (30%); sky and ground both differ between the frames,
+        // otherwise the rows between 30% and 50% cannot tell which frame was picked.
+        let shade = |i: usize, y: u32| -> u8 {
+            match (i, y < 12) {
+                (0, true) => 80,  // 早帧的天 / early sky
+                (0, false) => 40, // 早帧的地 / early ground
+                (_, true) => 220, // 末帧的天 / late sky
+                (_, false) => 90, // 末帧的地 / late ground
+            }
+        };
+        for i in 0..3usize {
+            let img = image::RgbImage::from_fn(40, 40, |_, y| {
+                let v = shade(i, y);
+                image::Rgb([v, v, v])
+            });
+            img.save(dir.join(format!("s{i:03}.png"))).expect("写帧");
+        }
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.display().to_string()}),
+            )
+            .expect("打开序列");
+        // 两趟各用各的输出目录：同一目录同名文件会把上一趟的成片覆盖掉。
+        //
+        // One output folder per run: the same folder and filename would overwrite the previous
+        // still.
+        let args = |extra: &Value| {
+            let out_dir = if extra.get("horizon_auto").and_then(Value::as_bool) == Some(true) {
+                dir.join("时间合成-自动")
+            } else {
+                dir.join("时间合成-手动")
+            };
+            let mut a = json!({
+                "frames": [0, 2],
+                "layout": "sky-ground",
+                "feather": 0.05,
+                "match_exposure": false,
+                "out_dir": out_dir.display().to_string(),
+                "confirm": true,
+            });
+            if let Some(obj) = a.as_object_mut()
+                && let Some(map) = extra.as_object()
+            {
+                for (k, v) in map {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+            a
+        };
+        let bad_deghost = state
+            .run_ui_command(&ctx, "timeblend.merge", &args(&json!({"deghost": 5.0})))
+            .unwrap_err();
+        assert!(bad_deghost.contains("deghost"), "{bad_deghost}");
+
+        let run = |state: &mut AppState, extra: &Value| {
+            state
+                .run_ui_command(&ctx2(&ctx), "timeblend.merge", &args(extra))
+                .expect("启动合成");
+            wait_merge(state, &ctx2(&ctx));
+            state.merge_result.clone().expect("合成结果落账")["path"]
+                .as_str()
+                .expect("成片路径")
+                .to_owned()
+        };
+        // ctx 只能借一次，包一层省得抄两遍。
+        //
+        // The context borrows once; wrap it so the two runs do not duplicate the dance.
+        fn ctx2(ctx: &Context) -> Context {
+            ctx.clone()
+        }
+        let auto_path = run(&mut state, &json!({"horizon_auto": true, "deghost": 0.0}));
+        let manual_path = run(&mut state, &json!({"horizon_auto": false, "deghost": 0.0}));
+        let auto = image::open(&auto_path).expect("读回自动成片").to_rgb8();
+        let manual = image::open(&manual_path).expect("读回手动成片").to_rgb8();
+        // 自动：分界在 30% → 行 6 是末帧的亮天，行 19（30%–50% 之间）是首帧的暗地。
+        //
+        // Auto: the boundary sits at 30% → row 6 is the late frame's bright sky, row 19
+        // (between 30% and 50%) is the early frame's dark ground.
+        let at = |img: &image::RgbImage, y: u32| img.get_pixel(8, y)[0];
+        assert!(at(&auto, 6) > 150, "行 6 应是末帧的亮天：{}", at(&auto, 6));
+        assert!(
+            at(&auto, 19) < 60,
+            "行 19 应是首帧的暗地：{}",
+            at(&auto, 19)
+        );
+        // 反向验证：停在默认 50% 时，行 19 按天混合，明显亮于首帧的暗地。
+        //
+        // Negative control: stuck at the default 50%, row 19 blends sky and is clearly
+        // brighter than the early frame's dark ground.
+        assert!(
+            at(&manual, 19) > at(&auto, 19) + 15,
+            "停在 50% 时行 19 应更亮：auto {} vs manual {}",
+            at(&auto, 19),
+            at(&manual, 19)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
