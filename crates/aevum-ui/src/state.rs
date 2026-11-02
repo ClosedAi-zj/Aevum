@@ -732,6 +732,11 @@ pub enum MergeKind {
     Pano,
     Stack,
     TimeBlend,
+    /// 焦点合成：一组不同对焦距离的帧融成一张全景深。
+    ///
+    /// Focus stacking: fuse a bracket taken at different focus distances into one
+    /// all-in-focus image.
+    Focus,
 }
 
 impl MergeKind {
@@ -741,6 +746,7 @@ impl MergeKind {
             Self::Pano => "全景拼接",
             Self::Stack => "星空堆栈",
             Self::TimeBlend => "时间合成",
+            Self::Focus => "焦点合成",
         }
     }
 
@@ -751,6 +757,7 @@ impl MergeKind {
             Self::Pano => "pano",
             Self::Stack => "stack",
             Self::TimeBlend => "timeblend",
+            Self::Focus => "focus",
         }
     }
 
@@ -761,6 +768,7 @@ impl MergeKind {
             Self::Pano => "全景",
             Self::Stack => "堆栈",
             Self::TimeBlend => "时间合成",
+            Self::Focus => "焦点合成",
         }
     }
 
@@ -771,6 +779,7 @@ impl MergeKind {
             Self::Pano => "全景",
             Self::Stack => "堆栈",
             Self::TimeBlend => "时间合成",
+            Self::Focus => "焦点",
         }
     }
 
@@ -781,6 +790,7 @@ impl MergeKind {
             Self::Pano => aevum_core::pano::MAX_FRAMES,
             Self::Stack => aevum_core::stack::MAX_FRAMES,
             Self::TimeBlend => aevum_core::timeblend::MAX_FRAMES,
+            Self::Focus => aevum_core::focus::MAX_FRAMES,
         }
     }
 
@@ -804,6 +814,7 @@ enum MergeSpec {
     Plain,
     Stack(aevum_core::stack::Options),
     TimeBlend(aevum_core::timeblend::Spec),
+    Focus(aevum_core::focus::Options),
 }
 
 /// 一次合并的全部输入。界面线程抓完就交给后台线程，线程里碰不到 `AppState`。
@@ -1407,6 +1418,18 @@ pub struct AppState {
     ///
     /// The small failure note for the preview; cleared as soon as parameters change.
     pub tb_preview_error: Option<String>,
+    /// 「焦点合成」分组的参数与回显；纯视图缓冲，不落工程。
+    ///
+    /// Parameters and echo line of the focus-stacking group; pure view buffers, never
+    /// written to the project.
+    pub focus_around: u32,
+    pub focus_method: aevum_core::focus::Method,
+    pub focus_radius: u32,
+    pub focus_threshold: f32,
+    pub focus_smooth_z: u32,
+    pub focus_feather: f32,
+    pub focus_last: Option<String>,
+    pub focus_error: Option<String>,
     /// 筛选台的四条判据阈值；纯视图缓冲，不落工程（拒收标记本身落在 `flags` 里）。
     ///
     /// The four thresholds of the cull station; pure view buffers, never written to the project
@@ -2292,6 +2315,15 @@ impl AppState {
             tb_preview_inflight: false,
             tb_preview_data: None,
             tb_preview_error: None,
+            // 焦点合成默认 8 帧（±7 从起始帧往后铺）、深度图法、半径 2、兜底关、3×3 去斑、2 px 羽化。
+            focus_around: 7,
+            focus_method: aevum_core::focus::Method::DepthMap,
+            focus_radius: 2,
+            focus_threshold: 0.0,
+            focus_smooth_z: 1,
+            focus_feather: 2.0,
+            focus_last: None,
+            focus_error: None,
             // 判据默认值与核心一致：±1 EV 之外判废、相邻突变 1 EV、清晰度不设限。
             cull_ev_low: -1.0,
             cull_ev_high: 1.0,
@@ -3250,6 +3282,7 @@ impl AppState {
                         MergeKind::Pano => (&mut self.pano_last, &mut self.pano_error),
                         MergeKind::Stack => (&mut self.stack_last, &mut self.stack_error),
                         MergeKind::TimeBlend => (&mut self.tb_last, &mut self.tb_error),
+                        MergeKind::Focus => (&mut self.focus_last, &mut self.focus_error),
                     };
                     match result {
                         Ok(v) => {
@@ -3943,6 +3976,7 @@ impl AppState {
             "cull.extract" => (String::new(), "剔除成子序列".to_owned(), false),
             "stack.merge" => (String::new(), "星空堆栈".to_owned(), false),
             "timeblend.merge" => (String::new(), "时间合成".to_owned(), false),
+            "focus.merge" => (String::new(), "焦点合成".to_owned(), false),
             "queue.run" => (String::new(), "批量渲染队列".to_owned(), false),
             "queue.add" | "queue.remove" | "queue.clear" => {
                 (String::new(), "改渲染队列".to_owned(), false)
@@ -4166,6 +4200,7 @@ impl AppState {
             "cull.extract" => self.cmd_cull_extract(args),
             "stack.merge" => self.cmd_stack_merge(ctx, args),
             "timeblend.merge" => self.cmd_timeblend_merge(ctx, args),
+            "focus.merge" => self.cmd_focus_merge(ctx, args),
             "merge.status" => Ok(self.merge_status_json()),
             "merge.cancel" => {
                 let busy = self.merge_busy;
@@ -5770,6 +5805,10 @@ impl AppState {
                 self.tb_last = None;
                 self.tb_error = None;
             }
+            MergeKind::Focus => {
+                self.focus_last = None;
+                self.focus_error = None;
+            }
         }
         self.cancel_merge.store(false, Ordering::SeqCst);
         self.merge_done.store(0, Ordering::Relaxed);
@@ -6488,6 +6527,84 @@ impl AppState {
             horizon_auto,
             deghost,
             match_exposure,
+        });
+        let job = self.build_merge_job(kind, indices, &out_dir, spec)?;
+        Ok(self.start_merge(ctx, job))
+    }
+
+    /// `focus.merge`：把一组不同对焦距离的帧融成一张全景深。
+    ///
+    /// `focus.merge`: fuse a bracket taken at different focus distances into one all-in-focus
+    /// image.
+    fn cmd_focus_merge(&mut self, ctx: &Context, args: &Value) -> Result<Value, String> {
+        let n = self.require_sequence()?.len();
+        if n == 0 {
+            return Err("序列里没有帧".to_owned());
+        }
+        if self.merge_busy {
+            return Err(crate::i18n::tr_fmt(
+                "已有一项{}在进行中；用 merge.status 查询进度，merge.cancel 取消",
+                &[&self.merge_kind.map(MergeKind::cn).unwrap_or("合并")],
+            ));
+        }
+        if !confirm(args) {
+            return Err("focus.merge 是批量写操作，需参数 confirm: true".to_owned());
+        }
+        let kind = MergeKind::Focus;
+        let indices = self.pick_indices(args, n, IndicesAnchor::Start, self.focus_around)?;
+        if indices.len() < 2 {
+            return Err(
+                "焦点合成至少要 2 帧：给 frames 数组，或把 around 调大（从起始帧往后铺）"
+                    .to_owned(),
+            );
+        }
+        if indices.len() > kind.max_frames() {
+            return Err(crate::i18n::tr_fmt(
+                "焦点合成一次最多 {} 帧，实得 {} 帧：把 around 调小或分段合成",
+                &[&kind.max_frames(), &indices.len()],
+            ));
+        }
+        let method = match opt_str(args, "method")? {
+            Some(raw) => aevum_core::focus::Method::parse(raw).ok_or_else(|| {
+                crate::i18n::tr_fmt("未知融合方式 {}；可用 depthmap / weighted", &[&raw])
+            })?,
+            None => self.focus_method,
+        };
+        let radius = opt_u32(args, "radius")?.unwrap_or(self.focus_radius) as usize;
+        if radius > 32 {
+            return Err("radius 要在 0..=32 之间（px；0 = 逐像素原始响应）".to_owned());
+        }
+        let threshold = opt_f64(args, "threshold")?
+            .map(|v| v as f32)
+            .unwrap_or(self.focus_threshold);
+        if !threshold.is_finite() || !(0.0..=100.0).contains(&threshold) {
+            return Err("threshold 要在 0..=100 之间（百分位；0 = 关闭无细节兜底）".to_owned());
+        }
+        let smooth_z = opt_u32(args, "smooth_z")?.unwrap_or(self.focus_smooth_z) as usize;
+        if smooth_z > 16 {
+            return Err("smooth_z 要在 0..=16 之间（px）".to_owned());
+        }
+        let feather = opt_f64(args, "feather")?
+            .map(|v| v as f32)
+            .unwrap_or(self.focus_feather);
+        if !feather.is_finite() || !(0.0..=64.0).contains(&feather) {
+            return Err("feather 要在 0..=64 之间（px；小于 0.5 视为硬切）".to_owned());
+        }
+        let root = self
+            .seq
+            .as_ref()
+            .map(|s| s.root.clone())
+            .unwrap_or_default();
+        let out_dir = self.merge_out_dir(args, &root, kind)?;
+        ensure_out_dir_safe(&root, &out_dir)?;
+        std::fs::create_dir_all(&out_dir)
+            .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
+        let spec = MergeSpec::Focus(aevum_core::focus::Options {
+            method,
+            radius,
+            threshold,
+            smooth_z,
+            feather,
         });
         let job = self.build_merge_job(kind, indices, &out_dir, spec)?;
         Ok(self.start_merge(ctx, job))
@@ -12403,6 +12520,22 @@ fn run_merge_job(
             };
             let out = aevum_core::timeblend::time_slice(&refs, w, h, &spec).map_err(|e| {
                 crate::i18n::tr_fmt("时间合成失败：{}", &[&crate::i18n::tr(e.cn())])
+            })?;
+            (out, w, h)
+        }
+        // 焦点合成：同机位叠帧，尺寸在上面已经查齐；测度只看纹理，帧序不带方向含义。
+        //
+        // Focus stacking: overlaid frames from a fixed camera, sizes already checked above;
+        // the measure only reads texture, so frame order carries no direction.
+        MergeKind::Focus => {
+            let (w, h) = dims.unwrap_or((0, 0));
+            let refs: Vec<&[f32]> = frames.iter().map(|(b, _, _)| b.as_slice()).collect();
+            let opts = match &job.spec {
+                MergeSpec::Focus(o) => o.clone(),
+                _ => aevum_core::focus::Options::default(),
+            };
+            let out = aevum_core::focus::focus_stack(&refs, w, h, &opts).map_err(|e| {
+                crate::i18n::tr_fmt("焦点合成失败：{}", &[&crate::i18n::tr(e.cn())])
             })?;
             (out, w, h)
         }

@@ -560,14 +560,20 @@ pub fn command_catalog() -> Vec<CommandSpec> {
             schema: r#"{"type":"object","additionalProperties":false,"properties":{"frames":{"type":"array","items":{"type":"integer","minimum":0},"description":"参与合成的帧下标（0 开始，升序即时间顺序）；给了就忽略 start/around"},"start":{"type":"integer","minimum":0,"description":"起始帧下标（0 开始）；省略用当前选中帧"},"around":{"type":"integer","minimum":1,"maximum":31,"description":"起始帧之后再取几帧（1..31）；省略=7（共 8 帧）"},"layout":{"type":"string","enum":["sky-ground","bands"],"description":"sky-ground 按地平线分天地；bands 横向分带、一带一帧"},"bands":{"type":"integer","minimum":1,"maximum":32,"description":"带数，只对 bands 生效；等于帧数时一带一帧"},"feather":{"type":"number","minimum":0,"maximum":0.5,"description":"羽化宽度占画面高度的比例，0.04 约等于 4%"},"horizon":{"type":"number","minimum":0,"maximum":1,"description":"地平线位置（从顶部算起的比例），只对 sky-ground 生效；horizon_auto 为 true 时忽略"},"horizon_auto":{"type":"boolean","description":"按行亮度梯度自动推地平线（找不到退回 horizon）"},"deghost":{"type":"number","minimum":0,"maximum":4,"description":"去鬼影阈值（EV）：某帧某块与自己 3×3 空间中位数偏离超过它就按标签衰减权重；0 = 关闭；省略沿用面板当前值（默认 0.5）"},"match_exposure":{"type":"boolean","description":"混之前把来源帧亮度对齐到参考帧（钳 ±2 EV），否则接缝处是一道台阶"},"out_dir":{"type":"string","description":"输出目录，不能是序列根或其上级；省略用序列根下 时间合成/"},"confirm":{"type":"boolean","description":"批量写操作必须为 true"}},"required":["confirm"]}"#,
         },
         CommandSpec {
+            id: "focus.merge",
+            summary: "把一组不同对焦距离的帧融成一张全景深（焦点合成，批量写，必须 confirm: true）：深度图法逐像素取测度最强的帧、测度低于阈值的无细节区整块用参考帧兜底、过渡带羽化；加权平均法按测度的四次方混合。会套对齐位移与统一裁切，尺寸对不齐会拒绝。长任务，立即返回，进度用 merge.status 查。",
+            params: "frames?（帧下标数组，0 开始）或 center?+around?（默认当前帧±7）；method?（depthmap/weighted）、radius?、threshold?、smooth_z?、feather?、out_dir?；confirm",
+            schema: r#"{"type":"object","additionalProperties":false,"properties":{"frames":{"type":"array","items":{"type":"integer","minimum":0},"description":"参与合成的帧下标（0 开始）；给了就忽略 center/around"},"center":{"type":"integer","minimum":0,"description":"包围中心帧下标（0 开始）；省略用当前选中帧"},"around":{"type":"integer","minimum":1,"maximum":31,"description":"中心前后各取几帧（1..31）；省略=7（共 8 帧）"},"method":{"type":"string","enum":["depthmap","weighted"],"description":"depthmap 逐像素选测度最强的帧（无细节区兜底参考帧）；weighted 按测度四次方加权混合；省略沿用面板当前值"},"radius":{"type":"integer","minimum":0,"maximum":32,"description":"焦点测度的分析半径（px），0 = 逐像素原始响应；省略=2"},"threshold":{"type":"number","minimum":0,"maximum":100,"description":"无细节阈值（全图最佳测度的百分位，0..100）：低于这条线的像素整块判给参考帧；0 = 关闭兜底"},"smooth_z":{"type":"integer","minimum":0,"maximum":16,"description":"深度图去斑半径（px，模值滤波），只对 depthmap 生效；省略=1"},"feather":{"type":"number","minimum":0,"maximum":64,"description":"过渡羽化半径（px），小于 0.5 视为硬切，只对 depthmap 生效；省略=2"},"out_dir":{"type":"string","description":"输出目录，不能是序列根或其上级；省略用序列根下 焦点合成/"},"confirm":{"type":"boolean","description":"批量写操作必须为 true"}},"required":["confirm"]}"#,
+        },
+        CommandSpec {
             id: "merge.status",
-            summary: "多帧合并（HDR / 全景 / 星空堆栈 / 时间合成）的进度与最近一次成片：busy、kind、done/total、result（含 path、width、height）、error。",
+            summary: "多帧合并（HDR / 全景 / 星空堆栈 / 时间合成 / 焦点合成）的进度与最近一次成片：busy、kind、done/total、result（含 path、width、height）、error。",
             params: "无参数",
             schema: r#"{"type":"object","additionalProperties":false,"properties":{}}"#,
         },
         CommandSpec {
             id: "merge.cancel",
-            summary: "请求取消正在进行的多帧合并（HDR / 全景 / 星空堆栈 / 时间合成）；核心算法是一整块，取消在两帧之间生效，已读进来的帧不会留下半成品。",
+            summary: "请求取消正在进行的多帧合并（HDR / 全景 / 星空堆栈 / 时间合成 / 焦点合成）；核心算法是一整块，取消在两帧之间生效，已读进来的帧不会留下半成品。",
             params: "无参数",
             schema: r#"{"type":"object","additionalProperties":false,"properties":{}}"#,
         },
