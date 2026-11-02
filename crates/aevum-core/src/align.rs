@@ -1243,6 +1243,153 @@ fn phase_patch(gray: &[u8], w: usize, x0: usize, y0: usize, fw: usize, fh: usize
 }
 
 // ---------------------------------------------------------------------------
+// 焦点专用块级相位相关（1.5 第二批）
+// ---------------------------------------------------------------------------
+
+/// 焦点专用块级相位相关：估 `cur` 相对 `prev` 的**对齐位移**（warp offset）与峰值响应。
+///
+/// 与 `PhaseSetup` 的区别：不用底部 30% 模板、不用 8bit CLAHE、不用 NCC 低分判失败。
+/// 输入是 1/2 分辨率的线性 luma 代理，取块中心的 2 的幂子窗，去均值 / 除标准差 / 乘
+/// Hann，再用**同一套** `fft2` 与 `parab` 求带符号峰值与抛物线亚像素。返回的 `[sx, sy]`
+/// 直接就是 `dst(x,y) = src(x - sx, y - sy)` 里的 offset，`chain_offsets` 可原样累加。
+///
+/// Focus-specific block phase correlation: estimate the **warp offset** that aligns `cur`
+/// onto `prev`, plus the normalised peak response. Unlike `PhaseSetup` there is no bottom
+/// 30% template, no 8-bit CLAHE and no NCC low-score rejection. The input is the half-size
+/// linear luma proxy; a centred power-of-two sub-window is de-meaned, divided by its standard
+/// deviation and multiplied by a Hann window, then the very same `fft2` / `parab` code yields
+/// a signed peak with parabolic sub-pixel refinement. The returned `[sx, sy]` is already the
+/// offset in `dst(x,y) = src(x - sx, y - sy)`, so `chain_offsets` accumulates it verbatim.
+pub(crate) fn focus_phase_shift(prev: &[f32], cur: &[f32], w: usize, h: usize) -> ([f64; 2], f32) {
+    if w < 16 || h < 16 || prev.len() < w * h || cur.len() < w * h {
+        return ([0.0, 0.0], 0.0);
+    }
+    let fw = pow2_floor(w).max(16).min(w);
+    let fh = pow2_floor(h).max(16).min(h);
+    let x0 = (w - fw) / 2;
+    let y0 = (h - fh) / 2;
+    let a = focus_patch(prev, w, x0, y0, fw, fh);
+    let b = focus_patch(cur, w, x0, y0, fw, fh);
+    let rp = FftPlan::new(fw);
+    let cp = FftPlan::new(fh);
+    let mut sa: Vec<C> = a
+        .iter()
+        .map(|&v| C {
+            re: v as f32,
+            im: 0.0,
+        })
+        .collect();
+    let mut sb: Vec<C> = b
+        .iter()
+        .map(|&v| C {
+            re: v as f32,
+            im: 0.0,
+        })
+        .collect();
+    fft2(&mut sa, fw, fh, &rp, &cp, false);
+    fft2(&mut sb, fw, fh, &rp, &cp, false);
+    // R = F_prev · conj(F_cur)：相位差只留位移，幅度归一。
+    //
+    // R = F_prev * conj(F_cur): phase difference carries the shift, amplitude is normalised.
+    for (v, r) in sb.iter_mut().zip(sa.iter()) {
+        let mut p = r.mul(v.conj());
+        let m = p.norm();
+        if m > 1e-12 {
+            p.re /= m;
+            p.im /= m;
+        }
+        *v = p;
+    }
+    fft2(&mut sb, fw, fh, &rp, &cp, true);
+
+    let (mut px, mut py) = (0usize, 0usize);
+    let mut peak = f32::NEG_INFINITY;
+    for y in 0..fh {
+        for x in 0..fw {
+            let v = sb[y * fw + x].re;
+            if v > peak {
+                peak = v;
+                px = x;
+                py = y;
+            }
+        }
+    }
+    let at = |x: isize, y: isize| -> f64 {
+        let xx = x.rem_euclid(fw as isize) as usize;
+        let yy = y.rem_euclid(fh as isize) as usize;
+        sb[yy * fw + xx].re as f64
+    };
+    // 抛物线亚像素是 A-C1 的负向锚：拿掉它就只剩整数峰，0.5px 步进夹具立刻红。
+    //
+    // Parabolic sub-pixel is A-C1's negative anchor: without it only the integer peak
+    // remains and the 0.5 px-step fixture immediately goes red.
+    let sub_x = parab(
+        at(px as isize - 1, py as isize),
+        peak as f64,
+        at(px as isize + 1, py as isize),
+    );
+    let sub_y = parab(
+        at(px as isize, py as isize - 1),
+        peak as f64,
+        at(px as isize, py as isize + 1),
+    );
+    let mut sx = px as f64 + sub_x;
+    let mut sy = py as f64 + sub_y;
+    if sx > fw as f64 * 0.5 {
+        sx -= fw as f64;
+    }
+    if sy > fh as f64 * 0.5 {
+        sy -= fh as f64;
+    }
+    ([sx, sy], (peak as f64).clamp(0.0, 1.0) as f32)
+}
+
+/// 块子窗预处理：去均值 / 除标准差 / Hann，与 `phase_patch` 同口径，但吃 f32 luma。
+///
+/// Block sub-window preprocessing: de-mean / divide by std / Hann, same convention as
+/// `phase_patch`, but on f32 luma instead of 8-bit gray.
+fn focus_patch(src: &[f32], w: usize, x0: usize, y0: usize, fw: usize, fh: usize) -> Vec<f64> {
+    let n = (fw * fh) as f64;
+    let mut sum = 0.0f64;
+    let mut sum2 = 0.0f64;
+    for y in 0..fh {
+        for x in 0..fw {
+            let v = src[(y0 + y) * w + x0 + x] as f64;
+            sum += v;
+            sum2 += v * v;
+        }
+    }
+    let mean = sum / n;
+    let std = (sum2 / n - mean * mean).max(0.0).sqrt() + 1e-6;
+    let hx: Vec<f64> = (0..fw)
+        .map(|x| {
+            if fw <= 1 {
+                1.0
+            } else {
+                0.5 * (1.0 - (2.0 * std::f64::consts::PI * x as f64 / (fw - 1) as f64).cos())
+            }
+        })
+        .collect();
+    let hy: Vec<f64> = (0..fh)
+        .map(|y| {
+            if fh <= 1 {
+                1.0
+            } else {
+                0.5 * (1.0 - (2.0 * std::f64::consts::PI * y as f64 / (fh - 1) as f64).cos())
+            }
+        })
+        .collect();
+    let mut out = Vec::with_capacity(fw * fh);
+    for y in 0..fh {
+        for x in 0..fw {
+            let v = src[(y0 + y) * w + x0 + x] as f64;
+            out.push(((v - mean) / std) * hx[x] * hy[y]);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // 平滑与残差
 // ---------------------------------------------------------------------------
 

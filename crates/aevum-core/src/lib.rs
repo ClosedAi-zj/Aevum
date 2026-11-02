@@ -32,6 +32,7 @@ pub mod errmsg;
 pub mod exif;
 pub mod export;
 pub mod focus;
+pub mod focus_align;
 pub mod fonts;
 pub mod grade;
 pub mod hdr;
@@ -71,6 +72,7 @@ pub use auto::{AutoParams, auto_params};
 pub use deflicker::{Analysis, FrameMeans, Stats};
 pub use develop::Ev;
 pub use export::{OutputMode, RenderOptions};
+pub use focus_align::{AlignStatus, DecideInput, FocusAlignReport};
 pub use metrics::FrameMetrics;
 pub use preview::{
     FOLD_KNEE, fold_above_white_in_place, render as render_preview,
