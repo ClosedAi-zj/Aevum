@@ -12,6 +12,10 @@
 //!    不会因为叠加而变亮或变暗；
 //! 3. **曝光匹配**：不同时刻的帧本来差着档位，先把来源帧的亮度对齐到参考帧再混，
 //!    否则接缝处一定是一道台阶。
+//! 4. **去鬼影**：云、树、车流这类移动物在羽化区里会出现两份（同一物体在两个时刻
+//!    位置不同）。照 ACR 多曝光合并那条链处理：低分辨率块均值 → 与 3×3 空间中位数
+//!    的偏离（EV）→ 二值标签 → 软化边缘 → 混合时按标签衰减离群帧的权重，全剔光时
+//!    兜底回权重最大的「素材帧」。
 //!
 //! 全部在**线性 f32** 上做。混合完再过显影链——绝不在每帧先调色，
 //! 那等于把两条非线性曲线叠加，接缝再也对不齐。
@@ -33,6 +37,12 @@
 //! 3. **Exposure matching**: frames taken at different times sit stops apart; align the source
 //!    frame's brightness to the reference before blending, or the seam is guaranteed to show a
 //!    step.
+//! 4. **Deghosting**: moving subjects (clouds, trees, traffic) double up inside the feather
+//!    zone, because the same object sits in different places at two moments. Handled with the
+//!    ACR multi-exposure chain: low-resolution tile means → deviation from the 3×3 spatial
+//!    median (in EV) → binary labels → softened edges → the outlier's weight decays by its
+//!    label during blending, falling back to the highest-weight "owner" frame when everything
+//!    is flagged.
 //!
 //! All of it runs on **linear f32**, and the develop chain comes afterwards -- never grade each
 //! frame first, which would stack two nonlinear curves and make the seam impossible to align.
@@ -119,6 +129,15 @@ pub struct Spec {
     ///
     /// Whether to align each source frame's brightness to the reference before blending.
     pub match_exposure: bool,
+    /// 去鬼影阈值（EV）：某帧某块与它自己 3×3 空间中位数的偏离超过这个值就算「离群」，
+    /// 混合时把它的权重按标签衰减。0 = 关闭。默认 0.5 EV——足够抓住真实移动物，
+    /// 又不会被噪声与压缩伪影骗到。
+    ///
+    /// The deghosting threshold (EV): a frame's tile counts as an outlier once its deviation
+    /// from its own 3×3 spatial median passes this, and its weight decays by the label during
+    /// blending. 0 = off. The 0.5 EV default catches real moving subjects without tripping on
+    /// noise or compression artefacts.
+    pub deghost: f32,
 }
 
 impl Default for Spec {
@@ -129,6 +148,7 @@ impl Default for Spec {
             feather: 0.04,
             horizon: 0.5,
             match_exposure: true,
+            deghost: 0.5,
         }
     }
 }
@@ -232,6 +252,224 @@ fn match_gain(source: f32, reference: f32) -> f32 {
     (reference / source).clamp(0.25, 4.0)
 }
 
+/// 鬼影标签的分块边长（像素）：太大定位不准，太小会被噪声与压缩伪影骗到。
+///
+/// The tile edge (in pixels) for ghost labels: too large misses the subject, too small trips
+/// on noise and compression artefacts.
+const GHOST_TILE: usize = 16;
+
+/// 每帧一份的鬼影标签图：低分辨率网格，每格 0–1（1 = 这一帧在这一格离群，已软化）。
+///
+/// One label grid per frame: a low-resolution grid of 0-1 values (1 = this frame is an
+/// outlier in this tile, already softened).
+struct GhostMaps {
+    tw: usize,
+    th: usize,
+    per_frame: Vec<Vec<f32>>,
+}
+
+impl GhostMaps {
+    /// 一个像素的保留系数：1 = 照常参与混合，0 = 这一帧在这里被剔掉。
+    ///
+    /// A pixel's keep factor: 1 blends as usual, 0 drops this frame at this pixel.
+    fn keep(&self, frame: usize, x: usize, y: usize) -> f32 {
+        1.0 - self.per_frame[frame][self.index(x, y)]
+    }
+
+    /// 像素坐标 → 格子下标（最近邻上采样：越界直接夹到边格）。
+    ///
+    /// Pixel coordinates → tile index (nearest-neighbour upsample: clamp at the border).
+    fn index(&self, x: usize, y: usize) -> usize {
+        let tx = (x / GHOST_TILE).min(self.tw - 1);
+        let ty = (y / GHOST_TILE).min(self.th - 1);
+        ty * self.tw + tx
+    }
+}
+
+/// 造鬼影标签，照 ACR 多曝光合并那条链：低分辨率块均值 → 与 3×3 **空间**中位数的
+/// 偏离（EV）→ 二值标签 → 3×3 软化（再对软化结果取 max，保住被标记的块不被自己
+/// 的软化稀释）。网格太小（不足 3×3 格）时放弃，返回 `None`。
+///
+/// 参考用**空间**中位数而不是跨帧中位数：天地合成只有两帧，跨帧中位数就是平均值，
+/// 一个移动物会让两帧同时离群、谁都剔不掉。空间中位数只看本帧自己的邻域——
+/// 静态的地平线、云边在两帧的同位置一起离群 → 两帧都标 → 全剔 → 兜底回权重最大的
+/// 素材帧，输出不变；而只在单帧出现的物体（鬼影）只有它离群，被干净帧顶替。
+///
+/// Build the ghost labels along the ACR multi-exposure chain: low-resolution tile means →
+/// deviation from the 3×3 **spatial** median (in EV) → binary labels → 3×3 softening (a max
+/// against the softened values keeps a flagged tile from being diluted by its own blur). Grids
+/// smaller than 3×3 tiles give up and return `None`.
+///
+/// The reference is **spatial**, not cross-frame: a sky-ground blend has two frames, so the
+/// cross-frame median is just the mean and one moving subject flags both frames at once. The
+/// spatial median only looks at a frame's own neighbourhood -- a static horizon or cloud edge
+/// is an outlier in both frames at the same place, so both get flagged, everything drops, and
+/// the blend falls back to the highest-weight owner frame unchanged; a subject present in one
+/// frame only (a ghost) is an outlier there alone and gets replaced by the clean frame.
+fn build_ghost_maps(
+    frames: &[&[f32]],
+    w: usize,
+    h: usize,
+    gains: &[f32],
+    threshold: f32,
+) -> Option<GhostMaps> {
+    let tw = w / GHOST_TILE;
+    let th = h / GHOST_TILE;
+    if tw < 3 || th < 3 {
+        return None;
+    }
+    // 每帧每格的平均亮度（曝光匹配之后的世界：均值直接乘增益）。
+    //
+    // Mean luma per tile per frame (in the exposure-matched world: the mean scales by the gain).
+    let area = (GHOST_TILE * GHOST_TILE) as f32;
+    let means: Vec<Vec<f32>> = frames
+        .iter()
+        .enumerate()
+        .map(|(fi, f)| {
+            let mut m = vec![0.0f32; tw * th];
+            for y in 0..th * GHOST_TILE {
+                let ty = y / GHOST_TILE;
+                for x in 0..tw * GHOST_TILE {
+                    let j = (y * w + x) * 3;
+                    m[ty * tw + x / GHOST_TILE] += (f[j] + f[j + 1] + f[j + 2]) / 3.0;
+                }
+            }
+            for v in m.iter_mut() {
+                *v = *v / area * gains[fi];
+            }
+            m
+        })
+        .collect();
+
+    let labels: Vec<Vec<f32>> = means
+        .iter()
+        .map(|m| {
+            let mut lab = vec![0.0f32; tw * th];
+            // 边格也参与：邻域用夹边取，一样能判。边框上如果有真实内容
+            // （暗角、边框），两帧会在同位置一起离群 → 全剔 → 兜底帧，输出不变。
+            //
+            // Border tiles take part too, with a clamped neighbourhood. Real border content
+            // (vignette, frame line) is an outlier in both frames at the same place →
+            // everything drops → owner fallback, output unchanged.
+            for ty in 0..th {
+                for tx in 0..tw {
+                    let mut nb: Vec<f32> = Vec::with_capacity(9);
+                    for dy in -1i32..=1 {
+                        for dx in -1i32..=1 {
+                            let ny = (ty as i32 + dy).clamp(0, th as i32 - 1) as usize;
+                            let nx = (tx as i32 + dx).clamp(0, tw as i32 - 1) as usize;
+                            nb.push(m[ny * tw + nx]);
+                        }
+                    }
+                    nb.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    let reference = nb[4];
+                    let own = m[ty * tw + tx];
+                    // 非有限或近黑的格子没有可比的比值，不算离群——判不出就不冤枉。
+                    //
+                    // A non-finite or near-black tile has no comparable ratio: not an outlier.
+                    let dev = if reference > 1e-6 && own.is_finite() {
+                        (own / reference).log2().abs()
+                    } else {
+                        0.0
+                    };
+                    if dev > threshold {
+                        lab[ty * tw + tx] = 1.0;
+                    }
+                }
+            }
+            soften_labels(&lab, tw, th)
+        })
+        .collect();
+    Some(GhostMaps {
+        tw,
+        th,
+        per_frame: labels,
+    })
+}
+
+/// 软化标签边缘：3×3 盒滤波，再对原值取 max——被标记的块保持完整剔除，
+/// 只有它周围一圈拿到部分系数，边界不再是一刀切的硬边。
+///
+/// Soften label edges: a 3×3 box filter maxed against the original -- flagged tiles keep their
+/// full exclusion and only the ring around them picks up partial factors, so the edge is not a
+/// hard cut.
+fn soften_labels(labels: &[f32], tw: usize, th: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; labels.len()];
+    for ty in 0..th {
+        for tx in 0..tw {
+            let mut sum = 0.0f32;
+            let mut n = 0u32;
+            for dy in -1i32..=1 {
+                for dx in -1i32..=1 {
+                    let ny = ty as i32 + dy;
+                    let nx = tx as i32 + dx;
+                    if ny < 0 || nx < 0 || ny as usize >= th || nx as usize >= tw {
+                        continue;
+                    }
+                    sum += labels[ny as usize * tw + nx as usize];
+                    n += 1;
+                }
+            }
+            let i = ty * tw + tx;
+            out[i] = labels[i].max(sum / n as f32);
+        }
+    }
+    out
+}
+
+/// 把一行按贡献帧的权重混进 `out`。权重可被鬼影标签衰减（`keep`）；
+/// 全部剔光时兜底到基础权重最大的「素材帧」——比输出全黑强。
+///
+/// Blend one row into `out` with per-frame weights, decayed by the ghost labels (`keep`).
+/// When everything is flagged, fall back to the highest-weight owner frame -- better than a
+/// black row.
+fn blend_row(
+    out: &mut [f32],
+    frames: &[&[f32]],
+    gains: &[f32],
+    y: usize,
+    w: usize,
+    contrib: &[(usize, f32)],
+    ghosts: Option<&GhostMaps>,
+) {
+    let row = y * w * 3;
+    let owner = contrib
+        .iter()
+        .copied()
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(fi, _)| fi)
+        .unwrap_or(0);
+    for x in 0..w {
+        let j = row + x * 3;
+        let mut acc = [0.0f32; 3];
+        let mut wsum = 0.0f32;
+        for &(fi, wt) in contrib {
+            let keep = match ghosts {
+                Some(gm) => gm.keep(fi, x, y),
+                None => 1.0,
+            };
+            if keep <= 0.0 {
+                continue;
+            }
+            let g = gains[fi] * wt * keep;
+            acc[0] += frames[fi][j] * g;
+            acc[1] += frames[fi][j + 1] * g;
+            acc[2] += frames[fi][j + 2] * g;
+            wsum += wt * keep;
+        }
+        if wsum > 0.0 {
+            out[j] = acc[0] / wsum;
+            out[j + 1] = acc[1] / wsum;
+            out[j + 2] = acc[2] / wsum;
+        } else {
+            let f = frames[owner];
+            out[j] = f[j];
+            out[j + 1] = f[j + 1];
+            out[j + 2] = f[j + 2];
+        }
+    }
+}
+
 /// 合成。输入是**已经对齐**的线性 RGB `f32`，长度必须等于 `w*h*3`；
 /// `frames[0]` 视为「早」（地面还亮），`frames[len-1]` 视为「晚」（天空最好）。
 ///
@@ -275,6 +513,15 @@ pub fn time_slice(
         })
         .collect();
 
+    // 去鬼影开着才算标签图：关着时零开销走老路。
+    //
+    // Build the label maps only when deghosting is on; off means the old zero-overhead path.
+    let ghosts = if spec.deghost > 0.0 && count >= 2 {
+        build_ghost_maps(frames, w, h, &gains, spec.deghost)
+    } else {
+        None
+    };
+
     let mut out = vec![0.0f32; n];
     match spec.layout {
         Layout::Bands => {
@@ -290,42 +537,20 @@ pub fn time_slice(
                     i * (count - 1) / (bands - 1)
                 }
             };
+            let mut contrib: Vec<(usize, f32)> = Vec::with_capacity(edges.len());
             for y in 0..h {
                 let yf = y as f32 + 0.5;
-                let row = y * w * 3;
-                let mut wsum = 0.0f32;
+                contrib.clear();
                 for (i, &(top, bottom)) in edges.iter().enumerate() {
-                    let last = i + 1 == edges.len();
-                    let wt = band_weight(yf, top, bottom, feather, i == 0, last);
-                    if wt <= 0.0 {
-                        continue;
+                    let wt = band_weight(yf, top, bottom, feather, i == 0, i + 1 == edges.len());
+                    if wt > 0.0 {
+                        contrib.push((pick(i), wt));
                     }
-                    let f = frames[pick(i)];
-                    let g = gains[pick(i)] * wt;
-                    for j in row..row + w * 3 {
-                        out[j] += f[j] * g;
-                    }
-                    wsum += wt;
                 }
-                if wsum > 0.0 {
-                    let inv = 1.0 / wsum;
-                    for j in row..row + w * 3 {
-                        out[j] *= inv;
-                    }
-                } else {
-                    // 理论上不会发生（权重和恒为 1），留一条兜底以免整行全黑。
-                    //
-                    // Should not happen (weights sum to one); kept so a row can never go black.
-                    let f = frames[pick(edges.len() / 2)];
-                    out[row..row + w * 3].copy_from_slice(&f[row..row + w * 3]);
-                }
+                blend_row(&mut out, frames, &gains, y, w, &contrib, ghosts.as_ref());
             }
         }
         Layout::SkyGround => {
-            let ground = frames[0];
-            let sky = frames[count - 1];
-            let gg = gains[0];
-            let sg = gains[count - 1];
             let horizon = spec.horizon.clamp(0.0, 1.0) * h as f32;
             for y in 0..h {
                 // 天空权重：地平线以上 1、以下 0，交界羽化。
@@ -333,13 +558,8 @@ pub fn time_slice(
                 // Sky weight: 1 above the horizon, 0 below, feathered across the boundary.
                 let wt_sky = smoothstep(((y as f32 + 0.5) - horizon) / (2.0 * feather) + 0.5);
                 let wt_ground = 1.0 - wt_sky;
-                let row = y * w * 3;
-                for x in 0..w {
-                    let j = row + x * 3;
-                    for c in 0..3 {
-                        out[j + c] = sky[j + c] * sg * wt_sky + ground[j + c] * gg * wt_ground;
-                    }
-                }
+                let contrib = [(count - 1, wt_sky), (0, wt_ground)];
+                blend_row(&mut out, frames, &gains, y, w, &contrib, ghosts.as_ref());
             }
         }
     }
@@ -516,5 +736,178 @@ mod tests {
             time_slice(&[&a, &[0.0; 6]], 2, 2, &Spec::default()),
             Err(StackError::SizeMismatch)
         );
+    }
+
+    /// 一只在单帧里移动的物体：去鬼影关着时羽化区里是一团半亮鬼影，
+    /// 开着时同一位置回到干净帧的背景亮度。
+    ///
+    /// A subject that moves in one frame: with deghosting off the feather zone holds a
+    /// half-bright ghost; with it on, the same spot returns to the clean frame's background.
+    #[test]
+    fn a_moved_subject_leaves_no_ghost_in_the_feather_zone() {
+        let w = 48;
+        let h = 48;
+        let bg = lin(0.0);
+        let obj = lin(2.0);
+        let mut early = flat(w, h, bg);
+        let mut late = flat(w, h, bg);
+        // 物体在 early 的左中（整格），在 late 的右中：羽化区（y≈24）里两份都在。
+        //
+        // The subject sits mid-left in `early` and mid-right in `late`: both copies fall in the
+        // feather zone (y≈24).
+        let stamp = |img: &mut Vec<f32>, x0: usize| {
+            for y in 16..32 {
+                for x in x0..x0 + 16 {
+                    let j = (y * w + x) * 3;
+                    img[j] = obj;
+                    img[j + 1] = obj;
+                    img[j + 2] = obj;
+                }
+            }
+        };
+        stamp(&mut early, 0);
+        stamp(&mut late, 32);
+        let spec = |deghost: f32| Spec {
+            layout: Layout::Bands,
+            bands: 2,
+            feather: 0.2,
+            match_exposure: false,
+            deghost,
+            ..Spec::default()
+        };
+        // 探针：early 的物体格中心、羽化带正中间的一行。
+        //
+        // Probe: the centre of early's subject tile, on a row in the middle of the feather band.
+        let probe = 24 * w * 3 + 8 * 3;
+        let off = time_slice(&[&early, &late], w, h, &spec(0.0)).unwrap();
+        let on = time_slice(&[&early, &late], w, h, &spec(0.5)).unwrap();
+        // 反向验证：阈值 0（关闭）时鬼影必须真的在——否则判据测了个寂寞。
+        //
+        // Negative control: with the threshold at 0 (off) the ghost must really be there,
+        // otherwise this signal proves nothing.
+        assert!(
+            off[probe] > bg * 1.5,
+            "关闭去鬼影时应有鬼影：{} vs bg {}",
+            off[probe],
+            bg
+        );
+        assert!(
+            (on[probe] - bg).abs() < 0.02 * bg,
+            "开启后鬼影应被剔掉：{} vs bg {}",
+            on[probe],
+            bg
+        );
+    }
+
+    /// 静态内容（地平线、两张同拍）会被两帧同时标记，全剔之后兜底回素材帧，
+    /// 输出与去鬼影关闭时一致。
+    ///
+    /// Static content (a horizon, two identical frames) gets flagged in both frames at once;
+    /// after everything drops the owner fallback keeps the output identical to deghosting off.
+    #[test]
+    fn a_clean_stack_is_unchanged_by_deghosting() {
+        let w = 48;
+        let h = 48;
+        // 上下两块平色：每个格子对它自己的空间中位数都可能有大偏离（块边界穿过格子），
+        // 但两帧在同一位置一起离群 → 全剔 → 兜底帧。
+        //
+        // Two flat halves: tiles can deviate from their own spatial median (the edge crosses
+        // tiles), but both frames deviate at the same places → everything drops → owner
+        // fallback.
+        let mut a = flat(w, h, lin(-1.0));
+        for j in (0..w * (h / 2) * 3).step_by(3) {
+            a[j] = lin(1.5);
+            a[j + 1] = lin(1.5);
+            a[j + 2] = lin(1.5);
+        }
+        let b = a.clone();
+        let spec = |deghost: f32| Spec {
+            layout: Layout::Bands,
+            bands: 2,
+            match_exposure: false,
+            deghost,
+            ..Spec::default()
+        };
+        let off = time_slice(&[&a, &b], w, h, &spec(0.0)).unwrap();
+        let on = time_slice(&[&a, &b], w, h, &spec(0.5)).unwrap();
+        assert_eq!(on, off, "静态内容不该被去鬼影改动");
+    }
+
+    /// 两帧在同一位置都有同一件物体：两帧一起被标 → 兜底回素材帧 → 物体保住。
+    ///
+    /// The same subject in the same place in both frames: both get flagged → owner fallback →
+    /// the subject survives.
+    #[test]
+    fn a_shared_subject_survives_through_the_owner_fallback() {
+        let w = 48;
+        let h = 48;
+        let mut a = flat(w, h, lin(0.0));
+        let mut b = flat(w, h, lin(0.0));
+        for img in [&mut a, &mut b] {
+            for y in 16..32 {
+                for x in 16..32 {
+                    let j = (y * w + x) * 3;
+                    img[j] = lin(2.0);
+                    img[j + 1] = lin(2.0);
+                    img[j + 2] = lin(2.0);
+                }
+            }
+        }
+        let out = time_slice(
+            &[&a, &b],
+            w,
+            h,
+            &Spec {
+                layout: Layout::Bands,
+                bands: 2,
+                feather: 0.2,
+                match_exposure: false,
+                deghost: 0.5,
+                ..Spec::default()
+            },
+        )
+        .unwrap();
+        let probe = 24 * w * 3 + 24 * 3;
+        assert!(out[probe] > lin(1.5), "共享物体不该被剔掉：{}", out[probe]);
+    }
+
+    /// 去鬼影只在画面足够大（至少 3×3 格）时工作；小图直接走普通混合，不出错。
+    ///
+    /// Deghosting only runs when the frame is at least 3×3 tiles; small frames fall through to
+    /// the plain blend without errors.
+    #[test]
+    fn deghosting_skips_frames_too_small_for_a_grid() {
+        let a = flat(32, 32, lin(0.0));
+        let b = flat(32, 32, lin(0.5));
+        let out = time_slice(
+            &[&a, &b],
+            32,
+            32,
+            &Spec {
+                layout: Layout::Bands,
+                bands: 2,
+                deghost: 0.5,
+                ..Spec::default()
+            },
+        )
+        .unwrap();
+        assert!(out.iter().all(|v| v.is_finite()), "小图也要产出有限值");
+        // 32×32 只有 2×2 格：标签图造不出来，输出应与去鬼影关闭完全一致。
+        //
+        // 32×32 is only 2×2 tiles: no label map, so the output must match deghosting off
+        // exactly.
+        let plain = time_slice(
+            &[&a, &b],
+            32,
+            32,
+            &Spec {
+                layout: Layout::Bands,
+                bands: 2,
+                deghost: 0.0,
+                ..Spec::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(out, plain);
     }
 }
