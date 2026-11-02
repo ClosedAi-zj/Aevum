@@ -52,6 +52,25 @@ use serde::{Deserialize, Serialize};
 /// Manifest file name; used by directory plugins and built-in plugins alike.
 pub const MANIFEST: &str = "plugin.toml";
 
+/// 清单文本的字节上限。真实清单是几十行、几 KB 量级（内置的那几份都在 2 KB 以内），
+/// 1 MB 比任何手写清单大两个数量级。超过这个数只可能是坏掉的或恶意的文件：把 10 GB
+/// 读成一个 `String` 换来的不是「更完整的解析」，而是内存被吃光。
+///
+/// 为什么是「先看 metadata 再读」而不是「读进来再判断」：目的就是**不要**把那份字节
+/// 读进内存，读完再拒已经晚了。TOML 解析器自己不怕深嵌套（toml 0.9 在约 80 层就报
+/// `cannot recurse further`），所以这里的风险面只有体积。
+///
+/// Byte cap for the manifest text. A real manifest is tens of lines and a few KB (the
+/// built-in ones are all under 2 KB), so 1 MB is two orders of magnitude above anything
+/// hand-written. Beyond that it can only be a broken or malicious file: reading 10 GB into a
+/// `String` buys no extra parsing, only an empty machine.
+///
+/// Why "check metadata, then read" rather than "read, then reject": the point is to **not**
+/// pull those bytes into memory at all, and rejecting after the fact is too late. The TOML
+/// parser itself is not afraid of deep nesting (toml 0.9 reports `cannot recurse further` at
+/// roughly 80 levels), so the only exposed surface here is size.
+pub const MAX_MANIFEST_BYTES: u64 = 1 << 20;
+
 /// 插件类别。决定宿主怎么调它，也决定菜单允许挂在哪些根下。
 ///
 /// Plugin kind. It decides how the host invokes the plugin and which menu roots the
@@ -447,6 +466,23 @@ impl Registry {
         dirs.sort();
         for dir in dirs {
             let path = dir.join(MANIFEST);
+            // 先看字节数：超过上限的清单连读都不读（见 `MAX_MANIFEST_BYTES`）。
+            // Check the size first: an oversized manifest is not even read (see
+            // `MAX_MANIFEST_BYTES`).
+            match std::fs::metadata(&path) {
+                Ok(meta) if meta.len() > MAX_MANIFEST_BYTES => {
+                    reg.errors.push((
+                        path,
+                        format!(
+                            "清单 {} 字节，超过 {MAX_MANIFEST_BYTES} 字节上限；插件清单是手写的，不该这么大",
+                            meta.len()
+                        ),
+                    ));
+                    continue;
+                }
+                Ok(_) => {}
+                Err(_) => continue,
+            }
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };

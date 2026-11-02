@@ -453,6 +453,14 @@ pub fn decode(path: impl AsRef<Path>) -> Result<DynamicImage, MetricsError> {
     Ok(decode_with_origin(path)?.0)
 }
 
+/// 普通图片（非 RAW、非 DNG）的单边像素上限。容器格式大多用 u16/u32 存宽高，
+/// 65535 是「格式说得出口」的上限；判据里那张声明 100000×100000 的靶子要靠它拒。
+///
+/// Per-side pixel cap for plain pictures (not RAW, not DNG). Most containers store width and
+/// height as u16/u32, so 65535 is the largest value a format can legitimately express; the
+/// fixture declaring 100000×100000 in the assertions relies on it to be refused.
+const MAX_IMAGE_SIDE: u32 = 65_535;
+
 /// [`decode`] 的完整版：连「像素从哪条路来」一起报。
 ///
 /// 这一层同时是**panic 的最后一道闸**：从路径到像素只有这一个漏斗（序列解码、测光、
@@ -517,7 +525,21 @@ fn decode_dispatch(path: &Path) -> Result<(DynamicImage, PixelOrigin), MetricsEr
             PixelOrigin::RawBackend,
         ));
     }
-    let reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    // `ImageReader` 默认就带 `Limits`（单边不设限，`max_alloc` 512 MB），所以
+    // 「200 KB 的 PNG 解出 4 GB」这条路本来就走不通——分配在 512 MB 处被拒。
+    // 这一道是**再往前推一步**：单边也钉死，让「声明 100000×100000」的文件在
+    // 读 IHDR 之后立刻被拒，而不是先尝试分配再失败。100 MP 的全景扫描件远在下面。
+    //
+    // `ImageReader` already carries `Limits` by default (no per-side limit, `max_alloc` 512
+    // MB), so "a 200 KB PNG expanding to 4 GB" is not reachable -- the allocation is refused
+    // at 512 MB. This adds **one step earlier**: the sides are pinned too, so a file
+    // declaring 100000×100000 is refused right after the header instead of being refused
+    // after an allocation attempt. A 100 MP panorama scan sits far below this.
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_SIDE);
+    limits.max_image_height = Some(MAX_IMAGE_SIDE);
+    reader.limits(limits);
     // 普通图的解压同样在第三方代码里（jpge/zune/zune-inflate），坏流一样会 panic。
     // 守卫只包 `decode()`：`open`/`with_guessed_format` 的失败要保持原来的
     // 「读取失败」/「解码失败」两种口径，不能都改说成 panic。

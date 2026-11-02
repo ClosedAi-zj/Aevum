@@ -510,11 +510,15 @@ impl std::ops::Deref for TmpDir {
 
 impl Drop for TmpDir {
     fn drop(&mut self) {
+        // 只删自己这一层，**不删公共父目录**：`remove_dir(root)` 与并行用例的
+        // `create_dir_all` 之间有窗口，会让对方的写入拿到 `NotFound`（同
+        // `raw_reads::TmpDir::drop` 的说明）。根目录由 `.gitignore` 的 `tests/_tmp*/` 盖住。
+        //
+        // Remove only this level, **never the shared parent**: `remove_dir(root)` races a
+        // parallel test's `create_dir_all` and hands the other side a `NotFound` (see the
+        // note on `raw_reads::TmpDir::drop`). The root stays covered by `.gitignore`'s
+        // `tests/_tmp*/`.
         let _ = std::fs::remove_dir_all(&self.path);
-        // 公共父目录只在该删干净了才删得掉：还有并行用例在用时保留。
-        if let Some(root) = self.path.parent() {
-            let _ = std::fs::remove_dir(root);
-        }
     }
 }
 

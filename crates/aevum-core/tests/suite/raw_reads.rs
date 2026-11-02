@@ -482,15 +482,27 @@ impl std::ops::Deref for TmpDir {
 
 impl Drop for TmpDir {
     fn drop(&mut self) {
+        // 只删自己这一层，**不删公共父目录**：`remove_dir(root)` 只在父目录恰好空时成功，
+        // 于是并行用例之间有一个窗口——A 用完删掉根目录，而 B 刚 `create_dir_all` 完自己的
+        // 子目录、还没写文件，B 的写入就会 `NotFound`（2026-11-02 在门槛里真红过一次）。
+        // 根目录留着没有代价：`.gitignore` 的 `tests/_tmp*/` 已经盖住它。
+        //
+        // Remove only this level, **never the shared parent**: `remove_dir(root)` succeeds
+        // only when the parent happens to be empty, which opens a window between parallel
+        // tests -- A finishes and removes the root while B has just created its own subtree
+        // and has not written yet, so B's write fails with `NotFound` (this really turned the
+        // gate red once on 2026-11-02). Leaving the root costs nothing: `.gitignore`'s
+        // `tests/_tmp*/` already covers it.
         let _ = std::fs::remove_dir_all(&self.path);
-        if let Some(root) = self.path.parent() {
-            let _ = std::fs::remove_dir(root);
-        }
     }
 }
 
 fn write_file(dir: &Path, name: &str, data: &[u8]) -> PathBuf {
     let path = dir.join(name);
+    // 目录可能被并行用例的清理顺手删掉（见 `Drop`）：写之前确保在。
+    // The directory may have been removed by a parallel test's cleanup (see `Drop`); make
+    // sure it exists before writing.
+    let _ = std::fs::create_dir_all(dir);
     std::fs::write(&path, data).expect("写临时文件");
     path
 }

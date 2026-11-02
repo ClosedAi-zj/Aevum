@@ -42,6 +42,7 @@ mod fit_sharpen;
 mod fit_sharpen_protect;
 mod fit_sliders;
 mod golden;
+mod input_hardening;
 mod interp_basic;
 mod lcp_real;
 mod lensfun_real;
