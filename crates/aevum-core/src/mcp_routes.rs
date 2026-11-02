@@ -48,7 +48,7 @@
 //! - [`TOOL_ROUTES`]: which command each MCP tool name maps to; `None` means the GUI has no
 //!   such capability and the call can only go to server mode;
 //! - [`command_for_mcp_name`] / [`tool_command`]: the two lookup paths; together they cover the
-//!   "34 tool names" and "74 command names" namespaces.
+//!   "39 tool names" and "77 command names" namespaces.
 //!
 //! Tests interlock the three lists (this table, `tools.rs`, `command_catalog()`) entry by
 //! entry: any addition, removal or typo turns the local test suite red at once instead of
@@ -175,7 +175,7 @@ pub struct ToolRoute {
     pub command: Option<&'static str>,
 }
 
-/// 全部 34 个 MCP 工具，以及它们在附着模式下的去向。
+/// 全部 39 个 MCP 工具，以及它们在附着模式下的去向。
 ///
 /// 顺序与 `aevum-mcp::tools::build_commands` 一致（`tools.rs` 有测试逐条比对）。
 ///
@@ -183,7 +183,7 @@ pub struct ToolRoute {
 /// `aevum_xmp_read` 就是 `xmp.import`，改名会让已经配好的客户端全部失效。
 /// 这张表存在的意义之一，正是把这种历史错位集中记在一处，而不是散在代码里当隐性知识。
 ///
-/// All 34 MCP tools and where each one lands in attach mode.
+/// All 39 MCP tools and where each one lands in attach mode.
 ///
 /// The order matches `aevum-mcp::tools::build_commands` (`tools.rs` has a test that compares
 /// them entry by entry).
@@ -288,7 +288,7 @@ pub fn mcp_name(command: &str) -> String {
 /// Used by attach mode: the tool list of a live GUI is generated on the fly from the command
 /// catalog, and each name is `mcp_name(command ID)`. That set includes `aevum_grade_auto`,
 /// `aevum_library_add` and `aevum_history_undo`, none of which appear in [`TOOL_ROUTES`]
-/// (whose 34 entries are server-mode tools), so routing them depends on this function.
+/// (whose 39 entries are server-mode tools), so routing them depends on this function.
 pub fn command_for_mcp_name(name: &str) -> Option<&'static str> {
     COMMANDS.iter().copied().find(|id| mcp_name(id) == name)
 }

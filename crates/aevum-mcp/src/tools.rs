@@ -1635,18 +1635,24 @@ fn timeblend_merge(session: &mut Session, args: &Value) -> Result<Value, String>
 
 /// 筛选评估：按四条判据逐帧裁决（曝光越界 / 相邻突变 / 清晰度 / 读不出来）。
 ///
-/// 与 GUI 的 `cull.evaluate` 同口径，判据吃测光缓存（没有就先按 512 长边测一遍），
-/// 立即返回、不解图。GUI 的 `apply` 是把判废帧标成「排除」的会话态，无头会话
-/// 没有旗标存储，这里只评估不标记；剔除走 `aevum_cull_extract` 的 `exclude`
-/// 显式列帧下标。
+/// 与 GUI 的 `cull.evaluate` 同判据，但测光来源不同：GUI 走 `measures::measure_sequence`
+/// （先命中盘上 `measures.json`），无头走 `Session::ensure_metrics` → `metrics::measure_many`
+/// （512 长边，会话内存内现测、之后复用，**不读盘上缓存**）。正确性不受影响，只是 GUI
+/// 已测过的序列在无头这边会再解一遍图；口径差异已记 `docs/遗留台账.md` C7。
+/// GUI 的 `apply` 是把判废帧标成「排除」的会话态，无头会话没有旗标存储，这里只评估
+/// 不标记；剔除走 `aevum_cull_extract` 的 `exclude` 显式列帧下标。
 ///
 /// Cull evaluation: judge every frame with the four rules (exposure band / adjacent
 /// jumps / sharpness / unreadable).
 ///
-/// Same convention as the GUI's `cull.evaluate`: the rules read the metering cache
-/// (measured once at a 512 long side if absent) and the call returns at once. The
-/// GUI's `apply` marks rejected frames "excluded" in session state, which a headless
-/// session does not store -- evaluation only here; exclusion happens through
+/// Same rules as the GUI's `cull.evaluate`, but the metering source differs: the GUI goes
+/// through `measures::measure_sequence` (hitting the on-disk `measures.json` first), while
+/// headless goes through `Session::ensure_metrics` → `metrics::measure_many` (512 long
+/// side, measured into session memory and reused, **never reading the on-disk cache**).
+/// Correctness is unaffected; a sequence the GUI already metered simply gets decoded again
+/// headless-side, and the divergence is recorded as C7 in `docs/遗留台账.md`. The GUI's
+/// `apply` marks rejected frames "excluded" in session state, which a headless session
+/// does not store -- evaluation only here; exclusion happens through
 /// `aevum_cull_extract`'s explicit `exclude` index list.
 fn cull_evaluate(session: &mut Session, args: &Value) -> Result<Value, String> {
     session.ensure_metrics()?;
@@ -3737,7 +3743,7 @@ fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_cull_evaluate",
-            description: "按四条判据逐帧裁决并给出理由：曝光越界（EV）、与相邻帧的突变、清晰度低于序列中位的比例、读不出来；吃测光缓存（没有就先按 512 长边测一遍），立即返回。只评估不标记：GUI 侧的 apply（把判废帧标成「排除」）是会话态，无头剔除走 aevum_cull_extract 的 exclude 参数。",
+            description: "按四条判据逐帧裁决并给出理由：曝光越界（EV）、与相邻帧的突变、清晰度低于序列中位的比例、读不出来；立即返回。测光在无头会话内存里进行（512 长边，第一次调用现测、之后会话内复用），**不读取盘上的测光缓存**——GUI 测过的序列，无头这边仍会整段重测（口径差异见 docs/遗留台账 C7）。只评估不标记：GUI 侧的 apply（把判废帧标成「排除」）是会话态，无头剔除走 aevum_cull_extract 的 exclude 参数。",
             input_schema: object(
                 json!({
                     "suggest": {"type": "boolean", "description": "用序列自身的亮度中位数绝对偏差推曝光区间（3×1.4826×MAD，下限 0.5 EV）；给了则覆盖 ev_low/ev_high"},
