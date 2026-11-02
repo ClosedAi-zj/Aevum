@@ -13,7 +13,7 @@ way of writing files. The first run of the 1.5 candidate against ten real sample
 `rawler 0.7.2` reading out of bounds on an iPhone LinearRaw DNG -- and the panic happened
 inside rawler's own rayon worker, was swallowed, and the main flow returned `Ok` with
 partially un-linearised garbage. **One sample cannot carry the word "compatibility".**
-Root cause and defences: `docs/RAW兼容性-根因与防线.en.md`.
+Root cause and defences: [`docs/RAW兼容性-根因与防线.en.md`](../../docs/RAW兼容性-根因与防线.en.md).
 
 ## Inventory and checksums
 
