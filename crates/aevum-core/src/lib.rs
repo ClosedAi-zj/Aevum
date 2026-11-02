@@ -31,6 +31,7 @@ pub mod env;
 pub mod errmsg;
 pub mod exif;
 pub mod export;
+pub mod focus;
 pub mod fonts;
 pub mod grade;
 pub mod hdr;
