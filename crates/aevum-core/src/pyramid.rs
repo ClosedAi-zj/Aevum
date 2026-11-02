@@ -16,13 +16,27 @@
 //! 的高频扩散（光晕的主源），也让常数场塌缩天然成立。`levels < 3` 时只有一层能收紧，
 //! `levels = 1` 时一层都不收紧（否则会破坏退化一致性）。
 //!
-//! # 内存口径
+//! # 内存与耗时（T10 实测，2026-11-03）
 //!
 //! 逐帧流式：**按层下采样 → 边算 L_l 边融进输出塔 → 只留相邻两层**，绝不把 32 帧
-//! 的完整塔一起驻留。常驻的是输出塔（RGB）+ 权重和塔（单通道）；当前帧手里只有
-//! 相邻两层的高斯面与权重面。塌缩从最粗层起**原地**逐层上采样累加，不另开一张
-//! 全分辨率缓冲。24 MP 一帧 f32 RGB = 288 MB，完整塔 ≈ 384 MB、权重塔 ≈ 128 MB，
-//! 峰值 ≈ 1.0 GB（权威数字由 T10 实测替换，这里是量级说明，不是实测值）。
+//! 的完整塔一起驻留。塌缩从最粗层起**原地**逐层上采样累加，不另开全分辨率缓冲。
+//!
+//! 实测口径：release 构建、24 MP（6000×4000）× 8 帧、`levels = auto = 6`、
+//! 同一台机器（i5-12600KF / 31.8 GB RAM / Windows）各跑 3 次取中位数，峰值取进程
+//! `PeakWorkingSetSize`。输入 8 帧本身驻留 2.32 GB（8 × 288 MB + 解码器余量），表里
+//! 「融合增量」是峰值减去融合开始前的常驻，才是本法自己的开销。
+//!
+//! | 方法 | 墙钟 | 进程峰值 | 融合增量 |
+//! |---|---|---|---|
+//! | Weighted | 1.97 s | 3.19 GB | 864 MB |
+//! | Pyramid | 29.7 s | 4.43 GB | **2.10 GB** |
+//! | 倍数 | **15.0×** | 1.39× | **2.4×** |
+//!
+//! 早先按「输出塔 384 MB + 权重塔 128 MB」推算的 ≈1.0 GB **是错的**（差 2 倍多）：
+//! 那个算式漏了 Pass A 的 `best` / `gate` 两个全分辨率面（各 96 MB）、掩膜塔（128 MB）、
+//! 每帧的测度面（96 MB）与当前帧的拉普拉斯面（288 MB）。耗时 15× 而非「2–3×」，主要
+//! 因为 `focus::measure_plane` 每帧跑**两遍**（Pass A 求分位线、Pass B 求权重）。
+//! 这两个数是实测值，不是推算值；改实现就重测，别照着旧数字改注释。
 //!
 //! `feather` / `smooth_z` 在本法下**不适用**：融合只在塔各层上按权重归一，没有
 //! 深度跳变、没有羽化掩膜，也没有模值滤波。调用方传了也只读校验、不生效。
@@ -52,16 +66,32 @@
 //! `levels < 3` only one level is tightened; with `levels = 1` none is, or the degeneration
 //! would break.
 //!
-//! # Memory
+//! # Memory and time (measured for T10, 2026-11-03)
 //!
-//! Streaming, one frame at a time: reduce level by level, compute `L_l` and fold it into
-//! the output tower immediately, keeping only two adjacent planes. The full towers of all
-//! 32 frames are never resident. The persistent allocations are the output tower (RGB) and
-//! the weight-sum tower (mono); the current frame holds only two adjacent Gaussian planes
-//! and two adjacent weight planes. Collapse runs **in place** from the coarsest level, with
-//! no extra full-resolution buffer. One 24 MP f32 RGB frame is 288 MB, a full tower is
-//! about 384 MB and a weight tower about 128 MB, so the peak is about 1.0 GB. T10 replaces
-//! these order-of-magnitude figures with measured numbers; they are not measurements.
+//! Streaming, one frame at a time: reduce level by level, compute `L_l` and fold it into the
+//! output tower immediately, keeping only two adjacent planes. The full towers of all 32
+//! frames are never resident. Collapse runs **in place** from the coarsest level, with no
+//! extra full-resolution buffer.
+//!
+//! Measured how: release build, 24 MP (6000x4000) x 8 frames, `levels = auto = 6`, one
+//! machine (i5-12600KF / 31.8 GB RAM / Windows), three runs each, median; peak is the
+//! process's `PeakWorkingSetSize`. The eight input frames alone stay resident at 2.32 GB
+//! (8 x 288 MB plus decoder slack); the "fusion delta" column is the peak minus what was
+//! already resident when fusion started, i.e. this method's own cost.
+//!
+//! | Method | Wall clock | Process peak | Fusion delta |
+//! |---|---|---|---|
+//! | Weighted | 1.97 s | 3.19 GB | 864 MB |
+//! | Pyramid | 29.7 s | 4.43 GB | **2.10 GB** |
+//! | Ratio | **15.0x** | 1.39x | **2.4x** |
+//!
+//! The earlier arithmetic ("output tower 384 MB + weight tower 128 MB") guessed about
+//! 1.0 GB and **is wrong by more than 2x**: it forgot Pass A's two full-resolution `best` /
+//! `gate` planes (96 MB each), the mask tower (128 MB), the per-frame measure plane (96 MB)
+//! and the current frame's Laplacian (288 MB). The 15x wall clock (not "2-3x") is mostly
+//! `focus::measure_plane` running **twice** per frame (Pass A for the percentile cut, Pass B
+//! for the weights). These are measurements, not estimates: change the implementation and
+//! re-measure -- do not edit the comment to match the old numbers.
 //!
 //! `feather` and `smooth_z` do **not apply** here: fusion is a per-level weighted
 //! normalisation, with no depth jumps, no feather mask and no mode filter. Callers may pass
