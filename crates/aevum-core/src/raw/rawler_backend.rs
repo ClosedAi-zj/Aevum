@@ -67,7 +67,19 @@ impl RawBackend for RawlerBackend {
 ///
 /// Routing entry point: decodes files rawler recognizes and reports the sensor-direct path.
 pub fn decode_full(path: &Path) -> Result<RawDecode, RawError> {
-    let img = rawler::decode_file(path).map_err(|e| RawError::Rawler(e.to_string()))?;
+    // rawler 吃的是不可信字节，它内部有 `bits.rs` 那种按下标直取的读法——0.7.2 在
+    // iPhone 的 LinearRaw DNG 上就越界 panic 过一次（见 docs/RAW兼容性-根因与防线.md）。
+    // 0.8.0 自己也兜了一层，但我们不把「别人兜了」当成前提：守卫在这里，换实现、
+    // 换版本、换后端都还是这一道。
+    //
+    // rawler eats untrusted bytes and reads by index inside (the `bits.rs` style). 0.7.2
+    // once panicked out of bounds on an iPhone LinearRaw DNG (see the RAW compatibility
+    // doc). 0.8.0 guards it internally too, but "someone else guards it" is not a premise:
+    // the guard lives here, so swapping the implementation, the version or the backend keeps
+    // the same boundary.
+    let img = super::guard::decode_guard(NAME, || {
+        rawler::decode_file(path).map_err(|e| RawError::Rawler(e.to_string()))
+    })?;
     // 方向跟着 rawler 走：CR3 是 BMFF 容器，我们的 exif::read 读不到它的
     // 方向标记，而 rawler 解容器时顺带就有——竖拍躺平就是漏了这一步。
     let orientation = match img.orientation {

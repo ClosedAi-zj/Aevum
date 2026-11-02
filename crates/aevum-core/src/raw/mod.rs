@@ -98,6 +98,8 @@
 
 pub mod backend;
 mod cfa;
+// 解码守卫：不可信字节上的第三方解码器 panic 收口（见模块头与 docs/RAW兼容性-根因与防线.md）。
+pub mod guard;
 mod preview;
 // `pub(crate)` 是给 `crate::exif` 的：magic 白名单必须只有一份，见 `tiff::header_at`。
 pub(crate) mod tiff;
@@ -318,17 +320,68 @@ pub enum RawError {
     UnsupportedPredictor(u16),
     UnsupportedTiles,
     UnsupportedCfa,
-    TooLarge { width: u32, height: u32 },
-    StripOutOfRange { offset: u64, length: u64 },
-    StripCountMismatch { found: usize, want: usize },
-    StripSizeMismatch { found: usize, want: usize },
-    BadLevels { black: u32, white: u32 },
+    TooLarge {
+        width: u32,
+        height: u32,
+    },
+    StripOutOfRange {
+        offset: u64,
+        length: u64,
+    },
+    StripCountMismatch {
+        found: usize,
+        want: usize,
+    },
+    StripSizeMismatch {
+        found: usize,
+        want: usize,
+    },
+    BadLevels {
+        black: u32,
+        white: u32,
+    },
     NoCfaIfd,
     NoRawData(Box<RawError>),
     NoContainerPreview,
-    PreviewTooLarge { width: u32, height: u32 },
+    PreviewTooLarge {
+        width: u32,
+        height: u32,
+    },
     Image(image::ImageError),
     Rawler(String),
+    /// 认得出这个后缀、但这一版没有解码器。与「文件坏了」是两件事：前者是能力边界，
+    /// 后者是数据问题，用户能采取的行动完全不同（换版本 vs 重新拷贝）。
+    ///
+    /// The suffix is recognized but this version has no decoder for it. That is not the same
+    /// as "the file is broken": one is a capability boundary, the other is a data problem,
+    /// and the user's next move differs (upgrade vs re-copy).
+    UnsupportedFormat {
+        /// 小写后的扩展名（`"heic"`），进句子前已按 `clip_echo` 截断。
+        ///
+        /// Lower-cased extension (`"heic"`), clipped by `clip_echo` before it enters the
+        /// sentence.
+        ext: String,
+    },
+    /// 解码器自己在坏字节上 panic 了，被 `guard::decode_guard` 收成错误。
+    ///
+    /// `detail` 是 panic 负载里的原文（只有 `&str`/`String` 负载才取得到），
+    /// 不是「文件哪里坏了」的精确诊断——精确位置在 stderr 的 panic 回溯里。
+    ///
+    /// The decoder itself panicked on bad bytes and `guard::decode_guard` caught it.
+    ///
+    /// `detail` is the text from the panic payload (only available for `&str`/`String`
+    /// payloads), not a precise diagnosis of what is wrong with the file -- the precise
+    /// location is in the panic backtrace on stderr.
+    DecoderPanic {
+        /// 哪个解码器（`"rawler"`、`"image"`、`"aevum"`）。
+        ///
+        /// Which decoder (`"rawler"`, `"image"`, `"aevum"`).
+        backend: &'static str,
+        /// 负载原文，取不到就是 `None`。
+        ///
+        /// The payload text, or `None` when unavailable.
+        detail: Option<String>,
+    },
 }
 
 impl crate::errmsg::Msg for RawError {
@@ -456,6 +509,27 @@ impl crate::errmsg::Msg for RawError {
                 "第三方解码器（rawler）失败：{}",
                 vec![crate::errmsg::Arg::Text(v.to_string())],
             ),
+            Self::UnsupportedFormat { ext } => (
+                "`{}` 格式暂不支持；把样张放进 `samples/cameras/` 可以在后续版本适配",
+                vec![crate::errmsg::Arg::Text(ext.clone())],
+            ),
+            Self::DecoderPanic {
+                backend,
+                detail: Some(detail),
+            } => (
+                "{} 解码器内部出错，这张先跳过（不是你的文件坏了）：{}",
+                vec![
+                    crate::errmsg::Arg::Text((*backend).to_owned()),
+                    crate::errmsg::Arg::Text(detail.clone()),
+                ],
+            ),
+            Self::DecoderPanic {
+                backend,
+                detail: None,
+            } => (
+                "{} 解码器内部出错，这张先跳过（不是你的文件坏了）",
+                vec![crate::errmsg::Arg::Text((*backend).to_owned())],
+            ),
         }
     }
 }
@@ -531,6 +605,81 @@ pub fn is_raw_name(path: impl AsRef<Path>) -> bool {
         .is_some_and(|e| RAW_EXTENSIONS.iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
+/// 认得、但这一版**没有解码器**的后缀：说得出名字，就不该让它掉进「格式不明」。
+///
+/// 与 [`RAW_EXTENSIONS`] 是两张表、两件事：那张说的是「我们有解码器」，这张说的是
+/// 「我们知道它是什么、也明确不做」。表里每一项都是相机厂商的真实后缀，用户拖进来
+/// 一张 `raf` 时报「`raf` 格式暂不支持」远比 `image` crate 的「格式无法确定」有用——
+/// 后者会让人怀疑文件坏了。
+///
+/// HEIC/HEIF 也在表里：它不是 RAW，但用户在系统里选「原图」时常拿到的是它，
+/// 报一个具名的「暂不支持」比报「解码失败」诚实。
+///
+/// 不在两张表里的后缀（例如 `.xyz`）仍然交给 `image` crate 去猜，它的
+/// 「格式无法确定」本身就是一句具名结论；再拦一道只会把「这个后缀我们没见过」
+/// 说成「这个后缀我们不做」，那是另一种不诚实。
+///
+/// Suffixes we recognize but cannot decode in this version: when the name is known, it must
+/// not fall into "unknown format".
+///
+/// This is a second table and a second question: [`RAW_EXTENSIONS`] says "we have a
+/// decoder", this one says "we know what it is and explicitly do not". Every entry is a real
+/// vendor suffix. Reporting "`raf` is not supported yet" when the user drags one in is far
+/// more useful than the `image` crate's "format could not be determined", which makes people
+/// suspect the file is corrupt.
+///
+/// HEIC/HEIF is in the table too: it is not RAW, but picking "original" in a system dialog
+/// often yields one, and a named "not supported yet" is more honest than "decode failed".
+///
+/// Suffixes in neither table (say `.xyz`) still go to the `image` crate to guess; its
+/// "format could not be determined" is already a named conclusion, and a second check would
+/// only turn "we have never seen this suffix" into "we do not do this suffix" -- another
+/// kind of dishonesty.
+const UNSUPPORTED_EXTENSIONS: [&str; 19] = [
+    "heic", "heif", // iPhone/手机：用户最常误当「原图」
+    "raf",  // Fujifilm（X-Trans，需专用去马赛克）
+    "pef",  // Pentax
+    "srw",  // Samsung
+    "3fr",  // Hasselblad
+    "fff",  // Hasselblad/Imacon
+    "iiq",  // Phase One
+    "mrw",  // Minolta
+    "mdc",  // Minolta
+    "kdc",  // Kodak
+    "dcr",  // Kodak
+    "dcs",  // Kodak
+    "dc2",  // Kodak
+    "x3f",  // Sigma（Foveon 三层，完全是另一套模型）
+    "crw",  // Canon 早期（CIFF 容器，不是 TIFF）
+    "mef",  // Mamiya
+    "mos",  // Leaf
+    "gpr",  // GoPro
+];
+
+/// 这个后缀是不是「认得但这一版不做」。命中就返回可读的 [`RawError::UnsupportedFormat`]。
+///
+/// 调用点在解码分派处（`metrics::decode_with_origin`、`backend::full`、[`info`]）：
+/// 越早停下越省事——真去解一张 HEIC，最好的结果是白读一遍文件再报一个语焉不详的错。
+///
+/// Whether this suffix is "recognized but not done in this version". A hit returns a readable
+/// [`RawError::UnsupportedFormat`].
+///
+/// Call sites sit at the decode dispatch points (`metrics::decode_with_origin`,
+/// `backend::full`, [`info`]): stopping early is cheaper -- actually decoding a HEIC at best
+/// reads the file for nothing and then reports a vague error.
+pub fn unsupported_extension(path: impl AsRef<Path>) -> Option<RawError> {
+    let ext = path.as_ref().extension()?.to_str()?;
+    let hit = UNSUPPORTED_EXTENSIONS
+        .iter()
+        .any(|x| ext.eq_ignore_ascii_case(x));
+    if !hit {
+        return None;
+    }
+    Some(RawError::UnsupportedFormat {
+        ext: crate::errmsg::clip_echo(&ext.to_ascii_lowercase()),
+    })
+}
+
 /// 结构上像不像 RAW（扩展名或头部认领）。目录扫描时用，逐帧解码用 [`is_raw_name`]。
 ///
 /// Whether this looks like RAW structurally (claimed by extension or header).
@@ -554,7 +703,12 @@ const SNIFF_BYTES: u64 = 1 << 20;
 ///
 /// Read metadata only, without decoding pixels.
 pub fn info(path: impl AsRef<Path>) -> Result<RawInfo, RawError> {
-    let data = load(path.as_ref(), MAX_FILE_BYTES)?;
+    let path = path.as_ref();
+    // 认得但没解码器的后缀：没有任何一条路能给出尺寸，直接说名字。
+    if let Some(err) = unsupported_extension(path) {
+        return Err(err);
+    }
+    let data = load(path, MAX_FILE_BYTES)?;
     info_bytes(&data)
 }
 

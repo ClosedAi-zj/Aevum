@@ -30,7 +30,7 @@ use std::io::Cursor;
 
 use image::{ColorType, DynamicImage, ImageFormat, ImageReader, Limits};
 
-use super::{MAX_PIXELS, RawError};
+use super::{MAX_PIXELS, RawError, guard};
 use crate::dng::Rgb16Image;
 
 /// 一次找预览能走的总步数（段头与熵数据扫描共用一份预算）。预算耗尽只会得到「没找到」，
@@ -207,9 +207,21 @@ pub(crate) fn find_at_least(d: &[u8], min_side: u32) -> Option<Found<'_>> {
 }
 
 /// 用 `image` 自己报的尺寸挑预览：不重复实现一遍 SOF 解析，也不信跨度字节数。
+///
+/// 预览字节来自 RAW 容器，和 RAW 本身一样不可信：`image` 的 JPEG 解析器在坏 SOF 上
+/// 也会 panic，所以这里走守卫——读不出尺寸就当没找到（`find` 会继续看下一个候选），
+/// 而不是让整个文件解码崩在半路。
+///
+/// Ask `image` for the size instead of re-implementing SOF parsing, and never trust the
+/// span byte count.
+///
+/// The preview bytes come out of a RAW container and are exactly as untrusted as the RAW
+/// itself: `image`'s JPEG parser can panic on a broken SOF, so this goes through the guard.
+/// A size that cannot be read counts as "not found" (`find` moves on to the next candidate)
+/// instead of crashing the whole decode half-way.
 fn declared_size(span: &[u8]) -> Option<(u32, u32)> {
     let reader = ImageReader::with_format(Cursor::new(span), ImageFormat::Jpeg);
-    reader.into_dimensions().ok()
+    guard::catch_decoder_panic("image", move || reader.into_dimensions().ok()).unwrap_or(None)
 }
 
 /// 解一张预览成 16 位 RGB。
@@ -231,7 +243,17 @@ pub(crate) fn decode(found: &Found<'_>) -> Result<Rgb16Image, RawError> {
     limits.max_image_width = Some(found.width);
     limits.max_image_height = Some(found.height);
     reader.limits(limits);
-    let img = reader.decode()?;
+    // 真正的解压在 `image` 里跑，字节是容器里的、不可信：panic 收成具名错误。
+    // `AssertUnwindSafe` 的理由见 `guard` 模块头——`reader` 只属于这个闭包。
+    //
+    // The actual decompression runs inside `image` over container bytes, which are
+    // untrusted: catch the panic and name it. The `AssertUnwindSafe` rationale is in the
+    // `guard` module docs -- `reader` belongs to this closure alone.
+    let img = guard::catch_decoder_panic(
+        "image",
+        std::panic::AssertUnwindSafe(move || reader.decode()),
+    )
+    .map_err(RawError::from)??;
     Ok(to_rgb16(&img))
 }
 

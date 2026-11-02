@@ -3071,10 +3071,26 @@ fn frame_pixels(path: &Path) -> u64 {
             Err(_) => None,
         }
     } else {
-        image::ImageReader::open(path)
-            .ok()
-            .and_then(|r| r.with_guessed_format().ok())
-            .and_then(|r| r.into_dimensions().ok())
+        // 只为决定并行路数问一次尺寸：读坏了、猜不出格式都当「尺寸不明」，退单线程
+        // 只是慢一点；这里绝不能因为一个坏文件 panic 掉整次导出。
+        // 不必再加 `Limits`：`into_dimensions` 只读头部、不解像素，而 `ImageReader`
+        // 本身已带 `Limits::default()`（`max_alloc` 512 MB），解压炸弹在真正解码的
+        // 地方才需要拦，那是 `decode_with_origin` 的守卫。
+        //
+        // Only asking for the size to pick the worker count: an unreadable or
+        // undeterminable file counts as "size unknown" and falls back to one worker, which
+        // is merely slower; a broken file must never panic an entire export.
+        // No extra `Limits` needed: `into_dimensions` reads headers only and allocates no
+        // pixels, and `ImageReader` already carries `Limits::default()` (`max_alloc` 512 MB).
+        // A decompression bomb only matters where pixels are actually decoded, which is the
+        // guard inside `decode_with_origin`.
+        crate::raw::guard::catch_decoder_panic("image", move || {
+            image::ImageReader::open(path)
+                .ok()
+                .and_then(|r| r.with_guessed_format().ok())
+                .and_then(|r| r.into_dimensions().ok())
+        })
+        .unwrap_or(None)
     };
     info.map_or(0, |(w, h)| w as u64 * h as u64)
 }

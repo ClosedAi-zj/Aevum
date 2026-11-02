@@ -10,7 +10,7 @@ members = [
 [workspace.package]
 version = "1.4.0"
 edition = "2024"
-rust-version = "1.88"  # 界面代码用了 let-chain（1.88 起、仅 2024 edition 可用）
+rust-version = "1.89"  # 界面代码用了 let-chain（1.88 起）；1.89 的下限来自 rawler 0.8（见下）
 license = "MIT"
 authors = ["Aevum Studio contributors"]
 
@@ -42,8 +42,11 @@ rfd = "0.17"
 skrifa = "0.44"
 # RAW 第三方解码后端（CRX/12/14 位打包）：纯 Rust、MIT OR Apache-2.0，
 # 见 crates/aevum-core/Cargo.toml 的 raw-rawler feature 与 docs/依赖许可说明.md。
-# 0.8 起要求 rustc 1.89，高于本仓 MSRV 1.88，钉在 0.7.x。
-rawler = "=0.7.2"
+# 0.8.0 起要求 rustc 1.89，本仓 MSRV 随之上抬到 1.89（原为 1.88，界面侧只用 let-chain，
+# 1.89 不收回任何已用特性）。**必须守在 0.8+**：0.7.2 在 iPhone 的 LinearRaw DNG 上
+# 读越界 panic，且 panic 发生在它自己的 rayon 工作线程里被吞掉，主流程仍返回 Ok——
+# 拿到的是部分未线性化的脏数据。见 docs/RAW兼容性-根因与防线.md。
+rawler = "=0.8.0"
 
 [profile.release]
 lto = "thin"

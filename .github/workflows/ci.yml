@@ -10,11 +10,12 @@ name: check
 # 于是 CI 常年全绿而一个都没执行 —— 1.2.0 修掉的那个「AVIF 导出从上线起就是坏的」bug，
 # 就是这么藏了一整轮。本机没 ffmpeg 又想跳过，显式设 AEVUM_ALLOW_NO_FFMPEG=1。
 #
-# 为什么没有 MSRV job：`rust-version = "1.88"` 是对下游的**声明**（界面代码用了 1.88 起、
-# 仅 2024 edition 可用的 let-chain），而本仓构建只用 rust-toolchain.toml 里的 1.98.0。
-# 真跑一个 1.88 job 能提前抓出「不小心用了 1.89+ 语法」，代价是每次 CI 多装一套 toolchain、
+# 为什么没有 MSRV job：`rust-version = "1.89"` 是对下游的**声明**（界面代码用了 1.88 起、
+# 仅 2024 edition 可用的 let-chain；1.89 的下限是 rawler 0.8 强制的），而本仓构建只用
+# rust-toolchain.toml 里的 1.98.0。
+# 真跑一个 1.89 job 能提前抓出「不小心用了 1.90+ 语法」，代价是每次 CI 多装一套 toolchain、
 # 多编一遍全 workspace。当前的约束是「不用更新语法」的纪律 + Cargo.toml 里的声明 ——
-# 这**不等于**已在 1.88 上验证过：本机是 1.98，编得过说明不了 MSRV 成立。
+# 这**不等于**已在 1.89 上验证过：本机是 1.98，编得过说明不了 MSRV 成立。
 # 以后若要加，加一个只跑 `cargo check --workspace` 的独立 job，别塞进这道门槛 ——
 # 门槛红了必须是代码问题，不能是工具链问题。
 

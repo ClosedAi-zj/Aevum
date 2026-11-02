@@ -1265,3 +1265,71 @@ fn backend_preview_prefers_embedded_jpeg() {
     assert_eq!(decoded.path, RawPath::Preview, "有内嵌预览就该走预览");
     assert_eq!((decoded.image.width(), decoded.image.height()), (8, 4));
 }
+
+// ------------------------------------------------------- 认清但没解码器的后缀
+
+/// 认得出来、但这一版没有解码器的后缀，必须报**名字**，不许掉进「格式无法确定」。
+///
+/// 判「不许」的方式：文件内容是一段纯垃圾（连 TIFF 头都不是），如果实现先去看内容，
+/// 就会报 `NotTiff`；如果实现去问 `image` crate 猜格式，就会报「格式无法确定」。
+/// 两种都不是用户能据以行动的话。**按后缀说的话只有一种**：「`heic` 暂不支持」。
+///
+/// A suffix we recognize but cannot decode in this version must be reported **by name** and
+/// must not fall into "could not determine the format".
+///
+/// How "must not" is judged: the file content is pure garbage (not even a TIFF header), so
+/// an implementation that looks at content first reports `NotTiff`, and one that asks the
+/// `image` crate to guess reports "could not determine the format". Neither tells the user
+/// what to do. **Speaking by suffix leaves exactly one answer**: "`heic` is not supported
+/// yet".
+#[test]
+fn an_unknown_extension_is_named_not_guessed() {
+    let dir = TmpDir::new("unsupported_ext");
+    // 内容刻意是垃圾：判据要证明结论来自后缀而不是来自内容。
+    let heic = write_file(&dir, "IMG_1159.HEIC", b"not a tiff, not a heif box either");
+    let err = raw::info(&heic).expect_err("HEIC 这一版不做，不该给尺寸");
+    match &err {
+        raw::RawError::UnsupportedFormat { ext } => {
+            assert_eq!(ext, "heic", "扩展名要归一成小写，否则英文界面里会漏成 HEIC");
+        }
+        other => panic!("应当是 UnsupportedFormat，实际是 {other:?}"),
+    }
+    assert!(
+        err.to_string().contains("heic"),
+        "错误串里要有后缀名，否则用户不知道该转什么：{err}"
+    );
+    assert!(
+        err.to_string().contains("samples/cameras"),
+        "要说清怎么办（放样张进来），否则这句话只是一句拒绝：{err}"
+    );
+
+    // 解码入口（测光走的那个门）必须给同一个结论：不能「读元数据」和「解像素」两套说法。
+    let decoded = aevum_core::metrics::decode(&heic).expect_err("解码入口同样要按后缀拒绝");
+    match decoded {
+        aevum_core::metrics::MetricsError::Raw(raw::RawError::UnsupportedFormat { ext }) => {
+            assert_eq!(ext, "heic");
+        }
+        other => panic!("解码入口应当是 UnsupportedFormat，实际是 {other:?}"),
+    }
+
+    // 各家 RAW 的后缀同理：这不是「HEIC 特例」，而是一张表。
+    for (name, want) in [
+        ("shot.raf", "raf"),
+        ("shot.PEF", "pef"),
+        ("shot.x3f", "x3f"),
+        ("shot.3fr", "3fr"),
+    ] {
+        let path = write_file(&dir, name, b"\x00\x01\x02");
+        match raw::info(&path) {
+            Err(raw::RawError::UnsupportedFormat { ext }) => assert_eq!(ext, want, "{name}"),
+            other => panic!("{name} 应当是 UnsupportedFormat，实际是 {other:?}"),
+        }
+    }
+
+    // 反向：我们有解码器的后缀**不许**被这张表吃掉，否则就等于把功能删了。
+    // 内容仍是垃圾，所以要到「容器不对」这一层，而不是「格式不支持」。
+    let cr3 = write_file(&dir, "clip.CR3", b"\x00\x00\x00\x18ftypcrx ");
+    if let Err(raw::RawError::UnsupportedFormat { ext }) = raw::info(&cr3) {
+        panic!("CR3 是我们在做的格式，不许报 UnsupportedFormat（报的是 `{ext}`）");
+    }
+}

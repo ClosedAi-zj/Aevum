@@ -146,6 +146,11 @@ impl RawBackend for BuiltinBackend {
 /// Routing entry for full-resolution export. This is what `raw::read` hands
 /// out externally.
 pub fn full(path: &Path) -> Result<RawDecode, RawError> {
+    // 认得但这一版没有解码器的后缀在任何后端上都不会成功；先停下，别让内置解析器
+    // 对着 HEIC 报一句「不是 TIFF 家族容器」——那句话对用户毫无用处。
+    if let Some(err) = super::unsupported_extension(path) {
+        return Err(err);
+    }
     #[cfg(feature = "raw-rawler")]
     {
         // 第三方后端在前：CRX、12/14 位打包这些内置拒绝的布局只有它解得动。

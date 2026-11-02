@@ -26,6 +26,17 @@ pub enum MetricsError {
     Dng(crate::dng::DngError),
     Raw(crate::raw::RawError),
     Profile(String),
+    /// 解码器在坏字节上 panic 了，被 `raw::guard` 收成错误。
+    ///
+    /// 与 [`Self::Raw`] 分开是因为它可能来自**普通图片**（jpg/png）的 `image` 解码，
+    /// 那时候说「RAW 解码失败」是错的；这一条只讲「谁崩了」，不假设文件类型。
+    ///
+    /// A decoder panicked on bad bytes and `raw::guard` caught it.
+    ///
+    /// This is separate from [`Self::Raw`] because it can come from the `image` decoder of a
+    /// **plain picture** (jpg/png), where "RAW decode failed" would be wrong; this variant
+    /// says who crashed and assumes nothing about the file type.
+    DecoderPanic(crate::raw::guard::DecoderPanic),
 }
 
 impl crate::errmsg::Msg for MetricsError {
@@ -45,6 +56,19 @@ impl crate::errmsg::Msg for MetricsError {
                 "相机配置处理失败：{}",
                 vec![crate::errmsg::Arg::Text(v.to_string())],
             ),
+            Self::DecoderPanic(p) => match p.detail() {
+                Some(detail) => (
+                    "{} 解码器内部出错，这张先跳过（不是你的文件坏了）：{}",
+                    vec![
+                        crate::errmsg::Arg::Text(p.backend.to_owned()),
+                        crate::errmsg::Arg::Text(detail.to_owned()),
+                    ],
+                ),
+                None => (
+                    "{} 解码器内部出错，这张先跳过（不是你的文件坏了）",
+                    vec![crate::errmsg::Arg::Text(p.backend.to_owned())],
+                ),
+            },
         }
     }
 }
@@ -76,6 +100,12 @@ impl From<image::ImageError> for MetricsError {
 impl From<crate::dng::DngError> for MetricsError {
     fn from(e: crate::dng::DngError) -> Self {
         Self::Dng(e)
+    }
+}
+
+impl From<crate::raw::guard::DecoderPanic> for MetricsError {
+    fn from(e: crate::raw::guard::DecoderPanic) -> Self {
+        Self::DecoderPanic(e)
     }
 }
 
@@ -425,11 +455,39 @@ pub fn decode(path: impl AsRef<Path>) -> Result<DynamicImage, MetricsError> {
 
 /// [`decode`] 的完整版：连「像素从哪条路来」一起报。
 ///
+/// 这一层同时是**panic 的最后一道闸**：从路径到像素只有这一个漏斗（序列解码、测光、
+/// 缩略图、导出都走它），而漏斗里既有第三方解码器，也有本仓自己写的 TIFF/DNG 解析器——
+/// 后者同样吃不可信字节。兜在这里，任何一条路径的 panic 都只变成「这一帧跳过」，
+/// 不会掀掉整个序列。分级的精度仍然在各条支路自己的守卫上（那里知道是谁崩的）。
+///
 /// [`decode`] with the route also reported.
+///
+/// This layer is also the **last panic gate**: there is exactly one funnel from a path to
+/// pixels (sequence decode, metering, thumbnails and export all pass through it), and the
+/// funnel holds third-party decoders as well as this repository's own TIFF/DNG parsers, which
+/// eat untrusted bytes just the same. Catching here turns any path's panic into "skip this
+/// frame" rather than losing the whole sequence. Precise attribution still lives in each
+/// branch's own guard, which knows who crashed.
 pub fn decode_with_origin(
     path: impl AsRef<Path>,
 ) -> Result<(DynamicImage, PixelOrigin), MetricsError> {
     let path = path.as_ref();
+    // `&Path` 是 `UnwindSafe`：守卫只读它，panic 之后没有任何半成品被复用。
+    // `&Path` is `UnwindSafe`: the guard only reads it and no half-built state survives.
+    crate::raw::guard::catch_decoder_panic("aevum", move || decode_dispatch(path))
+        .map_err(MetricsError::from)?
+}
+
+/// [`decode_with_origin`] 的真身：分派到 DNG / 厂商 RAW / 普通图片三条支路。
+///
+/// The real body of [`decode_with_origin`]: dispatch to the DNG, vendor RAW and plain image
+/// branches.
+fn decode_dispatch(path: &Path) -> Result<(DynamicImage, PixelOrigin), MetricsError> {
+    // 认得但这一版没有解码器的后缀（HEIC/HEIF、各家 RAW）：说得出名字就说名字。
+    // 让它掉进下面 image crate 的「格式无法确定」会把「我们不做」说成「你的文件坏了」。
+    if let Some(err) = crate::raw::unsupported_extension(path) {
+        return Err(err.into());
+    }
     let is_dng = crate::dng::is_named_dng(path);
     if is_dng {
         match crate::dng::read(path) {
@@ -460,7 +518,19 @@ pub fn decode_with_origin(
         ));
     }
     let reader = image::ImageReader::open(path)?.with_guessed_format()?;
-    let img = reader.decode()?;
+    // 普通图的解压同样在第三方代码里（jpge/zune/zune-inflate），坏流一样会 panic。
+    // 守卫只包 `decode()`：`open`/`with_guessed_format` 的失败要保持原来的
+    // 「读取失败」/「解码失败」两种口径，不能都改说成 panic。
+    //
+    // Decompression of a plain picture also happens in third-party code (jpge/zune), and a
+    // broken stream panics there too. The guard wraps only `decode()`: failures from
+    // `open`/`with_guessed_format` must keep their original "read failed" / "decode failed"
+    // wording instead of being reported as panics.
+    let img = crate::raw::guard::catch_decoder_panic(
+        "image",
+        std::panic::AssertUnwindSafe(move || reader.decode()),
+    )
+    .map_err(MetricsError::from)??;
     Ok((
         crate::exif::oriented(img, crate::exif::read(path).orientation),
         PixelOrigin::Image,
@@ -639,7 +709,24 @@ fn thumb_cache_path(path: &Path, max_side: u32) -> Option<PathBuf> {
 
 fn read_thumb_cache(path: &Path, max_side: u32) -> Option<RgbaImage> {
     let file = thumb_cache_path(path, max_side)?;
-    let img = image::open(file).ok()?;
+    // 缓存文件是我们自己写的，但它在用户的盘上待过：可能被截断、被别的程序写过。
+    // 读坏了就当缓存不存在（返回 `None`，走慢路径重算），绝不让它崩掉整张缩略图。
+    // 上限按「缓存本该多小」给：一张 128 边的缓存解出 4 GB 只可能是被替换过。
+    //
+    // The cache file is ours, but it has lived on the user's disk: it may be truncated or
+    // overwritten by another program. A broken read counts as a cache miss (`None`, taking
+    // the slow path) and never crashes the thumbnail. The size cap follows "how small this
+    // cache should be": a 128px cache expanding to 4 GB can only have been replaced.
+    let cap = max_side.saturating_mul(4).max(1);
+    let img = crate::raw::guard::catch_decoder_panic("image", move || -> Option<DynamicImage> {
+        let mut reader = image::ImageReader::open(file).ok()?;
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(cap);
+        limits.max_image_height = Some(cap);
+        reader.limits(limits);
+        reader.decode().ok()
+    })
+    .unwrap_or(None)?;
     Some(img.to_rgba8())
 }
 
