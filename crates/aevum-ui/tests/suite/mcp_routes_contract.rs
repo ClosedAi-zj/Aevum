@@ -119,6 +119,77 @@ fn qa_system_commands_payload_carries_every_id() {
     }
 }
 
+/// `focus.merge` 的取帧参数是 `start`+`around`，不是 `center`。
+///
+/// 实现走的是 `pick_indices(IndicesAnchor::Start)`（读 `start`），而 schema 曾经声明
+/// `center` 且 `additionalProperties: false`——照着 schema 传 `center` 的 agent 不报错、
+/// 只是静默取了错区间。这条把契约钉在实现上，并把 `around` 的上限钉在
+/// `focus::MAX_FRAMES - 1` 上（不是某个手写的数字）。
+///
+/// `focus.merge` takes its frame range from `start`+`around`, not `center`.
+///
+/// The implementation goes through `pick_indices(IndicesAnchor::Start)` (it reads `start`),
+/// while the schema used to declare `center` with `additionalProperties: false`: an agent
+/// following the schema passed `center`, got no error, and silently fused the wrong range.
+/// This pins the contract to the implementation, and `around`'s ceiling to
+/// `focus::MAX_FRAMES - 1` rather than a hand-written number.
+#[test]
+fn qa_focus_merge_takes_start_not_center_and_caps_around_at_max_frames() {
+    let catalog = aevum_ui::control::command_catalog();
+    let focus = catalog
+        .iter()
+        .find(|spec| spec.id == "focus.merge")
+        .expect("命令目录里没有 focus.merge");
+    let schema = focus.schema();
+    let props = schema["properties"]
+        .as_object()
+        .unwrap_or_else(|| panic!("focus.merge 的 schema 没有 properties：{schema}"));
+    assert!(
+        !props.contains_key("center"),
+        "focus.merge 的 schema 还在声明 center，实现读的是 start"
+    );
+    assert!(
+        props.contains_key("start"),
+        "focus.merge 的 schema 缺 start：{schema}"
+    );
+    let around = props
+        .get("around")
+        .expect("focus.merge 的 schema 缺 around");
+    assert_eq!(
+        around["maximum"].as_i64(),
+        Some(aevum_core::focus::MAX_FRAMES as i64 - 1),
+        "around 的上限必须跟 focus::MAX_FRAMES 绑死，而不是写死一个数字：{around}"
+    );
+    // 参数提示也要说 start：面板、MCP 描述与 schema 三处同一口径，别只改一处。
+    //
+    // The parameter hint must say start too: panel, MCP description and schema agree, and
+    // fixing only one of them is how they drifted apart in the first place.
+    assert!(
+        focus.params.contains("start"),
+        "focus.merge 的 params 没提 start：{}",
+        focus.params
+    );
+    assert!(
+        !focus.params.contains("center"),
+        "focus.merge 的 params 还在提 center：{}",
+        focus.params
+    );
+    // 合并状态与取消的说明要覆盖焦点合成：三条命令都建在这个合并管线上。
+    //
+    // The merge status and cancel descriptions must cover focus stacking: all three
+    // commands share this merge pipeline.
+    for id in ["merge.status", "merge.cancel"] {
+        let spec = catalog
+            .iter()
+            .find(|spec| spec.id == id)
+            .unwrap_or_else(|| panic!("命令目录里没有 {id}"));
+        assert!(
+            spec.summary.contains("焦点合成"),
+            "{id} 的说明没提焦点合成：{}",
+            spec.summary
+        );
+    }
+}
 fn duplicates(ids: &[&str]) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut dup = BTreeSet::new();

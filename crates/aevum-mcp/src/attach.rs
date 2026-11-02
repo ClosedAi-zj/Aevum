@@ -267,7 +267,7 @@ const FALLBACK_TOOLS: &[(&str, &str)] = &[
     ),
     (
         "focus.merge",
-        "把一组不同对焦距离的帧融成一张全景深（焦点合成，批量写，必须 confirm: true；长任务，立即返回，进度用 merge.status）。深度图法：逐像素取测度最强的帧，测度低于阈值的无细节区整块用参考帧兜底，过渡带羽化；加权平均法：测度四次方当权重。参数：frames?（帧下标数组，0 开始）或 center?+around?（默认当前帧±7，around 1..31）/ method?（depthmap / weighted）/ radius?（测度半径 0..32，默认 2）/ threshold?（无细节阈值百分位 0..100，0 = 关）/ smooth_z?（深度图去斑 0..16）/ feather?（羽化半径 0..64 px）/ out_dir?（默认序列根下 焦点合成/）/ confirm: true。",
+        "把一组不同对焦距离的帧融成一张全景深（焦点合成，批量写，必须 confirm: true；长任务，立即返回，进度用 merge.status）。深度图法：逐像素取测度最强的帧，测度低于阈值的无细节区整块用参考帧兜底，过渡带羽化；加权平均法：测度四次方当权重。参数：frames?（帧下标数组，0 开始）或 start?+around?（默认从当前帧起 8 帧，around 1..31）/ method?（depthmap / weighted）/ radius?（测度半径 0..32，默认 2）/ threshold?（无细节阈值百分位 0..100，0 = 关）/ smooth_z?（深度图去斑 0..16）/ feather?（羽化半径 0..64 px）/ out_dir?（默认序列根下 焦点合成/）/ confirm: true。",
     ),
     (
         "stack.merge",
@@ -279,11 +279,11 @@ const FALLBACK_TOOLS: &[(&str, &str)] = &[
     ),
     (
         "merge.status",
-        "查询多帧合并（HDR / 全景 / 星空堆栈 / 时间合成）的进度与最近一次成片（busy / kind / done / total / result / error）。无参数。",
+        "查询多帧合并（HDR / 全景 / 星空堆栈 / 时间合成 / 焦点合成）的进度与最近一次成片（busy / kind / done / total / result / error）。无参数。",
     ),
     (
         "merge.cancel",
-        "请求取消正在进行的多帧合并（HDR / 全景 / 星空堆栈 / 时间合成）；在两帧之间生效。无参数。",
+        "请求取消正在进行的多帧合并（HDR / 全景 / 星空堆栈 / 时间合成 / 焦点合成）；在两帧之间生效。无参数。",
     ),
     ("project.save", "写入 <序列>/.aevum/project.json。无参数。"),
     ("project.get", "读取工程快照与路径。无参数。"),
