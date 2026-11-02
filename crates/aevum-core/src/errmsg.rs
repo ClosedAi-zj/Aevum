@@ -171,6 +171,44 @@ impl Msg for Plain<'_> {
     }
 }
 
+/// 错误串里回显用户输入的上限（**字符**数，不是字节）。
+///
+/// The cap on user input echoed into an error message, in **characters**, not bytes.
+pub const MAX_ECHO_CHARS: usize = 256;
+
+/// 把要拼进错误串的用户输入截断到 [`MAX_ECHO_CHARS`] 个字符。
+///
+/// 为什么必须截：命令面（MCP）与面板会把参数原样拼进错误串，一条 20 KB 的路径足以把
+/// agent 的上下文整段灌满（实测）。被截断时补一个 `…`，让人看得出这里少了东西。
+///
+/// 按 **`char`** 切而不是按 byte 切：中文与 emoji 一个字占多个字节，按字节切会切出
+/// 半个 UTF-8 序列——要么 panic（`&str` 的边界检查），要么产出乱码。
+///
+/// Truncate user input echoed into an error message to [`MAX_ECHO_CHARS`] characters.
+///
+/// Why truncation is mandatory: the command surface (MCP) and the panel splice arguments
+/// straight into error strings, and a single 20 KB path is enough to fill an agent's whole
+/// context (measured). A trailing `…` marks that something was cut.
+///
+/// It cuts on **`char`** boundaries, not bytes: a Chinese character or an emoji is several
+/// bytes wide, so cutting by byte would slice a UTF-8 sequence in half -- which either
+/// panics (the `&str` boundary check) or yields mojibake.
+pub fn clip_echo(s: &str) -> String {
+    clip_echo_to(s, MAX_ECHO_CHARS)
+}
+
+/// [`clip_echo`] 的可调版本：上限由调用方给（判据要能探边界）。
+///
+/// [`clip_echo`] with a caller-supplied limit (the tests need to probe the boundary).
+pub fn clip_echo_to(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_owned();
+    }
+    let mut out: String = s.chars().take(max_chars).collect();
+    out.push('…');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +295,35 @@ mod tests {
     /// triggered. That is exactly how `{MAX_FRAMES}` slipped through: in thiserror it was
     /// an implicit format argument, the bulk conversion left it alone, it compiled, every
     /// test was green, and the UI would have shown it.
+    #[test]
+    fn clip_echo_cuts_on_char_boundaries_not_bytes() {
+        // 20 KB 的路径灌进错误串会把 agent 的上下文填满；截到 256 个字符 + 省略号。
+        //
+        // A 20 KB path in an error string fills an agent's context; cut it at 256 characters
+        // plus an ellipsis.
+        let long = "路径".repeat(6000);
+        let clipped = clip_echo(&long);
+        assert_eq!(clipped.chars().count(), MAX_ECHO_CHARS + 1);
+        assert!(clipped.ends_with('…'), "截断后要有省略号");
+        assert!(
+            long.starts_with(clipped.trim_end_matches('…')),
+            "截断只砍尾巴"
+        );
+        // 短串原样返回，多字节字符一个都不许切坏。
+        //
+        // Short strings come back untouched, with no multi-byte character sliced.
+        assert_eq!(clip_echo("成片"), "成片");
+        assert_eq!(clip_echo_to("abcdef", 3), "abc…");
+        for n in 0..40 {
+            for unit in ["帧", "🎞", "a"] {
+                let s = unit.repeat(n);
+                let out = clip_echo_to(&s, 5);
+                assert!(out.chars().count() <= 6);
+                assert!(out.ends_with('…') == (n > 5), "n={n} 的省略号位置不对");
+            }
+        }
+    }
+
     #[test]
     fn every_error_template_uses_only_brace_braces() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

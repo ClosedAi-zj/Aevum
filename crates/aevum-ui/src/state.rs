@@ -5684,7 +5684,10 @@ impl AppState {
                     v.as_u64()
                         .and_then(|i| ((i as usize) < n).then_some(i as usize))
                         .ok_or_else(|| {
-                            crate::i18n::tr_fmt("帧号越界：{}（序列共 {} 帧）", &[&v, &n])
+                            crate::i18n::tr_fmt(
+                                "帧号越界：{}（序列共 {} 帧）",
+                                &[&aevum_core::errmsg::clip_echo(&v.to_string()), &n],
+                            )
                         })
                 })
                 .collect::<Result<_, _>>()?,
@@ -5715,8 +5718,12 @@ impl AppState {
         let root = seq.root.clone();
         let out_dir = self.merge_out_dir(args, &root, kind)?;
         ensure_out_dir_safe(&root, &out_dir)?;
-        std::fs::create_dir_all(&out_dir)
-            .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
+        std::fs::create_dir_all(&out_dir).map_err(|e| {
+            crate::i18n::tr_fmt(
+                "建输出目录失败：{}",
+                &[&aevum_core::errmsg::clip_echo(&e.to_string())],
+            )
+        })?;
 
         let job = self.build_merge_job(kind, indices, &out_dir, MergeSpec::Plain)?;
         Ok(self.start_merge(ctx, job))
@@ -6027,7 +6034,10 @@ impl AppState {
                     v.as_u64()
                         .and_then(|i| ((i as usize) < n).then_some(i as usize))
                         .ok_or_else(|| {
-                            crate::i18n::tr_fmt("帧号越界：{}（序列共 {} 帧）", &[&v, &n])
+                            crate::i18n::tr_fmt(
+                                "帧号越界：{}（序列共 {} 帧）",
+                                &[&aevum_core::errmsg::clip_echo(&v.to_string()), &n],
+                            )
                         })
                 })
                 .collect::<Result<_, _>>()?,
@@ -6058,8 +6068,12 @@ impl AppState {
         let root = seq.root.clone();
         let out_dir = self.merge_out_dir(args, &root, kind)?;
         ensure_out_dir_safe(&root, &out_dir)?;
-        std::fs::create_dir_all(&out_dir)
-            .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
+        std::fs::create_dir_all(&out_dir).map_err(|e| {
+            crate::i18n::tr_fmt(
+                "建输出目录失败：{}",
+                &[&aevum_core::errmsg::clip_echo(&e.to_string())],
+            )
+        })?;
 
         let job = self.build_merge_job(kind, indices, &out_dir, MergeSpec::Plain)?;
         Ok(self.start_merge(ctx, job))
@@ -6084,7 +6098,10 @@ impl AppState {
                     v.as_u64()
                         .and_then(|i| ((i as usize) < n).then_some(i as usize))
                         .ok_or_else(|| {
-                            crate::i18n::tr_fmt("帧号越界：{}（序列共 {} 帧）", &[&v, &n])
+                            crate::i18n::tr_fmt(
+                                "帧号越界：{}（序列共 {} 帧）",
+                                &[&aevum_core::errmsg::clip_echo(&v.to_string()), &n],
+                            )
                         })
                 })
                 .collect();
@@ -6334,8 +6351,12 @@ impl AppState {
             .unwrap_or_default();
         let out_dir = self.merge_out_dir(args, &root, kind)?;
         ensure_out_dir_safe(&root, &out_dir)?;
-        std::fs::create_dir_all(&out_dir)
-            .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
+        std::fs::create_dir_all(&out_dir).map_err(|e| {
+            crate::i18n::tr_fmt(
+                "建输出目录失败：{}",
+                &[&aevum_core::errmsg::clip_echo(&e.to_string())],
+            )
+        })?;
         let spec = MergeSpec::Stack(aevum_core::stack::Options {
             mode,
             clip_sigma,
@@ -6519,8 +6540,12 @@ impl AppState {
             .unwrap_or_default();
         let out_dir = self.merge_out_dir(args, &root, kind)?;
         ensure_out_dir_safe(&root, &out_dir)?;
-        std::fs::create_dir_all(&out_dir)
-            .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
+        std::fs::create_dir_all(&out_dir).map_err(|e| {
+            crate::i18n::tr_fmt(
+                "建输出目录失败：{}",
+                &[&aevum_core::errmsg::clip_echo(&e.to_string())],
+            )
+        })?;
         let spec = MergeSpec::TimeBlend(aevum_core::timeblend::Spec {
             layout,
             bands,
@@ -6599,8 +6624,12 @@ impl AppState {
             .unwrap_or_default();
         let out_dir = self.merge_out_dir(args, &root, kind)?;
         ensure_out_dir_safe(&root, &out_dir)?;
-        std::fs::create_dir_all(&out_dir)
-            .map_err(|e| crate::i18n::tr_fmt("建输出目录失败：{}", &[&e]))?;
+        std::fs::create_dir_all(&out_dir).map_err(|e| {
+            crate::i18n::tr_fmt(
+                "建输出目录失败：{}",
+                &[&aevum_core::errmsg::clip_echo(&e.to_string())],
+            )
+        })?;
         let spec = MergeSpec::Focus(aevum_core::focus::Options {
             method,
             radius,
@@ -12433,12 +12462,20 @@ fn component_eq(a: Component<'_>, b: Component<'_>) -> bool {
 }
 
 /// 导出目录不得是序列根，也不得是根的上级：批量写与收尾清理都可能碰到源帧。
+///
+/// 两句都要过 i18n：英文界面下原来直接露中文（`t!` 只收字面量，键就是中文原文）。
+///
+/// The export folder must be neither the sequence root nor an ancestor of it: batch writes
+/// and the cleanup pass can both reach the source frames.
+///
+/// Both sentences go through i18n: an English UI used to show the Chinese verbatim (`t!`
+/// only takes literals, and the Chinese original is the key).
 fn ensure_out_dir_safe(root: &Path, out: &Path) -> Result<(), String> {
     if path_eq(out, root) {
-        return Err("输出目录不能是序列根目录，会污染源帧".to_owned());
+        return Err(crate::i18n::t!("输出目录不能是序列根目录，会污染源帧").to_owned());
     }
     if path_starts_with(root, out) {
-        return Err("输出目录不能是序列根目录的上级".to_owned());
+        return Err(crate::i18n::t!("输出目录不能是序列根目录的上级").to_owned());
     }
     Ok(())
 }
@@ -12479,9 +12516,22 @@ fn run_merge_job(
             match dims {
                 None => dims = Some(got),
                 Some(prev) if prev != got => {
+                    // 帧号取 `job.indices[k]`，不是循环下标 `k`：序列 [10,11,12] 出错时
+                    // 报「第 10 帧与第 2 帧」是错的（第 2 帧根本不在这批里）。
+                    //
+                    // The frame number is `job.indices[k]`, not the loop index `k`: on the
+                    // sequence [10, 11, 12] reporting "frame 10 vs frame 2" is wrong
+                    // (frame 2 is not in this batch at all).
                     return Err(crate::i18n::tr_fmt(
                         "第 {} 帧与第 {} 帧对齐后尺寸不一致（{}×{} vs {}×{}）：先跑对齐或裁成同尺寸",
-                        &[&job.indices[0], &k, &prev.0, &prev.1, &got.0, &got.1],
+                        &[
+                            &job.indices[0],
+                            &job.indices[k],
+                            &prev.0,
+                            &prev.1,
+                            &got.0,
+                            &got.1,
+                        ],
                     ));
                 }
                 Some(_) => {}
@@ -12536,8 +12586,16 @@ fn run_merge_job(
                 MergeSpec::Focus(o) => o.clone(),
                 _ => aevum_core::focus::Options::default(),
             };
+            // 焦点合成有自己的错误语境：`StackError` 的 `cn()` 说的是「堆栈」，
+            // 对焦包围的用户看到那句会莫名其妙（见 `focus::error_text`）。
+            //
+            // Focus stacking has its own error context: `StackError`'s `cn()` talks about a
+            // "stack", which reads wrong for a focus bracket (see `focus::error_text`).
             let out = aevum_core::focus::focus_stack(&refs, w, h, &opts).map_err(|e| {
-                crate::i18n::tr_fmt("焦点合成失败：{}", &[&crate::i18n::tr(e.cn())])
+                crate::i18n::tr_fmt(
+                    "焦点合成失败：{}",
+                    &[&crate::i18n::tr(aevum_core::focus::error_text(e))],
+                )
             })?;
             (out, w, h)
         }

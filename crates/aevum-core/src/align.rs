@@ -705,6 +705,9 @@ fn fft_1d(buf: &mut [C], plan: &FftPlan, inverse: bool) {
 #[derive(Clone, Copy)]
 struct SendPtr(*mut C);
 // 安全说明：叉乘到不同列，各线程写入的元素互不重叠。
+// Safety: every worker touches only its own column (`y * fw + x` for a fixed `x`), and the
+// columns of a row-major buffer never overlap, so the concurrent writes are disjoint and no
+// two threads ever alias the same `C`.
 unsafe impl Send for SendPtr {}
 unsafe impl Sync for SendPtr {}
 
@@ -716,9 +719,17 @@ impl SendPtr {
 }
 
 fn fft2(buf: &mut [C], fw: usize, fh: usize, rp: &FftPlan, cp: &FftPlan, inverse: bool) {
-    let ptr = SendPtr(buf.as_mut_ptr());
     buf.par_chunks_mut(fw)
         .for_each(|row| fft_1d(row, rp, inverse));
+    // 裸指针必须在**这里**取，不能提到上面去：`par_chunks_mut` 通过 `&mut buf` 重借用
+    // 整个缓冲，早取的指针 tag 会被这次重借用作废，第二段再用它就是 Stacked Borrows
+    // 下的 UB（数据竞争本身不存在——每线程只碰自己那一列）。
+    //
+    // The raw pointer has to be taken **here**, not above: `par_chunks_mut` reborrows the
+    // whole buffer through `&mut buf`, which invalidates the tag of any pointer created
+    // earlier, and using it afterwards is UB under Stacked Borrows (there is no data race
+    // -- each worker only touches its own column).
+    let ptr = SendPtr(buf.as_mut_ptr());
     (0..fw).into_par_iter().for_each_init(
         || vec![C::default(); fh],
         |tmp, x| {

@@ -30,6 +30,7 @@ use aevum_core::crop::Motion;
 use aevum_core::cube;
 use aevum_core::deflicker;
 use aevum_core::develop::Ev;
+use aevum_core::errmsg::clip_echo;
 use aevum_core::exif;
 use aevum_core::export::{
     self, Codec, JobProgress, OutputDynamic, OutputMode, OutputSharpen, RenderOptions,
@@ -120,7 +121,7 @@ fn dispatch_inner(session: &mut Session, id: &str, args: &Value) -> Result<Value
         "aevum_queue_status" => queue_status(session),
         "aevum_queue_cancel" => queue_cancel(session),
         "aevum_journal_list" => journal_list(session, args),
-        other => Err(format!("未知工具：{other}")),
+        other => Err(format!("未知工具：{}", clip_echo(other))),
     }
 }
 
@@ -891,7 +892,9 @@ fn hdr_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
             .map(|v| {
                 v.as_u64()
                     .and_then(|i| ((i as usize) < n).then_some(i as usize))
-                    .ok_or_else(|| format!("帧下标越界：{v}（序列共 {n} 帧）"))
+                    .ok_or_else(|| {
+                        format!("帧下标越界：{}（序列共 {n} 帧）", clip_echo(&v.to_string()))
+                    })
             })
             .collect::<Result<_, _>>()?,
         None => {
@@ -922,7 +925,8 @@ fn hdr_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
         None => root.join("HDR"),
     };
     ensure_out_dir_safe(&root, &out_dir)?;
-    fs::create_dir_all(&out_dir).map_err(|e| format!("建输出目录失败：{e}"))?;
+    fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("建输出目录失败：{}", clip_echo(&e.to_string())))?;
 
     let paths = session.require_seq()?.paths();
     // 有对齐结果就套统一裁切 + 逐帧位移，与静帧导出同一条几何路。
@@ -1011,7 +1015,9 @@ fn pano_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
             .map(|v| {
                 v.as_u64()
                     .and_then(|i| ((i as usize) < n).then_some(i as usize))
-                    .ok_or_else(|| format!("帧下标越界：{v}（序列共 {n} 帧）"))
+                    .ok_or_else(|| {
+                        format!("帧下标越界：{}（序列共 {n} 帧）", clip_echo(&v.to_string()))
+                    })
             })
             .collect::<Result<_, _>>()?,
         None => {
@@ -1040,7 +1046,8 @@ fn pano_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
         None => root.join("全景"),
     };
     ensure_out_dir_safe(&root, &out_dir)?;
-    fs::create_dir_all(&out_dir).map_err(|e| format!("建输出目录失败：{e}"))?;
+    fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("建输出目录失败：{}", clip_echo(&e.to_string())))?;
 
     let paths = session.require_seq()?.paths();
     // 全景靠特征点自己求单应，不套对齐位移——原始帧直接进拼接。

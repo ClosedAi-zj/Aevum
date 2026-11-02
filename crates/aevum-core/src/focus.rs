@@ -39,6 +39,32 @@
 
 use crate::stack::StackError;
 
+/// 焦点合成语境下的错误串。
+///
+/// [`StackError`] 是堆栈与焦点合成共用的枚举，`StackError::cn()` 说的是「堆栈的帧尺寸
+/// 不一致」——焦点合成的用户手上是一个对焦包围（bracket），不是星轨栈，看到「堆栈」
+/// 两个字会莫名其妙。枚举共用、文案按场景分：这里给焦点这份，堆栈那份原样不动。
+///
+/// 返回的是可翻译的中文模板键，界面仍要过一遍当前语言的表（`crate::i18n::tr`）。
+///
+/// Error text in the focus-stacking context.
+///
+/// [`StackError`] is shared between the star-field stacker and focus stacking, and
+/// `StackError::cn()` says "the stack's frames differ in size" -- a focus-stacking user
+/// holds a focus bracket, not a star-trail stack, and the word "stack" there is confusing.
+/// The enum stays shared while the wording splits by scenario: this is the focus one, and
+/// the stacker's stays untouched.
+///
+/// The return value is a translatable Chinese template key; the UI still runs it through
+/// the current language's table (`crate::i18n::tr`).
+pub fn error_text(e: StackError) -> &'static str {
+    match e {
+        StackError::Empty => "焦点合成没有输入帧",
+        StackError::SizeMismatch => "参与焦点合成的帧尺寸不一致",
+        StackError::ZeroSize => "焦点合成尺寸为零",
+    }
+}
+
 /// 一次融合最多吃多少帧。这个上限是**按帧驻留内存**定的：融合期全部帧同时驻留，
 /// 而内存主体正是帧本身，不是测度平面（测度平面已经边算边比，不整批留）。
 ///
@@ -914,6 +940,49 @@ mod tests {
                 "feather={feather} 时成片里有非有限值"
             );
         }
+    }
+
+    #[test]
+    fn focus_errors_speak_the_focus_context() {
+        // 焦点合成说「焦点」，堆栈说「堆栈」：共用一个枚举，但文案不许串场。
+        //
+        // 负向验证：把 `error_text(e)` 换回 `e.cn()`，这条立刻红（那正是要修的病）。
+        //
+        // Focus stacking says "focus", the stacker says "stack": one enum, but the wording
+        // must not cross over.
+        //
+        // Negative check: swap `error_text(e)` back to `e.cn()` and this goes red -- that
+        // is exactly the bug being fixed.
+        assert_eq!(
+            error_text(StackError::Empty),
+            "焦点合成没有输入帧",
+            "空输入要按焦点语境说话"
+        );
+        assert_ne!(
+            error_text(StackError::Empty),
+            StackError::Empty.cn(),
+            "焦点合成的错误串不能复用堆栈那句"
+        );
+        assert_ne!(
+            error_text(StackError::SizeMismatch),
+            StackError::SizeMismatch.cn()
+        );
+        assert_ne!(error_text(StackError::ZeroSize), StackError::ZeroSize.cn());
+        // 三句都得带「焦点」，否则迟早又被当成堆栈文案看走眼。
+        //
+        // All three must mention focus, or they will be mistaken for stacker copy again.
+        for e in [
+            StackError::Empty,
+            StackError::SizeMismatch,
+            StackError::ZeroSize,
+        ] {
+            assert!(error_text(e).contains("焦点"), "{e:?} 的文案没提焦点");
+        }
+        // 真出错时也要走这条路：空输入经 `focus_stack` 拿到的原因与文案对得上。
+        //
+        // The real error path too: an empty input yields the variant whose text we assert.
+        let err = focus_stack(&[], W, H, &Options::default()).expect_err("空输入必须报错");
+        assert_eq!(error_text(err), "焦点合成没有输入帧");
     }
 
     #[test]
