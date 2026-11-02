@@ -16,8 +16,9 @@
 
 功能版：焦点合成第二批——**金字塔合成法**与**合成前自动对齐**。MCP 与命令面的对外契约
 照旧「只增不改」：`focus_merge` 的 `method` 枚举加第三值、新增可选 `align` 参数；命令目录
-仍是 77 条，MCP 直连工具仍 35 个。工程文件格式不变；应用设置（settings.json）新增一个带
-缺省的字段，老文件照常读。
+仍是 77 条；MCP 直连工具 35 → 39 个——新增 `aevum_stack_merge` / `aevum_timeblend_merge` /
+`aevum_cull_evaluate` / `aevum_cull_extract` 四条无头工具。工程文件格式不变；应用设置
+（settings.json）新增一个带缺省的字段，老文件照常读。
 
 ### 焦点合成：金字塔法（第三个方法）
 
@@ -39,6 +40,15 @@ hover 写明取舍。`feather` / `smooth_z` 在金字塔下不适用：传了也
 settings.json 的 `merge.focus_align`，重启不再丢。1.4.0 已知限制第 2 条（只有两个方法）、
 第 5 条（不内建自动对齐）、第 6 条（合并参数不落盘）就此关闭。
 
+### 无头控制面：堆栈与时间合成进 MCP（第 36–39 个直连工具）
+
+GUI 里早有的能力补齐无头入口：`aevum_stack_merge`（星野堆栈：星轨 / 降噪 / 抹卫星 /
+sigma clipping）、`aevum_timeblend_merge`（时间合成：水平带 / 天地分割）、
+`aevum_cull_evaluate`（筛选评估：按测光挑保留帧；无头测光走会话内存、不读盘上缓存，
+口径差异记台账 C7）、`aevum_cull_extract`（剔除成子序列：显式 `exclude` 列表替代 GUI 的
+会话旗标，通常接 `aevum_cull_evaluate` 的 `indices`）。取帧口径与 `aevum_focus_merge`
+一致：无头会话没有「当前帧」，省略区间参数就从中间帧取。
+
 ### 性能实测与一轮优化
 
 金字塔首测 29.7 s；一轮优化（测度只算一遍、下采样改行流式、权重面免拷贝）后 **24.4 s**，
@@ -58,7 +68,8 @@ settings.json 的 `merge.focus_align`，重启不再丢。1.4.0 已知限制第 
 
 - 工程文件、预设与参数、命令行参数：与 1.4.0 完全一致，老工程直接打开。
 - MCP 工具集：`focus_merge` 的 `method` 枚举加 `pyramid`（只增）；新增可选 `align`
-  （缺省 `false`、不在 `required`）；工具数不变（35）。
+  （缺省 `false`、不在 `required`）；新增四条无头工具（`aevum_stack_merge` /
+  `aevum_timeblend_merge` / `aevum_cull_evaluate` / `aevum_cull_extract`），共 39 个。
 - settings.json 新增 `merge.focus_align`（serde 缺省 `false`）：1.4 的老设置缺该字段，
   读回即 `false`，行为与 1.4 一致。
 

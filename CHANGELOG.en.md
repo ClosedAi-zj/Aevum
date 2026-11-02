@@ -20,9 +20,10 @@ implementation details, test suites and golden data do not belong here.
 Feature release: focus-stacking batch two -- the **pyramid method** and
 **align-before-fusion**. The MCP and command-surface contracts stay "add only, never change":
 `focus_merge`'s `method` enum gains a third value and an optional `align` parameter; the
-command catalogue is still 77 entries and the MCP tool set still 35 direct tools. The project
-file format is unchanged; the app settings file (settings.json) gains one defaulted field that
-older files simply lack.
+command catalogue is still 77 entries; the MCP tool set grows 35 -> 39 direct tools, adding
+`aevum_stack_merge` / `aevum_timeblend_merge` / `aevum_cull_evaluate` / `aevum_cull_extract`.
+The project file format is unchanged; the app settings file (settings.json) gains one defaulted
+field that older files simply lack.
 
 ### Focus fusion: the pyramid method (a third method)
 
@@ -51,6 +52,18 @@ preference **persists** to `merge.focus_align` in settings.json. Known-limitatio
 (two methods only), 5 (no built-in alignment) and 6 (merge parameters not persisted) from 1.4.0
 are thereby closed.
 
+### Headless control plane: stacking and time-blending enter MCP (tools 36-39)
+
+Abilities the GUI has long had get headless entries: `aevum_stack_merge` (star-field stacking:
+trails / noise reduction / satellite removal / sigma clipping), `aevum_timeblend_merge`
+(time blending: horizontal bands / horizon split), `aevum_cull_evaluate` (culling evaluation:
+pick keepers by metering; headless meters into session memory and never reads the on-disk
+cache, divergence recorded as C7 in the ledger), and `aevum_cull_extract` (extract keepers
+into a new subsequence: an explicit `exclude` index list replaces the GUI's session flags,
+usually fed from `aevum_cull_evaluate`'s `indices`). Framing convention matches
+`aevum_focus_merge`: a headless session has no "current frame", so an omitted range starts
+from the middle frame.
+
 ### Measured performance and one optimisation round
 
 The pyramid first measured 29.7 s; after one optimisation round (measure computed once,
@@ -76,7 +89,8 @@ same-session ratio. Measurement protocol and the before/after comparison are in
 - Project files, presets and parameters, command-line arguments: identical to 1.4.0; old
   projects open as-is.
 - MCP tool set: `focus_merge`'s `method` enum gains `pyramid` (additive); new optional `align`
-  (default `false`, not in `required`); tool count unchanged (35).
+  (default `false`, not in `required`); four new headless tools (`aevum_stack_merge` /
+  `aevum_timeblend_merge` / `aevum_cull_evaluate` / `aevum_cull_extract`), 39 in total.
 - settings.json gains `merge.focus_align` (serde default `false`): 1.4 settings files lack the
   field, read back as `false`, behaviour identical to 1.4.
 
