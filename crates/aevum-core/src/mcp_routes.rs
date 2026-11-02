@@ -2,7 +2,7 @@
 //!
 //! 为什么要单独立一张表：同一个产品有两个 MCP 入口，命令清单原本各写一份——
 //!
-//! 1. **服务模式**（`aevum --mcp`）：自己实现 34 个工具，清单在 `aevum-mcp::tools`；
+//! 1. **服务模式**（`aevum --mcp`）：自己实现 39 个工具，清单在 `aevum-mcp::tools`；
 //! 2. **附着模式**（`aevum --mcp --attach control.json`）：自己不实现，只把调用转给
 //!    正在运行的 GUI，命令清单在 `aevum-ui::control::command_catalog`（77 条）。
 //!
@@ -17,7 +17,7 @@
 //! - [`TOOL_ROUTES`]：每个 MCP 工具名落到哪条命令；`None` 表示 GUI 没有这项能力，
 //!   只能直连服务模式；
 //! - [`command_for_mcp_name`] / [`tool_command`]：两条查表路径，合起来覆盖
-//!   「34 个工具名」与「77 个命令名」两个命名空间。
+//!   「39 个工具名」与「77 个命令名」两个命名空间。
 //!
 //! 三份清单（这张表、`tools.rs`、`command_catalog()`）由测试逐条互锁：任何一处增删
 //! 或拼错，本地测试当场就红，不会等用户来报「附着模式不认识某个工具」。
@@ -30,7 +30,7 @@
 //! Why a dedicated table: the product has two MCP entry points, and the command list used to
 //! be written out once per entry point.
 //!
-//! 1. **Server mode** (`aevum --mcp`): implements 34 tools itself, listed in `aevum-mcp::tools`;
+//! 1. **Server mode** (`aevum --mcp`): implements 39 tools itself, listed in `aevum-mcp::tools`;
 //! 2. **Attach mode** (`aevum --mcp --attach control.json`): implements nothing and forwards
 //!    calls to the running GUI; the command list lives in
 //!    `aevum-ui::control::command_catalog` (77 entries).
@@ -215,6 +215,10 @@ pub const TOOL_ROUTES: &[ToolRoute] = &[
     route("aevum_hdr_merge", "hdr.merge"),
     route("aevum_pano_merge", "pano.merge"),
     route("aevum_focus_merge", "focus.merge"),
+    route("aevum_stack_merge", "stack.merge"),
+    route("aevum_timeblend_merge", "timeblend.merge"),
+    route("aevum_cull_evaluate", "cull.evaluate"),
+    route("aevum_cull_extract", "cull.extract"),
     route("aevum_project_get", "project.get"),
     route("aevum_project_save", "project.save"),
     route("aevum_journal_list", "journal.list"),
@@ -276,7 +280,7 @@ pub fn mcp_name(command: &str) -> String {
 ///
 /// 用于附着模式：GUI 在线的工具清单是从命令目录现生成的，名字就是 `mcp_name(命令 ID)`。
 /// 这批名字里有 `aevum_grade_auto`、`aevum_library_add`、`aevum_history_undo` 等等，
-/// 它们不在 [`TOOL_ROUTES`] 里（那 34 条是服务模式的工具），必须靠这里才能路由。
+/// 它们不在 [`TOOL_ROUTES`] 里（那 39 条是服务模式的工具），必须靠这里才能路由。
 ///
 /// Tool name → command ID, through the "mechanically added prefix" path only (covers all 77
 /// entries of [`COMMANDS`]).
@@ -328,7 +332,7 @@ mod tests {
 
     #[test]
     fn every_tool_appears_once_and_points_at_a_real_command() {
-        assert_eq!(TOOL_ROUTES.len(), 35, "服务模式共 35 个工具");
+        assert_eq!(TOOL_ROUTES.len(), 39, "服务模式共 39 个工具");
         let mut seen = HashSet::new();
         for route in TOOL_ROUTES {
             assert!(route.tool.starts_with(TOOL_PREFIX), "{}", route.tool);

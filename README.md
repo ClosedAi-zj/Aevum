@@ -50,7 +50,7 @@ Lightroom 调色、After Effects / Premiere 合成，中间反复导出导入。
   蒙版（线性 / 径向 / 画笔）与局部调整
 - **成片**：静帧与视频导出、渲染队列、精确输出尺寸、水印、变速与运动模糊（ffmpeg 管线直推，不留临时帧）；
   HDR 静帧走 AVIF 10bit + PQ（参考白 203 nits，BT.2020，full range）
-- **AI Agent 控制面**：内置 MCP stdio server（直连 35 个 `aevum_*` 工具），也可通过本地回环 HTTP
+- **AI Agent 控制面**：内置 MCP stdio server（直连 39 个 `aevum_*` 工具），也可通过本地回环 HTTP
   把 MCP 调用代理给已打开的 GUI（附着模式，暴露 GUI 的全部 77 条命令，界面实时更新）
 - **数值金标**：Python 参考实现（`acceptance/reference/grade.py`）与 Rust 逐式同构，
   47 个显影金标 case + cube/grade 等多套金标钉住像素级一致

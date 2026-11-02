@@ -670,7 +670,7 @@ pub fn mcp_name(command: &str) -> String {
 /// 工具名 → 命令 ID。
 ///
 /// 两条查表路径合起来覆盖两个命名空间：
-/// 1. 服务模式的 34 个工具名（`aevum_xmp_read` 这种与命令 ID 对不齐的历史拼法也在此）；
+/// 1. 服务模式的 39 个工具名（`aevum_xmp_read` 这种与命令 ID 对不齐的历史拼法也在此）；
 /// 2. GUI 命令目录的 77 个名字（`aevum_library_add`、`aevum_history_undo` 等）。
 ///
 /// 旧前缀 `lumen_*` 先规范化，于是新旧名走**同一条**路，行为逐字节相同。
@@ -948,7 +948,7 @@ mod tests {
         }
     }
 
-    /// 服务模式的 34 个工具名一个都不能漏。历史上漏的正是 `xmp_read/write`
+    /// 服务模式的 39 个工具名一个都不能漏。历史上漏的正是 `xmp_read/write`
     /// （命令叫 import/export）与 `align`（命令叫 align.run）。
     #[test]
     fn every_server_tool_name_is_recognized() {
@@ -1397,7 +1397,7 @@ mod qa_acceptance {
         assert_eq!(resolve_command("aevum_open_sequence_run"), None);
     }
 
-    /// 旧前缀与新前缀：77 条命令 + 34 个工具，逐个比对必须逐字节相同。
+    /// 旧前缀与新前缀：77 条命令 + 39 个工具，逐个比对必须逐字节相同。
     #[test]
     fn qa_legacy_prefix_agrees_with_new_prefix_everywhere() {
         for id in catalog() {
@@ -1475,7 +1475,7 @@ mod qa_acceptance {
 
     /// 查表顺序陷阱：`resolve_command` 先查 TOOL_ROUTES，再查命令 ID，最后机械匹配。
     /// 如果某个工具名在机械匹配下能命中**另一条**命令，就会「后一条被前一条盖住」。
-    /// 这里把 34 个工具名逐个展开机械匹配集合，要求它要么为空、要么只含自己那条。
+    /// 这里把 39 个工具名逐个展开机械匹配集合，要求它要么为空、要么只含自己那条。
     /// 扫描「工具名 × 机械可达的命令」，返回会被抢走的名字。
     ///
     /// 抽成函数是为了做**反例自检**：一个永远返回空表的检测器同样「全绿」，

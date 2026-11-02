@@ -105,6 +105,10 @@ fn dispatch_inner(session: &mut Session, id: &str, args: &Value) -> Result<Value
         "aevum_hdr_merge" => hdr_merge(session, args),
         "aevum_focus_merge" => focus_merge(session, args),
         "aevum_pano_merge" => pano_merge(session, args),
+        "aevum_stack_merge" => stack_merge(session, args),
+        "aevum_timeblend_merge" => timeblend_merge(session, args),
+        "aevum_cull_evaluate" => cull_evaluate(session, args),
+        "aevum_cull_extract" => cull_extract(session, args),
         "aevum_project_get" => project_get(session),
         "aevum_project_save" => project_save(session),
         "aevum_xmp_read" => xmp_read(args),
@@ -1286,6 +1290,510 @@ fn pano_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
         "indices": indices,
         "width": cw,
         "height": ch,
+    }))
+}
+
+// ------------------------------------------------------------------ 堆栈 / 时间合成 / 筛选（无头补全）
+
+/// 合并类工具的帧选择：`frames` 数组优先，否则 `center`/`start` + `around`。
+///
+/// 无头会话没有「当前帧」，锚点省略时取序列中位帧（与 `aevum_hdr_merge` /
+/// `aevum_focus_merge` 的先例一致）；`center_anchor` 选中心锚（堆栈）还是
+/// 起始锚（时间合成），与 GUI 两条命令的口径逐字对齐。
+///
+/// Frame selection for the merge-family tools: a `frames` array wins, otherwise
+/// `center`/`start` plus `around`.
+///
+/// A headless session has no "current frame", so an omitted anchor falls back to the
+/// middle frame (same precedent as `aevum_hdr_merge` / `aevum_focus_merge`);
+/// `center_anchor` picks the centre anchor (stacking) or the start anchor (time
+/// blending), word for word aligned with the GUI commands' conventions.
+fn merge_indices(
+    session: &Session,
+    args: &Value,
+    default_around: u32,
+    center_anchor: bool,
+) -> Result<Vec<usize>, String> {
+    let n = session.require_seq()?.len();
+    match args.get("frames") {
+        Some(list) => list
+            .as_array()
+            .ok_or_else(|| "frames 要是帧下标数组，例如 [0,1,2]".to_owned())?
+            .iter()
+            .map(|v| {
+                v.as_u64()
+                    .and_then(|i| ((i as usize) < n).then_some(i as usize))
+                    .ok_or_else(|| {
+                        format!("帧下标越界：{}（序列共 {n} 帧）", clip_echo(&v.to_string()))
+                    })
+            })
+            .collect(),
+        None => {
+            let around = opt_u32(args, "around")?.unwrap_or(default_around) as usize;
+            let (key, at) = if center_anchor {
+                let c = opt_u32(args, "center")?
+                    .map(|v| v as usize)
+                    .unwrap_or(n / 2);
+                ("center", c)
+            } else {
+                let s = opt_u32(args, "start")?.map(|v| v as usize).unwrap_or(n / 2);
+                ("start", s)
+            };
+            if at >= n {
+                return Err(format!("{key} 越界：{at}（序列共 {n} 帧）"));
+            }
+            let from = if center_anchor {
+                at.saturating_sub(around)
+            } else {
+                at
+            };
+            Ok((from..=at.saturating_add(around).min(n - 1)).collect())
+        }
+    }
+}
+
+/// 把选中帧按对齐几何读成线性缓冲：统一裁切 + 逐帧位移，尺寸不齐当场拒绝。
+///
+/// 与 `hdr_merge` / `focus_merge` 里内联的那段读帧循环同一条路；抽出来是因为
+/// 堆栈与时间合成再抄两遍就开始失守（改一处漏三处），已有的两条不动，新的两条
+/// 从这里走。
+///
+/// Reads the selected frames into linear buffers through the alignment geometry:
+/// the shared crop plus per-frame offsets, refusing mismatched sizes on the spot.
+///
+/// Same path as the inlined read loops inside `hdr_merge` / `focus_merge`; it is
+/// extracted because copying it twice more (for stacking and time blending) starts
+/// to rot -- the two existing ones stay untouched, the two new ones go through here.
+fn load_aligned_frames(
+    session: &Session,
+    indices: &[usize],
+) -> Result<(Vec<Vec<f32>>, usize, usize), String> {
+    let paths = session.require_seq()?.paths();
+    let n = session.require_seq()?.len();
+    let (crop, offsets) = session.alignment(n);
+    let rect = crop.map(|c| (c.x as usize, c.y as usize, c.w as usize, c.h as usize));
+    let mut buffers: Vec<Vec<f32>> = Vec::with_capacity(indices.len());
+    let mut dims: Option<(usize, usize)> = None;
+    for i in indices {
+        let (rgb, w, h) = export::load_rgb_f32(&paths[*i]).map_err(|e| format!("读帧失败：{e}"))?;
+        let framing = Framing {
+            angle_deg: 0.0,
+            off: offsets.get(*i).copied().unwrap_or([0.0, 0.0]),
+        };
+        let (buf, got) = if rect.is_none() && framing.is_identity() {
+            (rgb, (w as usize, h as usize))
+        } else {
+            let mut out = Vec::new();
+            let (cw, ch) =
+                warp::transform_into(&rgb, w as usize, h as usize, framing, rect, &mut out);
+            (out, (cw, ch))
+        };
+        match dims {
+            None => dims = Some(got),
+            Some(prev) if prev != got => {
+                return Err(format!(
+                    "第 {} 帧与第 {i} 帧对齐后尺寸不一致（{}×{} vs {}×{}）：先跑对齐或裁成同尺寸",
+                    indices[0], prev.0, prev.1, got.0, got.1
+                ));
+            }
+            Some(_) => {}
+        }
+        buffers.push(buf);
+    }
+    let (w, h) = dims.unwrap_or((0, 0));
+    Ok((buffers, w, h))
+}
+
+/// 静帧成片尾的输出选项：与 `hdr_merge` / `focus_merge` 的构造逐字段一致。
+///
+/// The still-export tail's render options: field-for-field identical to what
+/// `hdr_merge` / `focus_merge` build.
+fn still_render_options(
+    session: &Session,
+    args: &Value,
+    format: StillFormat,
+    out_dir: &Path,
+) -> Result<RenderOptions, String> {
+    let (sharpen_for, sharpen_strength) = opt_sharpen(args)?;
+    let dynamic = opt_dynamic(args)?;
+    Ok(RenderOptions {
+        quality: opt_quality(args)?,
+        keep_exif: opt_bool(args, "keep_exif")?.unwrap_or(false),
+        xmp_sidecar: opt_bool(args, "xmp_sidecar")?.unwrap_or(false),
+        sharpen_for,
+        sharpen_strength,
+        color_space: color_space_for(dynamic, opt_color_space(args)?),
+        dynamic,
+        watermark: opt_watermark(args)?,
+        out_dir: out_dir.to_path_buf(),
+        metadata: session.metadata(),
+        ..RenderOptions::still(format)
+    })
+}
+
+/// 堆栈：把同机位一段帧按统计量合成一张（星轨 / 降噪 / 去卫星 / σ 截尾）。
+///
+/// 与 GUI 的 `stack.merge` 同口径——按帧下标读原图、套对齐的统一裁切与逐帧位移；
+/// 无头会话没有「当前帧」，省 `center` 就取序列中间那段（`aevum_hdr_merge` 同理）。
+///
+/// Star-field stacking: combine a fixed-camera run into one still with a statistical
+/// mode (star trails / noise reduction / satellite removal / sigma clipping).
+///
+/// Same convention as the GUI's `stack.merge`: read the originals by frame index and
+/// apply the alignment crop and per-frame shifts. A headless session has no "current
+/// frame", so an omitted `center` takes the run around the middle frame (as in
+/// `aevum_hdr_merge`).
+fn stack_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
+    if session.is_running() {
+        return Err("有后台任务正在运行，先等它结束或调用 aevum_cancel".to_owned());
+    }
+    let n = session.require_seq()?.len();
+    if n == 0 {
+        return Err("序列没有帧".to_owned());
+    }
+    require_batch_confirm(args, "aevum_stack_merge")?;
+    let indices = merge_indices(session, args, 4, true)?;
+    if indices.len() < 2 {
+        return Err("堆栈至少要 2 帧：给 frames 数组，或把 around 调大".to_owned());
+    }
+    if indices.len() > aevum_core::stack::MAX_FRAMES {
+        return Err(format!(
+            "堆栈一次最多 {} 帧，实得 {} 帧：把 around 调小，或用 frames 只挑关键几帧",
+            aevum_core::stack::MAX_FRAMES,
+            indices.len()
+        ));
+    }
+    let mode = match opt_str(args, "mode")? {
+        None => aevum_core::stack::Mode::Lighten,
+        Some(raw) => aevum_core::stack::Mode::parse(raw).ok_or_else(|| {
+            format!(
+                "未知堆栈模式 {}；可用 lighten / average / median / sigma-clip",
+                echo_text(raw)
+            )
+        })?,
+    };
+    let clip_sigma = opt_f64(args, "clip_sigma")?.unwrap_or(3.0) as f32;
+    if !clip_sigma.is_finite() || clip_sigma <= 0.0 {
+        return Err("clip_sigma 要大于 0（常用 2–4：3.0 只剔真离群）".to_owned());
+    }
+    let fill_gaps = opt_bool(args, "fill_gaps")?.unwrap_or(true);
+    let opts = aevum_core::stack::Options {
+        mode,
+        clip_sigma,
+        fill_gaps,
+    };
+    let root = session.require_root()?;
+    let out_dir = match opt_str(args, "out_dir")? {
+        Some(dir) => absolute(Path::new(dir))?,
+        None => root.join("堆栈"),
+    };
+    aevum_core::paths::ensure_out_dir_safe(&root, &out_dir)?;
+    fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("建输出目录失败：{}", clip_echo(&e.to_string())))?;
+    let (buffers, w, h) = load_aligned_frames(session, &indices)?;
+    let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();
+    let mut out = aevum_core::stack::combine(&refs, w, h, &opts)
+        .map_err(|e| format!("堆栈失败：{}", e.cn()))?;
+    let format = parse_format(opt_str(args, "format")?.unwrap_or("png8"))?;
+    let options = still_render_options(session, args, format, &out_dir)?;
+    let dst = out_dir.join(format!(
+        "stack_{:06}_{}f.{}",
+        indices[0],
+        indices.len(),
+        format.ext()
+    ));
+    let deep = format == StillFormat::Tiff16;
+    export::write_single_still(
+        &session.require_seq()?.paths()[indices[0]],
+        &dst,
+        &mut out,
+        w,
+        h,
+        deep,
+        &options,
+    )
+    .map_err(|e| format!("写堆栈成片失败：{}", clip_echo(&e.to_string())))?;
+    Ok(json!({
+        "path": dst.display().to_string(),
+        "kind": "stack",
+        "frames": indices.len(),
+        "indices": indices,
+        "width": w,
+        "height": h,
+    }))
+}
+
+/// 时间合成：按带或按地平线把不同时刻的帧合成一张。
+///
+/// 与 GUI 的 `timeblend.merge` 同口径；帧号升序即时间顺序（frames[0] 是最早一帧）。
+/// 无头会话没有「当前帧」，省 `start` 就从序列中位帧起取一段（`aevum_focus_merge`
+/// 同理）；锚点不参与合成几何，只决定取哪一段。
+///
+/// Time blending: composite frames from different moments as horizontal bands or
+/// split at the horizon.
+///
+/// Same convention as the GUI's `timeblend.merge`; ascending frame numbers are the
+/// time order (frames[0] is the earliest). A headless session has no "current frame",
+/// so an omitted `start` takes a run beginning at the middle frame (as in
+/// `aevum_focus_merge`); the anchor shapes the selection only, never the geometry.
+fn timeblend_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
+    if session.is_running() {
+        return Err("有后台任务正在运行，先等它结束或调用 aevum_cancel".to_owned());
+    }
+    let n = session.require_seq()?.len();
+    if n == 0 {
+        return Err("序列没有帧".to_owned());
+    }
+    require_batch_confirm(args, "aevum_timeblend_merge")?;
+    let indices = merge_indices(session, args, 7, false)?;
+    if indices.len() < 2 {
+        return Err(
+            "时间合成至少要 2 帧：给 frames 数组，或把 around 调大（帧号升序 = 时间顺序）"
+                .to_owned(),
+        );
+    }
+    if indices.len() > aevum_core::timeblend::MAX_FRAMES {
+        return Err(format!(
+            "时间合成一次最多 {} 帧，实得 {} 帧：把 around 调小",
+            aevum_core::timeblend::MAX_FRAMES,
+            indices.len()
+        ));
+    }
+    let layout = match opt_str(args, "layout")? {
+        None => aevum_core::timeblend::Layout::SkyGround,
+        Some(raw) => aevum_core::timeblend::Layout::parse(raw)
+            .ok_or_else(|| format!("未知布局 {}；可用 sky-ground / bands", echo_text(raw)))?,
+    };
+    let bands = opt_u32(args, "bands")?.unwrap_or(8) as usize;
+    // bands 只对时间切片有意义：天地合成不用它，不该被默认值卡住。
+    //
+    // bands only matters for the time slice: sky-ground ignores it and must not be
+    // blocked by the default.
+    if layout == aevum_core::timeblend::Layout::Bands && (bands == 0 || bands > indices.len()) {
+        return Err(format!(
+            "bands 要在 1..={} 之间（等于帧数时一带一帧）",
+            indices.len()
+        ));
+    }
+    let feather = (opt_f64(args, "feather")?.unwrap_or(0.04) as f32).clamp(0.0, 0.5);
+    let horizon_auto = opt_bool(args, "horizon_auto")?.unwrap_or(false);
+    let horizon = (opt_f64(args, "horizon")?.unwrap_or(0.5) as f32).clamp(0.0, 1.0);
+    let deghost = opt_f64(args, "deghost")?.unwrap_or(0.5) as f32;
+    if !deghost.is_finite() || !(0.0..=4.0).contains(&deghost) {
+        return Err("deghost 要在 0..=4 之间（EV；0 = 关闭去鬼影）".to_owned());
+    }
+    let match_exposure = opt_bool(args, "match_exposure")?.unwrap_or(true);
+    let spec = aevum_core::timeblend::Spec {
+        layout,
+        bands,
+        feather,
+        horizon,
+        horizon_auto,
+        deghost,
+        match_exposure,
+    };
+    let root = session.require_root()?;
+    let out_dir = match opt_str(args, "out_dir")? {
+        Some(dir) => absolute(Path::new(dir))?,
+        None => root.join("时间合成"),
+    };
+    aevum_core::paths::ensure_out_dir_safe(&root, &out_dir)?;
+    fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("建输出目录失败：{}", clip_echo(&e.to_string())))?;
+    let (buffers, w, h) = load_aligned_frames(session, &indices)?;
+    let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();
+    let mut out = aevum_core::timeblend::time_slice(&refs, w, h, &spec)
+        .map_err(|e| format!("时间合成失败：{}", e.cn()))?;
+    let format = parse_format(opt_str(args, "format")?.unwrap_or("png8"))?;
+    let options = still_render_options(session, args, format, &out_dir)?;
+    let dst = out_dir.join(format!(
+        "timeblend_{:06}_{}f.{}",
+        indices[0],
+        indices.len(),
+        format.ext()
+    ));
+    let deep = format == StillFormat::Tiff16;
+    export::write_single_still(
+        &session.require_seq()?.paths()[indices[0]],
+        &dst,
+        &mut out,
+        w,
+        h,
+        deep,
+        &options,
+    )
+    .map_err(|e| format!("写时间合成成片失败：{}", clip_echo(&e.to_string())))?;
+    Ok(json!({
+        "path": dst.display().to_string(),
+        "kind": "timeblend",
+        "frames": indices.len(),
+        "indices": indices,
+        "width": w,
+        "height": h,
+    }))
+}
+
+/// 筛选评估：按四条判据逐帧裁决（曝光越界 / 相邻突变 / 清晰度 / 读不出来）。
+///
+/// 与 GUI 的 `cull.evaluate` 同口径，判据吃测光缓存（没有就先按 512 长边测一遍），
+/// 立即返回、不解图。GUI 的 `apply` 是把判废帧标成「排除」的会话态，无头会话
+/// 没有旗标存储，这里只评估不标记；剔除走 `aevum_cull_extract` 的 `exclude`
+/// 显式列帧下标。
+///
+/// Cull evaluation: judge every frame with the four rules (exposure band / adjacent
+/// jumps / sharpness / unreadable).
+///
+/// Same convention as the GUI's `cull.evaluate`: the rules read the metering cache
+/// (measured once at a 512 long side if absent) and the call returns at once. The
+/// GUI's `apply` marks rejected frames "excluded" in session state, which a headless
+/// session does not store -- evaluation only here; exclusion happens through
+/// `aevum_cull_extract`'s explicit `exclude` index list.
+fn cull_evaluate(session: &mut Session, args: &Value) -> Result<Value, String> {
+    session.ensure_metrics()?;
+    let metrics = session.metrics.as_ref().expect("ensure_metrics 刚灌过测光");
+    let means: Vec<Option<f64>> = metrics.iter().map(|m| m.map(|x| x.mean)).collect();
+    let sharp: Vec<Option<f64>> = metrics.iter().map(|m| m.map(|x| x.sharp)).collect();
+    let mut rule = aevum_core::cull::CullRule::default();
+    if args
+        .get("suggest")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let (lo, hi) = aevum_core::cull::suggest_band(&means);
+        rule.ev_low = lo;
+        rule.ev_high = hi;
+    }
+    if let Some(v) = opt_f64(args, "ev_low")? {
+        rule.ev_low = v;
+    }
+    if let Some(v) = opt_f64(args, "ev_high")? {
+        rule.ev_high = v;
+    }
+    if let Some(v) = opt_f64(args, "jump_ev")? {
+        rule.jump_ev = v;
+    }
+    if let Some(v) = opt_f64(args, "sharp_ratio")? {
+        rule.sharp_ratio = v.clamp(0.0, 1.0);
+    }
+    if rule.ev_low > rule.ev_high {
+        return Err(format!(
+            "曝光下限 {} 不该高于上限 {}",
+            rule.ev_low, rule.ev_high
+        ));
+    }
+    let verdict = aevum_core::cull::evaluate(&means, &sharp, &rule);
+    let rejected = verdict.rejected_indices();
+    Ok(json!({
+        "band": [rule.ev_low, rule.ev_high],
+        "rule": {
+            "ev_low": rule.ev_low,
+            "ev_high": rule.ev_high,
+            "jump_ev": rule.jump_ev,
+            "sharp_ratio": rule.sharp_ratio,
+        },
+        "rejected": rejected.len(),
+        "indices": rejected,
+        "jumps": verdict
+            .jumps
+            .iter()
+            .map(|(i, step)| json!({"index": i, "step_ev": step}))
+            .collect::<Vec<Value>>(),
+        "frames": verdict
+            .frames
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                json!({
+                    "index": i,
+                    "reject": f.reject,
+                    "reason": f.reason.map(|r| r.key()),
+                })
+            })
+            .collect::<Vec<Value>>(),
+    }))
+}
+
+/// 剔除成子序列：把保留下来的帧复制成一条新序列。
+///
+/// 与 GUI 的 `cull.extract` 同口径（路径安全检查先行、复制保留 mtime、测光缓存
+/// 一并带走）；GUI 的「没被拒收的帧」读的是会话旗标，无头没有旗标，改用显式
+/// `exclude`（帧下标数组，通常来自 `aevum_cull_evaluate` 的 `indices`）。
+/// `dry_run: true` 只报帧数与体积，不写任何东西；非 dry_run 必须 confirm。
+///
+/// Extract a sub-sequence: copy the kept frames into a new folder.
+///
+/// Same convention as the GUI's `cull.extract` (path-safety first, mtimes preserved,
+/// the metering cache carried along). The GUI's "frames not rejected" reads session
+/// flags, which headless lacks, so an explicit `exclude` index list takes its place
+/// (usually the `indices` reported by `aevum_cull_evaluate`). `dry_run: true` only
+/// reports the frame count and size, writing nothing; anything else needs confirm.
+fn cull_extract(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let seq = session.require_seq()?;
+    if seq.is_empty() {
+        return Err("序列里没有帧".to_owned());
+    }
+    let target = args
+        .get("target")
+        .and_then(Value::as_str)
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| "target 要是目标目录的绝对路径".to_owned())?;
+    let target = PathBuf::from(target);
+    let dry_run = opt_bool(args, "dry_run")?.unwrap_or(false);
+    if !dry_run {
+        require_batch_confirm(args, "aevum_cull_extract")?;
+    }
+    let root = session.require_root()?;
+    // 路径安全先行：源内部、盘根、非空目录都在写任何东西之前拒绝。
+    //
+    // Path safety first: inside the source, a drive root and a non-empty folder are
+    // all refused before anything is written.
+    aevum_core::cull::check_target(&root, &target).map_err(|e| e.cn().to_owned())?;
+    let paths = seq.paths();
+    let exclude: Vec<usize> = match args.get("exclude") {
+        None => Vec::new(),
+        Some(list) => list
+            .as_array()
+            .ok_or_else(|| "exclude 要是帧下标数组，例如 [0,17]".to_owned())?
+            .iter()
+            .map(|v| {
+                v.as_u64()
+                    .and_then(|i| ((i as usize) < paths.len()).then_some(i as usize))
+                    .ok_or_else(|| {
+                        format!(
+                            "exclude 帧下标越界：{}（序列共 {} 帧）",
+                            clip_echo(&v.to_string()),
+                            paths.len()
+                        )
+                    })
+            })
+            .collect::<Result<_, _>>()?,
+    };
+    let kept: Vec<PathBuf> = (0..paths.len())
+        .filter(|i| !exclude.contains(i))
+        .map(|i| paths[i].clone())
+        .collect();
+    if kept.is_empty() {
+        return Err("每一帧都被剔除了：没有可保留的帧".to_owned());
+    }
+    if dry_run {
+        let plan = aevum_core::cull::plan_extract(&kept);
+        return Ok(json!({
+            "dry_run": true,
+            "frames": plan.kept.len(),
+            "bytes": plan.bytes,
+            "excluded": paths.len() - plan.kept.len(),
+            "target": target.display().to_string(),
+        }));
+    }
+    let bytes = aevum_core::cull::extract(&root, &kept, &target).map_err(|e| match e {
+        aevum_core::cull::ExtractError::Target(t) => t.cn().to_owned(),
+        aevum_core::cull::ExtractError::Io(e) => format!("复制失败：{e}"),
+    })?;
+    Ok(json!({
+        "copied": kept.len(),
+        "excluded": paths.len() - kept.len(),
+        "bytes": bytes,
+        "target": target.display().to_string(),
     }))
 }
 
@@ -3175,6 +3683,83 @@ fn build_commands() -> Vec<Command> {
                     "confirm": {"type": "boolean", "description": "批量写操作必须为 true"}
                 }),
                 &["confirm"],
+            ),
+        },
+        Command {
+            id: "aevum_stack_merge",
+            description: "把同机位的一段帧按统计量合成一张：星轨取最亮、降噪取平均、去卫星取中值、杂散光与热噪点做 σ 截尾（批量写，需 confirm）；自动套用对齐的统一裁切与逐帧位移，尺寸对不齐会拒绝。无头会话没有「当前帧」，省 center 就取序列中间那段。",
+            input_schema: object(
+                json!({
+                    "frames": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "要堆栈的帧下标（0 开始）；给了就忽略 center/around"},
+                    "center": {"type": "integer", "minimum": 0, "description": "包围中心帧下标（0 开始）；省略取序列中间帧"},
+                    "around": {"type": "integer", "minimum": 1, "maximum": 32, "default": 4, "description": "中心前后各取几帧（1..32）；省略=4（共 9 帧）"},
+                    "mode": {"type": "string", "enum": ["lighten", "average", "median", "sigma-clip"], "default": "lighten", "description": "统计量：星轨用 lighten、降噪用 average、去卫星用 median、杂散光用 sigma-clip"},
+                    "clip_sigma": {"type": "number", "exclusiveMinimum": 0, "maximum": 10, "default": 3, "description": "σ 截尾的倍数，常用 2–4；只对 sigma-clip 生效"},
+                    "fill_gaps": {"type": "boolean", "default": true, "description": "合成后仍全黑的像素用 3×3 邻域补上，闭合星轨之间的空隙"},
+                    "out_dir": {"type": "string", "description": "输出目录（不能是序列根或其上级）；省略用序列根下 堆栈/"},
+                    "format": {"type": "string", "enum": ["png8", "tiff16", "jpeg", "webp", "avif"], "default": "png8"},
+                    "quality": {"type": "integer", "minimum": 1, "maximum": 100, "description": "压缩质量，只对 jpeg / avif 生效"},
+                    "dynamic": {"type": "string", "enum": ["sdr", "hdr-pq"], "default": "sdr", "description": "输出动态范围：sdr=标准，hdr-pq=PQ（SMPTE ST 2084）+ BT.2020 + 10bit，参考白按 203 nits 落地、>1 的高光沿曲线尾部继续上升；hdr-pq 目前只有 avif 装得下，色域固定 rec2020（传别的会报错）"},
+                    "color_space": {"type": "string", "enum": ["srgb", "p3", "rec2020"], "default": "srgb", "description": "输出色域；非 sRGB 时嵌对应 ICC"},
+                    "xmp_sidecar": {"type": "boolean", "default": false, "description": "在成片旁写同名 .xmp（dc 四项 + crs 调色）"},
+                    "keep_exif": {"type": "boolean", "default": false, "description": "把首帧的 EXIF 块搬进成片"},
+                    "confirm": {"type": "boolean", "description": "批量写操作必须为 true"}
+                }),
+                &["confirm"],
+            ),
+        },
+        Command {
+            id: "aevum_timeblend_merge",
+            description: "把不同时刻的帧合成为一张：天地合成（天取末帧、地取首帧，可自动推地平线）或时间切片（横向分带，一带一帧、从早到晚铺满整幅），羽化区里的移动物可自动去鬼影（批量写，需 confirm）；自动套用对齐的统一裁切与逐帧位移，帧号升序即时间顺序。无头会话没有「当前帧」，省 start 就从序列中位帧起取一段。",
+            input_schema: object(
+                json!({
+                    "frames": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "参与合成的帧下标（0 开始，升序即时间顺序）；给了就忽略 start/around"},
+                    "start": {"type": "integer", "minimum": 0, "description": "起始帧下标（0 开始）；省略取序列中间帧"},
+                    "around": {"type": "integer", "minimum": 1, "maximum": 31, "default": 7, "description": "起始帧之后再取几帧（1..31）；省略=7（共 8 帧）"},
+                    "layout": {"type": "string", "enum": ["sky-ground", "bands"], "default": "sky-ground", "description": "sky-ground 按地平线分天地；bands 横向分带、一带一帧"},
+                    "bands": {"type": "integer", "minimum": 1, "maximum": 32, "default": 8, "description": "带数，只对 bands 生效；等于帧数时一带一帧"},
+                    "feather": {"type": "number", "minimum": 0, "maximum": 0.5, "default": 0.04, "description": "羽化宽度占画面高度的比例，0.04 约等于 4%"},
+                    "horizon": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5, "description": "地平线位置（从顶部算起的比例），只对 sky-ground 生效；horizon_auto 为 true 时忽略"},
+                    "horizon_auto": {"type": "boolean", "default": false, "description": "按行亮度梯度自动推地平线（找不到退回 horizon）"},
+                    "deghost": {"type": "number", "minimum": 0, "maximum": 4, "default": 0.5, "description": "去鬼影阈值（EV）：某帧某块与自己 3×3 空间中位数偏离超过它就按标签衰减权重；0 = 关闭"},
+                    "match_exposure": {"type": "boolean", "default": true, "description": "混之前把来源帧亮度对齐到参考帧（钳 ±2 EV），否则接缝处是一道台阶"},
+                    "out_dir": {"type": "string", "description": "输出目录（不能是序列根或其上级）；省略用序列根下 时间合成/"},
+                    "format": {"type": "string", "enum": ["png8", "tiff16", "jpeg", "webp", "avif"], "default": "png8"},
+                    "quality": {"type": "integer", "minimum": 1, "maximum": 100, "description": "压缩质量，只对 jpeg / avif 生效"},
+                    "dynamic": {"type": "string", "enum": ["sdr", "hdr-pq"], "default": "sdr", "description": "输出动态范围：sdr=标准，hdr-pq=PQ（SMPTE ST 2084）+ BT.2020 + 10bit，参考白按 203 nits 落地、>1 的高光沿曲线尾部继续上升；hdr-pq 目前只有 avif 装得下，色域固定 rec2020（传别的会报错）"},
+                    "color_space": {"type": "string", "enum": ["srgb", "p3", "rec2020"], "default": "srgb", "description": "输出色域；非 sRGB 时嵌对应 ICC"},
+                    "xmp_sidecar": {"type": "boolean", "default": false, "description": "在成片旁写同名 .xmp（dc 四项 + crs 调色）"},
+                    "keep_exif": {"type": "boolean", "default": false, "description": "把首帧的 EXIF 块搬进成片"},
+                    "confirm": {"type": "boolean", "description": "批量写操作必须为 true"}
+                }),
+                &["confirm"],
+            ),
+        },
+        Command {
+            id: "aevum_cull_evaluate",
+            description: "按四条判据逐帧裁决并给出理由：曝光越界（EV）、与相邻帧的突变、清晰度低于序列中位的比例、读不出来；吃测光缓存（没有就先按 512 长边测一遍），立即返回。只评估不标记：GUI 侧的 apply（把判废帧标成「排除」）是会话态，无头剔除走 aevum_cull_extract 的 exclude 参数。",
+            input_schema: object(
+                json!({
+                    "suggest": {"type": "boolean", "description": "用序列自身的亮度中位数绝对偏差推曝光区间（3×1.4826×MAD，下限 0.5 EV）；给了则覆盖 ev_low/ev_high"},
+                    "ev_low": {"type": "number", "minimum": -10, "maximum": 0, "description": "曝光下限（EV，相对 18% 中灰）；省略=-1"},
+                    "ev_high": {"type": "number", "minimum": 0, "maximum": 10, "description": "曝光上限（EV）；省略=1"},
+                    "jump_ev": {"type": "number", "minimum": 0, "maximum": 10, "description": "与相邻帧的突变阈值（EV）；0 关闭这条判据；省略=1"},
+                    "sharp_ratio": {"type": "number", "minimum": 0, "maximum": 1, "description": "清晰度低于序列中位的这个比例就判废；0 关闭这条判据；省略=0"}
+                }),
+                &[],
+            ),
+        },
+        Command {
+            id: "aevum_cull_extract",
+            description: "把保留下来的帧复制成一条新序列（剔除成子序列）：路径安全检查先行（不能是源内部、盘根或非空目录），复制保留 mtime、测光缓存一并带走（新序列不用重测）。exclude 给要剔除的帧下标（通常来自 aevum_cull_evaluate 的 indices）；dry_run: true 只报帧数与体积，不写任何东西；非 dry_run 需 confirm。",
+            input_schema: object(
+                json!({
+                    "target": {"type": "string", "description": "目标目录（绝对路径）；不能是源序列根或其内部、盘符根、已存在且非空的目录"},
+                    "exclude": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "要剔除的帧下标（0 开始）；省略=全部保留"},
+                    "dry_run": {"type": "boolean", "description": "true 只报会复制几帧、共多少字节，不写任何东西"},
+                    "confirm": {"type": "boolean", "description": "非 dry_run 时必须为 true"}
+                }),
+                &["target"],
             ),
         },
         Command {

@@ -777,6 +777,10 @@ fn every_tool_has_an_explicit_write_classification() {
         ("aevum_hdr_merge", true),
         ("aevum_pano_merge", true),
         ("aevum_focus_merge", true),
+        ("aevum_stack_merge", true),
+        ("aevum_timeblend_merge", true),
+        ("aevum_cull_evaluate", true),
+        ("aevum_cull_extract", true),
         ("aevum_project_get", false),
         ("aevum_project_save", true),
         ("aevum_journal_list", false),
@@ -870,4 +874,174 @@ fn routed_commands_point_at_real_catalog_entries() {
             route.tool
         );
     }
+}
+
+/// 无头堆栈 / 时间合成：小尺寸合成序列上各跑一条正例（成片存在、尺寸对），
+/// 再各钉一条负例（缺 confirm、未知枚举值）。
+#[test]
+fn stack_and_timeblend_merge_end_to_end() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    reset_session();
+
+    let temp = TempDir::new("stack-tb");
+    let seq_dir = temp.path().join("frames");
+    make_sequence(&seq_dir);
+    ok(
+        "aevum_open_sequence",
+        json!({"root": seq_dir.display().to_string()}),
+    );
+
+    // —— aevum_stack_merge ——
+    // 负例先行：缺 confirm 的批量写必须被拒；未知统计量必须被拒。
+    let bad = call("aevum_stack_merge", json!({"frames": [0, 1, 2]})).unwrap_err();
+    assert!(bad.contains("confirm"), "{bad}");
+    let bad = call(
+        "aevum_stack_merge",
+        json!({"frames": [0, 1, 2], "mode": "geometric", "confirm": true}),
+    )
+    .unwrap_err();
+    assert!(
+        bad.contains("未知堆栈模式") && bad.contains("lighten"),
+        "{bad}"
+    );
+    // 正例：三帧取平均，成片存在且与源帧同尺寸。
+    let out = temp.path().join("stack-out");
+    let result = ok(
+        "aevum_stack_merge",
+        json!({
+            "frames": [0, 1, 2],
+            "mode": "average",
+            "out_dir": out.display().to_string(),
+            "confirm": true,
+        }),
+    );
+    assert_eq!(result["kind"], "stack");
+    assert_eq!(result["frames"], 3);
+    let path = PathBuf::from(result["path"].as_str().expect("成片路径"));
+    assert!(path.is_file(), "成片该存在：{}", path.display());
+    let image = image::open(&path).expect("读成片");
+    assert_eq!((image.width(), image.height()), (128, 96));
+
+    // —— aevum_timeblend_merge ——
+    // 负例：未知布局；bands 超过帧数。
+    let bad = call(
+        "aevum_timeblend_merge",
+        json!({"frames": [0, 1, 2], "layout": "radial", "confirm": true}),
+    )
+    .unwrap_err();
+    assert!(
+        bad.contains("未知布局") && bad.contains("sky-ground"),
+        "{bad}"
+    );
+    let bad = call(
+        "aevum_timeblend_merge",
+        json!({"frames": [0, 1, 2], "layout": "bands", "bands": 5, "confirm": true}),
+    )
+    .unwrap_err();
+    assert!(bad.contains("bands"), "{bad}");
+    // 正例：三带时间切片，一带一帧，成片存在且同尺寸。
+    let out = temp.path().join("tb-out");
+    let result = ok(
+        "aevum_timeblend_merge",
+        json!({
+            "frames": [0, 1, 2],
+            "layout": "bands",
+            "bands": 3,
+            "out_dir": out.display().to_string(),
+            "confirm": true,
+        }),
+    );
+    assert_eq!(result["kind"], "timeblend");
+    let path = PathBuf::from(result["path"].as_str().expect("成片路径"));
+    assert!(path.is_file(), "成片该存在：{}", path.display());
+    let image = image::open(&path).expect("读成片");
+    assert_eq!((image.width(), image.height()), (128, 96));
+
+    reset_session();
+}
+
+/// 无头筛选：evaluate 出逐帧裁决（结构完整），extract 按显式 exclude 出成片；
+/// 缺 confirm、下标越界与「全剔光」各有负例。
+#[test]
+fn cull_evaluate_and_extract_end_to_end() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    reset_session();
+
+    let temp = TempDir::new("cull");
+    let seq_dir = temp.path().join("frames");
+    make_sequence(&seq_dir);
+    ok(
+        "aevum_open_sequence",
+        json!({"root": seq_dir.display().to_string()}),
+    );
+
+    // —— aevum_cull_evaluate ——
+    // 负例：曝光下限高于上限，当场拒绝。
+    let bad = call(
+        "aevum_cull_evaluate",
+        json!({"ev_low": 1.0, "ev_high": -1.0}),
+    )
+    .unwrap_err();
+    assert!(bad.contains("下限"), "{bad}");
+    // 正例：默认判据出逐帧裁决；结构完整、帧数对得上。
+    let result = ok("aevum_cull_evaluate", json!({}));
+    assert_eq!(result["frames"].as_array().expect("逐帧裁决").len(), 3);
+    assert_eq!(
+        result["rejected"].as_u64().expect("判废数"),
+        result["indices"].as_array().expect("判废下标").len() as u64
+    );
+    assert!(result["band"].is_array());
+
+    // —— aevum_cull_extract ——
+    // 负例：非 dry_run 缺 confirm；exclude 下标越界；全部剔除等于没有可留的帧。
+    let target = temp.path().join("kept");
+    let bad = call(
+        "aevum_cull_extract",
+        json!({"target": target.display().to_string(), "exclude": [0]}),
+    )
+    .unwrap_err();
+    assert!(bad.contains("confirm"), "{bad}");
+    let bad = call(
+        "aevum_cull_extract",
+        json!({"target": target.display().to_string(), "exclude": [99], "confirm": true}),
+    )
+    .unwrap_err();
+    assert!(bad.contains("越界"), "{bad}");
+    let bad = call(
+        "aevum_cull_extract",
+        json!({
+            "target": target.display().to_string(),
+            "exclude": [0, 1, 2],
+            "confirm": true,
+        }),
+    )
+    .unwrap_err();
+    assert!(bad.contains("没有可保留的帧"), "{bad}");
+    // dry_run 不写任何东西、也不要 confirm。
+    let dry = ok(
+        "aevum_cull_extract",
+        json!({
+            "target": target.display().to_string(),
+            "exclude": [0],
+            "dry_run": true,
+        }),
+    );
+    assert_eq!(dry["dry_run"], true);
+    assert_eq!(dry["frames"], 2);
+    assert!(!target.exists(), "dry_run 不该建目录");
+    // 正例：剔掉第 0 帧，复制两帧进目标目录，逐字节数得出来。
+    let result = ok(
+        "aevum_cull_extract",
+        json!({
+            "target": target.display().to_string(),
+            "exclude": [0],
+            "confirm": true,
+        }),
+    );
+    assert_eq!(result["copied"], 2);
+    assert_eq!(result["excluded"], 1);
+    let copied: Vec<_> = std::fs::read_dir(&target).expect("目标目录").collect();
+    assert_eq!(copied.len(), 2, "目标目录该有两帧");
+
+    reset_session();
 }
