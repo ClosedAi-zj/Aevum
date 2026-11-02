@@ -975,6 +975,78 @@ fn band_contrast(rgb: &[f32], w: usize, y0: usize, y1: usize) -> f32 {
     if cnt == 0 { 0.0 } else { acc / cnt as f32 }
 }
 
+/// X-C2：`tools/list` 报出的 `focus_merge` schema 必须**恰三值**，且顺序与 `Method::ALL` 逐字一致。
+///
+/// 为什么连顺序一起钉：客户端（agent 尤其）常按枚举顺序给用户列选项。缺一个值意味着
+/// 某个方法从界面上消失；多一个值意味着某个 key 一调就报错；顺序乱了会让「第 N 个方法」
+/// 这类位置化选择在两端错位。这条判据不需要素材，只走 `tools/list`，所以单独一个测试，
+/// 红了就知道是清单写歪了，而不是合成算法出了问题。
+///
+/// X-C2: the `focus_merge` schema reported by `tools/list` must have **exactly three**
+/// method values, in the same order as `Method::ALL`.
+///
+/// Why pin the order too: clients (agents especially) often present the options in enum
+/// order. A missing value hides a method, an extra one turns into a runtime error, and a
+/// reordered list makes any position-based pick disagree across the two sides. This needs
+/// no fixtures -- it only walks `tools/list` -- so it lives in its own test: red means the
+/// catalogue is wrong, not that the fusing algorithm broke.
+#[test]
+fn the_focus_merge_schema_lists_exactly_three_methods_and_an_optional_align() {
+    let mut server = Server::start();
+    server.request(
+        "initialize",
+        json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
+    );
+    server.notify("notifications/initialized");
+
+    let listed = server.request("tools/list", json!({}));
+    let tools = listed["result"]["tools"].as_array().expect("tools 数组");
+    let focus_tool = tools
+        .iter()
+        .find(|tool| tool["name"] == "aevum_focus_merge")
+        .expect("tools/list 里没有 aevum_focus_merge");
+    let schema = &focus_tool["inputSchema"];
+
+    let methods: Vec<&str> = schema["properties"]["method"]["enum"]
+        .as_array()
+        .expect("method 枚举")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    let expected: Vec<&str> = aevum_core::focus::Method::ALL
+        .iter()
+        .map(|m| m.key())
+        .collect();
+    assert_eq!(
+        methods, expected,
+        "schema 的方法枚举与 Method::ALL 不一致：{methods:?}"
+    );
+
+    // `align` 必须是可选布尔且 schema 里写死缺省 false：客户端不该靠猜缺省值。
+    //
+    // `align` must be an optional boolean with `false` written into the schema: clients
+    // should never have to guess a default.
+    let align_prop = &schema["properties"]["align"];
+    assert_eq!(
+        align_prop["type"], "boolean",
+        "align 必须是布尔：{align_prop}"
+    );
+    assert_eq!(
+        align_prop["default"],
+        json!(false),
+        "align 的 schema 缺省必须是 false：{align_prop}"
+    );
+    // `align` 不能进 required：它是可选开关，进了 required 老客户端会当场被卡住。
+    //
+    // `align` must not be required: it is an optional switch, and requiring it would
+    // break every client that was written before it existed.
+    let required = schema["required"].as_array().expect("required 数组");
+    assert!(
+        !required.iter().any(|v| v.as_str() == Some("align")),
+        "align 不该进 required：{required:?}"
+    );
+}
+
 #[test]
 fn focus_merge_recovers_each_band_from_the_frame_that_holds_its_texture() {
     let temp = TempDir::new("focus");
@@ -1092,6 +1164,38 @@ fn focus_merge_recovers_each_band_from_the_frame_that_holds_its_texture() {
         assert!(status.is_ascii(), "align_status 必须是 ASCII：{status}");
     }
 
+    // 省略 `align` 必须与显式 `align: false` 逐点一致。
+    //
+    // 缺省值只有在与写出来的那个值等价时才叫缺省：不跑这一步，脚本可以不传、agent
+    // 可以传 false，两条路各自演化后就会产出两张不同的成片，而没人会去比。
+    //
+    // Omitting `align` must be pixel-identical to `align: false`.
+    //
+    // A default is only a default if it equals the explicit value: without this step a
+    // script may omit it while an agent passes `false`, the two paths drift apart, and
+    // nothing ever compares the resulting images.
+    let no_align_dir = temp.path().join("focus-out-noalign");
+    let explicit_off = ok_json(&server.call(
+        "aevum_focus_merge",
+        json!({
+            "frames": [0, 1, 2],
+            "out_dir": no_align_dir.display().to_string(),
+            "format": "png8",
+            "align": false,
+            "confirm": true
+        }),
+    ));
+    assert_eq!(
+        merged.get("align_status").and_then(|v| v.as_str()),
+        Some("off"),
+        "省略 align 时状态必须是 off：{merged}"
+    );
+    assert_eq!(
+        explicit_off.get("align_status").and_then(|v| v.as_str()),
+        Some("off"),
+        "显式 align=false 时状态必须是 off：{explicit_off}"
+    );
+
     let path = merged["path"].as_str().expect("成片路径");
     assert!(
         path.ends_with("focus_000000_3f.png"),
@@ -1100,6 +1204,26 @@ fn focus_merge_recovers_each_band_from_the_frame_that_holds_its_texture() {
     let (rgb, w, h) = aevum_core::export::load_rgb_f32(Path::new(path)).expect("读回成片");
     let w = w as usize;
     assert_eq!((w, h), (48, 48));
+
+    // 接上一条：两张成片逐点比对。用 max|Δ| 而不是「差不多」，因为这条判据守的是
+    // 「完全同一条代码路径」，任何非零差都说明缺省分支被单独走到了。
+    //
+    // Continuing from above: compare the two images pixel by pixel. `max|Δ|` rather than an
+    // approximate match, because this guards "the very same code path" -- any non-zero
+    // difference means the default branch was taken separately.
+    let off_path = explicit_off["path"].as_str().expect("成片路径");
+    let (rgb_off, ow, oh) =
+        aevum_core::export::load_rgb_f32(Path::new(off_path)).expect("读回成片");
+    assert_eq!((ow as usize, oh), (48, 48));
+    assert_eq!(rgb.len(), rgb_off.len(), "两张成片尺寸必须一致");
+    let max_diff = rgb
+        .iter()
+        .zip(rgb_off.iter())
+        .fold(0.0f32, |acc, (a, b)| acc.max((a - b).abs()));
+    assert_eq!(
+        max_diff, 0.0,
+        "省略 align 与 align=false 的成片必须逐点一致，实测 max|Δ| = {max_diff}"
+    );
     // 每条带的中心 4 行：分界线两侧各留 radius + smooth_z + feather 的边距，
     // 边界上那一两行归谁在物理上就是模糊的（方法的属性，不是缺陷）。
     //

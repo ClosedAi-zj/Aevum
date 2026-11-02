@@ -267,7 +267,7 @@ const FALLBACK_TOOLS: &[(&str, &str)] = &[
     ),
     (
         "focus.merge",
-        "把一组不同对焦距离的帧融成一张全景深（焦点合成，批量写，必须 confirm: true；长任务，立即返回，进度用 merge.status）。深度图法：逐像素取测度最强的帧，测度低于阈值的无细节区整块用参考帧兜底，过渡带羽化；加权平均法：测度四次方当权重。参数：frames?（帧下标数组，0 开始）或 start?+around?（默认从当前帧起 8 帧，around 1..31）/ method?（depthmap / weighted）/ radius?（测度半径 0..32，默认 2）/ threshold?（无细节阈值百分位 0..100，0 = 关）/ smooth_z?（深度图去斑 0..16）/ feather?（羽化半径 0..64 px）/ out_dir?（默认序列根下 焦点合成/）/ confirm: true。",
+        "把一组不同对焦距离的帧融成一张全景深（焦点合成，批量写，必须 confirm: true；长任务，立即返回，进度用 merge.status）。深度图法：逐像素取测度最强的帧，测度低于阈值的无细节区整块用参考帧兜底，过渡带羽化；加权平均法：测度四次方当权重；金字塔法：拉普拉斯塔按层融合，多尺度自带过渡、羽化不适用。参数：frames?（帧下标数组，0 开始）或 start?+around?（默认从当前帧起 8 帧，around 1..31）/ method?（depthmap / weighted / pyramid）/ align?（合成前自动对齐，默认关；收益不足 0.5% 自动回退）/ radius?（测度半径 0..32，默认 2）/ threshold?（无细节阈值百分位 0..100，0 = 关）/ smooth_z?（深度图去斑 0..16）/ feather?（羽化半径 0..64 px）/ out_dir?（默认序列根下 焦点合成/）/ confirm: true。",
     ),
     (
         "stack.merge",

@@ -1076,6 +1076,11 @@ fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
         ));
     }
     let opts = focus_options(args)?;
+    // 合成前自动对齐：解析口径与 UI 的 `focus.merge` 一致——缺省 false，非布尔报错。
+    //
+    // Pre-fusion auto alignment: the same convention as the UI's `focus.merge` -- default
+    // false, a non-boolean value is an error.
+    let align = opt_bool(args, "align")?.unwrap_or(false);
     let root = session.require_root()?;
     let out_dir = match opt_str(args, "out_dir")? {
         Some(dir) => absolute(Path::new(dir))?,
@@ -1117,7 +1122,53 @@ fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
         }
         buffers.push(buf);
     }
-    let (w, h) = dims.unwrap_or((0, 0));
+    let (mut w, mut h) = dims.unwrap_or((0, 0));
+    // 自动对齐：默认不动任何像素（`align: false` 这条路的成片与从前逐点一致）。
+    //
+    // Auto alignment: by default not a single pixel is touched (`align: false` stays
+    // point-for-point identical to before).
+    let mut align_status = "off";
+    let mut align_gain = 0.0f32;
+    if align {
+        let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();
+        // 手动序列对齐的位移不叠（拍板 ⑥）：只保留它的裁切框，位移完全由本次估计给出。
+        //
+        // Manual sequence-alignment offsets are never stacked on top (ruling 6): only its
+        // crop rectangle survives, and the offsets come entirely from this estimate.
+        let report = aevum_core::focus_align::estimate(&refs, w, h, opts.radius, crop, &|| false)
+            .ok_or_else(|| "自动对齐被要求中止".to_owned())?;
+        align_status = report.status.key();
+        align_gain = report.gain;
+        if report.status == aevum_core::focus_align::AlignStatus::Adopted {
+            // 逐块 warp + 24px 接缝淡化；输出窗口按拍板 ⑥：有手动裁切框就整幅，否则
+            // 用估计位移算出的公共窗口。
+            //
+            // Per-block warp with 24 px seam feathering; the output window follows ruling 6:
+            // the whole frame when a manual crop exists, otherwise the common window derived
+            // from the estimated offsets.
+            let window = match crop {
+                Some(_) => None,
+                None => report
+                    .crop
+                    .map(|c| (c.x as usize, c.y as usize, c.w as usize, c.h as usize)),
+            };
+            let mut warped: Vec<Vec<f32>> = Vec::with_capacity(buffers.len());
+            for (i, buf) in buffers.iter().enumerate() {
+                let field = report.blocks.get(i).map(Vec::as_slice).unwrap_or(&[]);
+                let (out, nw, nh) =
+                    aevum_core::focus_align::warp_by_block_field(buf, w, h, field, window);
+                if nw == 0 || nh == 0 {
+                    return Err("自动对齐的裁切窗口是空的：检查对齐位移是否异常".to_owned());
+                }
+                if i == 0 {
+                    w = nw;
+                    h = nh;
+                }
+                warped.push(out);
+            }
+            buffers = warped;
+        }
+    }
     let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();
     // 报错走焦点语境的文案：`StackError::cn()` 说的是「堆栈」，对焦包围的用户看着别扭。
     let mut fused = aevum_core::focus::focus_stack(&refs, w, h, &opts)
@@ -1155,6 +1206,12 @@ fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
         "indices": indices,
         "width": w,
         "height": h,
+        // 机器键，**不发中文 reason**：MCP 客户端没有 i18n 漏斗。
+        //
+        // Machine keys only; the Chinese reason is **not** emitted -- MCP clients have no
+        // i18n funnel.
+        "align_status": align_status,
+        "align_gain": align_gain,
     }))
 }
 
@@ -1174,8 +1231,12 @@ fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
 fn focus_options(args: &Value) -> Result<aevum_core::focus::Options, String> {
     let method = match opt_str(args, "method")? {
         None => aevum_core::focus::Method::DepthMap,
-        Some(raw) => aevum_core::focus::Method::parse(raw)
-            .ok_or_else(|| format!("未知融合方式 {}；可用 depthmap / weighted", clip_echo(raw)))?,
+        Some(raw) => aevum_core::focus::Method::parse(raw).ok_or_else(|| {
+            format!(
+                "未知融合方式 {}；可用 depthmap / weighted / pyramid",
+                clip_echo(raw)
+            )
+        })?,
     };
     Ok(aevum_core::focus::Options {
         method,
@@ -3657,7 +3718,8 @@ fn build_commands() -> Vec<Command> {
                     "frames": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "参与合成的帧下标（0 开始）；给了就忽略 start/around"},
                     "start": {"type": "integer", "minimum": 0, "description": "起始帧下标（0 开始）；省略取序列中间帧"},
                     "around": {"type": "integer", "minimum": 1, "maximum": (aevum_core::focus::MAX_FRAMES - 1), "default": 7, "description": "起始帧之后再取几帧（1..31）；省略=7（共 8 帧）"},
-                    "method": {"type": "string", "enum": ["depthmap", "weighted"], "default": "depthmap", "description": "depthmap 逐像素选测度最强的帧（无细节区兜底参考帧）；weighted 按测度四次方加权混合"},
+                    "method": {"type": "string", "enum": ["depthmap", "weighted", "pyramid"], "default": "depthmap", "description": "depthmap 逐像素选测度最强的帧（无细节区兜底参考帧）；weighted 按测度四次方加权混合；pyramid 拉普拉斯塔按层融合（多尺度自带过渡，feather 与 depth-preview 不适用）"},
+                    "align": {"type": "boolean", "default": false, "description": "合成前自动对齐：先估每帧 8×6 网格位移再逐块补偿，压住对焦呼吸的轻微缩放。默认关闭；收益不足 0.5% 自动回退成不做（成片与关闭时逐点一致）；估计失败照样出图，只是按未对齐几何"},
                     "radius": {"type": "integer", "minimum": 0, "maximum": 32, "default": 2, "description": "焦点测度的分析半径（px），0 = 逐像素原始响应"},
                     "threshold": {"type": "number", "minimum": 0, "maximum": 100, "default": 0, "description": "无细节阈值（全图最佳测度的百分位，0..100）：低于这条线的像素整块判给参考帧；0 = 关闭兜底"},
                     "smooth_z": {"type": "integer", "minimum": 0, "maximum": 16, "default": 1, "description": "深度图去斑半径（px，模值滤波），只对 depthmap 生效"},

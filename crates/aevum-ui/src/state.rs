@@ -32,7 +32,7 @@ use aevum_core::export::{
     self, Codec, JobProgress, OutputDynamic, OutputMode, OutputSharpen, RenderOptions,
     SharpenStrength, Stage, StillFormat,
 };
-use aevum_core::focus_align::{self, AlignStatus, BlockField, DecideInput};
+use aevum_core::focus_align::{self, AlignStatus};
 use aevum_core::grade::{self, GradeParams, PRESET_NAMES};
 use aevum_core::interp;
 use aevum_core::journal;
@@ -6739,7 +6739,10 @@ impl AppState {
         }
         let method = match opt_str(args, "method")? {
             Some(raw) => aevum_core::focus::Method::parse(raw).ok_or_else(|| {
-                crate::i18n::tr_fmt("未知融合方式 {}；可用 depthmap / weighted", &[&raw])
+                crate::i18n::tr_fmt(
+                    "未知融合方式 {}；可用 depthmap / weighted / pyramid",
+                    &[&raw],
+                )
             })?,
             None => self.focus_method,
         };
@@ -12845,17 +12848,17 @@ struct FocusAlignPass {
     crop: CropRect,
 }
 
-/// 焦点合成的前置估计：代理 → 邻居链式网格场 → 收益校验 → 三态。
+/// 焦点合成的前置估计：调 core 的同一条编排，把取消旗翻成它的 `cancelled` 回调。
 ///
-/// 纯估计，**不改帧、不写盘**：三态里只有 `adopted` 才值得上层去 warp；`failed` 与
-/// 收益不足都原样退未对齐几何。估计前后各查一次取消（大图上这一步不便宜）。
+/// 编排本身在 [`aevum_core::focus_align::estimate`]——无头 MCP 走的是同一份，UI 只负责
+/// 「怎么取消」和「三态里 adopted 才带块场」。重复写两遍编排必然漂移，所以这里只剩翻译。
 ///
-/// The estimate in front of a focus merge: proxies -> neighbour-chained grid field -> gain
-/// check -> three states.
+/// The estimate in front of a focus merge: call core's single orchestration, translating the
+/// cancel flag into its `cancelled` callback.
 ///
-/// It only estimates -- no frame is modified and nothing is written: only `adopted` is worth
-/// warping for; `failed` and "insufficient gain" both fall back to the unaligned geometry.
-/// Cancellation is checked before and after (this step is not cheap on a large frame).
+/// The orchestration itself lives in [`aevum_core::focus_align::estimate`] -- the headless
+/// MCP uses the same one. The UI only decides "how to cancel" and "only adopted carries the
+/// block field". Two copies of the orchestration would drift, so this is just translation.
 fn focus_align_pass(
     frames: &[(Vec<f32>, usize, usize)],
     w: usize,
@@ -12864,276 +12867,27 @@ fn focus_align_pass(
     manual_crop: Option<CropRect>,
     cancel: &AtomicBool,
 ) -> Result<FocusAlignPass, String> {
-    let failed = || FocusAlignPass {
-        status: AlignStatus::Failed,
-        gain: 0.0,
-        blocks: Vec::new(),
-        crop: CropRect {
-            x: 0,
-            y: 0,
-            w: w as u32,
-            h: h as u32,
-        },
-    };
-    if frames.len() < 2 || w == 0 || h == 0 {
-        return Ok(failed());
-    }
-    if cancel.load(Ordering::SeqCst) {
-        return Err("已取消：还没开始估计自动对齐".to_owned());
-    }
-    // 代理按 1/2 分辨率建（长边封顶 2048），相邻两帧同时驻留即可链式累计。
-    //
-    // Proxies are built at half resolution (long side capped at 2048); keeping two
-    // neighbouring frames resident is enough for chained accumulation.
-    let proxies: Vec<focus_align::MonoProxy> = frames
-        .iter()
-        .map(|(buf, _, _)| focus_align::proxy_luma(buf, w, h))
-        .collect();
-    let mut fields: Vec<BlockField> = Vec::with_capacity(proxies.len());
-    fields.push(BlockField::zeros());
-    for k in 1..proxies.len() {
-        if cancel.load(Ordering::SeqCst) {
-            return Err("已取消：自动对齐估到一半".to_owned());
-        }
-        fields.push(focus_align::block_shifts(
-            &proxies[k - 1],
-            &proxies[k],
-            radius,
-        ));
-    }
-    let offsets = focus_align::chain_offsets(&fields);
-    let blocks = focus_align::chain_blocks(&fields);
-    let failed_blocks = fields.iter().skip(1).map(|f| f.failed).max().unwrap_or(0);
     let refs: Vec<&[f32]> = frames.iter().map(|(b, _, _)| b.as_slice()).collect();
-    let (mean_aligned, mean_unaligned) = focus_align::gain_stats(&refs, w, h, &offsets, radius);
-    let crop = manual_crop.unwrap_or_else(|| focus_align::auto_crop(&offsets, w as u32, h as u32));
-    let report = focus_align::decide(&DecideInput {
-        mean_aligned,
-        mean_unaligned,
-        failed_blocks,
-        total_blocks: focus_align::GRID_COLS * focus_align::GRID_ROWS,
-        offsets,
-        blocks,
-        crop: Some(crop),
-    });
-    if cancel.load(Ordering::SeqCst) {
-        return Err("已取消：自动对齐估完了，还没开始融合".to_owned());
-    }
-    let status = report.status;
+    let report = focus_align::estimate(&refs, w, h, radius, manual_crop, &|| {
+        cancel.load(Ordering::SeqCst)
+    })
+    .ok_or_else(|| "已取消：自动对齐估到一半".to_owned())?;
     let blocks = if report.status == AlignStatus::Adopted {
         report.blocks.clone()
     } else {
         Vec::new()
     };
     Ok(FocusAlignPass {
-        status,
+        status: report.status,
         gain: report.gain,
         blocks,
-        crop: report.crop.unwrap_or(crop),
+        crop: report.crop.unwrap_or(CropRect {
+            x: 0,
+            y: 0,
+            w: w as u32,
+            h: h as u32,
+        }),
     })
-}
-
-/// 接缝淡化带宽度（px）：相邻块各自的位移不同，硬拼会在块界留下断点。
-///
-/// 取 24px 的理由与设计拍板 ⑦ 一致：典型手持位移 ~5px，24px ≥ 4 倍，足以把断点糊成
-/// 渐变；又远小于块宽（24MP 上约 750px），不会侵到块内真正有效的区域。
-///
-/// Seam feather width (px): neighbouring blocks carry different shifts, and a hard join
-/// leaves a visible break on the boundary.
-///
-/// 24 px matches design ruling 7: typical handheld displacement is ~5 px, so 24 px is four
-/// times that and smears the break into a gradient; and it is far below the block width
-/// (about 750 px on 24 MP), so it never eats into the block's genuinely useful interior.
-const BLOCK_SEAM_FEATHER: usize = 24;
-
-/// 逐块 warp 一帧：按拍板 ⑦ 的「裁块 → 块内位移 → 裁回 → 淡化拼装」，不新写稠密内核。
-///
-/// 每块先按 `ceil(max_shift)+2` 外扩裁出（留出位移越界的来源像素），块内用
-/// `transform_into` 施加该块自己的位移，再裁回块矩形，按 24px 线性交叉淡化的权重
-/// 累加进输出、权重和归一。
-///
-/// Warp one frame block by block, following ruling 7's "crop the block -> apply the block
-/// shift -> crop back -> feather into the output"; no new dense warp kernel is written.
-///
-/// Each block is first cropped with a `ceil(max_shift)+2` margin (so a shifted sample still
-/// has real source pixels), the block's own shift is applied inside with `transform_into`,
-/// the result is cropped back to the block rectangle, and it is accumulated into the output
-/// with 24 px linear cross-fade weights, normalised by their sum.
-fn warp_by_block_field(
-    src: &[f32],
-    w: usize,
-    h: usize,
-    shifts: &[[f64; 2]],
-    crop: Option<(usize, usize, usize, usize)>,
-) -> (Vec<f32>, usize, usize) {
-    let (cx, cy, cw, ch) = {
-        let (x, y, ww, hh) = crop.unwrap_or((0, 0, w, h));
-        let x = x.min(w);
-        let y = y.min(h);
-        (x, y, ww.min(w - x), hh.min(h - y))
-    };
-    if cw == 0 || ch == 0 || w == 0 || h == 0 {
-        return (Vec::new(), 0, 0);
-    }
-    let mut out = vec![0.0f32; cw * ch * 3];
-    let mut wsum = vec![0.0f32; cw * ch];
-    let cols = focus_align::GRID_COLS;
-    let rows = focus_align::GRID_ROWS;
-    let max_shift = shifts
-        .iter()
-        .fold(0.0f64, |m, s| m.max(s[0].abs()).max(s[1].abs()));
-    let feather = BLOCK_SEAM_FEATHER;
-    // 外扩量要同时覆盖两件事：位移越界（`ceil(max_shift)`）与接缝淡化带（`feather`）——
-    // 淡化带里的像素虽然属于邻块，本块也要为它们提供样本，否则它们会落到裁好的样本
-    // 矩形之外，被 `transform_into` 的边界镜像折回来，接缝处就出现折痕。
-    //
-    // The margin must cover both the shift excursion (`ceil(max_shift)`) and the seam feather
-    // band (`feather`): pixels inside the feather band belong to the neighbour, but this
-    // block still has to supply their samples -- otherwise they fall outside the cropped
-    // sample rectangle and get folded back by `transform_into`'s border mirroring, leaving a
-    // crease along the seam.
-    let margin = max_shift.ceil() as usize + feather + 2;
-
-    for by in 0..rows {
-        for bx in 0..cols {
-            let x0 = bx * w / cols;
-            let x1 = (bx + 1) * w / cols;
-            let y0 = by * h / rows;
-            let y1 = (by + 1) * h / rows;
-            if x1 <= x0 || y1 <= y0 {
-                continue;
-            }
-            let shift = shifts.get(by * cols + bx).copied().unwrap_or([0.0, 0.0]);
-            // 外扩后的来源矩形（夹进画面），位移样本才不会读到块外已丢掉的像素。
-            //
-            // The expanded source rectangle (clamped to the frame), so shifted samples do
-            // not miss pixels the block crop dropped.
-            let sx0 = x0.saturating_sub(margin);
-            let sy0 = y0.saturating_sub(margin);
-            let sx1 = (x1 + margin).min(w);
-            let sy1 = (y1 + margin).min(h);
-            if sx1 <= sx0 || sy1 <= sy0 {
-                continue;
-            }
-            let mut sample = Vec::new();
-            warp::transform_into(
-                src,
-                w,
-                h,
-                Framing {
-                    angle_deg: 0.0,
-                    off: [0.0, 0.0],
-                },
-                Some((sx0, sy0, sx1 - sx0, sy1 - sy0)),
-                &mut sample,
-            );
-            let bw = sx1 - sx0;
-            let bh = sy1 - sy0;
-            let mut warped = Vec::new();
-            warp::transform_into(
-                &sample,
-                bw,
-                bh,
-                Framing {
-                    angle_deg: 0.0,
-                    off: shift,
-                },
-                None,
-                &mut warped,
-            );
-            // 淡化权重：到块边界的有符号距离，边界为 0.5、向内 feather 处为 1、
-            // 向外 feather 处为 0。两块在接缝两侧的权重接近且都非零（0.5 / 0.48 量级），
-            // 归一后就是平滑过渡——既没有硬断点，也不会出现权重和远小于 1 的暗带。
-            //
-            // Feather weight from the signed distance to the block edge: 0.5 on the edge, 1
-            // one feather inside, 0 one feather outside. Two neighbours' weights near a seam
-            // are close and both non-zero (about 0.5 / 0.48), so normalisation yields a
-            // smooth transition -- no hard break and no dark band from a tiny sum.
-            let ramp = |d: f64| -> f32 {
-                if feather == 0 {
-                    if d >= 0.0 { 1.0 } else { 0.0 }
-                } else {
-                    let t = 0.5 + d / (2.0 * feather as f64);
-                    t.clamp(0.0, 1.0) as f32
-                }
-            };
-            // 输出窗口与「块矩形 + feather 带」的交集。与窗口求交是必须的：窗口可能已经
-            // 被 auto_crop 裁小，块界落在窗口外时不该往窗口里写。下界还要夹到来源矩形
-            // 之内：feather（24px）通常大于采样外扩量（位移 + 2px），越界的像素在
-            // warped 缓冲里没有对应样本。
-            //
-            // Intersection of the output window with "block rectangle plus feather band".
-            // Intersecting with the window matters: auto_crop may already have shrunk it, and
-            // a block edge outside the window must not write into it. The lower bound is also
-            // clamped to the source rectangle: the feather (24 px) is usually wider than the
-            // sample margin (shift + 2 px), and pixels beyond it have no counterpart in the
-            // warped buffer.
-            let px0 = x0.saturating_sub(feather).max(cx).max(sx0);
-            let px1 = (x1 + feather).min(cx + cw).min(w).min(sx1);
-            let py0 = y0.saturating_sub(feather).max(cy).max(sy0);
-            let py1 = (y1 + feather).min(cy + ch).min(h).min(sy1);
-            for py in py0..py1 {
-                // 纵向权重：到块上/下边界的距离取较小者（块内为正、带内为负）。
-                //
-                // Vertical weight: the smaller distance to the top/bottom edge (positive
-                // inside the block, negative in the feather band).
-                let dy = (py as f64 - y0 as f64).min(y1 as f64 - 1.0 - py as f64);
-                let wy = ramp(dy);
-                if wy <= 0.0 {
-                    continue;
-                }
-                for px in px0..px1 {
-                    let dx = (px as f64 - x0 as f64).min(x1 as f64 - 1.0 - px as f64);
-                    let wt = axis_weight(ramp(dx), wy);
-                    if wt <= 0.0 {
-                        continue;
-                    }
-                    // warped 与 sample 同原点（只施加了块位移），减来源矩形原点即可。
-                    //
-                    // The warped buffer shares the sample's origin (only the block shift was
-                    // applied), so subtracting the source rectangle origin is enough.
-                    let wx = px - sx0;
-                    let wyi = py - sy0;
-                    if wx >= bw || wyi >= bh {
-                        continue;
-                    }
-                    let si = (wyi * bw + wx) * 3;
-                    let oi = ((py - cy) * cw + (px - cx)) * 3;
-                    for c in 0..3 {
-                        out[oi + c] += wt * warped[si + c];
-                    }
-                    wsum[(py - cy) * cw + (px - cx)] += wt;
-                }
-            }
-        }
-    }
-    // 权重和归一；理论上每像素都被至少一块覆盖，权重和近零时用参考帧兜底（不留下黑块）。
-    //
-    // Normalise by the weight sum; every pixel should be covered by at least one block, and
-    // a near-zero sum falls back to the reference frame rather than leaving a black hole.
-    for (p, s) in wsum.iter().enumerate() {
-        let s = *s;
-        let j = p * 3;
-        if s > 1e-6 {
-            out[j] /= s;
-            out[j + 1] /= s;
-            out[j + 2] /= s;
-        } else {
-            let sx = ((cx + p % cw).min(w - 1) + (cy + p / cw).min(h - 1) * w) * 3;
-            out[j] = src[sx];
-            out[j + 1] = src[sx + 1];
-            out[j + 2] = src[sx + 2];
-        }
-    }
-    (out, cw, ch)
-}
-
-/// 两个方向权重的乘积：两个方向各自在接缝两侧连续，乘积也连续。
-///
-/// Product of the two per-axis weights: each axis is continuous across a seam, so the
-/// product is too.
-fn axis_weight(a: f32, b: f32) -> f32 {
-    a * b
 }
 
 fn run_merge_job(
@@ -13287,7 +13041,8 @@ fn run_merge_job(
                             return Err("已取消：自动对齐已完成，还没开始融合".to_owned());
                         }
                         let field = outcome.blocks.get(i).map(Vec::as_slice).unwrap_or(&[]);
-                        let (out, nw, nh) = warp_by_block_field(buf, w, h, field, window);
+                        let (out, nw, nh) =
+                            focus_align::warp_by_block_field(buf, w, h, field, window);
                         warped.push((out, nw, nh));
                     }
                     if let Some((nw, nh)) = warped.first().map(|(_, nw, nh)| (*nw, *nh)) {
@@ -19013,7 +18768,7 @@ mod focus_align_wiring_tests {
             .collect();
         let shift = [5.5, -3.25];
         let field = vec![shift; focus_align::GRID_COLS * focus_align::GRID_ROWS];
-        let (block, bw, bh) = warp_by_block_field(&src, w, h, &field, None);
+        let (block, bw, bh) = focus_align::warp_by_block_field(&src, w, h, &field, None);
         let mut once = Vec::new();
         let (gw, gh) = warp::transform_into(
             &src,
