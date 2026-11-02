@@ -65,6 +65,32 @@ README_PATTERNS = [
 
 CHANGELOG_FIRST = re.compile(r"^## v(" + VER + r")", re.MULTILINE)
 
+# ---- 命令面两个数字：README 里写的「N 个直连工具」「全部 N 条命令」必须等于源码里
+# 的真实条数 ----
+# 为什么也要在这一关查：版本号漂移有人盯着，这两处数字没人盯。工具表加一条、命令目录
+# 加一条，README 不会自己跟着动；等到用户按 README 数工具时才发现少了一个。
+#
+# 口径：数字从源码现数，不从另一处文档抄——
+#   * 直连工具数 = `tools.rs` 里 dispatch 的 `"aevum_…" => handler(session, args),` 分支；
+#     工具表里的 `id: "aevum_…"` 是声明不是路由，不算；
+#   * 命令数 = `mcp_routes::COMMANDS` 数组里的 ID。
+TOOL_COUNT_SOURCE = "crates/aevum-mcp/src/tools.rs"
+COMMAND_LIST_SOURCE = "crates/aevum-core/src/mcp_routes.rs"
+
+TOOL_COUNT_PATTERNS = [
+    ("README.md", "「直连 N 个 `aevum_*` 工具」", re.compile(r"直连 (\d+) 个 `aevum_\*` 工具")),
+    ("README.en.md", "「(N `aevum_*` tools)」", re.compile(r"\((\d+) `aevum_\*` tools\)")),
+    (
+        "README.en.md",
+        "「N tools an AI agent can drive directly」",
+        re.compile(r"(\d+) tools an AI agent can drive directly"),
+    ),
+]
+COMMAND_COUNT_PATTERNS = [
+    ("README.md", "「全部 N 条命令」", re.compile(r"全部 (\d+) 条命令")),
+    ("README.en.md", "「all N GUI commands」", re.compile(r"all (\d+) GUI commands")),
+]
+
 # 中英两册 CHANGELOG 的最新节都要对齐真源。少查一册，就等于「英文册可以随便落后」。
 CHANGELOGS = ("CHANGELOG.md", "CHANGELOG.en.md")
 
@@ -83,6 +109,37 @@ def cargo_toml_version() -> str:
     if not m:
         raise SystemExit("check_version: Cargo.toml 里找不到 version = \"…\"")
     return m.group(1)
+
+
+def tool_count() -> int:
+    """数 `aevum_mcp` dispatch 里的工具分支条数。"""
+    text = read(TOOL_COUNT_SOURCE)
+    return len(re.findall(r'^\s*"aevum_[a-z0-9_]+"\s*=>', text, re.MULTILINE))
+
+
+def command_count() -> int:
+    """数 `mcp_routes::COMMANDS` 里的命令 ID。"""
+    text = read(COMMAND_LIST_SOURCE)
+    m = re.search(r"pub const COMMANDS: &\[&str\] = &\[(.*?)\n\];", text, re.S)
+    if not m:
+        raise SystemExit("check_version: mcp_routes.rs 里找不到 COMMANDS 数组")
+    return len(re.findall(r'"([a-z0-9_.]+)"', m.group(1)))
+
+
+def check_number(rel: str, label: str, pat: re.Pattern[str], want: int, problems: list[str]) -> None:
+    """README 里那一处数字必须恰好出现 1 次，且等于源码里的真实条数。"""
+    text = read(rel)
+    hits = list(pat.finditer(text))
+    if len(hits) != 1:
+        extra = f"，首处在第 {_line_of(text, hits[0].start())} 行" if hits else ""
+        problems.append(f"{rel}：{label} 命中 {len(hits)} 处（应为 1）{extra}")
+        return
+    got = int(hits[0].group(1))
+    if got != want:
+        problems.append(
+            f"{rel}:{_line_of(text, hits[0].start())}：{label} 写的是 {got}，"
+            f"源码里实际有 {want} 条"
+        )
 
 
 def main() -> int:
@@ -126,6 +183,14 @@ def main() -> int:
             line_no = _line_of(text, m.start())
             problems.append(f"{rel}:{line_no}：最新版本节是 v{m.group(1)}，真源是 {cur}")
 
+    # ---- 命令面两个数字 ----
+    tools = tool_count()
+    commands = command_count()
+    for rel, label, pat in TOOL_COUNT_PATTERNS:
+        check_number(rel, label, pat, tools, problems)
+    for rel, label, pat in COMMAND_COUNT_PATTERNS:
+        check_number(rel, label, pat, commands, problems)
+
     if problems:
         print("版本号漂移，以下各处与 Cargo.toml 的真源不一致：", file=sys.stderr)
         for p in problems:
@@ -134,7 +199,9 @@ def main() -> int:
         return 1
     print(
         f"版本一致：{cur}（Cargo.toml / Cargo.lock×{len(LOCK_MEMBERS)} / "
-        f"README 中英各 2 / CHANGELOG 中英各 1）"
+        f"README 中英各 2 / CHANGELOG 中英各 1）；"
+        f"命令面：{commands} 条命令 / {tools} 个直连工具（README 中英共 "
+        f"{len(TOOL_COUNT_PATTERNS) + len(COMMAND_COUNT_PATTERNS)} 处）"
     )
     return 0
 

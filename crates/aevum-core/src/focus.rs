@@ -543,10 +543,12 @@ pub fn focus_stack(
     }
 }
 
-/// 只算深度图（阈值与去斑之后的最终归属，不含羽化）：面板预览与判据直接断言它。
+/// 只算深度图（阈值与去斑之后的最终归属，不含羽化）：判据直接断言它，将来的面板预览
+/// 也走这一个入口。
 ///
 /// Compute just the depth map (the final assignment after threshold and despeckle, before
-/// feathering): the panel preview and the tests assert on this directly.
+/// feathering): the tests assert on it, and a future panel preview would enter through the
+/// same door.
 pub fn depth_map(
     frames: &[&[f32]],
     w: usize,

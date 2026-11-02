@@ -15,6 +15,82 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.4.0 — 2026-11-02
+
+The pre-release audit pass: closing the gaps focus stacking left behind -- a headless
+`aevum_focus_merge`, the `focus.merge` framing parameters brought in line with the
+implementation, an "align first" prompt in the panel -- plus four defects that could kill a
+long job halfway or eat all the memory. The MCP tool set gains one entry (34 -> 35 direct
+tools); **the command catalogue is still 77** (the "72" in the README was a stale number,
+corrected here). The project format, presets and parameters, and command line contracts are
+unchanged.
+
+### Headless: `aevum_focus_merge` (direct tool no. 35)
+
+The GUI had focus stacking; headless had only HDR / panorama / star stacking / time
+blending -- an agent wanting a focus bracket had to assemble frames and go through export.
+It now follows `aevum_pano_merge`'s shape: eight frames from the sequence's middle frame by
+default, or an explicit `frames` list; alignment offsets and the uniform crop apply when an
+alignment report exists, mismatched sizes are refused; errors speak of "focus stacking", not
+"star stacking"; the still lands as `focus_{first:06}_{N}f.{ext}`.
+
+### `focus.merge`: framing parameters match the implementation
+
+The contract table said `center` while the implementation read `start` -- passing `center`
+per the 1.3.0 schema never did anything. 1.4.0 renames the contract to `start` (the
+implementation is untouched): `start?` is the first frame index, `around?` is how many more
+frames to take after it (1..31, 7 by default, eight frames in all).
+
+### Focus stacking: the panel says "align first"
+
+A handheld focus pull usually drifts a few pixels; fusing without aligning ghosts along the
+transition band, and ghosting looks exactly like "the depth map picked the wrong frame". The
+focus group now says so up front and offers an "Align the sequence first" button right
+there. All four merge groups share one sentence for the framing row, and the caption spells
+out the real frame count (N either side -> 2N+1 frames; N forward -> N+1 frames, cap 32).
+`focus.merge` also returns `aligned`, saying whether this run applied the alignment offsets.
+
+### Real bugs fixed
+
+1. **The metering cache's replace window**: `measures::save` deleted the old file before
+   renaming the new one, leaving an instant where the cache file did not exist; another
+   extraction reading at that moment got "the system cannot find the file specified". It now
+   renames straight over the target (Windows `fs::rename` goes through
+   `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`, measured to overwrite) and retries once after
+   10 ms on failure.
+2. **Cache contention during cull extraction**: when another process moved the source
+   sequence's metering cache away, the whole extraction failed. It now retries `NotFound`
+   three times, then skips the cache and extracts anyway; other IO errors still surface.
+3. **Focus stacking's memory and integer overflow**: the ownership map no longer computes a
+   whole row of measure planes before comparing -- it compares as it goes, an order of
+   magnitude less peak memory. An enormous `feather` no longer panics on integer overflow.
+4. **Symlink and junction traversal on the output directory**: when `out_dir` was a junction
+   pointing back to the sequence root's drive, the old lexical containment check saw nothing
+   wrong and the still was written somewhere the user never named. The check now resolves the
+   deepest existing ancestor first and refuses when lexical and real containment disagree.
+
+### Known limitations
+
+1. Focus stacking takes at most **32 frames**: every frame is resident, estimated as
+   `frames x pixels x 12 B + three output planes`, which is about **9.6 GB** for 32 frames at
+   24MP. Deeper stacks fuse in passes.
+2. Only the **depth-map** and **weighted-average** methods; pyramid fusion (survey item P2)
+   and GPU (OpenCL) are not implemented in this round.
+3. The panel has no depth-map preview: per-pixel ownership is not visible, only the fused
+   result.
+4. A headless session has no "current frame": `aevum_focus_merge` starts from the sequence's
+   **middle frame** when `start` is omitted; pass `start` or `frames` to pick another span.
+
+### Compatibility
+
+- Project file, presets and parameters, command line arguments: identical to 1.3.0; old
+  projects open as-is.
+- MCP tool set: adds `aevum_focus_merge` (direct tool no. 35); the existing 34 are unchanged.
+- **One contract correction**: `focus.merge`'s `center` never did anything (the
+  implementation reads `start`), so 1.4.0 renames it to `start`. A script that passed
+  `center` per the 1.3.0 schema had that field ignored all along -- pass `start` instead and
+  the behaviour matches what 1.3.0 actually did.
+
 ## v1.3.0 — 2026-11-02
 
 Feature release: ledger gaps B6-B9 closed in one pass — three time-blending features
