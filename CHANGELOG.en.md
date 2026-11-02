@@ -15,6 +15,65 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.3.0 — 2026-11-02
+
+Feature release: ledger gaps B6-B9 closed in one pass — three time-blending features
+(deghosting, automatic horizon, half-resolution preview) plus "extract a subsequence" in
+the cull station. The MCP tool set gains one entry (`cull.extract`, 76 in total); the
+project format, presets and parameters, and command line contracts are unchanged.
+
+### Time blending: deghosting (B6)
+
+Moving subjects — clouds, trees, traffic — no longer smear across band boundaries. The ACR
+chain: split each frame into 16 px blocks and take means; a block deviating from its own
+3x3 **spatial** median by more than the threshold (EV) is labelled as motion; the label map
+is box-filter softened while taking the max against the original (keeping full rejection);
+blending decays weights by label; a fully rejected tile falls back to the highest-weight
+source frame. Static content (vignette, horizon) is labelled on both frames and returns
+untouched. The threshold is the panel's "deghost" slider (EV, 0 = off).
+
+### Time blending: automatic horizon (B7)
+
+No more hand-placed horizon for sky-ground composites: all frames are averaged into a
+per-row brightness profile, smoothed, and the strongest vertical step within the 10%-90%
+window wins — provided the sky-ground contrast is at least 0.5 EV (flat light or pure sky
+falls back to the manual value).
+
+**This feature flushed out a real bug**: the sky-ground weight numerator was inverted,
+laying the sky across the bottom half. Old tests using identical frames could not see it; a
+stronger fixture (ground `lin(0)` / sky `lin(2)`) exposed it immediately; fixed in
+`8b18dd1`.
+
+### Time blending: half-resolution preview (B8)
+
+See the composite in the panel without writing a file first: whenever a parameter or the
+frame selection changes, a half-resolution composite is recomputed in the background (2x2
+box filter, with a decode cache — unchanged frames only redo the composite). Late stale
+replies only refresh the cache, never the on-screen texture. The preview runs the same
+alignment and crop path as the final still, and the acceptance test requires the preview to
+match the halved real still point by point.
+
+### Cull station: extract a subsequence (B9)
+
+`cull.extract` (MCP command no. 76): copies the kept frames into a new sequence folder with
+three path-safety refusals (inside the source / a drive root / a non-empty target), mtime
+preservation, the metering cache (`.aevum/measures.json`) carried over whole, and a
+`dry_run` estimate that never touches the disk. The panel gains a folder input and
+"Estimate / Export" buttons.
+
+### Compatibility
+
+- Project format, presets and parameters, command line: identical to 1.2.1; old projects
+  open as-is.
+- MCP tool set: `cull.extract` added (no. 76); the existing 75 are untouched — additive
+  only, so older clients are unaffected.
+- The new time-blend parameters (`horizon_auto`, `deghost`) carry defaults: omit them and
+  you get the new behaviour (auto horizon off, deghost 0.5 EV). The `bands` validation is
+  narrowed to the time-slice layout, so sky-ground is no longer blocked by the panel's
+  default (itself a real defect fix).
+
+---
+
 ## v1.2.1 — 2026-11-02
 
 A patch release in name, but a substantial one: four **real bugs** fixed (two of which made RAW
