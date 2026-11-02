@@ -441,12 +441,14 @@ fn p_c5_no_inversion_overshoot_outside_the_texture() {
             let got = out[j];
             let over = (lo - got).max(got - hi);
             worst = worst.max(over);
-            // 1e-2 是拉普拉斯重构的固有振铃容差：正向上实测最大 0.0058，
-            // 负向（全层 m^4）实测 0.026，是容差的 2.6 倍以上，判据有牙。
+            // 1e-2 是拉普拉斯重构的固有振铃容差：正向上实测最大 0.0057591796，
+            // 负向（`tight_from = levels`，即全层 m^4）实测最大 0.024443984，
+            // 是容差的 2.44 倍，判据有牙。这两个数与 `eprintln!` 的 `worst` 同源。
             //
             // 1e-2 is the intrinsic ringing tolerance of Laplacian reconstruction: the
-            // healthy implementation measures 0.0058 worst, while the negative (all
-            // levels on m^4) measures 0.026 -- well above the tolerance.
+            // healthy implementation measures 0.0057591796 worst, while the negative
+            // (`tight_from = levels`, i.e. every level on m^4) measures 0.024443984 --
+            // 2.44x the tolerance. Both numbers are the same `worst` the `eprintln!` prints.
             assert!(
                 over <= 1e-2,
                 "({x},{y}) 越过输入包络 [{lo},{hi}]：got={got}，超出 {over}"

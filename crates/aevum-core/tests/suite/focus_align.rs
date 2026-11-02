@@ -645,3 +645,113 @@ fn a_c5_breathing_grid_beats_global_translation() {
     );
     assert!(gc.is_finite() && gg > 0.0, "四角测度口径失效：{gc} / {gg}");
 }
+
+/// A-C2′：`decide` 的收益阈值与失败块比例**构造性**钉死，不靠夹具的偶然数值。
+///
+/// 为什么需要这条：A-C3 用的是「干净栈 gain = −0.0271」，它锚的是「回退分支还在」，
+/// 而不是「阈值是 0.005」——把 `GAIN_MIN` 改成 `0.0` 这条依然绿，因为负增益本来就
+/// 小于任何非负阈值。`decide` 是纯函数，直接喂构造好的统计量，阈值一改立刻红。
+///
+/// A-C2': pin `decide`'s gain threshold and failed-block ratio **constructively**, not via
+/// whatever numbers a fixture happens to produce.
+///
+/// Why this is needed: A-C3 uses "clean stack gain = -0.0271", which anchors "the revert
+/// branch still exists" rather than "the threshold is 0.005" -- setting `GAIN_MIN` to `0.0`
+/// keeps it green, since a negative gain is below any non-negative threshold. `decide` is a
+/// pure function; feeding it constructed statistics makes any threshold change go red.
+#[test]
+fn decide_pins_the_gain_floor_and_the_failure_ratio_by_construction() {
+    use aevum_core::focus_align::{DecideInput, GAIN_MIN};
+
+    let input = |mean_aligned: f32, mean_unaligned: f32, failed: usize| DecideInput {
+        mean_aligned,
+        mean_unaligned,
+        failed_blocks: failed,
+        total_blocks: GRID_COLS * GRID_ROWS,
+        offsets: vec![[0.0, 0.0]],
+        blocks: vec![],
+        crop: None,
+    };
+
+    // 阈值下沿：(1.003 − 1.0) / 1.0 = +0.003 < 0.005 → 必须回退。
+    //
+    // Just below the floor: (1.003 - 1.0) / 1.0 = +0.003 < 0.005 -> must revert.
+    let below = aevum_core::focus_align::decide(&input(1.003, 1.0, 0));
+    eprintln!(
+        "A-C2' 阈值下沿 gain={:.6} status={:?}",
+        below.gain, below.status
+    );
+    assert!(
+        (below.gain - 0.003).abs() < 1e-6,
+        "增益该是 +0.003，实得 {}",
+        below.gain
+    );
+    assert_eq!(
+        below.status,
+        AlignStatus::RevertedInsufficientGain,
+        "gain 0.003 < GAIN_MIN({GAIN_MIN}) 必须回退"
+    );
+
+    // 阈值上沿：+0.01 ≥ 0.005 → 必须采用。
+    //
+    // Just above the floor: +0.01 >= 0.005 -> must adopt.
+    let above = aevum_core::focus_align::decide(&input(1.01, 1.0, 0));
+    eprintln!(
+        "A-C2' 阈值上沿 gain={:.6} status={:?}",
+        above.gain, above.status
+    );
+    assert!(
+        (above.gain - 0.01).abs() < 1e-6,
+        "增益该是 +0.01，实得 {}",
+        above.gain
+    );
+    assert_eq!(
+        above.status,
+        AlignStatus::Adopted,
+        "gain 0.01 ≥ GAIN_MIN({GAIN_MIN}) 必须采用"
+    );
+
+    // 负增益：−0.03 → 必须回退（这条把「阈值改成 0」钉死：0 时它会被误判采用）。
+    //
+    // Negative gain: -0.03 -> must revert (this pins "threshold set to 0": that would
+    // wrongly adopt it).
+    let negative = aevum_core::focus_align::decide(&input(0.97, 1.0, 0));
+    eprintln!(
+        "A-C2' 负增益 gain={:.6} status={:?}",
+        negative.gain, negative.status
+    );
+    assert!(
+        (negative.gain + 0.03).abs() < 1e-6,
+        "增益该是 −0.03，实得 {}",
+        negative.gain
+    );
+    assert_eq!(
+        negative.status,
+        AlignStatus::RevertedInsufficientGain,
+        "负增益必须回退"
+    );
+
+    // 失败块比例：25% 不过线（严格大于才失败），27% 过线。
+    //
+    // Failed-block ratio: 25% does not cross (strictly greater fails), 27% does.
+    let quarter = aevum_core::focus_align::decide(&input(1.01, 1.0, 12));
+    assert_ne!(
+        quarter.status,
+        AlignStatus::Failed,
+        "12/48 = 25% 不该判失败（严格大于才失败）"
+    );
+    let over_quarter = aevum_core::focus_align::decide(&input(1.01, 1.0, 13));
+    eprintln!("A-C2' 失败块 13/48 status={:?}", over_quarter.status);
+    assert_eq!(
+        over_quarter.status,
+        AlignStatus::Failed,
+        "13/48 ≈ 27% > 25% 必须判失败"
+    );
+
+    // 失败块判定优先于收益判定：就算 gain 达标，块失败过多也是 Failed。
+    //
+    // The failure test outranks the gain test: even with a passing gain, too many failed
+    // blocks means Failed.
+    let both = aevum_core::focus_align::decide(&input(2.0, 1.0, 48));
+    assert_eq!(both.status, AlignStatus::Failed, "全块失败必须判失败");
+}
