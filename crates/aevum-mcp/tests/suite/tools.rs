@@ -776,6 +776,7 @@ fn every_tool_has_an_explicit_write_classification() {
         ("aevum_export_video", true),
         ("aevum_hdr_merge", true),
         ("aevum_pano_merge", true),
+        ("aevum_focus_merge", true),
         ("aevum_project_get", false),
         ("aevum_project_save", true),
         ("aevum_journal_list", false),

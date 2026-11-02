@@ -27,6 +27,7 @@ const TOOLS: &[&str] = &[
     "aevum_export_video",
     "aevum_hdr_merge",
     "aevum_pano_merge",
+    "aevum_focus_merge",
     "aevum_project_get",
     "aevum_project_save",
     "aevum_journal_list",
@@ -849,4 +850,196 @@ fn pano_merge_stitches_overlapping_frames() {
         json!({"frames": [0, 1], "out_dir": seq_dir.display().to_string(), "confirm": true}),
     );
     assert_eq!(into_root["isError"], json!(true));
+}
+
+/// 焦点测试序列：三条 16 像素横带，第 k 条只有第 k 帧带纹理，其余带盒模糊。
+///
+/// Focus test sequence: three 16 px horizontal bands; only frame k carries texture in
+/// band k, every other band is box-blurred.
+fn make_focus_sequence(dir: &Path, frames: usize) {
+    std::fs::create_dir_all(dir).expect("建序列目录");
+    const SIDE: usize = 48;
+    // 竖条纹：周期 4px，`(x/2)%2` 在 200/55 之间交替。对比度要足够大，
+    // 8 位量化与羽化都吃不出亏损。
+    //
+    // Vertical stripes, a 4 px period alternating 200/55: the contrast must be wide
+    // enough that neither 8-bit quantisation nor feathering can eat it.
+    fn stripes(x: usize) -> u8 {
+        if (x / 2).is_multiple_of(2) { 200 } else { 55 }
+    }
+    // 沿 x 的 4 点平均：窗口宽度正好等于条纹周期，条纹因此被压成一条平线 127，
+    // 当「失焦」用——它的对比度恰好归零，白送一个反向对照。
+    //
+    // Four-tap average along x: the window is exactly one stripe period wide, so the
+    // stripes collapse into the constant 127, standing in for defocus. Its contrast is
+    // exactly zero, which makes it a free negative control.
+    fn blurred(x: usize) -> u8 {
+        let mut acc = 0u32;
+        for d in 0..4 {
+            acc += u32::from(stripes((x + d) % 4));
+        }
+        (acc / 4) as u8
+    }
+    let band = SIDE / frames;
+    for k in 0..frames {
+        let lo = k * band;
+        let image = image::RgbImage::from_fn(SIDE as u32, SIDE as u32, |x, y| {
+            let (x, y) = (x as usize, y as usize);
+            let v = if y >= lo && y < lo + band {
+                stripes(x)
+            } else {
+                blurred(x)
+            };
+            image::Rgb([v, v, v])
+        });
+        image
+            .save(dir.join(format!("f{k:02}.png")))
+            .expect("写焦点测试帧");
+    }
+}
+
+/// 一块横带里「相邻两列灰度差的平均值」：每列都在变说明这段有纹理，糊了就归零。
+///
+/// Mean absolute horizontal neighbour difference over a band: it stays high while every
+/// column changes (texture) and drops to zero once the band is defocused.
+fn band_contrast(rgb: &[f32], w: usize, y0: usize, y1: usize) -> f32 {
+    let (mut acc, mut cnt) = (0.0f32, 0u32);
+    for y in y0..y1 {
+        for x in 1..w {
+            let a = rgb[(y * w + x) * 3];
+            let b = rgb[(y * w + x - 1) * 3];
+            acc += (a - b).abs();
+            cnt += 1;
+        }
+    }
+    if cnt == 0 { 0.0 } else { acc / cnt as f32 }
+}
+
+#[test]
+fn focus_merge_recovers_each_band_from_the_frame_that_holds_its_texture() {
+    let temp = TempDir::new("focus");
+    let seq_dir = temp.path().join("frames");
+    make_focus_sequence(&seq_dir, 3);
+    let mut server = Server::start();
+    server.request(
+        "initialize",
+        json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
+    );
+    server.notify("notifications/initialized");
+
+    // 清单里必须有它，否则 agent 连发现都发现不了。
+    let listed = server.request("tools/list", json!({}));
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .expect("tools 数组")
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"aevum_focus_merge"),
+        "tools/list 里没有焦点合成：{names:?}"
+    );
+
+    ok_json(&server.call(
+        "aevum_open_sequence",
+        json!({"root": seq_dir.display().to_string()}),
+    ));
+
+    let out_dir = temp.path().join("focus-out");
+    // 没 confirm 要拦下，而且不能留下目录——无头批处理里空目录也是副作用。
+    let refused = server.call(
+        "aevum_focus_merge",
+        json!({"frames": [0, 1, 2], "out_dir": out_dir.display().to_string()}),
+    );
+    assert_eq!(refused["isError"], json!(true), "{refused}");
+    assert!(
+        refused["content"][0]["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("confirm")),
+        "{refused}"
+    );
+    assert!(!out_dir.exists(), "被拦下的调用不该建目录");
+
+    // 未知融合方式要报错，不能悄悄落到缺省值上。
+    let unknown = server.call(
+        "aevum_focus_merge",
+        json!({
+            "frames": [0, 1, 2],
+            "method": "pyramid",
+            "out_dir": out_dir.display().to_string(),
+            "confirm": true
+        }),
+    );
+    assert_eq!(unknown["isError"], json!(true), "{unknown}");
+    assert!(
+        unknown["content"][0]["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("未知融合方式")),
+        "{unknown}"
+    );
+
+    // 正常融合：三条带各取到持有纹理的那帧，成片因此每条带都有对比度。
+    let merged = ok_json(&server.call(
+        "aevum_focus_merge",
+        json!({
+            "frames": [0, 1, 2],
+            "out_dir": out_dir.display().to_string(),
+            "format": "png8",
+            "confirm": true
+        }),
+    ));
+    assert_eq!(merged["kind"], "focus", "{merged}");
+    assert_eq!(merged["frames"], 3);
+    assert_eq!(merged["width"], 48);
+    assert_eq!(merged["height"], 48);
+    let path = merged["path"].as_str().expect("成片路径");
+    assert!(
+        path.ends_with("focus_000000_3f.png"),
+        "文件名要带首帧与帧数：{path}"
+    );
+    let (rgb, w, h) = aevum_core::export::load_rgb_f32(Path::new(path)).expect("读回成片");
+    let w = w as usize;
+    assert_eq!((w, h), (48, 48));
+    // 每条带的中心 4 行：分界线两侧各留 radius + smooth_z + feather 的边距，
+    // 边界上那一两行归谁在物理上就是模糊的（方法的属性，不是缺陷）。
+    //
+    // The middle four rows of each band: a margin of radius + smooth_z + feather is
+    // left on each side of a seam, since ownership of the boundary rows is genuinely
+    // ambiguous (a property of the method, not a defect).
+    let fused = [
+        band_contrast(&rgb, w, 6, 10),
+        band_contrast(&rgb, w, 22, 26),
+        band_contrast(&rgb, w, 38, 42),
+    ];
+    for (k, c) in fused.iter().enumerate() {
+        assert!(*c > 0.2, "第 {k} 条带该取到持有纹理的那帧，实测对比度 {c}");
+    }
+    // 反向对照：第 0 帧只在第 0 条带清晰，第 1、2 条带是糊的，对比度必须接近零。
+    // 少了这一段，上面那三行断言就只是在测「图里有东西」，而不是测「逐带取对了帧」。
+    //
+    // Negative control: frame 0 is only sharp in band 0; bands 1 and 2 are defocused and
+    // must read near zero. Without this, the three assertions above would only prove
+    // "something got written", not "every band picked its own frame".
+    let (f0, fw, _fh) =
+        aevum_core::export::load_rgb_f32(&seq_dir.join("f00.png")).expect("读回帧 0");
+    for (k, (y0, y1)) in [(22usize, 26usize), (38, 42)].into_iter().enumerate() {
+        let base = band_contrast(&f0, fw as usize, y0, y1);
+        assert!(
+            base < 0.02,
+            "第 {} 条带在帧 0 里应当是糊的，实测 {base}",
+            k + 1
+        );
+    }
+
+    // 少于 2 帧、写回序列根都要拦下。
+    let single = server.call(
+        "aevum_focus_merge",
+        json!({"frames": [0], "out_dir": out_dir.display().to_string(), "confirm": true}),
+    );
+    assert_eq!(single["isError"], json!(true), "{single}");
+    let into_root = server.call(
+        "aevum_focus_merge",
+        json!({"frames": [0, 1], "out_dir": seq_dir.display().to_string(), "confirm": true}),
+    );
+    assert_eq!(into_root["isError"], json!(true), "{into_root}");
 }

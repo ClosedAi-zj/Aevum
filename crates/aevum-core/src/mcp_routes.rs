@@ -214,6 +214,7 @@ pub const TOOL_ROUTES: &[ToolRoute] = &[
     route("aevum_export_video", "export.video"),
     route("aevum_hdr_merge", "hdr.merge"),
     route("aevum_pano_merge", "pano.merge"),
+    route("aevum_focus_merge", "focus.merge"),
     route("aevum_project_get", "project.get"),
     route("aevum_project_save", "project.save"),
     route("aevum_journal_list", "journal.list"),
@@ -327,7 +328,7 @@ mod tests {
 
     #[test]
     fn every_tool_appears_once_and_points_at_a_real_command() {
-        assert_eq!(TOOL_ROUTES.len(), 34, "服务模式共 34 个工具");
+        assert_eq!(TOOL_ROUTES.len(), 35, "服务模式共 35 个工具");
         let mut seen = HashSet::new();
         for route in TOOL_ROUTES {
             assert!(route.tool.starts_with(TOOL_PREFIX), "{}", route.tool);

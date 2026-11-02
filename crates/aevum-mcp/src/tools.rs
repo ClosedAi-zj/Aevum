@@ -103,6 +103,7 @@ fn dispatch_inner(session: &mut Session, id: &str, args: &Value) -> Result<Value
         "aevum_export_stills" => export_stills(session, args),
         "aevum_export_video" => export_video(session, args),
         "aevum_hdr_merge" => hdr_merge(session, args),
+        "aevum_focus_merge" => focus_merge(session, args),
         "aevum_pano_merge" => pano_merge(session, args),
         "aevum_project_get" => project_get(session),
         "aevum_project_save" => project_save(session),
@@ -996,6 +997,174 @@ fn hdr_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
         "width": w,
         "height": h,
     }))
+}
+
+/// 焦点合成：把一组不同对焦距离的帧融成一张全景深静帧。
+///
+/// 与 GUI 的 `focus.merge` 同口径——按帧下标读原图、套对齐的统一裁切与逐帧位移、
+/// 融合后走静帧导出那条输出尾（锐化 / 水印 / 色域 / EXIF）；融合本身不改调色。
+/// 无头会话没有「当前帧」，省 `start` 就取序列中位帧起的一段（与 `aevum_hdr_merge`
+/// 省 `center` 时取中间帧同理）。
+///
+/// Focus stacking: fuse a bracket taken at different focus distances into one all-in-focus
+/// still.
+///
+/// Same convention as the GUI's `focus.merge`: read the originals by frame index, apply the
+/// alignment crop and the per-frame shifts, then go through the still-export tail (sharpen,
+/// watermark, colour space, EXIF); the fusion itself does not grade. A headless session has
+/// no "current frame", so an omitted `start` takes a run beginning at the middle frame (the
+/// same idea as `aevum_hdr_merge` falling back to the middle frame for `center`).
+fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
+    if session.is_running() {
+        return Err("有后台任务正在运行，先等它结束或调用 aevum_cancel".to_owned());
+    }
+    let n = session.require_seq()?.len();
+    if n == 0 {
+        return Err("序列没有帧".to_owned());
+    }
+    require_batch_confirm(args, "aevum_focus_merge")?;
+    let indices: Vec<usize> = match args.get("frames") {
+        Some(list) => list
+            .as_array()
+            .ok_or_else(|| "frames 要是帧下标数组，例如 [0,1,2]".to_owned())?
+            .iter()
+            .map(|v| {
+                v.as_u64()
+                    .and_then(|i| ((i as usize) < n).then_some(i as usize))
+                    .ok_or_else(|| {
+                        format!("帧下标越界：{}（序列共 {n} 帧）", clip_echo(&v.to_string()))
+                    })
+            })
+            .collect::<Result<_, _>>()?,
+        None => {
+            let around = opt_u32(args, "around")?.unwrap_or(7) as usize;
+            // 无头会话没有「当前帧」，省 start 就取序列中位帧起的一段。
+            let start = opt_u32(args, "start")?.map(|v| v as usize).unwrap_or(n / 2);
+            if start >= n {
+                return Err(format!("start 越界：{start}（序列共 {n} 帧）"));
+            }
+            (start..=start.saturating_add(around).min(n - 1)).collect()
+        }
+    };
+    if indices.len() < 2 {
+        return Err("焦点合成至少要 2 帧：给 frames 数组，或把 around 调大".to_owned());
+    }
+    if indices.len() > aevum_core::focus::MAX_FRAMES {
+        return Err(format!(
+            "焦点合成一次最多 {} 帧，实得 {} 帧：把 around 调小或分段合成",
+            aevum_core::focus::MAX_FRAMES,
+            indices.len()
+        ));
+    }
+    let opts = focus_options(args)?;
+    let root = session.require_root()?;
+    let out_dir = match opt_str(args, "out_dir")? {
+        Some(dir) => absolute(Path::new(dir))?,
+        None => root.join("焦点合成"),
+    };
+    aevum_core::paths::ensure_out_dir_safe(&root, &out_dir)?;
+    fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("建输出目录失败：{}", clip_echo(&e.to_string())))?;
+
+    let paths = session.require_seq()?.paths();
+    // 有对齐结果就套统一裁切 + 逐帧位移，与静帧导出同一条几何路。
+    let (crop, offsets) = session.alignment(n);
+    let rect = crop.map(|c| (c.x as usize, c.y as usize, c.w as usize, c.h as usize));
+    let mut buffers: Vec<Vec<f32>> = Vec::with_capacity(indices.len());
+    let mut dims: Option<(usize, usize)> = None;
+    for i in &indices {
+        let (rgb, w, h) = export::load_rgb_f32(&paths[*i]).map_err(|e| format!("读帧失败：{e}"))?;
+        let framing = Framing {
+            angle_deg: 0.0,
+            off: offsets.get(*i).copied().unwrap_or([0.0, 0.0]),
+        };
+        let (buf, got) = if rect.is_none() && framing.is_identity() {
+            (rgb, (w as usize, h as usize))
+        } else {
+            let mut out = Vec::new();
+            let (cw, ch) =
+                warp::transform_into(&rgb, w as usize, h as usize, framing, rect, &mut out);
+            (out, (cw, ch))
+        };
+        match dims {
+            None => dims = Some(got),
+            Some(prev) if prev != got => {
+                return Err(format!(
+                    "第 {} 帧与第 {i} 帧对齐后尺寸不一致（{}×{} vs {}×{}）：先跑对齐或裁成同尺寸",
+                    indices[0], prev.0, prev.1, got.0, got.1
+                ));
+            }
+            Some(_) => {}
+        }
+        buffers.push(buf);
+    }
+    let (w, h) = dims.unwrap_or((0, 0));
+    let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();
+    // 报错走焦点语境的文案：`StackError::cn()` 说的是「堆栈」，对焦包围的用户看着别扭。
+    let mut fused = aevum_core::focus::focus_stack(&refs, w, h, &opts)
+        .map_err(|e| format!("焦点合成失败：{}", aevum_core::focus::error_text(e)))?;
+
+    let format = parse_format(opt_str(args, "format")?.unwrap_or("png8"))?;
+    let (sharpen_for, sharpen_strength) = opt_sharpen(args)?;
+    let dynamic = opt_dynamic(args)?;
+    let options = RenderOptions {
+        quality: opt_quality(args)?,
+        keep_exif: opt_bool(args, "keep_exif")?.unwrap_or(false),
+        xmp_sidecar: opt_bool(args, "xmp_sidecar")?.unwrap_or(false),
+        sharpen_for,
+        sharpen_strength,
+        color_space: color_space_for(dynamic, opt_color_space(args)?),
+        dynamic,
+        watermark: opt_watermark(args)?,
+        out_dir: out_dir.clone(),
+        metadata: session.metadata(),
+        ..RenderOptions::still(format)
+    };
+    let dst = out_dir.join(format!(
+        "focus_{:06}_{}f.{}",
+        indices[0],
+        indices.len(),
+        format.ext()
+    ));
+    let deep = format == StillFormat::Tiff16;
+    export::write_single_still(&paths[indices[0]], &dst, &mut fused, w, h, deep, &options)
+        .map_err(|e| format!("写焦点合成成片失败：{}", clip_echo(&e.to_string())))?;
+    Ok(json!({
+        "path": dst.display().to_string(),
+        "kind": "focus",
+        "frames": indices.len(),
+        "indices": indices,
+        "width": w,
+        "height": h,
+    }))
+}
+
+/// 焦点融合参数：`method` 解析，其余数值按 `control.rs` 的 schema 范围夹住。
+///
+/// 为什么夹而不报错：这几个数都是「越大越慢 / 越糊」的旋钮，超出范围不会让结果算错，
+/// 只会让 agent 传进一份没人想要的参数；schema 已经声明了范围，这里按同一口径夹住，
+/// 比让一条无头批处理任务因为 `smooth_z: 900` 多跑十分钟要友好。
+///
+/// Focus-fusion parameters: `method` is parsed, the numeric knobs are clamped to the ranges
+/// `control.rs`'s schema declares.
+///
+/// Why clamp instead of erroring: each of these is a "slower/blurrier as it grows" knob that
+/// never makes the result *wrong*, it only expresses parameters nobody wants; the schema
+/// already declares the range, so clamping to the same bounds beats letting a headless batch
+/// job run ten minutes longer because of `smooth_z: 900`.
+fn focus_options(args: &Value) -> Result<aevum_core::focus::Options, String> {
+    let method = match opt_str(args, "method")? {
+        None => aevum_core::focus::Method::DepthMap,
+        Some(raw) => aevum_core::focus::Method::parse(raw)
+            .ok_or_else(|| format!("未知融合方式 {}；可用 depthmap / weighted", clip_echo(raw)))?,
+    };
+    Ok(aevum_core::focus::Options {
+        method,
+        radius: (opt_u32(args, "radius")?.unwrap_or(2) as usize).min(32),
+        threshold: (opt_f64(args, "threshold")?.unwrap_or(0.0) as f32).clamp(0.0, 100.0),
+        smooth_z: (opt_u32(args, "smooth_z")?.unwrap_or(1) as usize).min(16),
+        feather: (opt_f64(args, "feather")?.unwrap_or(2.0) as f32).clamp(0.0, 64.0),
+    })
 }
 
 fn pano_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
@@ -2892,6 +3061,31 @@ fn build_commands() -> Vec<Command> {
                     "center": {"type": "integer", "minimum": 0, "description": "包围中心帧下标（0 开始）；省略取序列中间帧"},
                     "around": {"type": "integer", "minimum": 1, "maximum": 4, "default": 1, "description": "中心前后各取几帧（1..4，最多凑成 9 张）"},
                     "out_dir": {"type": "string", "description": "输出目录（不能是序列根或其上级）；省略用序列根下 HDR/"},
+                    "format": {"type": "string", "enum": ["png8", "tiff16", "jpeg", "webp", "avif"], "default": "png8"},
+                    "quality": {"type": "integer", "minimum": 1, "maximum": 100, "description": "压缩质量，只对 jpeg / avif 生效"},
+                    "dynamic": {"type": "string", "enum": ["sdr", "hdr-pq"], "default": "sdr", "description": "输出动态范围：sdr=标准，hdr-pq=PQ（SMPTE ST 2084）+ BT.2020 + 10bit，参考白按 203 nits 落地、>1 的高光沿曲线尾部继续上升；hdr-pq 目前只有 avif 装得下，色域固定 rec2020（传别的会报错）"},
+                    "color_space": {"type": "string", "enum": ["srgb", "p3", "rec2020"], "default": "srgb", "description": "输出色域；非 sRGB 时嵌对应 ICC"},
+                    "xmp_sidecar": {"type": "boolean", "default": false, "description": "在成片旁写同名 .xmp（dc 四项 + crs 调色）"},
+                    "keep_exif": {"type": "boolean", "default": false, "description": "把首帧的 EXIF 块搬进成片"},
+                    "confirm": {"type": "boolean", "description": "批量写操作必须为 true"}
+                }),
+                &["confirm"],
+            ),
+        },
+        Command {
+            id: "aevum_focus_merge",
+            description: "把一组不同对焦距离的帧融成一张全景深（焦点合成：深度图法逐像素取测度最强的帧、无细节区兜底参考帧、过渡带羽化；加权平均法按测度四次方混合）；自动套用对齐的统一裁切与逐帧位移，尺寸对不齐会拒绝（批量写，需 confirm）。",
+            input_schema: object(
+                json!({
+                    "frames": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "参与合成的帧下标（0 开始）；给了就忽略 start/around"},
+                    "start": {"type": "integer", "minimum": 0, "description": "起始帧下标（0 开始）；省略取序列中间帧"},
+                    "around": {"type": "integer", "minimum": 1, "maximum": (aevum_core::focus::MAX_FRAMES - 1), "default": 7, "description": "起始帧之后再取几帧（1..31）；省略=7（共 8 帧）"},
+                    "method": {"type": "string", "enum": ["depthmap", "weighted"], "default": "depthmap", "description": "depthmap 逐像素选测度最强的帧（无细节区兜底参考帧）；weighted 按测度四次方加权混合"},
+                    "radius": {"type": "integer", "minimum": 0, "maximum": 32, "default": 2, "description": "焦点测度的分析半径（px），0 = 逐像素原始响应"},
+                    "threshold": {"type": "number", "minimum": 0, "maximum": 100, "default": 0, "description": "无细节阈值（全图最佳测度的百分位，0..100）：低于这条线的像素整块判给参考帧；0 = 关闭兜底"},
+                    "smooth_z": {"type": "integer", "minimum": 0, "maximum": 16, "default": 1, "description": "深度图去斑半径（px，模值滤波），只对 depthmap 生效"},
+                    "feather": {"type": "number", "minimum": 0, "maximum": 64, "default": 2, "description": "过渡羽化半径（px），小于 0.5 视为硬切，只对 depthmap 生效"},
+                    "out_dir": {"type": "string", "description": "输出目录（不能是序列根或其上级）；省略用序列根下 焦点合成/"},
                     "format": {"type": "string", "enum": ["png8", "tiff16", "jpeg", "webp", "avif"], "default": "png8"},
                     "quality": {"type": "integer", "minimum": 1, "maximum": 100, "description": "压缩质量，只对 jpeg / avif 生效"},
                     "dynamic": {"type": "string", "enum": ["sdr", "hdr-pq"], "default": "sdr", "description": "输出动态范围：sdr=标准，hdr-pq=PQ（SMPTE ST 2084）+ BT.2020 + 10bit，参考白按 203 nits 落地、>1 的高光沿曲线尾部继续上升；hdr-pq 目前只有 avif 装得下，色域固定 rec2020（传别的会报错）"},
