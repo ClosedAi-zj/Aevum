@@ -648,10 +648,15 @@ pub fn time_slice(
             .clamp(0.0, 1.0);
             let horizon = horizon_frac * h as f32;
             for y in 0..h {
-                // 天空权重：地平线以上 1、以下 0，交界羽化。
+                // 天空权重：地平线以上（y 小）1、以下 0，交界羽化。分子必须是
+                // horizon − y：写成 y − horizon 会把天与地对调（上一版的真 bug，
+                // 旧判据全用同内容帧，方向错了也测不出来）。
                 //
-                // Sky weight: 1 above the horizon, 0 below, feathered across the boundary.
-                let wt_sky = smoothstep(((y as f32 + 0.5) - horizon) / (2.0 * feather) + 0.5);
+                // Sky weight: 1 above the horizon (small y), 0 below, feathered across the
+                // boundary. The numerator must be horizon - y; writing y - horizon swaps sky
+                // and ground (a real bug in the previous version that the old identical-frame
+                // signals could not see).
+                let wt_sky = smoothstep((horizon - (y as f32 + 0.5)) / (2.0 * feather) + 0.5);
                 let wt_ground = 1.0 - wt_sky;
                 let contrib = [(count - 1, wt_sky), (0, wt_ground)];
                 blend_row(&mut out, frames, &gains, y, w, &contrib, ghosts.as_ref());
@@ -731,8 +736,12 @@ mod tests {
 
     #[test]
     fn sky_ground_splits_at_the_horizon_without_a_step() {
+        // 首帧整幅是「地面亮度」，末帧整幅是「天空亮度」：哪一帧铺在上面一目了然。
+        //
+        // The first frame is uniformly "ground bright" and the last uniformly "sky bright":
+        // which one ends up on top is unmistakable.
         let ground = flat(4, 50, lin(0.0));
-        let sky = flat(4, 50, lin(0.0));
+        let sky = flat(4, 50, lin(2.0));
         let out = time_slice(
             &[&ground, &sky],
             4,
@@ -746,10 +755,38 @@ mod tests {
             },
         )
         .unwrap();
-        // 两帧同亮度时，输出必须处处等于它——羽化不能凭空造出亮暗。
+        // 方向：顶部必须来自末帧（天），底部必须来自首帧（地）。
         //
-        // With both frames equal the output must equal them everywhere: feathering cannot invent
-        // brightness.
+        // Direction: the top must come from the last frame (sky), the bottom from the first
+        // (ground).
+        assert!(
+            (out[0] - lin(2.0)).abs() < 1e-5,
+            "顶部应是天空帧：{}",
+            out[0]
+        );
+        let last = out.len() - 3;
+        assert!(
+            (out[last] - lin(0.0)).abs() < 1e-5,
+            "底部应是地面帧：{}",
+            out[last]
+        );
+        // 同亮度帧的旧要求仍然成立：羽化不能凭空造出亮暗。
+        //
+        // The old equal-frame requirement still holds: feathering cannot invent brightness.
+        let equal = flat(4, 50, lin(0.0));
+        let out = time_slice(
+            &[&equal, &equal],
+            4,
+            50,
+            &Spec {
+                layout: Layout::SkyGround,
+                horizon: 0.5,
+                feather: 0.04,
+                match_exposure: false,
+                ..Spec::default()
+            },
+        )
+        .unwrap();
         for v in &out {
             assert!((v - lin(0.0)).abs() < 1e-5, "{v}");
         }
@@ -1063,14 +1100,25 @@ mod horizon_tests {
         let w = 8;
         let h = 40;
         let split = 12usize; // 30%
-        let mut scene = vec![lin(-1.0); w * h * 3];
+        // 两帧都带着同一条 30% 的天/地分界（剖面因此找得到），但天与地的亮度都
+        // 随时间变了（真实延时正是如此）：分界若真搬到 30%，30%–50% 之间的行
+        // 取自首帧（暗地 lin(-1)）；若还停在默认 50%，那里按天混合（亮得多）。
+        //
+        // Both frames carry the same 30% sky-ground boundary (so the profile finds it), but
+        // sky and ground both change brightness over time (as in a real time-lapse): if the
+        // split really moves to 30%, the rows between 30% and 50% come from the first frame
+        // (dark ground lin(-1)); stuck at the default 50%, they blend sky (much brighter).
+        let mut early = vec![lin(-1.0); w * h * 3];
+        let mut late = vec![lin(0.5); w * h * 3];
         for y in 0..split {
             for j in (y * w * 3)..((y + 1) * w * 3) {
-                scene[j] = lin(1.5);
+                early[j] = lin(1.0);
+                late[j] = lin(2.5);
             }
         }
-        let out = time_slice(
-            &[&scene, &scene],
+        let at = |out: &[f32], row: usize| out[row * w * 3];
+        let auto = time_slice(
+            &[&early, &late],
             w,
             h,
             &Spec {
@@ -1082,9 +1130,42 @@ mod horizon_tests {
             },
         )
         .unwrap();
-        let at = |row: usize| out[row * w * 3];
-        assert!(at(6) > lin(1.0), "30% 之上应是天：{}", at(6));
-        assert!(at(20) < lin(0.0), "50% 附近应是地：{}", at(20));
+        // 天空区取末帧（更亮的那帧），证明「天取末帧」。
+        //
+        // The sky region takes the last frame (the brighter one), proving "sky from the last".
+        assert!(
+            at(&auto, 6) > lin(2.0),
+            "30% 之上应是末帧的天：{}",
+            at(&auto, 6)
+        );
+        assert!(
+            at(&auto, 19) < lin(-0.5),
+            "30%–50% 之间应是首帧的地（分界搬过来了）：{}",
+            at(&auto, 19)
+        );
+        // 反向验证：关掉自动、停在默认 50% 时，同一行按天混合，明显更亮。
+        //
+        // Negative control: with auto off the split stays at 50%, so the same row blends sky
+        // and is clearly brighter.
+        let manual = time_slice(
+            &[&early, &late],
+            w,
+            h,
+            &Spec {
+                layout: Layout::SkyGround,
+                horizon_auto: false,
+                horizon: 0.5,
+                feather: 0.05,
+                match_exposure: false,
+                ..Spec::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            at(&manual, 19) > lin(0.0),
+            "停在 50% 时该行应按天混合：{}",
+            at(&manual, 19)
+        );
     }
 
     /// 退化输入不 panic、不瞎指。
