@@ -1301,6 +1301,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("预估", "Estimate"),
     ("预览失败：{}", "Preview failed: {}"),
     ("预览白以上（SDR 屏上检视高光）", "Preview above white (inspect highlights on SDR)"),
+    ("预览计算中…", "Preview running…"),
     ("预览长边", "Preview long edge"),
     ("预设", "Preset"),
     ("预设 {}", "Preset {}"),

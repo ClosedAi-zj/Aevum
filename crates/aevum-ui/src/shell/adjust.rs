@@ -1224,6 +1224,28 @@ fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     if let Some(err) = state.tb_error.clone() {
         ui.label(RichText::new(err).size(SIZE_SMALL).color(danger()));
     }
+    // 预览：参数或帧选择变了就自动在后台重算一张半分辨率小图，按可用宽度缩放展示。
+    state.timeblend_preview_tick(ctx);
+    if let Some((_, tex)) = &state.tb_preview {
+        let size = tex.size_vec2();
+        let avail = ui.available_width();
+        let scale = if size.x > 0.0 && avail > 0.0 {
+            (avail / size.x).min(1.0)
+        } else {
+            1.0
+        };
+        ui.add(egui::Image::new((tex.id(), size * scale)));
+    }
+    if state.tb_preview_inflight {
+        ui.label(
+            RichText::new(crate::i18n::t!("预览计算中…"))
+                .size(SIZE_SMALL)
+                .color(dim()),
+        );
+    }
+    if let Some(err) = state.tb_preview_error.clone() {
+        ui.label(RichText::new(err).size(SIZE_SMALL).color(danger()));
+    }
 }
 
 /// 合并任务的进度条 + 取消按钮：只在这一类任务在跑时出现。

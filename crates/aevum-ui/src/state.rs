@@ -882,6 +882,24 @@ enum Msg {
         token: u64,
         result: Result<Vec<Finding>, String>,
     },
+    /// 时间合成预览的回包：半分辨率合成图 + 顺带带回的解码缓存。
+    /// `key` 是发任务时的参数指纹：不是最新指纹的迟到回包只收缓存、不上屏。
+    ///
+    /// Time-blend preview reply: a half-resolution composite plus the decode cache that
+    /// came with it. `key` is the parameter fingerprint at dispatch; a late reply whose
+    /// key is stale only refreshes the cache, never the on-screen texture.
+    TimeblendPreview {
+        token: u64,
+        key: u64,
+        image: Box<ColorImage>,
+        frames: Option<Arc<TbPreviewData>>,
+    },
+    /// 时间合成预览失败：不致命，分组里挂一行小字，参数再动就重试。
+    TimeblendPreviewFail {
+        token: u64,
+        key: u64,
+        error: String,
+    },
     QueueRow {
         index: usize,
         status: QueueStatus,
@@ -1367,6 +1385,28 @@ pub struct AppState {
     /// view buffer.
     pub tb_last: Option<String>,
     pub tb_error: Option<String>,
+    /// 时间合成预览：已上屏的纹理与其参数指纹。
+    ///
+    /// Time-blend preview: the on-screen texture with its parameter fingerprint.
+    pub tb_preview: Option<(u64, TextureHandle)>,
+    /// 预览的原始像素（与纹理同源）：测试读它断言内容，也留给别的面板复用。
+    ///
+    /// The preview's raw pixels (same source as the texture): tests assert on it and other
+    /// panels may reuse it.
+    pub tb_preview_img: Option<Arc<ColorImage>>,
+    /// 最近一次请求（或已失败）的参数指纹：相同指纹不重发任务。
+    ///
+    /// The latest requested (or failed) parameter fingerprint; identical keys never re-dispatch.
+    pub tb_preview_key: u64,
+    pub tb_preview_inflight: bool,
+    /// 半分辨率解码缓存：帧选择没变就复用，换帧才重新解码。
+    ///
+    /// Half-resolution decode cache: reused while the frame selection is unchanged.
+    pub tb_preview_data: Option<Arc<TbPreviewData>>,
+    /// 预览失败的小字说明；参数一变就清。
+    ///
+    /// The small failure note for the preview; cleared as soon as parameters change.
+    pub tb_preview_error: Option<String>,
     /// 筛选台的四条判据阈值；纯视图缓冲，不落工程（拒收标记本身落在 `flags` 里）。
     ///
     /// The four thresholds of the cull station; pure view buffers, never written to the project
@@ -2246,6 +2286,12 @@ impl AppState {
             tb_match: true,
             tb_last: None,
             tb_error: None,
+            tb_preview: None,
+            tb_preview_img: None,
+            tb_preview_key: 0,
+            tb_preview_inflight: false,
+            tb_preview_data: None,
+            tb_preview_error: None,
             // 判据默认值与核心一致：±1 EV 之外判废、相邻突变 1 EV、清晰度不设限。
             cull_ev_low: -1.0,
             cull_ev_high: 1.0,
@@ -2507,6 +2553,12 @@ impl AppState {
         self.stack_error = None;
         self.tb_last = None;
         self.tb_error = None;
+        self.tb_preview = None;
+        self.tb_preview_img = None;
+        self.tb_preview_key = 0;
+        self.tb_preview_inflight = false;
+        self.tb_preview_data = None;
+        self.tb_preview_error = None;
         self.merge_kind = None;
         self.merge_result = None;
         self.merge_error = None;
@@ -2674,6 +2726,12 @@ impl AppState {
         self.stack_error = None;
         self.tb_last = None;
         self.tb_error = None;
+        self.tb_preview = None;
+        self.tb_preview_img = None;
+        self.tb_preview_key = 0;
+        self.tb_preview_inflight = false;
+        self.tb_preview_data = None;
+        self.tb_preview_error = None;
         self.merge_kind = None;
         self.merge_result = None;
         self.merge_error = None;
@@ -3249,6 +3307,45 @@ impl AppState {
                                 self.error = Some(crate::i18n::tr_fmt("体检失败：{}", &[&e]));
                             }
                         }
+                    }
+                }
+                Msg::TimeblendPreview {
+                    token,
+                    key,
+                    image,
+                    frames,
+                } => {
+                    if token != self.reload_token {
+                        continue;
+                    }
+                    self.tb_preview_inflight = false;
+                    if let Some(data) = frames {
+                        // 解码缓存照收：哪怕参数又变了，帧没变就还能复用。
+                        self.tb_preview_data = Some(data);
+                    }
+                    if key != self.tb_preview_key {
+                        continue; // 迟到的旧参数回包：不上屏
+                    }
+                    let img = *image;
+                    self.tb_preview_img = Some(Arc::new(img.clone()));
+                    // 纹理按名字复用：同参数只重传像素，不重新在 GPU 上分配。
+                    match &mut self.tb_preview {
+                        Some((k, tex)) if *k == key => tex.set(img, TextureOptions::LINEAR),
+                        _ => {
+                            self.tb_preview = Some((
+                                key,
+                                ctx.load_texture("timeblend.preview", img, TextureOptions::LINEAR),
+                            ));
+                        }
+                    }
+                }
+                Msg::TimeblendPreviewFail { token, key, error } => {
+                    if token != self.reload_token {
+                        continue;
+                    }
+                    self.tb_preview_inflight = false;
+                    if key == self.tb_preview_key {
+                        self.tb_preview_error = Some(error);
                     }
                 }
                 Msg::QueueRow {
@@ -6205,6 +6302,102 @@ impl AppState {
         });
         let job = self.build_merge_job(kind, indices, &out_dir, spec)?;
         Ok(self.start_merge(ctx, job))
+    }
+
+    /// 时间合成预览：面板每帧调用；参数或帧选择变了就在后台重算一张半分辨率小图。
+    ///
+    /// 派发要同时满足：序列开着、至少两帧、没在合并、没有同参数任务在飞。回包拿
+    /// 参数指纹（`tb_preview_key`）对账——迟到的旧参数回包只收解码缓存、不上屏。
+    ///
+    /// The time-blend preview tick, called by the panel every frame; a changed parameter
+    /// or frame selection re-runs a half-resolution composite in the background. Dispatch
+    /// requires an open sequence with at least two frames, no running merge and no
+    /// in-flight job for the same parameters. Replies reconcile against the parameter
+    /// fingerprint (`tb_preview_key`): stale replies only refresh the decode cache.
+    pub fn timeblend_preview_tick(&mut self, ctx: &Context) {
+        if self.merge_busy || self.tb_preview_inflight {
+            return;
+        }
+        let Some(seq) = self.seq.as_ref() else {
+            return;
+        };
+        let n = seq.len();
+        if n < 2 {
+            return;
+        }
+        // 帧选择与 timeblend.merge 的 Start 锚点一致：当前帧起 tb_around 帧。
+        let at = self.selected.min(n - 1);
+        let indices: Vec<usize> =
+            (at..=at.saturating_add(self.tb_around as usize).min(n - 1)).collect();
+        if indices.len() < 2 {
+            return;
+        }
+        let layout = self.tb_layout;
+        let mut bands = self.tb_bands as usize;
+        if layout == aevum_core::timeblend::Layout::Bands {
+            bands = bands.clamp(1, indices.len());
+        }
+        let spec = aevum_core::timeblend::Spec {
+            layout,
+            bands,
+            feather: self.tb_feather.clamp(0.0, 0.5),
+            horizon: self.tb_horizon.clamp(0.0, 1.0),
+            horizon_auto: self.tb_horizon_auto,
+            deghost: self.tb_deghost,
+            match_exposure: self.tb_match,
+        };
+        // 指纹：帧选择（序列根 + 帧号）先散一遍归解码缓存，合成参数叠在其上做对账。
+        let root = seq.root.display().to_string();
+        let mut hf = fnv1a(0xcbf2_9ce4_8422_2325, root.as_bytes());
+        for i in &indices {
+            hf = fnv1a(hf, &(*i as u64).to_le_bytes());
+        }
+        let key_frames = hf;
+        let mut h = key_frames;
+        h = fnv1a(h, layout.key().as_bytes());
+        h = fnv1a(h, &(bands as u64).to_le_bytes());
+        h = fnv1a(h, &spec.feather.to_bits().to_le_bytes());
+        h = fnv1a(h, &spec.horizon.to_bits().to_le_bytes());
+        h = fnv1a(h, &spec.deghost.to_bits().to_le_bytes());
+        h = fnv1a(
+            h,
+            &[u8::from(spec.horizon_auto), u8::from(spec.match_exposure)],
+        );
+        let key = h;
+        let paths = seq.paths();
+        let srcs: Vec<PathBuf> = indices.iter().map(|i| paths[*i].clone()).collect();
+        let framing: Vec<(Option<CropRect>, [f64; 2])> =
+            indices.iter().map(|i| self.alignment_at(*i)).collect();
+        let token = self.reload_token;
+        let tx = self.tx.clone();
+        let ctx2 = ctx.clone();
+        let cached = self.tb_preview_data.clone();
+        if self.tb_preview_key == key {
+            return; // 已上屏（或已失败）的同一组参数：不重发，失败也不打转
+        }
+        self.tb_preview_key = key;
+        self.tb_preview_inflight = true;
+        self.tb_preview_error = None;
+        thread::spawn(move || {
+            match run_timeblend_preview(cached, srcs, indices, framing, spec, key_frames) {
+                Ok((data, lin, w, h)) => {
+                    let _ = tx.send(Msg::TimeblendPreview {
+                        token,
+                        key,
+                        image: Box::new(tb_preview_image(&lin, w, h)),
+                        frames: Some(data),
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(Msg::TimeblendPreviewFail {
+                        token,
+                        key,
+                        error: e,
+                    });
+                }
+            }
+            ctx2.request_repaint();
+        });
     }
 
     /// `timeblend.merge`：按带或按地平线把不同时刻的帧合成为一张。
@@ -12253,6 +12446,129 @@ fn run_merge_job(
     }))
 }
 
+/// 时间合成预览的半分辨率解码缓存：帧选择没变就整包复用，参数变了只重算合成。
+///
+/// Half-resolution decode cache for the time-blend preview: reused wholesale while the
+/// frame selection stays the same, so parameter tweaks only redo the composite.
+pub struct TbPreviewData {
+    /// 帧选择指纹：序列根路径 + 选中帧号，变了缓存作废。
+    ///
+    /// Frame-selection fingerprint: sequence root plus chosen indices; a change voids it.
+    pub key_frames: u64,
+    pub indices: Vec<usize>,
+    pub frames: Vec<(Vec<f32>, usize, usize)>,
+}
+
+/// 2×2 盒滤波降半分辨率：预览不必逐像素精确，省一半内存与解码后处理。
+///
+/// 2x2 box-filter downscale by half: previews need not be pixel-exact, and this halves
+/// both memory and post-decode work.
+fn downscale2(rgb: Vec<f32>, w: usize, h: usize) -> (Vec<f32>, usize, usize) {
+    let (w2, h2) = (w / 2, h / 2);
+    if w2 == 0 || h2 == 0 {
+        return (rgb, w, h);
+    }
+    let mut out = vec![0.0f32; w2 * h2 * 3];
+    for y in 0..h2 {
+        for x in 0..w2 {
+            for c in 0..3 {
+                let a = rgb[((y * 2) * w + x * 2) * 3 + c];
+                let b = rgb[((y * 2) * w + x * 2 + 1) * 3 + c];
+                let d = rgb[((y * 2 + 1) * w + x * 2) * 3 + c];
+                let e = rgb[((y * 2 + 1) * w + x * 2 + 1) * 3 + c];
+                out[(y * w2 + x) * 3 + c] = (a + b + d + e) * 0.25;
+            }
+        }
+    }
+    (out, w2, h2)
+}
+
+/// FNV-1a 64 位散列：给预览参数做指纹，快而且够散。
+///
+/// FNV-1a 64-bit hash: fingerprints the preview parameters; fast and well spread.
+fn fnv1a(mut h: u64, bytes: &[u8]) -> u64 {
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h
+}
+
+/// 归一化 RGB 转 ColorImage：读帧管线不做传输变换，成片写盘也只是缩放回 0..=255，
+/// 所以预览同样恒等缩放——预览与成片的像素才对得上。
+///
+/// Normalized RGB to a ColorImage: the decode pipeline applies no transfer change and the
+/// still writer just scales back to 0..=255, so the preview scales identically and its
+/// pixels line up with the final still.
+fn tb_preview_image(lin: &[f32], w: usize, h: usize) -> ColorImage {
+    let mut px = Vec::with_capacity(w * h);
+    for c in lin.chunks_exact(3) {
+        let to8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        px.push(egui::Color32::from_rgb(to8(c[0]), to8(c[1]), to8(c[2])));
+    }
+    ColorImage::new([w, h], px)
+}
+
+/// 后台预览任务：缓存失效就半分辨率解码一遍，再用同一套核心算法合成。
+///
+/// 与 `run_merge_job` 的读帧循环同构（对齐位移与裁切都套上），只是多了一步降半，
+/// 这样预览的构图与最终成片一致。
+///
+/// The background preview job: decodes at half resolution when the cache is stale, then
+/// composites with the same core algorithm. The decode loop mirrors `run_merge_job`
+/// (alignment offsets and crops applied), only with an extra downscale, so the preview
+/// framing matches the final still.
+fn run_timeblend_preview(
+    cached: Option<Arc<TbPreviewData>>,
+    srcs: Vec<PathBuf>,
+    indices: Vec<usize>,
+    framing: Vec<(Option<CropRect>, [f64; 2])>,
+    spec: aevum_core::timeblend::Spec,
+    key_frames: u64,
+) -> Result<(Arc<TbPreviewData>, Vec<f32>, usize, usize), String> {
+    let data = match cached {
+        Some(d) if d.key_frames == key_frames && d.indices == indices => d,
+        _ => {
+            let mut frames: Vec<(Vec<f32>, usize, usize)> = Vec::with_capacity(srcs.len());
+            for (src, (crop, off)) in srcs.iter().zip(framing.iter()) {
+                let (rgb, w, h) = export::load_rgb_f32(src)
+                    .map_err(|e| crate::i18n::tr_fmt("读帧失败：{}", &[&e]))?;
+                let rect = crop.map(|c| (c.x as usize, c.y as usize, c.w as usize, c.h as usize));
+                let fr = Framing {
+                    angle_deg: 0.0,
+                    off: *off,
+                };
+                let (buf, got) = if rect.is_none() && fr.is_identity() {
+                    (rgb, (w as usize, h as usize))
+                } else {
+                    let mut out = Vec::new();
+                    let (cw, ch) =
+                        warp::transform_into(&rgb, w as usize, h as usize, fr, rect, &mut out);
+                    (out, (cw, ch))
+                };
+                frames.push(downscale2(buf, got.0, got.1));
+            }
+            Arc::new(TbPreviewData {
+                key_frames,
+                indices,
+                frames,
+            })
+        }
+    };
+    let (w, h) = data
+        .frames
+        .first()
+        .map(|(_, w, h)| (*w, *h))
+        .unwrap_or((0, 0));
+    if w == 0 || h == 0 {
+        return Err("预览没有可读的帧".to_owned());
+    }
+    let refs: Vec<&[f32]> = data.frames.iter().map(|(b, _, _)| b.as_slice()).collect();
+    let lin = aevum_core::timeblend::time_slice(&refs, w, h, &spec)
+        .map_err(|e| crate::i18n::tr_fmt("时间合成失败：{}", &[&crate::i18n::tr(e.cn())]))?;
+    Ok((data, lin, w, h))
+}
+
 // ---------------------------------------------------------------- 序列体检
 
 /// 一次 `stat` 多少帧再查一次取消。64 帧约几毫秒，够让取消按下去就有反应，
@@ -16282,6 +16598,98 @@ mod command_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 预览：同参数不重发；改 bands 后自动重算，结构与最终成片一致（上带首帧暗、下带末帧亮）。
+    ///
+    /// Preview: identical parameters never re-dispatch; changing bands re-runs it, and the
+    /// structure matches the final still (dark first-frame band on top, bright last-frame
+    /// band below).
+    #[test]
+    fn timeblend_preview_refreshes_with_parameters_and_matches_the_final_still() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let dir = stack_frame_dir("tbpv");
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.display().to_string()}),
+            )
+            .expect("打开序列");
+        state.tb_layout = aevum_core::timeblend::Layout::Bands;
+        state.tb_bands = 2;
+        state.tb_around = 1;
+        state.timeblend_preview_tick(&ctx);
+        assert!(state.tb_preview_inflight, "首趟应已派发预览任务");
+        wait_preview(&mut state, &ctx);
+        let (key0, tex0) = state.tb_preview.clone().expect("首趟预览上屏");
+        assert_eq!(tex0.size(), [16, 12], "预览应是成片的一半（32×24 → 16×12）");
+        let img0 = state.tb_preview_img.clone().expect("预览像素应随纹理落账");
+        let lum = |img: &ColorImage, x: usize, y: usize| img.pixels[y * 16 + x].r();
+        let top = lum(&img0, 8, 2);
+        // 星点在半分辨率的 (4,8)：末帧（帧 1）在整幅 (8..10,16..18) 的亮块，折半正好一格。
+        let bottom = lum(&img0, 4, 8);
+        assert!(top < 80, "上带应来自首帧（暗）：{top}");
+        assert!(bottom > 140, "下带应带着末帧的星点（亮）：{bottom}");
+        // 负向：同参数再 tick 不得重发（在飞标记不置位、指纹不变）。
+        state.timeblend_preview_tick(&ctx);
+        assert!(!state.tb_preview_inflight, "同参数不该重发预览");
+        // 改 bands → 指纹变化 → 自动重算：bands=1 时全图来自首帧，下带也该暗。
+        state.tb_bands = 1;
+        state.timeblend_preview_tick(&ctx);
+        assert!(state.tb_preview_inflight, "改了 bands 应重发预览");
+        wait_preview(&mut state, &ctx);
+        let key1 = state.tb_preview_key;
+        assert_ne!(key0, key1, "参数指纹应变化");
+        let img1 = state.tb_preview_img.clone().expect("第二趟预览像素落账");
+        let bottom1 = lum(&img1, 4, 8);
+        assert!(
+            bottom1 < 80,
+            "bands=1 时全图来自首帧，星点位置也该暗：{bottom1}"
+        );
+        // 与最终成片同构图：同一参数跑一次真合成，成片折半后的明暗结构与预览一致。
+        let out_dir = dir.join("预览对照");
+        let ok = state
+            .run_ui_command(
+                &ctx,
+                "timeblend.merge",
+                &json!({
+                    "frames": [0, 1],
+                    "layout": "bands",
+                    "bands": 2,
+                    "out_dir": out_dir.display().to_string(),
+                    "confirm": true
+                }),
+            )
+            .expect("启动对照合成");
+        assert_eq!(ok["kind"], json!("timeblend"));
+        wait_merge(&mut state, &ctx);
+        let path = state.merge_result.as_ref().expect("成片落账")["path"]
+            .as_str()
+            .expect("成片路径")
+            .to_owned();
+        let still = image::open(&path).expect("读回成片").to_rgb8();
+        assert_eq!(still.dimensions(), (32, 24));
+        // 折半（2×2 均值）后与预览逐点比对：γ 编码路径不同，留 32 的容差。
+        for (py, sy) in [(2usize, 4usize), (8usize, 16usize)] {
+            for px in [4usize, 8, 12] {
+                let sx = px * 2;
+                let mut sum = 0u32;
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        sum += still.get_pixel((sx + dx) as u32, (sy + dy) as u32)[0] as u32;
+                    }
+                }
+                let fin = (sum / 4) as i32;
+                let pv = lum(&img0, px, py) as i32;
+                assert!(
+                    (fin - pv).abs() <= 32,
+                    "预览 ({px},{py})={pv} 与成片折半 ({sx},{sy})={fin} 结构不一致"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 自动地平线：素材在 30% 处有天/地分界，开自动后分界真的搬过去；
     /// 顺带验 deghost 越界要被拒。
     ///
@@ -16491,6 +16899,18 @@ mod command_tests {
     }
 
     /// 单测没有界面帧，等后台合并收尾只能自己把消息队列抽干。
+    /// 轮询等预览回包：与 wait_merge 同款，监视的是预览在飞标记。
+    fn wait_preview(state: &mut AppState, ctx: &Context) {
+        for _ in 0..2000 {
+            state.poll(ctx);
+            if !state.tb_preview_inflight {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("预览任务没收尾");
+    }
+
     fn wait_merge(state: &mut AppState, ctx: &Context) {
         for _ in 0..2000 {
             state.poll(ctx);
