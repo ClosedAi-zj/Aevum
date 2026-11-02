@@ -12823,10 +12823,11 @@ struct FocusAlignPass {
     ///
     /// Translatable template key: adopted / reverted / failed.
     reason: &'static str,
-    /// 逐帧全局位移（全分辨率 px），采用时才用来 warp。
+    /// 逐帧 8×6 累计位移场（全分辨率 px），采用时逐块 warp 用。
     ///
-    /// Per-frame global offsets in full-resolution px; used for warping only when adopted.
-    offsets: Vec<[f64; 2]>,
+    /// Per-frame accumulated 8x6 shift field in full-resolution px, used by the per-block
+    /// warp when adopted.
+    blocks: Vec<Vec<[f64; 2]>>,
     /// 自动裁切（采用且没有手动裁切框时给出）。
     ///
     /// Automatic crop (supplied when adopted and there is no manual crop rectangle).
@@ -12856,7 +12857,7 @@ fn focus_align_pass(
         status: "failed",
         gain: 0.0,
         reason,
-        offsets: Vec::new(),
+        blocks: Vec::new(),
         crop: CropRect {
             x: 0,
             y: 0,
@@ -12913,8 +12914,8 @@ fn focus_align_pass(
         AlignStatus::RevertedInsufficientGain => "reverted_insufficient_gain",
         AlignStatus::Failed => "failed",
     };
-    let offsets = if report.status == AlignStatus::Adopted {
-        report.offsets.clone()
+    let blocks = if report.status == AlignStatus::Adopted {
+        report.blocks.clone()
     } else {
         Vec::new()
     };
@@ -12922,9 +12923,212 @@ fn focus_align_pass(
         status,
         gain: report.gain,
         reason: report.reason,
-        offsets,
+        blocks,
         crop: report.crop.unwrap_or(crop),
     })
+}
+
+/// 接缝淡化带宽度（px）：相邻块各自的位移不同，硬拼会在块界留下断点。
+///
+/// 取 24px 的理由与设计拍板 ⑦ 一致：典型手持位移 ~5px，24px ≥ 4 倍，足以把断点糊成
+/// 渐变；又远小于块宽（24MP 上约 750px），不会侵到块内真正有效的区域。
+///
+/// Seam feather width (px): neighbouring blocks carry different shifts, and a hard join
+/// leaves a visible break on the boundary.
+///
+/// 24 px matches design ruling 7: typical handheld displacement is ~5 px, so 24 px is four
+/// times that and smears the break into a gradient; and it is far below the block width
+/// (about 750 px on 24 MP), so it never eats into the block's genuinely useful interior.
+const BLOCK_SEAM_FEATHER: usize = 24;
+
+/// 逐块 warp 一帧：按拍板 ⑦ 的「裁块 → 块内位移 → 裁回 → 淡化拼装」，不新写稠密内核。
+///
+/// 每块先按 `ceil(max_shift)+2` 外扩裁出（留出位移越界的来源像素），块内用
+/// `transform_into` 施加该块自己的位移，再裁回块矩形，按 24px 线性交叉淡化的权重
+/// 累加进输出、权重和归一。
+///
+/// Warp one frame block by block, following ruling 7's "crop the block -> apply the block
+/// shift -> crop back -> feather into the output"; no new dense warp kernel is written.
+///
+/// Each block is first cropped with a `ceil(max_shift)+2` margin (so a shifted sample still
+/// has real source pixels), the block's own shift is applied inside with `transform_into`,
+/// the result is cropped back to the block rectangle, and it is accumulated into the output
+/// with 24 px linear cross-fade weights, normalised by their sum.
+fn warp_by_block_field(
+    src: &[f32],
+    w: usize,
+    h: usize,
+    shifts: &[[f64; 2]],
+    crop: Option<(usize, usize, usize, usize)>,
+) -> (Vec<f32>, usize, usize) {
+    let (cx, cy, cw, ch) = {
+        let (x, y, ww, hh) = crop.unwrap_or((0, 0, w, h));
+        let x = x.min(w);
+        let y = y.min(h);
+        (x, y, ww.min(w - x), hh.min(h - y))
+    };
+    if cw == 0 || ch == 0 || w == 0 || h == 0 {
+        return (Vec::new(), 0, 0);
+    }
+    let mut out = vec![0.0f32; cw * ch * 3];
+    let mut wsum = vec![0.0f32; cw * ch];
+    let cols = focus_align::GRID_COLS;
+    let rows = focus_align::GRID_ROWS;
+    let max_shift = shifts
+        .iter()
+        .fold(0.0f64, |m, s| m.max(s[0].abs()).max(s[1].abs()));
+    let feather = BLOCK_SEAM_FEATHER;
+    // 外扩量要同时覆盖两件事：位移越界（`ceil(max_shift)`）与接缝淡化带（`feather`）——
+    // 淡化带里的像素虽然属于邻块，本块也要为它们提供样本，否则它们会落到裁好的样本
+    // 矩形之外，被 `transform_into` 的边界镜像折回来，接缝处就出现折痕。
+    //
+    // The margin must cover both the shift excursion (`ceil(max_shift)`) and the seam feather
+    // band (`feather`): pixels inside the feather band belong to the neighbour, but this
+    // block still has to supply their samples -- otherwise they fall outside the cropped
+    // sample rectangle and get folded back by `transform_into`'s border mirroring, leaving a
+    // crease along the seam.
+    let margin = max_shift.ceil() as usize + feather + 2;
+
+    for by in 0..rows {
+        for bx in 0..cols {
+            let x0 = bx * w / cols;
+            let x1 = (bx + 1) * w / cols;
+            let y0 = by * h / rows;
+            let y1 = (by + 1) * h / rows;
+            if x1 <= x0 || y1 <= y0 {
+                continue;
+            }
+            let shift = shifts.get(by * cols + bx).copied().unwrap_or([0.0, 0.0]);
+            // 外扩后的来源矩形（夹进画面），位移样本才不会读到块外已丢掉的像素。
+            //
+            // The expanded source rectangle (clamped to the frame), so shifted samples do
+            // not miss pixels the block crop dropped.
+            let sx0 = x0.saturating_sub(margin);
+            let sy0 = y0.saturating_sub(margin);
+            let sx1 = (x1 + margin).min(w);
+            let sy1 = (y1 + margin).min(h);
+            if sx1 <= sx0 || sy1 <= sy0 {
+                continue;
+            }
+            let mut sample = Vec::new();
+            warp::transform_into(
+                src,
+                w,
+                h,
+                Framing {
+                    angle_deg: 0.0,
+                    off: [0.0, 0.0],
+                },
+                Some((sx0, sy0, sx1 - sx0, sy1 - sy0)),
+                &mut sample,
+            );
+            let bw = sx1 - sx0;
+            let bh = sy1 - sy0;
+            let mut warped = Vec::new();
+            warp::transform_into(
+                &sample,
+                bw,
+                bh,
+                Framing {
+                    angle_deg: 0.0,
+                    off: shift,
+                },
+                None,
+                &mut warped,
+            );
+            // 淡化权重：到块边界的有符号距离，边界为 0.5、向内 feather 处为 1、
+            // 向外 feather 处为 0。两块在接缝两侧的权重接近且都非零（0.5 / 0.48 量级），
+            // 归一后就是平滑过渡——既没有硬断点，也不会出现权重和远小于 1 的暗带。
+            //
+            // Feather weight from the signed distance to the block edge: 0.5 on the edge, 1
+            // one feather inside, 0 one feather outside. Two neighbours' weights near a seam
+            // are close and both non-zero (about 0.5 / 0.48), so normalisation yields a
+            // smooth transition -- no hard break and no dark band from a tiny sum.
+            let ramp = |d: f64| -> f32 {
+                if feather == 0 {
+                    if d >= 0.0 { 1.0 } else { 0.0 }
+                } else {
+                    let t = 0.5 + d / (2.0 * feather as f64);
+                    t.clamp(0.0, 1.0) as f32
+                }
+            };
+            // 输出窗口与「块矩形 + feather 带」的交集。与窗口求交是必须的：窗口可能已经
+            // 被 auto_crop 裁小，块界落在窗口外时不该往窗口里写。下界还要夹到来源矩形
+            // 之内：feather（24px）通常大于采样外扩量（位移 + 2px），越界的像素在
+            // warped 缓冲里没有对应样本。
+            //
+            // Intersection of the output window with "block rectangle plus feather band".
+            // Intersecting with the window matters: auto_crop may already have shrunk it, and
+            // a block edge outside the window must not write into it. The lower bound is also
+            // clamped to the source rectangle: the feather (24 px) is usually wider than the
+            // sample margin (shift + 2 px), and pixels beyond it have no counterpart in the
+            // warped buffer.
+            let px0 = x0.saturating_sub(feather).max(cx).max(sx0);
+            let px1 = (x1 + feather).min(cx + cw).min(w).min(sx1);
+            let py0 = y0.saturating_sub(feather).max(cy).max(sy0);
+            let py1 = (y1 + feather).min(cy + ch).min(h).min(sy1);
+            for py in py0..py1 {
+                // 纵向权重：到块上/下边界的距离取较小者（块内为正、带内为负）。
+                //
+                // Vertical weight: the smaller distance to the top/bottom edge (positive
+                // inside the block, negative in the feather band).
+                let dy = (py as f64 - y0 as f64).min(y1 as f64 - 1.0 - py as f64);
+                let wy = ramp(dy);
+                if wy <= 0.0 {
+                    continue;
+                }
+                for px in px0..px1 {
+                    let dx = (px as f64 - x0 as f64).min(x1 as f64 - 1.0 - px as f64);
+                    let wt = axis_weight(ramp(dx), wy);
+                    if wt <= 0.0 {
+                        continue;
+                    }
+                    // warped 与 sample 同原点（只施加了块位移），减来源矩形原点即可。
+                    //
+                    // The warped buffer shares the sample's origin (only the block shift was
+                    // applied), so subtracting the source rectangle origin is enough.
+                    let wx = px - sx0;
+                    let wyi = py - sy0;
+                    if wx >= bw || wyi >= bh {
+                        continue;
+                    }
+                    let si = (wyi * bw + wx) * 3;
+                    let oi = ((py - cy) * cw + (px - cx)) * 3;
+                    for c in 0..3 {
+                        out[oi + c] += wt * warped[si + c];
+                    }
+                    wsum[(py - cy) * cw + (px - cx)] += wt;
+                }
+            }
+        }
+    }
+    // 权重和归一；理论上每像素都被至少一块覆盖，权重和近零时用参考帧兜底（不留下黑块）。
+    //
+    // Normalise by the weight sum; every pixel should be covered by at least one block, and
+    // a near-zero sum falls back to the reference frame rather than leaving a black hole.
+    for (p, s) in wsum.iter().enumerate() {
+        let s = *s;
+        let j = p * 3;
+        if s > 1e-6 {
+            out[j] /= s;
+            out[j + 1] /= s;
+            out[j + 2] /= s;
+        } else {
+            let sx = ((cx + p % cw).min(w - 1) + (cy + p / cw).min(h - 1) * w) * 3;
+            out[j] = src[sx];
+            out[j + 1] = src[sx + 1];
+            out[j + 2] = src[sx + 2];
+        }
+    }
+    (out, cw, ch)
+}
+
+/// 两个方向权重的乘积：两个方向各自在接缝两侧连续，乘积也连续。
+///
+/// Product of the two per-axis weights: each axis is continuous across a seam, so the
+/// product is too.
+fn axis_weight(a: f32, b: f32) -> f32 {
+    a * b
 }
 
 fn run_merge_job(
@@ -13068,17 +13272,19 @@ fn run_merge_job(
                         let c = outcome.crop;
                         Some((c.x as usize, c.y as usize, c.w as usize, c.h as usize))
                     };
+                    // 逐块 warp + 24px 接缝淡化（拍板 ⑦）：breathing 是径向放大率变化，
+                    // 单一全局平移表达不了，必须让每块各走各的位移。
+                    //
+                    // Per-block warp with 24 px seam feathering (ruling 7): breathing is a
+                    // radial magnification change that one global translation cannot
+                    // express, so every block must follow its own shift.
                     let mut warped: Vec<(Vec<f32>, usize, usize)> = Vec::with_capacity(work.len());
                     for (i, (buf, _, _)) in work.iter().enumerate() {
                         if cancel.load(Ordering::SeqCst) {
                             return Err("已取消：自动对齐已完成，还没开始融合".to_owned());
                         }
-                        let mut out = Vec::new();
-                        let framing = Framing {
-                            angle_deg: 0.0,
-                            off: outcome.offsets[i],
-                        };
-                        let (nw, nh) = warp::transform_into(buf, w, h, framing, window, &mut out);
+                        let field = outcome.blocks.get(i).map(Vec::as_slice).unwrap_or(&[]);
+                        let (out, nw, nh) = warp_by_block_field(buf, w, h, field, window);
                         warped.push((out, nw, nh));
                     }
                     if let Some((nw, nh)) = warped.first().map(|(_, nw, nh)| (*nw, *nh)) {
@@ -18736,6 +18942,60 @@ mod focus_align_wiring_tests {
         let img = read_rgb(&path);
         assert_eq!((img.width() as u64, img.height() as u64), (w, h));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 接缝淡化自检：均匀位移场下逐块 warp 必须与单一全局位移**逐点一致**——块与块
+    /// 位移相同，淡化权重归一后不该留下任何接缝或暗带。这条钉住 `warp_by_block_field`
+    /// 的权重归一，避免「看起来能出图、其实块界有一条 24px 灰带」这种哑故障。
+    ///
+    /// Seam-feather self-check: with a uniform shift field the per-block warp must match one
+    /// global translation **point for point** -- identical block shifts plus normalised
+    /// feather weights may not leave any seam or dark band. This pins the normalisation in
+    /// `warp_by_block_field` and rules out the silent failure where the image looks fine but
+    /// a 24 px grey band runs along every block boundary.
+    #[test]
+    fn uniform_block_field_matches_one_global_translation() {
+        let (w, h) = (240usize, 180usize);
+        let src: Vec<f32> = (0..w * h * 3)
+            .map(|i| {
+                let p = i / 3;
+                let (x, y) = (p % w, p / w);
+                ((x * 7 + y * 13) % 251) as f32 / 255.0
+            })
+            .collect();
+        let shift = [5.5, -3.25];
+        let field = vec![shift; focus_align::GRID_COLS * focus_align::GRID_ROWS];
+        let (block, bw, bh) = warp_by_block_field(&src, w, h, &field, None);
+        let mut once = Vec::new();
+        let (gw, gh) = warp::transform_into(
+            &src,
+            w,
+            h,
+            Framing {
+                angle_deg: 0.0,
+                off: shift,
+            },
+            None,
+            &mut once,
+        );
+        assert_eq!((bw, bh), (gw, gh), "尺寸应与全局 warp 一致");
+        let mut max_d = 0.0f32;
+        let mut worst = (0usize, 0usize, 0usize);
+        for p in 0..w * h {
+            for c in 0..3 {
+                let i = p * 3 + c;
+                let d = (block[i] - once[i]).abs();
+                if d > max_d {
+                    max_d = d;
+                    worst = (p % w, p / w, c);
+                }
+            }
+        }
+        eprintln!("逐块 vs 全局（均匀 5.5/−3.25px）：max|Δ| = {max_d}，最差于 {worst:?}");
+        assert!(
+            max_d <= 1e-5,
+            "均匀位移场下逐块 warp 应与全局一致，实测 max|Δ|={max_d} @ {worst:?}"
+        );
     }
 
     /// A-C3：干净栈（0.5 px 级抖动）在 `align: true` 下报收益不足并回退，成片与
