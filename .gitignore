@@ -60,6 +60,11 @@ docs/*
 # 就是一份读者拿不到的文件。`*` 顺带匹配 `.en`。
 !docs/RAW兼容性-*.md
 
+# README 五张截图的可复现记录（每张的样张、--shot 命令、素材约束）。D-C2 判据咬的就是
+# 这份文档与 scripts/shots-readme.sh 的一致性：不入库，「照着重截」就是一句空话，
+# readme_shots.rs 也读不到它。`*` 顺带匹配 `.en`。
+!docs/README-截图*.md
+
 # 相机样张：来源部分不明、体积大（164 MB / 10 个文件），不入库（换机需手动拷）。
 # 清单与校验值见 samples/cameras/README.md。注意白名单必须先忽略目录内容、再放行
 # README——顺序反了 `!` 就不生效。`.aevum/` 是缩略图缓存，一并挡掉。

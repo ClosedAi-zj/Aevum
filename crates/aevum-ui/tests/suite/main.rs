@@ -26,4 +26,5 @@ mod i18n_coverage;
 mod i18n_errors;
 mod i18n_literals;
 mod mcp_routes_contract;
+mod readme_shots;
 mod ui_tokens;

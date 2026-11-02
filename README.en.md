@@ -21,9 +21,11 @@ folder onto the window and it switches to the right module.
 
 One window carries the whole pipeline. Develop is the main workspace — presets and
 history on the left, canvas and masks in the middle, parameters and histogram on the
-right, a per-frame filmstrip along the bottom:
+right, a per-frame filmstrip along the bottom. From 1.5 focus stacking lives here too,
+with the depth map / weighted average / pyramid methods side by side and optional
+auto-alignment before fusing:
 
-![Develop — masks, parameter panel and the per-frame filmstrip](assets/shots/develop.png)
+![Develop — focus stacking, parameter panel and the per-frame filmstrip](assets/shots/develop.png)
 
 | **Sequence — alignment check-up** | **Deflicker — per-frame metering curves** |
 |---|---|
