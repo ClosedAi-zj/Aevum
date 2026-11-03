@@ -904,9 +904,21 @@ fn thumb_cache_path(path: &Path, max_side: u32) -> Option<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
         .as_secs();
-    let stem: String = path
-        .file_stem()?
-        .to_string_lossy()
+    let raw_stem = path.file_stem()?.to_string_lossy();
+    // 文件名里掺一段**原始** stem 的 FNV-32。清洗会把非 ASCII 与分隔符抹成 `_`：
+    // `风景.jpg` / `人像.jpg` / `照片.jpg` 都是 `__`（`..jpg` 是 `_.`），若再撞上同秒
+    // mtime 与精确相同的字节数（批量拷贝保留时间戳），两个不同帧就会共用一个缓存文件，
+    // 胶片条里显示别人的图。哈希让「清洗后重名」不再等于「同一张图」。旧缓存按新名找不到，
+    // 自然淘汰成孤儿文件，不影响正确性。
+    //
+    // Mix an FNV-32 of the **raw** stem into the file name. Sanitising maps every non-ASCII
+    // character and separator to `_`, so three different Chinese names all become `__` (and
+    // `..jpg` becomes `_.`); with the same second-level mtime and an identical byte count
+    // (batch copies preserve timestamps) two distinct frames would share one cache file and
+    // the filmstrip would show someone else's picture. The hash makes "same sanitised stem"
+    // stop meaning "same image". Old caches stop being found and are simply orphaned.
+    let tag = fnv32(raw_stem.as_bytes());
+    let stem: String = raw_stem
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
@@ -917,7 +929,23 @@ fn thumb_cache_path(path: &Path, max_side: u32) -> Option<PathBuf> {
         })
         .collect();
     let dir = crate::project::guard_dir(path.parent()?).join("thumbs");
-    Some(dir.join(format!("{stem}-{mtime}-{}-{max_side}.png", meta.len())))
+    Some(dir.join(format!(
+        "{stem}-{tag:08x}-{mtime}-{}-{max_side}.png",
+        meta.len()
+    )))
+}
+
+/// FNV-1a 32：只用来把两个「清洗后同名」的帧分开，不做安全用途。
+///
+/// FNV-1a 32: only there to tell two frames with the same sanitised stem apart; not a
+/// security primitive.
+fn fnv32(bytes: &[u8]) -> u32 {
+    let mut hash = 0x811c_9dc5u32;
+    for &b in bytes {
+        hash ^= b as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
 }
 
 fn read_thumb_cache(path: &Path, max_side: u32) -> Option<RgbaImage> {
@@ -1237,6 +1265,56 @@ mod tests {
         ));
         out.extend_from_slice(&png_chunk(b"IEND", &[]));
         out
+    }
+
+    /// 清洗后同名的两帧不许共用一个缓存文件。
+    ///
+    /// 清洗把 `风景` / `人像` / `照片` 全抹成 `__`；只要字节数相同、mtime 又落在同一秒
+    /// （批量拷贝保留时间戳就是这个形状），两帧就会共用一个缓存文件，胶片条里显示别人
+    /// 的图。文件名里的 stem 哈希必须把它们分开，同时同一帧的路径要保持稳定。
+    ///
+    /// Two frames whose sanitised stems collide must not share one cache file.
+    ///
+    /// Sanitising collapses `风景` / `人像` / `照片` to `__`; with an identical byte count and
+    /// an mtime in the same second (what batch copies that preserve timestamps produce) the
+    /// two frames would share one cache file and the filmstrip would show someone else's
+    /// picture. The stem hash in the name must keep them apart while a frame's own path stays
+    /// stable.
+    #[test]
+    fn two_frames_with_the_same_sanitised_stem_do_not_share_a_cache_file() {
+        let root = std::env::temp_dir().join(format!("aevum-thumb-alias-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("建临时目录");
+        let a = root.join("风景.jpg");
+        let b = root.join("人像.jpg");
+        let payload = b"identical-length-payload";
+        std::fs::write(&a, payload).expect("写 a");
+        std::fs::write(&b, payload).expect("写 b");
+        let when = std::time::SystemTime::now();
+        for p in [&a, &b] {
+            std::fs::File::options()
+                .write(true)
+                .open(p)
+                .expect("打开源帧")
+                .set_modified(when)
+                .expect("拨 mtime");
+        }
+
+        let pa = super::thumb_cache_path(&a, 128).expect("a 的缓存路径");
+        let pb = super::thumb_cache_path(&b, 128).expect("b 的缓存路径");
+        assert_ne!(
+            pa,
+            pb,
+            "清洗后同名的两帧共用了缓存文件，会串图：{}",
+            pa.display()
+        );
+        assert_eq!(
+            pa,
+            super::thumb_cache_path(&a, 128).expect("a 的缓存路径"),
+            "同一帧的缓存路径必须稳定"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
