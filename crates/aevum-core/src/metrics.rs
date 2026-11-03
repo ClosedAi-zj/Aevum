@@ -540,6 +540,34 @@ fn decode_dispatch(path: &Path) -> Result<(DynamicImage, PixelOrigin), MetricsEr
     limits.max_image_width = Some(MAX_IMAGE_SIDE);
     limits.max_image_height = Some(MAX_IMAGE_SIDE);
     reader.limits(limits);
+    // 截断 JPEG 的静默半截：zune-jpeg 对截断流**不报错**，把缺的行填成中性灰
+    // (128,128,128) 照常返回成功——半张灰图会被测光放行、被合成烤进成片，全链路
+    // 无一句提示（PNG/TIFF/WebP 的解码器都会报错，这道校验只钉 JPEG）。EOI 标记
+    // （FF D9）是熵编码数据的合法终点：熵数据里的 FF 都被 00 填充（byte stuffing），
+    // 正文不会出现裸 FFD9，所以「最后一个 EOI 之后只许剩填充字节」是完整的充要近似。
+    // EXIF 内嵌缩略图也有自己的 EOI，但它在前段、后面跟着大段非填充字节，会被这
+    // 条规则正确判成截断。
+    //
+    // Truncated-JPEG silent half: zune-jpeg does **not** error on a truncated stream; it
+    // fills the missing rows with neutral gray (128,128,128) and returns success -- half a
+    // gray image passes metering, gets baked into stacks, with no warning anywhere (the
+    // PNG/TIFF/WebP decoders all error; this check pins JPEG only). The EOI marker (FF D9)
+    // is the only legal end of entropy-coded data: every FF inside it is 00-stuffed (byte
+    // stuffing), so a bare FFD9 never appears in the payload and "only padding may follow
+    // the last EOI" is a sound approximation of completeness. An embedded EXIF thumbnail
+    // carries its own EOI early in the file, followed by a large run of non-padding bytes,
+    // which this rule correctly reports as truncated.
+    if reader.format() == Some(image::ImageFormat::Jpeg) {
+        let bytes = std::fs::read(path).map_err(MetricsError::Io)?;
+        if !jpeg_stream_complete(&bytes) {
+            return Err(MetricsError::Image(image::ImageError::Decoding(
+                image::error::DecodingError::new(
+                    image::error::ImageFormatHint::Exact(image::ImageFormat::Jpeg),
+                    "文件不完整：JPEG 流没有正常的结束标记（多半是传输或拷贝中断）",
+                ),
+            )));
+        }
+    }
     // 普通图的解压同样在第三方代码里（jpge/zune/zune-inflate），坏流一样会 panic。
     // 守卫只包 `decode()`：`open`/`with_guessed_format` 的失败要保持原来的
     // 「读取失败」/「解码失败」两种口径，不能都改说成 panic。
@@ -557,6 +585,22 @@ fn decode_dispatch(path: &Path) -> Result<(DynamicImage, PixelOrigin), MetricsEr
         crate::exif::oriented(img, crate::exif::read(path).orientation),
         PixelOrigin::Image,
     ))
+}
+
+/// JPEG 流完整性：最后一个 EOI（FF D9）之后只许剩填充字节（≤0x20 或 0xFF）。
+/// 没有任何 EOI → 必然截断；EOI 在前段且后面还有实质数据 → 熵数据没写完，也是截断。
+///
+/// JPEG stream completeness: only padding bytes (≤0x20 or 0xFF) may follow the last EOI
+/// (FF D9). No EOI at all -> definitely truncated; an EOI early in the file followed by
+/// substantial payload -> the entropy data never finished, also truncated.
+fn jpeg_stream_complete(bytes: &[u8]) -> bool {
+    let last_eoi = (0..bytes.len().saturating_sub(1))
+        .rev()
+        .find(|&i| bytes[i] == 0xFF && bytes[i + 1] == 0xD9);
+    match last_eoi {
+        None => false,
+        Some(eoi) => bytes[eoi + 2..].iter().all(|&b| b <= 0x20 || b == 0xFF),
+    }
 }
 
 /// 解码并等比缩到长边不超过 `max_side`，返回 sRGB 像素，供画布预览用。
@@ -877,5 +921,68 @@ mod tests {
         assert_eq!(reflect101(-1, 5), 1);
         assert_eq!(reflect101(5, 5), 3);
         assert_eq!(reflect101(-3, 5), 3);
+    }
+
+    /// 截断 JPEG 不许静默成功（缺陷排查 D1）：zune-jpeg 会把缺的行填灰返回成功，
+    /// 半张灰图会被测光放行、被合成烤进成片。EOI 校验必须在 decode 之前拦住。
+    ///
+    /// A truncated JPEG must not silently succeed (defect D1): zune-jpeg fills the missing
+    /// rows with gray and returns success, half a gray image passes metering and gets baked
+    /// into stacks. The EOI check must intercept before decode.
+    #[test]
+    fn truncated_jpeg_is_an_error_not_a_gray_half_image() {
+        // 噪声纹理压不出小体积，保证截断点落在熵数据而不是头部。
+        //
+        // Noise texture does not compress small, so the cut lands in entropy data, not headers.
+        let img = image::RgbImage::from_fn(600, 600, |x, y| {
+            let v = (x.wrapping_mul(73_856_093) ^ y.wrapping_mul(83_492_791)) as u8;
+            image::Rgb([v, v.wrapping_add(17), v.wrapping_sub(9)])
+        });
+        let dir = std::env::temp_dir().join("aevum-trunc-jpeg-test");
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let full = dir.join("full.jpg");
+        img.save_with_format(&full, image::ImageFormat::Jpeg)
+            .expect("写 JPEG");
+        let bytes = std::fs::read(&full).expect("读回");
+        assert!(bytes.len() > 20_000, "夹具必须足够大：{} B", bytes.len());
+
+        // 完整文件：解码成功。
+        let ok = super::decode(&full);
+        assert!(ok.is_ok(), "完整 JPEG 必须能解：{:?}", ok.err());
+
+        // 截掉后 40%：必须报「不完整」，而不是半张灰图。
+        let cut = dir.join("cut.jpg");
+        std::fs::write(&cut, &bytes[..bytes.len() * 6 / 10]).expect("写截断 JPEG");
+        let err = super::decode(&cut).expect_err("截断 JPEG 必须报错");
+        assert!(
+            err.to_string().contains("不完整"),
+            "错误要说是文件不完整：{err}"
+        );
+
+        // EOI 之后的零填充（某些写卡器会补零）：不许误伤。
+        let padded = dir.join("padded.jpg");
+        let mut with_pad = bytes.clone();
+        with_pad.extend_from_slice(&[0u8; 512]);
+        std::fs::write(&padded, with_pad).expect("写补零 JPEG");
+        assert!(
+            super::decode(&padded).is_ok(),
+            "EOI 后补零的完整 JPEG 必须照常解码"
+        );
+
+        // 规则本身的确定性单测（不依赖 image 的解码行为）：
+        // ① 完整流 + 填充 → true；② 无 EOI → false；③ 早期 EOI（EXIF 内嵌缩略图的
+        // 形状）后跟大段非填充 → false——这正是「带缩略图的 JPEG 截断在主数据中途」
+        // 的字节形状，靠「最后一个 EOI 之后只许填充」把它抓出来。
+        assert!(super::jpeg_stream_complete(&[0x12, 0xFF, 0xD9, 0x00, 0x00]));
+        assert!(super::jpeg_stream_complete(&[0xFF, 0xD9]));
+        assert!(!super::jpeg_stream_complete(&[0x12, 0x34, 0x56]));
+        assert!(!super::jpeg_stream_complete(&[
+            0xFF, 0xD9, 0xAB, 0xCD, 0xEF, 0x11, 0x22, 0x33
+        ]));
+
+        std::fs::remove_file(&full).ok();
+        std::fs::remove_file(&cut).ok();
+        std::fs::remove_file(&padded).ok();
+        std::fs::remove_dir(&dir).ok();
     }
 }
