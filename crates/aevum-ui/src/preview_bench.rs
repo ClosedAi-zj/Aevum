@@ -83,6 +83,15 @@ pub struct PreviewRow {
     /// Size of the buffer handed to grading; this column is where the sketch and the full
     /// preview visibly differ.
     pub src: [usize; 2],
+    /// 草图解码走的路：`Some(true)` = 半尺寸快路，`Some(false)` = 整幅解码再减半，
+    /// `None` = 全量行（不适用）。
+    ///
+    /// 这是**代码走没走快路**的事实，不受机器快慢影响；首屏判据断言的就是它。
+    ///
+    /// Which route the sketch decode took: `Some(true)` for the half-size fast route,
+    /// `Some(false)` for a full decode plus halving, `None` for a full-preview row. A fact
+    /// about the code path rather than about machine speed; the first-screen fence asserts it.
+    pub half_route: Option<bool>,
 }
 
 /// 样张目录。不入库，所以可能不存在。
@@ -182,6 +191,7 @@ fn measure_sample(path: &Path, sketch: bool) -> Result<PreviewRow, String> {
     let mut grade = Vec::with_capacity(REPS);
     let mut size = [0u32; 2];
     let mut src = [0usize; 2];
+    let mut half_route = None;
     for _ in 0..REPS {
         state::clear_preview_caches_for_bench();
         let t0 = Instant::now();
@@ -191,6 +201,7 @@ fn measure_sample(path: &Path, sketch: bool) -> Result<PreviewRow, String> {
         grade.push(probe.phases.grade);
         size = probe.size;
         src = probe.phases.src;
+        half_route = probe.sketch_half;
     }
 
     let row = PreviewRow {
@@ -204,6 +215,7 @@ fn measure_sample(path: &Path, sketch: bool) -> Result<PreviewRow, String> {
         rest_ms: 0.0,
         size,
         src,
+        half_route,
     };
     Ok(PreviewRow {
         rest_ms: (row.median_ms - row.decode_ms - row.grade_ms).max(0.0),
@@ -251,13 +263,19 @@ pub fn preview_first_screen() -> Result<String, String> {
     }
     let mut out = String::from(
         "首屏预览（清缓存后 5 次取中位；单位 ms，端到端 = 解码 + 调色 + 取景/成图/直方图）\n\
-         口径：仅 render_preview_file 的 CPU 墙钟，不含 GPU 上传与呈现，文件页缓存已预热。\n",
+         口径：仅 render_preview_file 的 CPU 墙钟，不含 GPU 上传与呈现，文件页缓存已预热。\n\
+         路：草图的解码走了半尺寸快路（快路）还是整幅解码再减半（兜底）——与机器快慢无关。\n",
     );
     for row in &rows {
         out.push_str(&format!(
-            "  {:<14} {:<4} 端到端 {:7.1}（{:6.1}…{:6.1}）  解码 {:6.1}  调色 {:5.1}  其余 {:5.1}  源 {}×{}  贴图 {}×{}\n",
+            "  {:<14} {:<4} {:<6} 端到端 {:7.1}（{:6.1}…{:6.1}）  解码 {:6.1}  调色 {:5.1}  其余 {:5.1}  源 {}×{}  贴图 {}×{}\n",
             row.file,
             if row.sketch { "草图" } else { "全量" },
+            match row.half_route {
+                Some(true) => "快路",
+                Some(false) => "兜底",
+                None => "—",
+            },
             row.median_ms,
             row.min_ms,
             row.max_ms,

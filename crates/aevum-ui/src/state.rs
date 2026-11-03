@@ -11997,6 +11997,15 @@ fn decoded_preview_source(
         slots.full.as_mut()
     }
     .expect("source_slot 填过才有返回值");
+    // 记下「这一次」草图走的路。放在线程本地而不是读回全局槽：判据的几条测试是并行跑
+    // 的，它们共用同一个 `PREVIEW_SRC`，事后读槽会读到别人清空/换掉的槽——2026-11-04
+    // 就是这么读到 `None` 的，与解码走哪条路无关。
+    //
+    // Record the route this very render took. Thread-local rather than reading the global slot
+    // back: the fence's tests run in parallel and share `PREVIEW_SRC`, so a read-back can see
+    // another test's cleared slot -- that is how a `None` showed up on 2026-11-04, saying
+    // nothing about which route the decoder took.
+    LAST_SKETCH_ROUTE.with(|cell| cell.set(if sketch { Some(src.half) } else { None }));
     Ok((src.rgb.clone(), src.w, src.h, src.full))
 }
 
@@ -12028,13 +12037,14 @@ fn source_slot(
             && c.demosaic == demosaic
     );
     if fresh {
-        let (buf, w, h, full) = if sketch {
-            metrics::decode_preview_sketch(path, profile, SKETCH_SIDE, PREVIEW_SIDE)
-                .map_err(|e| crate::i18n::err_text(&e))?
+        let (buf, w, h, full, half) = if sketch {
+            let src = metrics::decode_preview_sketch(path, profile, SKETCH_SIDE, PREVIEW_SIDE)
+                .map_err(|e| crate::i18n::err_text(&e))?;
+            (src.rgb, src.w, src.h, src.full, src.half)
         } else {
             let (buf, w, h) = metrics::decode_profile_preview(path, profile, PREVIEW_SIDE)
                 .map_err(|e| crate::i18n::err_text(&e))?;
-            (buf, w, h, (w, h))
+            (buf, w, h, (w, h), false)
         };
         if w == 0 || h == 0 || full.0 == 0 || full.1 == 0 {
             return Err("解码结果为空".to_owned());
@@ -12049,6 +12059,7 @@ fn source_slot(
             h,
             rgb: buf,
             full,
+            half,
         });
     }
     Ok((slots, sketch))
@@ -12126,6 +12137,16 @@ pub(crate) struct PreviewProbe {
     ///
     /// Per-phase timings of decode and grade, plus the size of the buffer handed to grading.
     pub phases: PreviewPhases,
+    /// 草图这次解码走的是哪条路：`Some(true)` = 半尺寸快路，`Some(false)` = 整幅解码再
+    /// 减半，`None` = 这次要的是全量预览。
+    ///
+    /// 首屏判据断言的就是它：这是**代码走没走快路**的事实，不受机器快慢影响。
+    ///
+    /// Which route produced the sketch: `Some(true)` for the half-size fast route,
+    /// `Some(false)` for the full decode plus halving, `None` when this render asked for the
+    /// full preview. The first-screen fence asserts this flag -- a fact about the code path,
+    /// independent of machine speed.
+    pub sketch_half: Option<bool>,
 }
 
 /// 清掉预览源与原图缓存，模拟「这张图第一次被打开」。
@@ -12165,6 +12186,11 @@ pub(crate) fn render_preview_for_bench(
         false,
     )?;
     let phases = trace_take_for_bench().unwrap_or_default();
+    // 这次解码走的是哪条路，由 `decoded_preview_source` 在解码完成时记在本线程上。
+    //
+    // Which route this decode took, recorded on this thread by `decoded_preview_source` at the
+    // moment the decode finished.
+    let sketch_half = LAST_SKETCH_ROUTE.with(std::cell::Cell::get);
     // 直方图不进探针：判据比对的是像素，直方图每个回包都带着，拷进探针只是多一份。
     //
     // The histogram stays out of the probe: the fence compares pixels, and every reply already
@@ -12174,6 +12200,7 @@ pub(crate) fn render_preview_for_bench(
         graded,
         size,
         phases,
+        sketch_half,
     })
 }
 
@@ -12195,6 +12222,12 @@ struct PreviewSource {
     /// Side lengths of the **full** preview; the sketch slot records them too so the canvas
     /// gets the same logical size in both cases.
     full: (usize, usize),
+    /// 草图槽专用：这份像素是半尺寸快路解的（`true`）还是整幅解码再减半（`false`）。
+    /// 全量槽不读这个字段。
+    ///
+    /// Sketch slot only: whether these pixels came from the half-size fast route (`true`) or
+    /// from a full decode plus halving (`false`). The full slot never reads it.
+    half: bool,
 }
 
 /// 两档缓存：全量与草图各一槽。加起来仍然封顶两张预览图。
@@ -12214,6 +12247,22 @@ static PREVIEW_SRC: Mutex<PreviewSlots> = Mutex::new(PreviewSlots {
     full: None,
     sketch: None,
 });
+
+thread_local! {
+    /// 本线程最近一次预览解码走的路：`Some(true)` = 草图半尺寸快路，`Some(false)` = 草图
+    /// 整幅解码再减半，`None` = 那一次要的是全量预览（或还没解过）。
+    ///
+    /// 只给基准探针读。用线程本地是因为判据的测试并行跑、共用 `PREVIEW_SRC`：事后读全局
+    /// 槽拿到的是「此刻缓存里有什么」，而不是「这次渲染走了哪条路」，两者在多线程下不等。
+    ///
+    /// The route this thread's latest preview decode took: `Some(true)` for the sketch's
+    /// half-size fast path, `Some(false)` for the sketch's full decode plus halving, `None`
+    /// when that render asked for the full preview (or nothing ran yet). Read by the bench
+    /// probe only. Thread-local because the fence's tests run in parallel over one shared
+    /// `PREVIEW_SRC`: a slot read-back answers "what is cached now", not "which route this
+    /// render took", and those differ across threads.
+    static LAST_SKETCH_ROUTE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
 
 /// 「原图」那一路的取景结果：只跟源文件和取景几何有关，参数怎么拖都不变。
 /// 取景、转换再拷一份，拖动期间每帧约 9ms，是草图整帧的三分之一，所以也缓存一份。

@@ -26,25 +26,31 @@
 //!
 //! 预算只针对 **24MP RAW**。JPEG 的草图走的是兜底路径（整幅解码再 2×2 均值减半，
 //! 见 `metrics::decode_preview_sketch`），它没有半尺寸入口，数字只作参考、不设闸——
-//! 一台更慢的机器上它会先破 300ms，那不是这次动的路（本机 240.1ms，另一台机器量到
-//! 307.5ms，两者都在「机器抖动」的量级里）。
+//! 一台更慢的机器上它会先破 300ms，那不是这次动的路（本机 240.1ms）。
 //!
-//! ## 两道断言，各自在什么时候判
+//! 两条判据并行跑会互相搅局（见文末「必须串行」），所以跨机对比数字前先确认是单跑。
+//!
+//! ## 三道断言，各自在什么时候判
 //!
 //! | 断言 | dev（门槛 `cargo test`） | release |
 //! |------|--------------------------|---------|
-//! | 比值 `草图/全量 ≤ 0.90` | **判** | 判 |
+//! | 结构 `half_route == Some(true)` | **判** | 判 |
+//! | 全量行 `half_route == None` | **判** | 判 |
 //! | 绝对值 `草图 ≤ 300ms` | 只打印 | 判 |
+//!
+//! **结构那条是主闸**：`half_route` 是解码器回报的「这次走了哪条路」，不是估算——
+//! 半尺寸快路被短路（`if false &&`）或静默退回整幅解码，它就是 `Some(false)`，当场红，
+//! 与机器快慢无关。它两种档位都判，所以门槛第 3 步（`cargo test`）就能踩到。
 //!
 //! 绝对值量的是 24MP 传感器数据的解包与重采样（几百兆内存流量），dev 档（opt-level 1）
 //! 的同一段代码本机实测 253.8ms、release 223.1ms，慢机器上更多——在 dev 卡 300ms 会把
-//! 「机器慢」报成「代码退化」。比值那条不吃机器快慢，所以**dev 也判**：门槛第 3 步
-//! （`cargo test`）跑的就是它，退化回「整幅解码再减半」时比值约 1.0，当场红。
-//!
-//! 绝对值也不会漏：门槛第 5 步专门用 **release** 跑 `preview_budget` + `perf_budget`
-//! （`acceptance/check.sh` 5/6）。所以这里两道闸在门槛里都被踩过一遍，dev 那道只是
-//! 让退化在不编 release 的时候也能很快看见。手动跑同一条：
+//! 「机器慢」报成「代码退化」，所以它只在 **release** 断言：门槛第 5 步专门用 release
+//! 跑 `preview_budget` + `perf_budget`（`acceptance/check.sh` 5/6）。手动跑同一条：
 //! `cargo test --release -p aevum-ui preview`。
+//!
+//! 比值（`草图 / 全量`）只打印，不判：它不普遍成立——全量那行的成本取决于机器内存
+//! 压力（同一份代码见过 282.9 也见过 577），兜底草图在某些机器上仍只有全量的 0.48，
+//! 拿它当闸等于没有闸（QA 实测）。
 //!
 //! ## 本机实测（2026-11-03，release，Windows 11，样张 `samples/cameras/`）
 //!
@@ -60,20 +66,27 @@
 //! 220ms 上下——省掉的正是「展开成 24MP RGB 再缩回来」这一来一回。
 //!
 //! **同一台机上分次运行会漂**：这台机器上同时还有别的编译在跑，同一份代码的全量一列
-//! 见过 282.9–446.5ms、JPEG 见过 219.9–475.2ms。所以绝对值只作参考，退化要靠下面
-//! 那条相对判据抓。
+//! 见过 282.9–446.5ms、JPEG 见过 219.9–475.2ms。所以绝对值只作参考，退化要靠上面
+//! 那条结构判据抓。
 //!
-//! ## 变异验证（提交后做的）
+//! ## 变异验证（提交后、隔离 worktree 里做的）
 //!
 //! 把 `metrics::decode_preview_sketch` 的半尺寸分支短路（`if false &&`，即草图退回
 //! 「整幅解码到 1600 再减半」）：
 //!
-//! | 变异 | 草图 | 全量 | 比值 | 300ms 那条 | 比值那条 |
-//! |------|-----:|-----:|-----:|-----------|---------|
-//! | 断掉半尺寸分支 | 292.9 | 282.9 | 1.04 | **绿**（还没到 300） | **红** |
+//! | 变异 | `half_route` | 结构那条 | 300ms 那条 |
+//! |------|--------------|---------|-----------|
+//! | 断掉半尺寸分支 | `Some(false)` | **红**（两种档位） | 绿（292.9ms，还没到 300） |
 //!
-//! 这正是加相对判据的理由：改前代码在这台机上的绝对值本来就在 286–350ms 之间漂，
-//! 300ms 的上限一个人挡不住退化。
+//! 这正是主闸不用时间的理由：改前代码在这台机上的绝对值本来就在 286–350ms 之间漂，
+//! 300ms 的上限一个人挡不住退化；而 `half_route` 只需看事实，快路一断必红。
+//!
+//! ## 这两条判据共用一份全局缓存，必须串行
+//!
+//! `PREVIEW_SRC` 是进程级单例，`cargo test` 默认并行：另一条判据的
+//! `clear_preview_caches_for_bench()` 会在本判据渲染完之后把槽抹掉。2026-11-04 就因此
+//! 读到 `half_route = None`，同一轮草图那行的「其余」还虚高到 233ms（等锁）。所以两条
+//! 判据各自先拿文件内的 `SERIAL` 锁再开跑。
 //!
 //! # 第二条：草图路径不许改到全量预览的像素
 //!
@@ -111,22 +124,6 @@ use aevum_ui::{preview_checksum, preview_first_screen_rows};
 ///
 /// End-to-end first-screen ceiling in milliseconds.
 const BUDGET_MS: f64 = 300.0;
-
-/// 草图相对全量最多只能花这么点（同一台机、同一次运行里量）。
-///
-/// 上限本身挡不住退化：本机同一段改前代码在不同时刻量到 286.6–349.5ms（机器状态与
-/// 内存压力的差别就有这么大），300ms 的绝对值会时红时绿。所以再加一条**相对的**：
-/// 草图既然按 800 边解，就**必须**比全量便宜——退化回「整幅解码再减半」时两者相等，
-/// 比值约 1.0，这条立刻红。本机实测改后 224.8/293.3 = 0.77，阈值 0.90 两边都留着
-/// 一成以上的余量。
-///
-/// The absolute ceiling cannot catch the regression on its own: the same pre-change code
-/// measured 286.6-349.5ms at different moments on this machine, so a 300ms gate flips colour
-/// with machine state. Hence a **relative** check: a sketch decoded at 800 must be cheaper
-/// than the full preview; falling back to "decode fully, then halve" makes the two equal
-/// (ratio ~1.0) and turns this red immediately. Measured 224.8/293.3 = 0.77 here, so 0.90
-/// leaves more than ten percent of headroom on both sides.
-const SKETCH_VS_FULL_RATIO: f64 = 0.90;
 
 /// 24MP RAW 样本：本机 `samples/cameras/` 里那张 6000×4000 的 RW2。
 ///
@@ -178,11 +175,31 @@ fn temp_dir(tag: &str) -> PathBuf {
     dir
 }
 
+/// 两条判据共用同一份全局预览缓存（`PREVIEW_SRC`），并行跑会互相清缓存、把对方的数字
+/// 和槽状态搅乱——2026-11-04 就因此读到 `half_route = None`，同一轮草图那行的「其余」
+/// 还虚高到 233ms。`cargo test` 默认并行，所以这里用一把文件内的锁把它们串起来。
+///
+/// The two fences share the process-wide preview cache. Run in parallel they clear each
+/// other's slots mid-measurement: on 2026-11-04 that read back as `half_route = None` and
+/// inflated the sketch row's "rest" to 233ms. `cargo test` runs tests in parallel, so a
+/// file-local lock serialises them.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 拿串行锁；被 poison 也要接着跑（判据自己会给出结论）。
+///
+/// Take the serial lock, ignoring poisoning: the fence below decides the outcome.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// 首屏预算：24MP RAW 清缓存后草图首次 ≤300ms。
 ///
 /// First-screen budget: a 24MP RAW's cold sketch must come in at or under 300ms.
 #[test]
 fn preview_sketch_first_screen_within_budget() {
+    let _serial = serial();
     let rows = preview_first_screen_rows().expect("首屏基准跑不起来");
     if rows.is_empty() {
         println!("跳过：没有样张（samples/cameras/ 不入库）");
@@ -212,23 +229,38 @@ fn preview_sketch_first_screen_within_budget() {
         .find(|r| !r.sketch && r.file == RAW_SAMPLE)
         .unwrap_or_else(|| panic!("没有 {RAW_SAMPLE} 的全量行：\n{table}"));
 
-    // 相对判据**两种档位都判**：它不依赖机器快慢，是「草图有没有真的按小尺寸解」的
-    // 结构性事实。门槛跑 `cargo test`（dev 档）时，这条是这条判据在门槛里唯一会红的
-    // 闸——绝对值只在 release 下卡（见下）。
+    // 结构性判据**两种档位都判**：24MP RAW 的草图必须真的走了半尺寸快路。
     //
-    // The relative check runs in **both** profiles: it does not depend on machine speed, it
-    // is a structural fact about whether the sketch really decoded small. In the gate's dev
-    // run this is the only assertion here that can go red; the absolute budget is release
-    // only (below).
-    let ratio = sketch.median_ms / full.median_ms.max(f64::MIN_POSITIVE);
-    assert!(
-        ratio <= SKETCH_VS_FULL_RATIO,
-        "草图 {:.1}ms 是全量 {:.1}ms 的 {ratio:.2} 倍（上限 {SKETCH_VS_FULL_RATIO:.2}）——\
-         草图又在整幅解码。先看表：两行是**先后**量的（不是交错），机器抖一下就会\n\
-         「草图尖、全量静」，重跑一次再判定，别照着数字改代码：\n{table}",
-        sketch.median_ms,
-        full.median_ms
+    // 这条不看时间。时间和比值都不稳：同一段改前代码在本机量到 286–350ms（绝对值在
+    // 300 上下漂），而「草图 / 全量」的比值又不普遍成立——全量那行的成本取决于机器
+    // 内存压力（见过 282.9 也见过 577），兜底草图在某些机器上仍只有全量的 0.48，
+    // 比值闸在那里等于没有（QA 实测）。`half_route` 是解码器回报的**事实**：快路
+    // 短路了就是 `Some(false)`，红得干脆，与机器无关。
+    //
+    // The structural check runs in **both** profiles: a 24MP RAW sketch must really have
+    // taken the half-size route. It looks at no timing at all. Timings and ratios are both
+    // unstable -- the same pre-change code measured 286-350ms here (the 300ms line drifts),
+    // and the sketch/full ratio does not hold in general because the full row's cost depends
+    // on memory pressure (282.9 and 577 both observed); a fallback sketch can still be 0.48 of
+    // the full row on some machines, which makes a ratio gate toothless there (QA measured
+    // exactly that). `half_route` is what the decoder reports: short-circuit the fast route
+    // and it is `Some(false)` -- a clean red, machine independent.
+    assert_eq!(
+        sketch.half_route,
+        Some(true),
+        "24MP RAW 的草图没有走半尺寸快路（{:?}）——它又退回「整幅解码再 2×2 减半」了：\n{table}",
+        sketch.half_route
     );
+    // 全量那行不该带这个标记（它不适用）。
+    //
+    // The full row must not carry the flag at all.
+    assert_eq!(full.half_route, None, "全量行不该报草图的路由：\n{table}");
+
+    // 比值只打印，不判：它是给人看趋势的（本机 0.55–0.76），不是闸。
+    //
+    // The ratio is printed, never asserted: a trend for humans (0.55-0.76 here), not a gate.
+    let ratio = sketch.median_ms / full.median_ms.max(f64::MIN_POSITIVE);
+    println!("草图/全量 = {ratio:.2}（只作参考：全量那行受内存压力影响，别拿它当判据）");
 
     // 绝对值只在 release 下卡：它量的是 24MP 数据的解包与重采样，dev 档（opt-level 1）
     // 的同一段代码比 release 慢 1.2 倍上下、慢机器上更多，在 dev 卡 300ms 会把「机器
@@ -258,6 +290,7 @@ fn preview_sketch_first_screen_within_budget() {
 /// The sketch path must not change the full preview output.
 #[test]
 fn sketch_path_does_not_change_the_full_preview() {
+    let _serial = serial();
     let dir = temp_dir("golden");
     let synth = dir.join("frame.png");
     let mut img = image::RgbImage::new(120, 80);

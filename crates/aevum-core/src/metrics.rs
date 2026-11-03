@@ -760,10 +760,41 @@ pub fn decode_profile_preview(
     Ok((resized.into_raw(), nw as usize, nh as usize))
 }
 
-/// 草图解码的回包：（像素、宽、高、全量预览边长）。
+/// 草图解码的结果。
 ///
-/// The sketch decode's reply: (pixels, width, height, full-preview side lengths).
-pub type SketchSource = (Vec<f32>, usize, usize, (usize, usize));
+/// `half` 是**这条回包走的是哪条路**的事实，不是估算：`true` = 传感器半尺寸直解
+/// （rawler 后端把 2×2 单元估计直接交出来），`false` = 退回「整幅解码再 2×2 均值减半」。
+/// 首屏判据断言的就是它——比时间和比值都可靠，因为它不受机器快慢影响。
+///
+/// The result of a sketch decode.
+///
+/// `half` is the **fact** of which route produced these pixels, not an estimate: `true` means
+/// the sensor was decoded at half size (the rawler backend hands out the 2x2 cell estimates),
+/// `false` means the fallback "decode fully, then 2x2 mean". The first-screen fence asserts
+/// this flag -- it is more reliable than both the wall clock and the ratio, because it does
+/// not depend on machine speed.
+pub struct SketchSource {
+    /// sRGB f32 `[0,1]`，已缩到 `sketch_side`。
+    ///
+    /// sRGB f32 `[0,1]`, already scaled to `sketch_side`.
+    pub rgb: Vec<f32>,
+    /// 宽（像素，缩过之后）。
+    ///
+    /// Width after scaling.
+    pub w: usize,
+    /// 高（像素，缩过之后）。
+    ///
+    /// Height after scaling.
+    pub h: usize,
+    /// 全量预览的边长（画布逻辑尺寸靠它）。
+    ///
+    /// Side lengths of the full preview (the canvas logical size comes from it).
+    pub full: (usize, usize),
+    /// 是否走了半尺寸快路。
+    ///
+    /// Whether the half-size fast route was taken.
+    pub half: bool,
+}
 
 /// 草图解码：按「目标长边 + 半尺寸」解一张小图，并报出全量预览的边长。
 ///
@@ -814,11 +845,23 @@ pub fn decode_preview_sketch(
         let small = fit_long_side(&img.to_rgb8(), sketch_side);
         let (w, h) = (small.width() as usize, small.height() as usize);
         let pixels = small.as_raw().iter().map(|v| *v as f32 / 255.0).collect();
-        return Ok((pixels, w, h, full));
+        return Ok(SketchSource {
+            rgb: pixels,
+            w,
+            h,
+            full,
+            half: true,
+        });
     }
     let (pixels, fw, fh) = decode_profile_preview(path, profile, full_side)?;
-    let (half, hw, hh) = halve_2x2(&pixels, fw, fh);
-    Ok((half, hw, hh, (fw, fh)))
+    let (rgb, w, h) = halve_2x2(&pixels, fw, fh);
+    Ok(SketchSource {
+        rgb,
+        w,
+        h,
+        full: (fw, fh),
+        half: false,
+    })
 }
 
 /// [`fit_long_side`] 的尺寸算法（不出像素），供草图算全量预览的逻辑尺寸。
