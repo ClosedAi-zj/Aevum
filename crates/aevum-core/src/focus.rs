@@ -259,10 +259,12 @@ pub(crate) fn measure_plane(frame: &[f32], w: usize, h: usize, radius: usize) ->
 /// - `t = 0`（默认，也就是「这一格有没有任何纹理」）时**逐像素严格等价**：
 ///   `max_f box(ml_f) > 0` ⟺ `∃f ∃q∈窗口(p): ml_f[q] > 0` ⟺ `box(max_f ml_f) > 0`，
 ///   因为 `ml >= 0`。所以 `t = 0` 的成片与改前**逐点相同**（有判据钉着）。
-/// - `t > 0` 时分位线落在两个**不同但单调相近**的分布上：一个是「每帧各自盒平均后
-///   取最大值」，一个是「先取最大值再盒平均」。二者在纹理尺度远大于窗口时几乎相同，
-///   在单像素孤立纹理上会有微小差异。输出因此有 ~1e-7 量级的漂移，实测值见
-///   `pyramid.rs` 模块头。
+/// - `t > 0` 时分位线落在两个**不同**的分布上：一个是「每帧各自盒平均后取最大值」，
+///   一个是「先取最大值再盒平均」。二者**不等价**：`box(max ml)` 与 `max(box ml)`
+///   不可交换——纹理尺度与窗口（radius）可比时差异可观（第四轮回归实测：块状纹理
+///   夹具 threshold = 25 下 65% 像素不同、max|Δ| = 0.23，见 `pyramid.rs` 模块头），
+///   纹理远细于窗口时趋近零。`t = 0` 的严格等价主张有夹具实测背书（49152/49152
+///   像素 max|Δ| = 0）。
 ///
 /// Peak measure across frames: the per-frame modified Laplacian maxima, box-averaged once.
 ///
@@ -273,12 +275,14 @@ pub(crate) fn measure_plane(frame: &[f32], w: usize, h: usize, radius: usize) ->
 /// - At `t = 0` (the default, meaning "does anything here have texture at all") they are
 ///   **strictly equivalent per pixel**: `max_f box(ml_f) > 0` iff `exists f, q in window(p)`
 ///   with `ml_f[q] > 0` iff `box(max_f ml_f) > 0`, because `ml >= 0`. So the `t = 0` output is
-///   **point-for-point identical** to before (an assertion pins this).
-/// - At `t > 0` the cut lands on two **different but monotonically similar** distributions:
-///   "box each frame, then take the max" versus "take the max, then box". They agree almost
-///   exactly when texture is large compared with the window, and differ slightly on isolated
-///   single-pixel texture. The output therefore drifts by order 1e-7; measured in
-///   `pyramid.rs`'s module header.
+///   **point-for-point identical** to before (an assertion pins this; regression round 4
+///   measured 49152/49152 pixels, max|Δ| = 0 on the fixture).
+/// - At `t > 0` the cut lands on two **different** distributions:
+///   "box each frame, then take the max" versus "take the max, then box". These are **not**
+///   equivalent -- `box(max ml)` and `max(box ml)` do not commute: when the texture scale is
+///   comparable to the window the difference is material (regression round 4, block-texture
+///   fixture at threshold = 25: 65% of pixels differ, max|Δ| = 0.23; see `pyramid.rs`'s
+///   module header); for textures much finer than the window it tends to zero.
 pub(crate) fn measure_peak(frames: &[&[f32]], w: usize, h: usize, radius: usize) -> Vec<f32> {
     let n = w * h;
     let mut peak = vec![0.0f32; n];
@@ -1139,5 +1143,76 @@ mod tests {
             assert_eq!(Method::parse(m.key()), Some(m));
         }
         assert_eq!(Method::parse("nope"), None);
+    }
+
+    /// D1b（台账开放项收口）：`measure_peak` 的次序语义——先逐帧取逐像素最大、
+    /// 再一次盒平均（`box(max ml)`），**不是**「每帧各自盒平均后取最大」
+    /// （`max(box ml)`）。第四轮回归把盒平均半径变异为 0 后 P-C1…P-C6 仍全绿，
+    /// 说明窗口分支没有任何判据；这条把次序与半径分支都钉住。
+    ///
+    /// D1b (ledger open item): `measure_peak`'s order semantics -- take the per-pixel
+    /// max across frames first, then one box average (`box(max ml)`), **not** "box each
+    /// frame, then take the max" (`max(box ml)`). Regression round 4 mutated the box
+    /// radius to 0 and P-C1..P-C6 stayed green, so the window branch had no anchor;
+    /// this pins both the order and the radius branch.
+    #[test]
+    fn measure_peak_boxes_the_cross_frame_maximum_not_the_maximum_of_boxes() {
+        // 两帧各一个孤立亮斑，水平相邻：同在半径 2 的 5×5 窗口内、分属不同帧。
+        // 只有这种「相邻异帧」夹具能把 box(max) 与 max(box) 分开——box(max) 把
+        // 两个斑累进同一个窗，max(box) 各自摊开再择一。
+        //
+        // Two frames, one isolated bright pixel each, horizontally adjacent: both fall
+        // inside one radius-2 5x5 window yet belong to different frames. Only such a
+        // fixture separates box(max) from max(box) -- box(max) accumulates both spikes
+        // into the same window, max(box) spreads each and picks one.
+        let w = 9;
+        let h = 9;
+        let mut a = vec![0.25f32; w * h * 3]; // γ2.0 亮度 0.5 / luma 0.5
+        let mut b = a.clone();
+        let spike = |f: &mut Vec<f32>, x: usize, y: usize, v: f32| {
+            let p = (y * w + x) * 3;
+            f[p] = v;
+            f[p + 1] = v;
+            f[p + 2] = v;
+        };
+        spike(&mut a, 4, 4, 0.81); // 亮度 0.9 / luma 0.9
+        spike(&mut b, 5, 4, 0.81);
+
+        let frames = [a.as_slice(), b.as_slice()];
+        // 半径 0：就是逐帧 ML 的逐像素最大，一个值都不能动。
+        //
+        // Radius 0: exactly the per-pixel max of the per-frame MLs, untouched.
+        let peak0 = measure_peak(&frames, w, h, 0);
+        let ml_a = modified_laplacian(&a, w, h);
+        let ml_b = modified_laplacian(&b, w, h);
+        for i in 0..w * h {
+            assert_eq!(peak0[i], ml_a[i].max(ml_b[i]), "pixel {i}");
+        }
+        // 半径 2：等于对「跨帧最大面」做一次盒平均——次序钉死。
+        //
+        // Radius 2: one box average over the cross-frame max plane -- order pinned.
+        let peak2 = measure_peak(&frames, w, h, 2);
+        let boxed_max = box_average(&peak0, w, h, 2);
+        for i in 0..w * h {
+            assert_eq!(peak2[i], boxed_max[i], "pixel {i}");
+        }
+        // 反序在同一点上给出不同的值：box(max) 累加两帧的斑，max(box) 择一。
+        //
+        // The reversed order gives a different value at the same pixel: box(max)
+        // accumulates both frames' spikes, max(box) picks one.
+        let box_a = box_average(&ml_a, w, h, 2);
+        let box_b = box_average(&ml_b, w, h, 2);
+        let p = 4 * w + 4;
+        assert!(
+            (peak2[p] - box_a[p].max(box_b[p])).abs() > 1e-6,
+            "box(max) 与 max(box) 在该夹具上应当可分：{} vs {}",
+            peak2[p],
+            box_a[p].max(box_b[p])
+        );
+        // 半径 >0 真的在平均：与半径 0 的面在斑点上严格不同（窗口分支活着）。
+        //
+        // Radius > 0 really averages: strictly different from the radius-0 plane at
+        // the spike (the window branch is alive).
+        assert!(peak2[p] != peak0[p]);
     }
 }

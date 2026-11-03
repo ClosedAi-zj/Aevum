@@ -1164,20 +1164,34 @@ fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
                     .map(|c| (c.x as usize, c.y as usize, c.w as usize, c.h as usize)),
             };
             let mut warped: Vec<Vec<f32>> = Vec::with_capacity(buffers.len());
+            let mut out_dims = (0usize, 0usize);
             for (i, buf) in buffers.iter().enumerate() {
                 let field = report.blocks.get(i).map(Vec::as_slice).unwrap_or(&[]);
+                // w/h 必须全程是**原帧**尺寸：窗口（auto_crop 的裁切）比整幅小，
+                // 若在循环里把 w/h 改成第 0 帧的输出尺寸，第 1 帧起就拿裁切后的
+                // 尺寸去解释整幅缓冲，几何整个错掉、尺寸对不上。输出尺寸在循环外
+                // 统一取（UI 侧同一条编排的写法，见 state.rs 的 merge job）。
+                //
+                // w/h must stay the **source-frame** size throughout: the window (auto_crop's
+                // rectangle) is smaller than the frame, and rewriting w/h to frame 0's output
+                // size inside the loop would make every later frame interpret a full-size
+                // buffer at cropped dimensions -- geometry scrambled, sizes inconsistent.
+                // Output size is taken once, after the loop (the same orchestration the UI
+                // side runs; see the merge job in state.rs).
                 let (out, nw, nh) =
                     aevum_core::focus_align::warp_by_block_field(buf, w, h, field, window);
                 if nw == 0 || nh == 0 {
                     return Err("自动对齐的裁切窗口是空的：检查对齐位移是否异常".to_owned());
                 }
                 if i == 0 {
-                    w = nw;
-                    h = nh;
+                    out_dims = (nw, nh);
                 }
                 warped.push(out);
             }
             buffers = warped;
+            // 从这里起 w/h 是成片尺寸（所有帧的窗口一致，尺寸必然相同）。
+            w = out_dims.0;
+            h = out_dims.1;
         }
     }
     let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();

@@ -18647,7 +18647,8 @@ mod focus_align_wiring_tests {
         // No key containing "reason" may appear in the result JSON: Chinese template keys
         // are never emitted (MCP and scripts have no i18n funnel), and the report's reason
         // field is gone entirely. Scanning for the substring "reason" rather than one hard
-        // coded key stops a field that merely renames itself (`note`, `why`) from slipping by.
+        // coded key stops any renamed comeback (`note`, `why`, ...) of a field that was
+        // removed outright from slipping back in.
         let stray = result_off
             .as_object()
             .expect("结果 JSON 是对象")

@@ -1144,7 +1144,8 @@ fn focus_merge_recovers_each_band_from_the_frame_that_holds_its_texture() {
     // 叫那个名字的字段，换个名字（`note`、`why`）就绕过去了。
     //
     // No key containing "reason" may appear in the result. Scanning for the substring rather
-    // than one hard coded key stops a field that merely renames itself from slipping by.
+    // than one hard coded key stops any renamed comeback (`note`, `why`, ...) of a field
+    // that was removed outright from slipping back in.
     let stray = merged
         .as_object()
         .expect("结果 JSON 是对象")
@@ -1432,4 +1433,158 @@ fn every_name_the_agent_sends_is_clipped_in_the_error_text() {
         head(&text)
     );
     assert_bounded(&text, true);
+}
+
+/// blocks 端到端（台账开放项收口）：`align: true` 时调用侧必须把 core 估出的
+/// **逐块**位移场原样交给 warp。
+///
+/// 夹具的位移必须带全局分量：采纳决策（`gain_stats`）用**全局代表位移**算收益，
+/// 纯块内局部位移的全局增益为 0、按设计就会回退。所以 f1 = 全局平移 6px + 上半幅
+/// 再多 4px：全局分量让对齐被采纳，块内偏差让「全局平移」与「逐块场」的成片可分。
+/// 正确的逐块场把上半幅挪 10px、下半幅 6px，warp 后 f1 ≡ f0，融合成片 ≈ f0；
+/// 丢掉块场（不平移）或退回全局平移，都会留下某个半幅的残余错位，成片与 f0 的
+/// 逐像素差当场涨上去——红。条纹周期 16px：所有位移都落在同一个相关峰上，无歧义。
+///
+/// End-to-end for the block field (closing the ledger open item): with `align: true`
+/// the caller must hand core's **per-block** shift field to the warp unchanged.
+///
+/// The fixture's shift must carry a global component: the adoption decision
+/// (`gain_stats`) is computed with the **global representative shift**, so a purely
+/// block-local shift has zero global gain and reverts by design. f1 therefore equals a
+/// global 6 px shift plus 4 px extra on the top half: the global part gets the
+/// alignment adopted, the block-local part is what separates "global translation" from
+/// "per-block field" in the output. A correct per-block field moves the top blocks 10 px
+/// and the bottom 6 px, so the warped f1 equals f0 and the fusion tracks f0; dropping
+/// the field (identity) or falling back to a global translation leaves residual
+/// misalignment in one half and the pixel difference against f0 jumps -- red. Stripe
+/// period 16 px keeps every shift on the same correlation peak, unambiguously.
+#[test]
+fn focus_merge_alignment_warps_by_the_estimated_block_field_not_a_global_translation() {
+    let temp = TempDir::new("focus-blocks");
+    let seq_dir = temp.path().join("frames");
+    // 确定性白噪声：hash 取高位字节。宽频谱让相位相关只有一个峰，错位的两帧
+    // 加权平均直接摊成平场、测度归零——增益统计对这种纹理最敏感。
+    //
+    // Deterministic white noise: high byte of an integer hash. The broadband spectrum
+    // gives phase correlation a single peak, and averaging misaligned copies flattens
+    // the measure to zero -- the gain statistic is most sensitive on this texture.
+    let noise = |x: u32, y: u32| -> u8 {
+        let h = x.wrapping_mul(73_856_093) ^ y.wrapping_mul(83_492_791);
+        (h >> 24) as u8
+    };
+    std::fs::create_dir_all(&seq_dir).expect("建序列目录");
+    // f0：原始噪声。f1：全局平移 6px，上半幅再多 2px（合计 8px）。
+    for (name, top_shift, bottom_shift) in [("f00.png", 0u32, 0u32), ("f01.png", 8u32, 6u32)] {
+        let img = image::RgbImage::from_fn(512, 384, |x, y| {
+            // 位移场在 1/2 luma 代理上估：512×384 源图 → 256×192 代理 → 块
+            // 32×32 代理像素；上半幅 192 行 = 3 个整块行，48 个块全部有效。
+            //
+            // The shift field is estimated on the 1/2-luma proxy: a 512x384 source gives
+            // a 256x192 proxy and 32x32-px blocks; the top 192 rows are three whole block
+            // rows and all 48 blocks are valid.
+            let v = if y < 192 {
+                noise(x + top_shift, y)
+            } else {
+                noise(x + bottom_shift, y)
+            };
+            image::Rgb([v, v, v])
+        });
+        img.save(seq_dir.join(name)).expect("写帧");
+    }
+    let mut server = Server::start();
+    server.request(
+        "initialize",
+        json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
+    );
+    server.notify("notifications/initialized");
+    ok_json(&server.call(
+        "aevum_open_sequence",
+        json!({"root": seq_dir.display().to_string()}),
+    ));
+
+    let out_dir = temp.path().join("out");
+    let merged = ok_json(&server.call(
+        "aevum_focus_merge",
+        json!({
+            "frames": [0, 1],
+            // 必须用 weighted：depthmap 是逐像素硬选帧，两帧都锐时选谁测度都满格，
+            // 对相位错乱不敏感，增益恒为 0 → 永远回退。加权平均才会把错位当成
+            // 「互相抵消」降测度，对齐的收益才显现。
+            //
+            // Must be weighted: depthmap hard-picks a frame per pixel, and when both
+            // frames are sharp its measure is full either way -- it is insensitive to
+            // phase scrambling, so the gain stays 0 and it always reverts. Weighted
+            // averaging treats misalignment as mutual cancellation, which is what makes
+            // the alignment gain visible.
+            "method": "weighted",
+            "out_dir": out_dir.display().to_string(),
+            "format": "png8",
+            "align": true,
+            "confirm": true
+        }),
+    ));
+    // 对齐必须真被采纳：夹具把半幅的相位反转了，对齐收益远高于 GAIN_MIN。
+    //
+    // The alignment must actually be adopted: inverting half the frame's phase gives a
+    // gain far above GAIN_MIN.
+    assert_eq!(
+        merged.get("align_status").and_then(|v| v.as_str()),
+        Some("adopted"),
+        "{merged}"
+    );
+    let gain = merged
+        .get("align_gain")
+        .and_then(|v| v.as_f64())
+        .expect("align_gain");
+    assert!(gain > 0.0, "采纳时增益必须为正：{merged}");
+
+    let path = merged["path"].as_str().expect("成片路径");
+    let (rgb, w, h) = aevum_core::export::load_rgb_f32(Path::new(path)).expect("读回成片");
+    let (w, h) = (w as usize, h as usize);
+    assert_eq!(
+        (w, h),
+        (
+            merged["width"].as_u64().expect("width") as usize,
+            merged["height"].as_u64().expect("height") as usize
+        )
+    );
+    let (f0, fw, fh) = aevum_core::export::load_rgb_f32(&seq_dir.join("f00.png")).expect("读 f0");
+    assert_eq!((fw, fh), (512, 384));
+
+    // 公共窗口的落点由位移决定（上半幅 −4px），不写死：在 0..=8 里找让**两半幅同时**
+    // 最贴 f0 的横向偏移，再用这个偏移做逐像素比较。全局平移或丢块场的变异没有
+    // 任何一个偏移能让两半幅同时贴上 f0——这就是红与绿的分界。
+    //
+    // The common window's offset follows the shifts (-4 px on the top half) and is not
+    // hard coded: scan 0..=8 for the horizontal offset that brings **both halves** closest
+    // to f0 at once, then compare pixel-wise under that offset. Neither the dropped-field
+    // nor the global-translation mutation has any single offset that aligns both halves
+    // simultaneously -- that is the green/red line.
+    let mean_abs_diff = |ox: usize| -> f32 {
+        // 避开裁切边与块接缝羽化带：行取 8..184 与 200..376，列取 8..w-8。
+        let mut acc = 0.0f64;
+        let mut cnt = 0u64;
+        for y in 0..h {
+            if !((8..184).contains(&y) || (200..376).contains(&y)) {
+                continue;
+            }
+            for x in 8..w.saturating_sub(8) {
+                let o = (y * w + x) * 3;
+                let r = (y * 512 + x + ox) * 3;
+                for c in 0..3 {
+                    acc += f64::from((rgb[o + c] - f0[r + c]).abs());
+                    cnt += 1;
+                }
+            }
+        }
+        (acc / cnt as f64) as f32
+    };
+    let (best_ox, best) = (0..=16usize)
+        .map(|ox| (ox, mean_abs_diff(ox)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("非空");
+    assert!(
+        best < 0.05,
+        "成片两半幅必须同时贴回 f0（best_ox={best_ox}, mean|Δ|={best}）：块场被丢或退回全局平移都会红"
+    );
 }
