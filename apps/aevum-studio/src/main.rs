@@ -59,6 +59,7 @@ fn main() -> ExitCode {
     let mut shot: Option<PathBuf> = None;
     let mut module: Option<Module> = None;
     let mut selftest = false;
+    let mut bench_ui = false;
     let mut demo_edit = false;
     let mut shot_queue = false;
     let mut shot_end = false;
@@ -85,6 +86,7 @@ fn main() -> ExitCode {
         let text = arg.to_string_lossy().to_string();
         match text.as_str() {
             "--selftest" => selftest = true,
+            "--bench-ui" => bench_ui = true,
             "--demo" => demo = true,
             "--demo-edit" => demo_edit = true,
             "--shot-queue" => shot_queue = true,
@@ -154,6 +156,19 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+    }
+
+    if bench_ui {
+        return match aevum_ui::bench_ui() {
+            Ok(msg) => {
+                say!("{msg}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                warn!("bench 失败：{e}");
+                ExitCode::FAILURE
+            }
+        };
     }
 
     if selftest {
@@ -261,6 +276,7 @@ fn print_help() {
     );
     say!("  --module <模块>   截图时停在指定模块：序列/去闪/显影/构图/成片/声音");
     say!("  --selftest        无显示器跑一遍布局自检");
+    say!("  --bench-ui        无显示器跑帧时基准（面板切换 / 滑块拖动，打印中位与 p95）");
     say!("  --mcp             以 MCP stdio server 无头运行，供 agent 调用");
     say!("  --mcp --attach <control.json>");
     say!("                    附着到正在运行的 GUI，把工具调用转给窗口（界面实时更新）");

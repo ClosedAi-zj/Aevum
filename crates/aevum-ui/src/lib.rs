@@ -11,6 +11,7 @@
 pub mod app;
 #[cfg(test)]
 mod bench;
+pub mod bench_ui;
 #[cfg(test)]
 mod cache_tests;
 pub mod control;
@@ -29,6 +30,7 @@ pub mod theme;
 pub mod widgets;
 
 pub use app::{AevumApp, Startup};
+pub use bench_ui::{BenchRow, bench_ui, bench_ui_rows};
 pub use control::ControlServer;
 pub use state::AppState;
 
