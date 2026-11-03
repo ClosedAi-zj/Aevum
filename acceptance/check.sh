@@ -45,7 +45,7 @@ python "$ROOT/tools/doc_lint.py"
 # gates stayed green because the latency criterion only measures wall clock and the disabled
 # path still fit the budget. The criterion is now structural, but "a mutation got committed"
 # still deserves a zero-cost gate. Lines with a `/` before the match are treated as comments.
-residue="$(git grep -nE '^[^/]*[^/](if false[ &{]|dbg!\(|todo!\(|unimplemented!\()' -- '*.rs' || true)"
+residue="$(git grep -nE '^[^/]*[^/](if \(?false\)?[ &{]|dbg!\(|todo!\(|unimplemented!\()' -- '*.rs' || true)"
 if [ -n "$residue" ]; then
     # 别在双引号里写反引号：`` `if false` `` 会被 shell 当命令执行（这条自己踩过一次）。
     echo '✗ 代码里还有变异/调试残留（if false / dbg! / todo!() / unimplemented!()）：'
