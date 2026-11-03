@@ -15,6 +15,35 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.5.1 — 2026-11-03
+
+Patch release: fixes a bug in v1.5.0 that made headless focus fusion fail outright.
+
+### `aevum_focus_merge`: adopting auto-alignment no longer reports "frame size mismatch"
+
+In v1.5.0, headless `focus_merge` under the combination of `align: true` + adopted
+alignment + no manual crop rewrote w/h to frame 0's **output** size inside the warp loop
+and used it for the following frames: the output geometry was scrambled end to end and the
+call failed outright with "the frames in the focus stack differ in size" -- headless focus
+fusion was unusable under that combination (it fails loudly rather than silently producing
+a bad image). The warp now keeps the source-frame size throughout and takes the output size
+once after the loop, matching how the GUI side's identical orchestration was already
+written. Affected combination: headless / MCP + `align: true` + multiple frames + no manual
+crop; `align: false`, single-frame, and manual-crop paths are unaffected; the GUI path was
+always correct.
+
+Assertions: a new MCP end-to-end test pins "the adopted output tracks the reference frame"
+-- this bug was its first catch; the negative mutations (reinstating the old loop / dropping
+the block field / one uniform chain for every frame) all go true red. The same batch adds the
+pyramid measure's window-semantics anchor, closing the ledger's block-field end-to-end and D1b
+open items.
+
+### Compatibility
+
+- Project files, presets and parameters, command-line arguments, MCP tool set: identical to
+  1.5.0; only the headless warp's geometric correctness changes, nothing added or removed.
+- Upgrading from 1.5.0: replace the executable; no migration step.
+
 ## v1.5.0 — 2026-11-03
 
 Feature release: focus-stacking batch two -- the **pyramid method** and
