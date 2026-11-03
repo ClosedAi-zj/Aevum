@@ -452,9 +452,15 @@ pub const GUARD_DIR: &str = crate::brand::GUARD_DIR;
 
 /// 更早的护带目录名，**从新到旧**。`.lumen` 是 2026-10 之前，`.lapse` 更早。
 ///
+/// 长度不写死：`brand::LEGACY_GUARD_DIRS` 增删旧名时这里自动跟上，
+/// 改名脚本（`tools/rename_brand.py`）推进 LEGACY 数组也不会打破这行再导出。
+///
 /// Earlier guard directory names, **newest first**. `.lumen` was used before 2026-10, and
-/// `.lapse` is older.
-pub const LEGACY_GUARD_DIRS: [&str; 2] = crate::brand::LEGACY_GUARD_DIRS;
+/// `.lapse` is older. The length is not hardcoded: adding or removing a legacy name in
+/// `brand::LEGACY_GUARD_DIRS` keeps this re-export in sync automatically (which also keeps
+/// the rename script, `tools/rename_brand.py`, from breaking it when it grows the array).
+pub const LEGACY_GUARD_DIRS: [&str; crate::brand::LEGACY_GUARD_DIRS.len()] =
+    crate::brand::LEGACY_GUARD_DIRS;
 
 /// 判定过的护带目录：进程内每个目录只探一次（探针是真建真删文件），
 /// 也只喊一次。`guard_dir` 挂在 UI 渲染路径上，每帧会被 `project_path()` 调好几次，

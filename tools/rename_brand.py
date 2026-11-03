@@ -164,6 +164,27 @@ def generic_replacements(old, new):
     ]
 
 
+def legacy_reexport_lengths(brand_text):
+    """从 brand.rs 抽出每个 LEGACY_* 数组的实际长度，用于归一化别处的再导出。
+
+    再导出形如 `pub const X: [&str; N] = crate::brand::X;`——N 是硬编码的。
+    grow_array 把数组变长后 N 就对不上（E0308）。首选修复是源码里不写死长度
+    （`[&str; crate::brand::X.len()]`），这里是兜底：按新 brand.rs 的实际长度归一。
+    """
+    return {name: int(n) for name, n in
+            re.findall(r'pub const (LEGACY_\w+): \[&str; (\d+)\] = \[', brand_text)}
+
+
+def fix_legacy_reexports(text, lengths):
+    """把硬编码长度的 LEGACY_* 再导出改成新 brand.rs 的实际长度；返回 (文本, 改了几处)。"""
+    n_total = 0
+    for name, n in lengths.items():
+        pat = re.compile(r'(: \[&str; )\d+(\] = (?:crate::)?brand::%s;)' % name)
+        text, k = pat.subn(r'\g<1>%d\g<2>' % n, text)
+        n_total += k
+    return text, n_total
+
+
 def main():
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("--en", required=True, help='新英文展示名，如 "Zephyr Studio"')
@@ -201,6 +222,17 @@ def main():
         assert "⟦" not in str(v), k
 
     files = list(tracked_text_files())
+    # brand.rs 的新文本先算出来（纯字符串操作，此处不写盘）：
+    # ① 取 LEGACY 数组改写后的实际长度，供再导出归一化用；② 供后面一步写盘。
+    brand_new = rewrite_brand(brand_src, old, new)
+    for a, b in repl:
+        brand_new = brand_new.replace(a, b)
+    brand_new = (brand_new.replace("⟦OLD_APP⟧", old["APP_DIR"])
+                 .replace("⟦OLD_GUARD⟧", old["GUARD_DIR"])
+                 .replace("⟦OLD_ENV⟧", old["ENV_PREFIX"])
+                 .replace("⟦OLD_TOOL⟧", old["TOOL_PREFIX"]))
+    legacy_lengths = legacy_reexport_lengths(brand_new)
+
     plan = {}   # path -> (替换总次数)
     total = 0
     for p in files:
@@ -211,6 +243,8 @@ def main():
         for a, b in repl:
             n += text.count(a)
             text = text.replace(a, b)
+        text, k = fix_legacy_reexports(text, legacy_lengths)
+        n += k
         if n:
             plan[p] = n
             total += n
@@ -239,15 +273,8 @@ def main():
         return
 
     # ---- 真写 ----
-    # 1) brand.rs：专门改写 → 通用替换（占位符免疫）→ 还原占位符
-    s = rewrite_brand(brand_src, old, new)
-    for a, b in repl:
-        s = s.replace(a, b)
-    s = (s.replace("⟦OLD_APP⟧", old["APP_DIR"])
-          .replace("⟦OLD_GUARD⟧", old["GUARD_DIR"])
-          .replace("⟦OLD_ENV⟧", old["ENV_PREFIX"])
-          .replace("⟦OLD_TOOL⟧", old["TOOL_PREFIX"]))
-    BRAND.write_text(s, encoding="utf-8")
+    # 1) brand.rs：新文本在上面已经算好（rewrite_brand → 通用替换 → 还原占位符）
+    BRAND.write_text(brand_new, encoding="utf-8")
     print("brand.rs 已重写")
 
     # 2) 其余文本
@@ -255,6 +282,7 @@ def main():
         text = p.read_text(encoding="utf-8")
         for a, b in repl:
             text = text.replace(a, b)
+        text, _ = fix_legacy_reexports(text, legacy_lengths)
         p.write_text(text, encoding="utf-8")
     print(f"{len(plan)} 个文本文件已替换")
 
