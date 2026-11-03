@@ -282,6 +282,16 @@ pub(crate) fn measure_plane(frame: &[f32], w: usize, h: usize, radius: usize) ->
 ///   comparable to the window the difference is material (regression round 4, block-texture
 ///   fixture at threshold = 25: 65% of pixels differ, max|Δ| = 0.23; see `pyramid.rs`'s
 ///   module header); for textures much finer than the window it tends to zero.
+///
+/// 金字塔多线程轮（2026-11-03）后 Pass A 不再调它（测度链在 `pyramid.rs` 里本地
+/// 重实现、复用中间面），生产路径已无调用点；保留是因为 D1b 判据钉着它的次序
+/// 语义（见 tests），它是「先取最大再盒平均」的参照实现。
+///
+/// After the pyramid multithreading round (2026-11-03) Pass A no longer calls this (the
+/// measure chain is re-implemented locally in `pyramid.rs`, reusing intermediate planes);
+/// production has no caller. It is kept because the D1b test pins its order semantics --
+/// it is the reference implementation of "max first, box once".
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn measure_peak(frames: &[&[f32]], w: usize, h: usize, radius: usize) -> Vec<f32> {
     let n = w * h;
     let mut peak = vec![0.0f32; n];
@@ -400,6 +410,119 @@ pub(crate) fn box_average(ml: &[f32], w: usize, h: usize, radius: usize) -> Vec<
     out
 }
 
+/// 深度图的模值滤波：半径 `r` 的方窗里票数最多的帧号获胜，同票取**编号最小**者。
+///
+/// 旧版逐像素重扫整个窗口（窗口收缩、`counts` 清零、升序取舍），O(n·k²) 且全串行：
+/// `smooth_z=16` 时 24 MP×2 帧实测 +36 s，是滑杆能拖到的第二道悬崖。这里换成
+/// 「按列维护竖直窗口的直方图」：先给行带要用的那几行摊出 `col[x][帧号]`，行内再用
+/// 滑动列窗口增量进出，每个像素只碰 `O(count)` 个计数 → O(n·count)；行带之间互不相交，
+/// 直接按行并行。
+///
+/// 语义逐字照搬旧版：窗口同样是 `[x-r, x+r] × [y-r, y+r]` 夹边收缩，投票规则同样是
+/// 「最大票数」，并列同样是编号最小者（旧版以 `counts[own]` 起步、升序只换「严格更大」
+/// 或「相等但更小」，合起来正是「最大票数里的最小索引」）。计数全是整数，增量加减
+/// 与重扫窗口得出同一组计数，所以选择结果**逐点相同**，不依赖浮点结合顺序。
+///
+/// The depth map's mode filter: in the `r`-radius window the frame index with the most votes
+/// wins, ties go to the **lowest** index.
+///
+/// The old version rescanned the whole window per pixel (shrinking window, clearing `counts`,
+/// ascending pick), O(n·k^2) and fully serial: at `smooth_z=16` on 24 MP x 2 frames it cost
+/// +36 s, the second cliff the sliders can reach. This keeps a per-column histogram of the
+/// vertical window instead -- `col[x][frame]` is spread for the rows the band needs, then the
+/// horizontal window slides by adding/removing one column, so each pixel touches only
+/// `O(count)` counters: O(n·count). Bands are disjoint, so this parallelises by rows.
+///
+/// The semantics are copied literally from the old version: the same `[x-r, x+r] x [y-r, y+r]`
+/// window with clamped shrinking, the same "most votes" rule, the same lowest-index tie-break
+/// (the old code started from `counts[own]` and replaced only on "strictly greater" or
+/// "equal but smaller", which is exactly "smallest index among the maximal counts"). All
+/// counters are integers, so incremental add/subtract yields the same counts as a fresh scan
+/// and the selection is **point-for-point identical**, independent of float association.
+fn mode_filter(owner: &[u16], w: usize, h: usize, r: usize, count: usize) -> Vec<u16> {
+    let mut filtered = vec![0u16; w * h];
+    crate::par::for_bands(h, &mut filtered, w, |y0, y1, band| {
+        // 每个行带自带一份列直方图（列 x 在竖直窗口内的帧号计数），带内独享。
+        //
+        // Each band keeps its own per-column histogram (frame counts for column x inside the
+        // vertical window); nothing is shared between bands.
+        let mut col = vec![0u32; w * count];
+        let mut top = y0.saturating_sub(r);
+        let mut bottom = (y0 + r + 1).min(h);
+        for yy in top..bottom {
+            let row = &owner[yy * w..yy * w + w];
+            for (x, &o) in row.iter().enumerate() {
+                col[x * count + o as usize] += 1;
+            }
+        }
+        let mut tot = vec![0u32; count];
+        for y in y0..y1 {
+            // `tot` 始终是列区间 [left, right) 的票数合计。
+            //
+            // `tot` always holds the votes of the column interval [left, right).
+            tot.fill(0);
+            let mut left = 0usize;
+            let mut right = (r + 1).min(w);
+            for x in 0..right {
+                let base = x * count;
+                for (t, c) in tot.iter_mut().zip(&col[base..base + count]) {
+                    *t += *c;
+                }
+            }
+            for x in 0..w {
+                let mut best_c = tot[0];
+                let mut best_i = 0usize;
+                for (i, &c) in tot.iter().enumerate().skip(1) {
+                    if c > best_c {
+                        best_c = c;
+                        best_i = i;
+                    }
+                }
+                band[(y - y0) * w + x] = best_i as u16;
+                // 窗口右移一格：左出一列、右进一列。
+                //
+                // Slide right by one: a column leaves on the left, one enters on the right.
+                let next_left = (x + 1).saturating_sub(r);
+                let next_right = (x + 1 + r + 1).min(w);
+                while left < next_left {
+                    let base = left * count;
+                    for (t, c) in tot.iter_mut().zip(&col[base..base + count]) {
+                        *t -= *c;
+                    }
+                    left += 1;
+                }
+                while right < next_right {
+                    let base = right * count;
+                    for (t, c) in tot.iter_mut().zip(&col[base..base + count]) {
+                        *t += *c;
+                    }
+                    right += 1;
+                }
+            }
+            // 行下移一格：竖直窗口顶出一行、底进一行。
+            //
+            // Slide down by one: a row leaves the top, one enters the bottom.
+            let next_top = (y + 1).saturating_sub(r);
+            while top < next_top {
+                let base = top * w;
+                for x in 0..w {
+                    col[x * count + owner[base + x] as usize] -= 1;
+                }
+                top += 1;
+            }
+            let next_bottom = (y + 1 + r + 1).min(h);
+            while bottom < next_bottom {
+                let base = bottom * w;
+                for x in 0..w {
+                    col[x * count + owner[base + x] as usize] += 1;
+                }
+                bottom += 1;
+            }
+        }
+    });
+    filtered
+}
+
 /// 深度图：每像素测度最强的帧号；`threshold` 分位线以下的像素改判参考帧；
 /// 再做一轮模值滤波把孤立深度点并进周围多数派。
 ///
@@ -462,48 +585,30 @@ fn compute_owner_map(frames: &[&[f32]], w: usize, h: usize, options: &Options) -
             }
         }
     }
-    // 模值滤波：窗口里出现最多的帧号获胜（并列取中间那个，稳定）。
-    // 半径 0 跳过。O(n·k²)，默认半径 1（3×3）很便宜。
+    // 模值滤波：窗口里出现最多的帧号获胜（并列取编号最小者，稳定）。半径 0 跳过。
     //
-    // Mode filter: the most frequent frame index in the window wins (ties go to the middle
-    // value, deterministically). Radius 0 skips. O(n·k²); the default radius 1 (3x3) is cheap.
+    // Mode filter: the most frequent frame index in the window wins (ties go to the lowest
+    // index, deterministically). Radius 0 skips.
     if options.smooth_z > 0 {
-        let r = options.smooth_z;
-        let mut counts = vec![0u32; count];
-        let mut filtered = owner.clone();
-        for y in 0..h {
-            let top = y.saturating_sub(r);
-            let bottom = (y + r + 1).min(h);
-            for x in 0..w {
-                let left = x.saturating_sub(r);
-                let right = (x + r + 1).min(w);
-                for c in counts.iter_mut() {
-                    *c = 0;
-                }
-                for yy in top..bottom {
-                    for xx in left..right {
-                        counts[owner[yy * w + xx] as usize] += 1;
-                    }
-                }
-                let own = owner[y * w + x] as usize;
-                let mut best_c = counts[own];
-                let mut best_i = own;
-                for (i, c) in counts.iter().enumerate() {
-                    if *c > best_c || (*c == best_c && i < best_i) {
-                        best_c = *c;
-                        best_i = i;
-                    }
-                }
-                filtered[y * w + x] = best_i as u16;
-            }
-        }
-        owner = filtered;
+        owner = mode_filter(&owner, w, h, options.smooth_z, count);
     }
     owner
 }
 
-/// 一帧的 one-hot 选中掩膜做高斯模糊（σ = feather，边界夹边）。
+/// 第 `index` 帧的 one-hot 选中掩膜做高斯模糊（σ = feather，边界夹边），写进调用方的
+/// `out`；`tmp` 是横向卷积的临时面。两块缓冲都由调用方在帧间复用，掩膜本身**不能**
+/// 复用：`mask_i = blur(1[owner == i])` 按构造就依赖帧号，只有
+/// `Σ_i mask_i = blur(1) = 1` 这一条线性关系成立（见下面的注记）。
 /// feather < 0.5（含 NaN）时退回硬掩膜（零开销路径）。
+///
+/// 两趟卷积都按行带并行：横向每个像素只读自己那一行、纵向每个像素只读自己的列，
+/// 每个像素的核累加顺序（`ki` 升序、`d = ki - k`）与串行版逐字相同，所以**逐位不变**。
+/// `feather = 64` 时 24 MP×2 帧由 9.87 s 降到秒级以下；滑杆拖到 1024 也只是线性变慢。
+///
+/// 注记（为什么不「只算一次」）：三个方向的掩膜是互不相同的面，唯一的关系是
+/// `Σ_i mask_i = 1`（模糊是线性的、one-hot 在每像素上求和为 1）。理论上可以改算
+/// `out = blur(Σ_i 1[owner == i] · f_i)`——把 `count` 次单通道模糊换成 3 次单通道模糊，
+/// 再大两倍多的加速；但那是**另一个浮点结合顺序**，与逐位不变的硬约束冲突，所以没做。
 ///
 /// 两条护栏，`Options` 是 `pub` 的、库调用方真会踩：
 ///
@@ -513,9 +618,25 @@ fn compute_owner_map(frames: &[&[f32]], w: usize, h: usize, options: &Options) -
 /// * 早退判据写成 `feather.is_nan() || feather < 0.5`：NaN 与任何数比较恒
 ///   false，只写 `feather < 0.5` 会让 NaN 溜进卷积分支，除出全 NaN 掩膜。
 ///
-/// Gaussian-blur one frame's one-hot selection mask (σ = feather, clamped edges).
+/// Gaussian-blur frame `index`'s one-hot selection mask (σ = feather, clamped edges) into
+/// the caller's `out`; `tmp` is the horizontal-pass scratch plane. Both buffers are reused
+/// across frames by the caller, but the mask itself **cannot** be: `mask_i = blur(1[owner == i])`
+/// depends on the frame index by construction, and only the linear identity
+/// `Σ_i mask_i = blur(1) = 1` holds (see the note below).
 /// A feather below 0.5 (NaN included) degenerates to the hard mask (the zero-overhead
 /// path).
+///
+/// Both passes are parallelised by row bands: the horizontal one reads only its own row, the
+/// vertical one only its own column, and every pixel accumulates the kernel in the very same
+/// order as the serial version (`ki` ascending, `d = ki - k`), so the result is **bitwise
+/// unchanged**. At `feather = 64` on 24 MP x 2 frames this takes 9.87 s down to under a
+/// second; dragging the slider to 1024 only makes it slower linearly.
+///
+/// Note (why not "compute it once"): the per-frame masks are genuinely different planes; the
+/// only relation is `Σ_i mask_i = 1` (the blur is linear and the one-hots sum to 1 per
+/// pixel). One could instead compute `out = blur(Σ_i 1[owner == i] · f_i)` -- turning
+/// `count` single-channel blurs into 3 -- for another 2x+; that is a **different float
+/// association order**, at odds with the bitwise-invariance constraint, so it stays undone.
 ///
 /// Two guard rails, because `Options` is `pub` and library callers do hit them:
 ///
@@ -526,10 +647,25 @@ fn compute_owner_map(frames: &[&[f32]], w: usize, h: usize, options: &Options) -
 /// * the early-out is written `feather.is_nan() || feather < 0.5` rather than a bare
 ///   `feather < 0.5`: NaN compares false against everything, so the bare form let NaN
 ///   into the convolution branch and divided its way to an all-NaN mask.
-fn feather_mask(onehot: &[u8], w: usize, h: usize, feather: f32) -> Vec<f32> {
-    let n = w * h;
+fn feather_mask(
+    owner: &[u16],
+    index: u16,
+    w: usize,
+    h: usize,
+    feather: f32,
+    tmp: &mut [f32],
+    out: &mut [f32],
+) {
     if feather.is_nan() || feather < 0.5 {
-        return onehot.iter().map(|&v| v as f32).collect();
+        crate::par::for_bands(h, out, w, |y0, _y1, band| {
+            for (i, row) in band.chunks_mut(w).enumerate() {
+                let base = (y0 + i) * w;
+                for (x, cell) in row.iter_mut().enumerate() {
+                    *cell = f32::from(u8::from(owner[base + x] == index));
+                }
+            }
+        });
+        return;
     }
     let sigma = feather;
     let k = (feather.ceil() as usize).clamp(1, 1024);
@@ -538,34 +674,83 @@ fn feather_mask(onehot: &[u8], w: usize, h: usize, feather: f32) -> Vec<f32> {
         kernel.push((-((d * d) as f32) / (2.0 * sigma * sigma)).exp());
     }
     let ksum: f32 = kernel.iter().sum();
-    // 横向卷积到临时面，再纵向一步到位地累加进调用方的输出面。
+    // 横向卷积到临时面，再纵向一步到位地写进调用方的掩膜面；两趟都按行带并行。
     //
-    // Convolve horizontally into a temp plane, then fold vertically in one pass.
-    let mut tmp = vec![0.0f32; n];
-    for y in 0..h {
-        for x in 0..w {
-            let mut acc = 0.0f32;
-            for (ki, &kv) in kernel.iter().enumerate() {
-                let d = ki as i32 - k as i32;
-                let xx = (x as i32 + d).clamp(0, w as i32 - 1) as usize;
-                acc += kv * onehot[y * w + xx] as f32;
+    // Convolve horizontally into the temp plane, then fold vertically straight into the
+    // caller's mask plane; both passes run parallel by row bands.
+    crate::par::for_bands(h, tmp, w, |y0, _y1, band| {
+        for (i, row) in band.chunks_mut(w).enumerate() {
+            let base = (y0 + i) * w;
+            for (x, cell) in row.iter_mut().enumerate() {
+                let mut acc = 0.0f32;
+                for (ki, &kv) in kernel.iter().enumerate() {
+                    let d = ki as i32 - k as i32;
+                    let xx = (x as i32 + d).clamp(0, w as i32 - 1) as usize;
+                    acc += kv * f32::from(u8::from(owner[base + xx] == index));
+                }
+                *cell = acc / ksum;
             }
-            tmp[y * w + x] = acc / ksum;
         }
-    }
-    let mut out = vec![0.0f32; n];
-    for y in 0..h {
-        for x in 0..w {
-            let mut acc = 0.0f32;
-            for (ki, &kv) in kernel.iter().enumerate() {
-                let d = ki as i32 - k as i32;
-                let yy = (y as i32 + d).clamp(0, h as i32 - 1) as usize;
-                acc += kv * tmp[yy * w + x];
+    });
+    crate::par::for_bands(h, out, w, |y0, _y1, band| {
+        // 纵向那趟按 64 列一块走：一块要看的 2k+1 行（feather=64 时约 33 KB）留在二级
+        // 缓存里，避免每个像素沿列方向摸 129 条相距 24 KB 的缓存行。每个像素的核累加
+        // 顺序仍是 `ki` 升序，逐位不变。
+        //
+        // The vertical pass walks 64 columns at a time so the block's 2k+1 rows (~33 KB at
+        // feather=64) stay in L2 instead of every pixel touching 129 cache lines 24 KB apart.
+        // Each pixel still accumulates the kernel in `ki` order, bitwise unchanged.
+        let mut xb = 0;
+        while xb < w {
+            let xe = (xb + 64).min(w);
+            for (i, row) in band.chunks_mut(w).enumerate() {
+                let y = y0 + i;
+                for x in xb..xe {
+                    let mut acc = 0.0f32;
+                    for (ki, &kv) in kernel.iter().enumerate() {
+                        let d = ki as i32 - k as i32;
+                        let yy = (y as i32 + d).clamp(0, h as i32 - 1) as usize;
+                        acc += kv * tmp[yy * w + x];
+                    }
+                    row[x] = acc / ksum;
+                }
             }
-            out[y * w + x] = acc / ksum;
+            xb = xe;
         }
-    }
-    out
+    });
+}
+
+/// 归一化：`out / wsum`；权重不足 `eps` 的像素整块退回参考帧。
+///
+/// 逐像素独立（每像素只读自己的 `wsum`、只写自己的三个通道），按行带并行——每像素的
+/// 除法序列一字未动，逐位一致。
+///
+/// Normalise: `out / wsum`; pixels whose weight sum is at or below `eps` fall back to the
+/// reference frame wholesale.
+///
+/// Per-pixel independent (each pixel reads only its own `wsum` and writes only its own three
+/// channels), parallelised by row bands -- the per-pixel division sequence is untouched, so
+/// it is bitwise identical.
+fn resolve_weights(out: &mut [f32], wsum: &[f32], fallback: &[f32], w: usize, h: usize, eps: f32) {
+    crate::par::for_bands(h, out, w * 3, |y0, _y1, band| {
+        for (r, row) in band.chunks_mut(w * 3).enumerate() {
+            let base = (y0 + r) * w;
+            for (x, px) in row.chunks_mut(3).enumerate() {
+                let p = base + x;
+                let ws = wsum[p];
+                if ws > eps {
+                    px[0] /= ws;
+                    px[1] /= ws;
+                    px[2] /= ws;
+                } else {
+                    let j = p * 3;
+                    px[0] = fallback[j];
+                    px[1] = fallback[j + 1];
+                    px[2] = fallback[j + 2];
+                }
+            }
+        }
+    });
 }
 
 /// 融合。输入是**已经对齐**的线性 RGB `f32`，长度必须等于 `w*h*3`；
@@ -599,42 +784,51 @@ pub fn focus_stack(
     match options.method {
         Method::DepthMap => {
             let owner = compute_owner_map(frames, w, h, options);
-            // 每帧一张 one-hot 掩膜 → 羽化 → 直接累加输出；归一化面同步累加。
-            // 内存峰值 = 输出面 + 归一化面 + 一张羽化掩膜。
+            // 每帧：one-hot 选中掩膜 → 羽化 → 直接累加输出；归一化面同步累加。
+            // 掩膜面与它的横向临时面在帧间复用（不再每帧各 alloc 96 MB）。
             //
-            // One one-hot mask per frame -> feather -> accumulate straight into the output;
-            // the normalization plane accumulates alongside. Peak memory = output + weights
-            // + one feathered mask.
+            // Per frame: the one-hot selection mask -> feather -> accumulate straight into the
+            // output, with the normalization plane alongside. The mask plane and its horizontal
+            // scratch are reused across frames (no fresh 96 MB allocation per frame).
             let mut out = vec![0.0f32; n];
             let mut wsum = vec![0.0f32; w * h];
+            let mut tmp = vec![0.0f32; w * h];
+            let mut mask = vec![0.0f32; w * h];
             for i in 0..count {
-                let onehot: Vec<u8> = owner.iter().map(|&o| u8::from(o == i as u16)).collect();
-                let mask = feather_mask(&onehot, w, h, options.feather);
+                feather_mask(&owner, i as u16, w, h, options.feather, &mut tmp, &mut mask);
                 let f = frames[i];
-                for (p, wt) in mask.iter().enumerate() {
-                    if *wt != 0.0 {
-                        let j = p * 3;
-                        out[j] += wt * f[j];
-                        out[j + 1] += wt * f[j + 1];
-                        out[j + 2] += wt * f[j + 2];
-                        wsum[p] += wt;
-                    }
-                }
+                // 混合按行带并行（`out` + `wsum` 两个可变输出）；帧循环在外，所以每个像素
+                // 仍按帧序在**同一线程**内累加，逐位一致。
+                //
+                // The blend is parallelised by row bands (two mutable outputs, `out` and
+                // `wsum`); the frame loop stays outside, so every pixel still accumulates in
+                // frame order **inside one thread** -- bitwise unchanged.
+                crate::par::for_bands2(
+                    h,
+                    &mut out,
+                    w * 3,
+                    &mut wsum,
+                    w,
+                    |y0, _y1, oband, wband| {
+                        for (r, wrow) in wband.chunks_mut(w).enumerate() {
+                            let base = (y0 + r) * w;
+                            for (x, ws) in wrow.iter_mut().enumerate() {
+                                let p = base + x;
+                                let wt = mask[p];
+                                if wt != 0.0 {
+                                    let o = (r * w + x) * 3;
+                                    let j = p * 3;
+                                    oband[o] += wt * f[j];
+                                    oband[o + 1] += wt * f[j + 1];
+                                    oband[o + 2] += wt * f[j + 2];
+                                    *ws += wt;
+                                }
+                            }
+                        }
+                    },
+                );
             }
-            let rf = frames[reference];
-            for (p, ws) in wsum.iter().enumerate() {
-                if *ws > 1e-6 {
-                    let j = p * 3;
-                    out[j] /= *ws;
-                    out[j + 1] /= *ws;
-                    out[j + 2] /= *ws;
-                } else {
-                    let j = p * 3;
-                    out[j] = rf[j];
-                    out[j + 1] = rf[j + 1];
-                    out[j + 2] = rf[j + 2];
-                }
-            }
+            resolve_weights(&mut out, &wsum, frames[reference], w, h, 1e-6);
             Ok(out)
         }
         Method::Weighted => {
@@ -648,31 +842,36 @@ pub fn focus_stack(
             let mut wsum = vec![0.0f32; w * h];
             for f in frames {
                 let m = measure_plane(f, w, h, options.radius);
-                for p in 0..w * h {
-                    let wt = m[p] * m[p] * m[p] * m[p];
-                    if wt > 0.0 {
-                        let j = p * 3;
-                        out[j] += wt * f[j];
-                        out[j + 1] += wt * f[j + 1];
-                        out[j + 2] += wt * f[j + 2];
-                        wsum[p] += wt;
-                    }
-                }
+                // 同上：行带并行，帧序仍由外层串行循环保证，逐位一致。
+                //
+                // Same as above: row bands in parallel, frame order still guaranteed by the
+                // serial loop outside, bitwise unchanged.
+                crate::par::for_bands2(
+                    h,
+                    &mut out,
+                    w * 3,
+                    &mut wsum,
+                    w,
+                    |y0, _y1, oband, wband| {
+                        for (r, wrow) in wband.chunks_mut(w).enumerate() {
+                            let base = (y0 + r) * w;
+                            for (x, ws) in wrow.iter_mut().enumerate() {
+                                let p = base + x;
+                                let wt = m[p] * m[p] * m[p] * m[p];
+                                if wt > 0.0 {
+                                    let o = (r * w + x) * 3;
+                                    let j = p * 3;
+                                    oband[o] += wt * f[j];
+                                    oband[o + 1] += wt * f[j + 1];
+                                    oband[o + 2] += wt * f[j + 2];
+                                    *ws += wt;
+                                }
+                            }
+                        }
+                    },
+                );
             }
-            let rf = frames[reference];
-            for (p, ws) in wsum.iter().enumerate() {
-                if *ws > 0.0 {
-                    let j = p * 3;
-                    out[j] /= *ws;
-                    out[j + 1] /= *ws;
-                    out[j + 2] /= *ws;
-                } else {
-                    let j = p * 3;
-                    out[j] = rf[j];
-                    out[j + 1] = rf[j + 1];
-                    out[j + 2] = rf[j + 2];
-                }
-            }
+            resolve_weights(&mut out, &wsum, frames[reference], w, h, 0.0);
             Ok(out)
         }
         Method::Pyramid => {
@@ -786,6 +985,85 @@ mod tests {
                     }
                     out[(y * W + x) * 3 + c] = acc / cnt as f32;
                 }
+            }
+        }
+        out
+    }
+
+    /// 旧版模值滤波（逐像素重扫窗口），留作增量版的判据。
+    ///
+    /// The old mode filter (rescan the window per pixel), kept as the reference for the
+    /// incremental version.
+    fn naive_mode_filter(owner: &[u16], w: usize, h: usize, r: usize, count: usize) -> Vec<u16> {
+        let mut counts = vec![0u32; count];
+        let mut filtered = owner.to_vec();
+        for y in 0..h {
+            let top = y.saturating_sub(r);
+            let bottom = (y + r + 1).min(h);
+            for x in 0..w {
+                let left = x.saturating_sub(r);
+                let right = (x + r + 1).min(w);
+                for c in counts.iter_mut() {
+                    *c = 0;
+                }
+                for yy in top..bottom {
+                    for xx in left..right {
+                        counts[owner[yy * w + xx] as usize] += 1;
+                    }
+                }
+                let own = owner[y * w + x] as usize;
+                let mut best_c = counts[own];
+                let mut best_i = own;
+                for (i, c) in counts.iter().enumerate() {
+                    if *c > best_c || (*c == best_c && i < best_i) {
+                        best_c = *c;
+                        best_i = i;
+                    }
+                }
+                filtered[y * w + x] = best_i as u16;
+            }
+        }
+        filtered
+    }
+
+    /// 旧版羽化（两趟全串行卷积），同样留作判据。
+    ///
+    /// The old feather (two fully serial convolution passes), also kept as a reference.
+    fn naive_feather_mask(owner: &[u16], index: u16, w: usize, h: usize, feather: f32) -> Vec<f32> {
+        let n = w * h;
+        let onehot: Vec<u8> = owner.iter().map(|&o| u8::from(o == index)).collect();
+        if feather.is_nan() || feather < 0.5 {
+            return onehot.iter().map(|&v| v as f32).collect();
+        }
+        let sigma = feather;
+        let k = (feather.ceil() as usize).clamp(1, 1024);
+        let mut kernel = Vec::with_capacity(2 * k + 1);
+        for d in -(k as i32)..=(k as i32) {
+            kernel.push((-((d * d) as f32) / (2.0 * sigma * sigma)).exp());
+        }
+        let ksum: f32 = kernel.iter().sum();
+        let mut tmp = vec![0.0f32; n];
+        for y in 0..h {
+            for x in 0..w {
+                let mut acc = 0.0f32;
+                for (ki, &kv) in kernel.iter().enumerate() {
+                    let d = ki as i32 - k as i32;
+                    let xx = (x as i32 + d).clamp(0, w as i32 - 1) as usize;
+                    acc += kv * onehot[y * w + xx] as f32;
+                }
+                tmp[y * w + x] = acc / ksum;
+            }
+        }
+        let mut out = vec![0.0f32; n];
+        for y in 0..h {
+            for x in 0..w {
+                let mut acc = 0.0f32;
+                for (ki, &kv) in kernel.iter().enumerate() {
+                    let d = ki as i32 - k as i32;
+                    let yy = (y as i32 + d).clamp(0, h as i32 - 1) as usize;
+                    acc += kv * tmp[yy * w + x];
+                }
+                out[y * w + x] = acc / ksum;
             }
         }
         out
@@ -1243,5 +1521,78 @@ mod tests {
         // Radius > 0 really averages: strictly different from the radius-0 plane at
         // the spike (the window branch is alive).
         assert!(peak2[p] != peak0[p]);
+    }
+
+    /// 增量版模值滤波必须与旧版（逐像素重扫窗口）逐点相同，含大量同票的夹具。
+    ///
+    /// 负向验证：把 `mode_filter` 的取舍从「严格更大才换」改成「大于等于就换」，同票
+    /// 像素立刻红——tie-break 的口径是这条判据真正钉住的东西。
+    ///
+    /// The incremental mode filter must match the old per-pixel window rescan point for point,
+    /// on a fixture swarming with ties.
+    ///
+    /// Negative check: change `mode_filter`'s pick from "replace only on strictly greater" to
+    /// "replace on greater or equal" and the tied pixels go red immediately -- the tie-break is
+    /// what this pins.
+    #[test]
+    fn the_incremental_mode_filter_matches_the_naive_window_vote() {
+        let w = 37;
+        let h = 140; // ≥ 128 行：`for_bands` 会真的切成多条行带，带边界也在判据内
+        let count = 3;
+        let owner: Vec<u16> = (0..w * h)
+            .map(|p| (((p * 2_654_435_761) >> 7) % count) as u16)
+            .collect();
+        for r in [1usize, 2, 16] {
+            let got = mode_filter(&owner, w, h, r, count);
+            let want = naive_mode_filter(&owner, w, h, r, count);
+            // 只报第一个不一致的像素（x, y, 增量版, 旧版），免得整幅面刷屏。
+            //
+            // Report only the first differing pixel (x, y, incremental, old), so a failure
+            // does not dump the whole plane.
+            let first = (0..w * h).find(|&k| got[k] != want[k]);
+            assert_eq!(
+                first.map(|k| (k % w, k / w, got[k], want[k])),
+                None,
+                "增量版与旧版在 r={r} 上不一致"
+            );
+        }
+    }
+
+    /// 并行羽化必须与旧版全串行卷积**逐位**相同（含硬掩膜与 NaN 两条早退路径）。
+    ///
+    /// 判据用 `to_bits` 比对，规避 `0.0 == -0.0` 这类浮点相等的宽松。
+    ///
+    /// 负向验证：把纵向那趟的 `tmp[yy * w + x]` 换成 `tmp[y * w + x]`（即漏掉竖直
+    /// 卷积），判据立刻红。
+    ///
+    /// The parallel feather must match the old fully serial convolution **bit for bit**,
+    /// including both early-out paths (hard mask and NaN).
+    ///
+    /// The assertion compares `to_bits`, avoiding the looseness of float `==` (`0.0 == -0.0`).
+    ///
+    /// Negative check: replace the vertical pass's `tmp[yy * w + x]` with `tmp[y * w + x]`
+    /// (dropping the vertical convolution) and this goes red.
+    #[test]
+    fn the_parallel_feather_matches_the_serial_convolution_bit_for_bit() {
+        let w = 29;
+        let h = 140; // 同上：够 128 行才会真的分带
+        let count = 3u16;
+        let owner: Vec<u16> = (0..w * h)
+            .map(|p| (((p * 2_654_435_761) >> 9) % count as usize) as u16)
+            .collect();
+        let mut tmp = vec![0.0f32; w * h];
+        let mut mask = vec![0.0f32; w * h];
+        for feather in [6.0f32, 0.4, f32::NAN] {
+            for i in 0..count {
+                feather_mask(&owner, i, w, h, feather, &mut tmp, &mut mask);
+                let want = naive_feather_mask(&owner, i, w, h, feather);
+                let first = (0..w * h).find(|&k| mask[k].to_bits() != want[k].to_bits());
+                assert_eq!(
+                    first.map(|k| (k % w, k / w, mask[k], want[k])),
+                    None,
+                    "feather={feather} 帧 {i} 与串行版不逐位相同"
+                );
+            }
+        }
     }
 }

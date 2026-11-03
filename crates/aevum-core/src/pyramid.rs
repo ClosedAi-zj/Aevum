@@ -31,8 +31,9 @@
 //! | Weighted | 1.95 s | 2.88 GB | 732 MB |
 //! | Pyramid（优化前） | 29.7 s | 4.43 GB | **2.10 GB** |
 //! | Pyramid（优化后·单线程轮） | 24.4 s | 4.43 GB | **2.10 GB** |
-//! | Pyramid（优化后·多线程轮） | **5.97 s** | **4.14 GB** | **1.82 GB** |
-//! | 优化收益 | 单线程轮 −18%（15.0× → 12.5×）；多线程轮 −77%（同轮 11.3× → **4.56×**） | −6.5% | −13% |
+//! | Pyramid（优化后·多线程轮） | 5.97 s | 4.14 GB | **1.82 GB** |
+//! | Pyramid（优化后·测度链一遍轮） | **4.05 s** | **3.86 GB** | **1.54 GB** |
+//! | 优化收益 | 本轮墙钟 −28%（5.60 → 4.05 s，同轮 Weighted 0.95 s，倍数 5.9× → 4.3×） | −6.7% | −15% |
 //!
 //! 优化三件事（2026-11-03 单线程轮）：① `focus::measure_peak`——逐帧每层只算一遍改进
 //! 拉普拉斯取逐像素最大再盒平均，Pass A 的分位线改由子采样峰值估计。`t = 0` 时与旧路径
@@ -57,12 +58,32 @@
 //! 倍数一律按**同轮**基线计。
 //!
 //! 各轮实测的 Weighted 基线有抖动（优化前那轮 1.97 s / 3.19 GB / 864 MB，单线程轮
-//! 1.95 s / 2.88 GB / 732 MB，多线程轮 2.285 s / 3.09 GB / 768 MB），倍数一律按
-//! **同轮**基线计。早先按「输出塔 384 MB +
+//! 1.95 s / 2.88 GB / 732 MB，多线程轮 2.285 s / 3.09 GB / 768 MB，本轮 0.95 s /
+//! 3.09 GB / 768 MB），倍数一律按**同轮**基线计。早先按「输出塔 384 MB +
 //! 权重塔 128 MB」推算的 ≈1.0 GB **是错的**（差 2 倍多）：那个算式漏了 Pass A 的
 //! `best` / `gate` 两个全分辨率面（各 96 MB）、掩膜塔（128 MB）、每帧的测度面（96 MB）
 //! 与当前帧的拉普拉斯面（288 MB）。这些数都是实测值，不是推算值；改实现就重测，
 //! 别照着旧数字改注释。
+//!
+//! 测度链一遍轮（2026-11-03 同日第四轮）：Pass A 与 Pass B 曾各自把整条测度链
+//! （亮度 → 改进拉普拉斯 → 积分图 → 盒平均）跑一遍，每帧两遍。现在 Pass A 一趟同时
+//! 产出峰值面（跨帧取 ml 最大，最后一次盒平均，求分位线）和每帧**盒平均后**的测度面
+//! 缓存，Pass B 直接取用、用完即释放（8 帧 × 96 MB，随帧衰减）。同时：① 第 0 层不再
+//! `from_rgb` 整幅拷贝，`reduce` / 拉普拉斯直接借用帧数据；② 逐层 scratch（高斯面、
+//! 权重面、最细层权重 w0、tap 表）预分配一次跨帧复用；③ 拉普拉斯**不再落盘**，
+//! `fine − upsample(coarse)` 在 `accumulate_laplacian_level` 处逐像素现算（f32 减法
+//! 两版都只舍入一次，逐位等价），省掉每帧每层一张面的写+读；④ gate / weak 两次全图
+//! 遍历合成一次，weak 面直接由 `masks[0]`（即 gate 本身）替代；⑤ 逐层上/下采样 tap 表
+//! 每层只建一次。分层实测（同一轮、min-of-N）：levels=1 1.21 s、levels=2 3.35 s、
+//! levels=6 4.05 s——「进入多尺度的固定开销」（levels=2 − levels=1）从 4.11 s 压到
+//! **2.14 s**。峰值内存 4.14 → **3.86 GB**：缓存加了 768 MB，但测度链 churn、gate/weak/
+//! best 三张常驻面、掩膜塔 level-0 克隆与整张拉普拉斯面省掉了更多。逐位不变：探针
+//! `T10_DUMP` 改前改后各 288 MB 逐字节 `cmp` 相同，checksum 不变。
+//! 代价说明：Pass B 期间测度缓存驻留最高约 7×96 MB，是峰值内存的主要新增项；若
+//! 再压内存，只能减缓存面或换编码（f16 不满足逐位要求），无免费午餐。
+//!
+//! 历史注：多线程轮之前，本法慢主要慢在 `focus::measure_plane` 每帧跑两遍（Pass A 求
+//! 分位线、Pass B 求权重）；本轮起每帧只跑一遍，见上。
 //!
 //! `feather` / `smooth_z` 在本法下**不适用**：融合只在塔各层上按权重归一，没有
 //! 深度跳变、没有羽化掩膜，也没有模值滤波。调用方传了也只读校验、不生效。
@@ -110,8 +131,9 @@
 //! | Weighted | 1.97 s | 3.19 GB | 864 MB |
 //! | Pyramid (before) | 29.7 s | 4.43 GB | **2.10 GB** |
 //! | Pyramid (after, single-thread round) | 24.4 s | 4.43 GB | **2.10 GB** |
-//! | Pyramid (after, multithread round) | **5.97 s** | **4.14 GB** | **1.82 GB** |
-//! | Gain | single-thread −18% (15.0x → 12.5x); multithread −77% (same-session 11.3x → **4.56x**) | −6.5% | −13% |
+//! | Pyramid (after, multithread round) | 5.97 s | 4.14 GB | **1.82 GB** |
+//! | Pyramid (after, measure-chain-once round) | **4.05 s** | **3.86 GB** | **1.54 GB** |
+//! | Gain | this round −28% wall (5.60 → 4.05 s, same-session Weighted 0.95 s, ratio 5.9x → 4.3x) | −6.7% | −15% |
 //!
 //! The single-thread round did three things (2026-11-03): ① `focus::measure_peak` -- the
 //! modified Laplacian once per frame per level, per-pixel max, then one box average, with
@@ -143,10 +165,35 @@
 //! The earlier arithmetic ("output tower 384 MB + weight tower 128 MB") guessed about
 //! 1.0 GB and **is wrong by more than 2x**: it forgot Pass A's two full-resolution `best` /
 //! `gate` planes (96 MB each), the mask tower (128 MB), the per-frame measure plane (96 MB)
-//! and the current frame's Laplacian (288 MB). The 15x wall clock (not "2-3x") is mostly
+//! and the current frame's Laplacian (288 MB). Historically the wall clock was dominated by
 //! `focus::measure_plane` running **twice** per frame (Pass A for the percentile cut, Pass B
-//! for the weights). These are measurements, not estimates: change the implementation and
+//! for the weights); since the measure-chain-once round it runs **once** -- see below.
+//! These are measurements, not estimates: change the implementation and
 //! re-measure -- do not edit the comment to match the old numbers.
+//!
+//! The measure-chain-once round (same day, fourth round): Pass A and Pass B used to each
+//! run the whole measure chain (luma → modified Laplacian → summed-area table → box
+//! average) per frame -- twice per frame in total. Pass A now produces both the peak plane
+//! (cross-frame ml maxima, box-averaged once, for the percentile cut) and, per frame, the
+//! **box-averaged** measure plane in one pass; the planes are cached for Pass B, which
+//! consumes and releases them frame by frame (8 x 96 MB, decaying). Also: ① level 0 no
+//! longer `from_rgb`-copies the whole frame -- `reduce` and the Laplacian borrow the frame
+//! data directly; ② per-level scratch (Gaussian planes, weight planes, the finest-level
+//! weight `w0`, the tap tables) is preallocated once and reused across frames; ③ the
+//! Laplacian is **never materialised** -- `fine - upsample(coarse)` is computed per pixel
+//! right in `accumulate_laplacian_level` (the f32 subtraction rounds once in both forms,
+//! bitwise equivalent), saving a whole-plane write+read per frame per level; ④ the two
+//! whole-image passes building `gate` and `weak` merged into one, with `weak` replaced by
+//! `masks[0]` (which *is* gate); ⑤ the up/down-sampling tap tables are built once per
+//! level. Level-swept, same session, min-of-N: levels=1 1.21 s, levels=2 3.35 s, levels=6
+//! 4.05 s -- the "fixed cost of entering multi-scale" (levels=2 − levels=1) dropped from
+//! 4.11 s to **2.14 s**. Peak memory 4.14 → **3.86 GB**: the measure cache adds 768 MB,
+//! but the measure-chain churn, the three resident `best`/`gate`/`weak` planes, the mask
+//! tower's level-0 clone and the whole Laplacian plane saved more. Bitwise unchanged: the
+//! probe's `T10_DUMP` dumps before/after (288 MB each) compare equal byte for byte with
+//! `cmp`, checksum identical. Cost note: during Pass B the measure cache holds up to
+//! ~7 x 96 MB resident -- the main new contributor to peak memory; shrinking it further
+//! means fewer cached planes or a different encoding (f16 fails the bitwise requirement).
 //!
 //! `feather` and `smooth_z` do **not apply** here: fusion is a per-level weighted
 //! normalisation, with no depth jumps, no feather mask and no mode filter. Callers may pass
@@ -321,14 +368,30 @@ pub fn level_dims(w: usize, h: usize, levels: usize) -> Vec<(usize, usize)> {
 pub fn reduce(src: &Plane) -> Plane {
     let dw = src.w.div_ceil(2);
     let dh = src.h.div_ceil(2);
-    let ch = src.channels;
+    let mut out = Plane::zeros(dw, dh, src.channels);
+    reduce_into(&src.data, src.w, src.h, src.channels, &mut out);
+    out
+}
+
+/// [`reduce`] 的**写入既有缓冲**版：源是裸切片视图（`sw`×`sh`×`ch`），输出写进
+/// 调用方预分配好的 `dst`（尺寸必须是 `ceil(sw/2)`×`ceil(sh/2)`×`ch`）。
+///
+/// `fuse_pyramid` 的帧循环是串行的，每层的目标尺寸固定，所以这些缓冲可以每帧
+/// 复用——旧版每帧每层 fresh 分配（最细层一张 288 MB 拉普拉斯面 + 两座塔的下采样
+/// 输出，每帧约 1 GB 的分配 churn）。运算序列与 [`reduce`] 逐一相同，逐位不变。
+///
+/// The write-into-buffer form of [`reduce`]: the source is a bare slice view
+/// (`sw`×`sh`×`ch`), the output goes into a caller-preallocated `dst` (sized exactly
+/// `ceil(sw/2)`×`ceil(sh/2)`×`ch`). `fuse_pyramid`'s frame loop is serial and each
+/// level's output size is fixed, so these buffers are reused every frame -- the old code
+/// freshly allocated per frame per level (a 288 MB Laplacian plane at the finest level
+/// plus both towers' reductions, ~1 GB of allocation churn per frame). The arithmetic
+/// matches [`reduce`] exactly, bitwise.
+fn reduce_into(src: &[f32], sw: usize, sh: usize, ch: usize, dst: &mut Plane) {
+    let dw = dst.w;
+    let dh = dst.h;
     if dw == 0 || dh == 0 || ch == 0 {
-        return Plane {
-            w: dw,
-            h: dh,
-            channels: ch,
-            data: Vec::new(),
-        };
+        return;
     }
     // 横向 5-tap 的源列下标：每个目标列算一次，全图复用。
     //
@@ -338,7 +401,7 @@ pub fn reduce(src: &Plane) -> Plane {
             let sx = (2 * x) as isize;
             let mut t = [0usize; 5];
             for (k, slot) in t.iter_mut().enumerate() {
-                *slot = (sx + k as isize - 2).clamp(0, src.w as isize - 1) as usize;
+                *slot = (sx + k as isize - 2).clamp(0, sw as isize - 1) as usize;
             }
             t
         })
@@ -354,15 +417,15 @@ pub fn reduce(src: &Plane) -> Plane {
     // band keeps its own 5-row ring and recomputes one or two horizontal rows at band edges
     // (the same row computed twice is bitwise identical, just duplicated work); the
     // per-row arithmetic inside a band matches the serial version exactly, bitwise.
-    let mut out = vec![0.0f32; dw * dh * ch];
-    crate::par::for_bands(dh, &mut out, dw * ch, |y0, y1, oband| {
+    let out = dst.data.as_mut_slice();
+    crate::par::for_bands(dh, out, dw * ch, |y0, y1, oband| {
         let mut ring: Vec<Vec<f32>> = (0..5).map(|_| vec![0.0f32; dw * ch]).collect();
         let mut done_row: isize = -1;
         for (i, y) in (y0..y1).enumerate() {
             let sy = (2 * y) as isize;
             let mut need = [0usize; 5];
             for (k, slot) in need.iter_mut().enumerate() {
-                *slot = (sy + k as isize - 2).clamp(0, src.h as isize - 1) as usize;
+                *slot = (sy + k as isize - 2).clamp(0, sh as isize - 1) as usize;
             }
             for &r in &need {
                 if (r as isize) <= done_row {
@@ -370,13 +433,13 @@ pub fn reduce(src: &Plane) -> Plane {
                 }
                 let slot = r % 5;
                 let dst_row = &mut ring[slot];
-                let src_row = r * src.w * ch;
+                let src_row = r * sw * ch;
                 for (x, idx) in xi.iter().enumerate() {
                     let d = x * ch;
                     for c in 0..ch {
                         let mut acc = 0.0f32;
                         for k in 0..5 {
-                            acc += K5[k] * src.data[src_row + idx[k] * ch + c];
+                            acc += K5[k] * src[src_row + idx[k] * ch + c];
                         }
                         dst_row[d + c] = acc;
                     }
@@ -395,12 +458,6 @@ pub fn reduce(src: &Plane) -> Plane {
             }
         }
     });
-    Plane {
-        w: dw,
-        h: dh,
-        channels: ch,
-        data: out,
-    }
 }
 
 /// 掩膜塔用的下采样：2×2 取最大，不做平滑。
@@ -433,18 +490,25 @@ fn reduce_mask(src: &[f32], sw: usize, sh: usize) -> (Vec<f32>, usize, usize) {
     (out, dw, dh)
 }
 
-/// 0/1 门限塔：第 0 层就是原样，以后每层 2×2 取最大。
+/// 0/1 门限塔：第 0 层就是输入本身（**接管所有权，不克隆**——旧版 `cur.clone()`
+/// 在最细层白拷 96 MB），以后每层 2×2 取最大。最后一层的 reduce 结果不会再用，
+/// 不算。
 ///
-/// A 0/1 gate pyramid: level 0 is the input itself, later levels are 2x2 maxima.
-fn mask_pyramid(gate: &[f32], w: usize, h: usize, levels: usize) -> Vec<Vec<f32>> {
+/// A 0/1 gate pyramid: level 0 is the input itself (ownership taken, no clone -- the old
+/// `cur.clone()` wastefully copied 96 MB at the finest level), later levels are 2x2
+/// maxima. The last level's reduce output is never read, so it is not computed.
+fn mask_pyramid(gate: Vec<f32>, w: usize, h: usize, levels: usize) -> Vec<Vec<f32>> {
     let mut tower = Vec::with_capacity(levels);
-    let (mut cur, mut cw, mut ch) = (gate.to_vec(), w, h);
-    for _ in 0..levels {
-        tower.push(cur.clone());
-        let next = reduce_mask(&cur, cw, ch);
-        cur = next.0;
-        cw = next.1;
-        ch = next.2;
+    let mut cur = gate;
+    let (mut cw, mut ch) = (w, h);
+    for l in 0..levels {
+        tower.push(std::mem::take(&mut cur));
+        if l + 1 < levels {
+            let next = reduce_mask(&tower[l], cw, ch);
+            cur = next.0;
+            cw = next.1;
+            ch = next.2;
+        }
     }
     tower
 }
@@ -486,6 +550,11 @@ fn taps(dst_len: usize, src_len: usize) -> Vec<Vec<(usize, f32)>> {
     }
     all
 }
+
+/// 一维插值 tap 表：每个目标坐标一列 `(源下标, 权重)`。
+///
+/// A one-dimensional tap table: one `(source index, weight)` list per target coordinate.
+type TapTable = Vec<Vec<(usize, f32)>>;
 
 /// 把 `src` 上采样到 `(tw, th)`；核归一，常数场不变。
 ///
@@ -570,20 +639,37 @@ pub fn gaussian_pyramid(frame: &[f32], w: usize, h: usize, levels: usize) -> Vec
 /// two-step form exactly, bitwise unchanged; it saves one 288 MB allocation plus a full
 /// plane write+read.
 pub fn laplacian_from_gaussian(fine: &Plane, coarse: &Plane) -> Plane {
-    let xt = taps(fine.w, coarse.w);
-    let yt = taps(fine.h, coarse.h);
     let mut out = Plane::zeros(fine.w, fine.h, fine.channels);
-    let row = fine.w * fine.channels;
-    crate::par::for_bands(fine.h, &mut out.data, row, |y0, y1, band| {
+    laplacian_into(&fine.data, fine.w, fine.h, coarse, &mut out);
+    out
+}
+
+/// [`laplacian_from_gaussian`] 的**写入既有缓冲**版：细层是裸切片视图（最细层直接
+/// 借用输入帧本身，省掉一次全幅 288 MB 拷贝），输出写进预分配的 `dst`。
+///
+/// 运算序列与 [`laplacian_from_gaussian`] 逐一相同（ytaps 外层、xtaps 内层求和，
+/// `fine − acc`），逐位不变。
+///
+/// The write-into-buffer form of [`laplacian_from_gaussian`]: the fine plane is a bare
+/// slice view (at the finest level it borrows the input frame itself, saving one full
+/// 288 MB copy), the output goes into a preallocated `dst`. The arithmetic matches
+/// [`laplacian_from_gaussian`] exactly (ytaps outer, xtaps inner sum, then `fine - acc`),
+/// bitwise unchanged.
+fn laplacian_into(fine: &[f32], fw: usize, fh: usize, coarse: &Plane, dst: &mut Plane) {
+    let xt = taps(fw, coarse.w);
+    let yt = taps(fh, coarse.h);
+    let row = fw * dst.channels;
+    let out = dst.data.as_mut_slice();
+    crate::par::for_bands(fh, out, row, |y0, y1, band| {
         for (i, ytaps) in yt[y0..y1].iter().enumerate() {
             for (x, xtaps) in xt.iter().enumerate() {
                 // `d` 是带内偏移（band 从行 y0 起），读 fine 用绝对偏移 `fa`。
                 //
                 // `d` is the band-local offset (the band starts at row y0); reading `fine`
                 // uses the absolute offset `fa`.
-                let d = (i * fine.w + x) * fine.channels;
-                let fa = ((y0 + i) * fine.w + x) * fine.channels;
-                for c in 0..fine.channels {
+                let d = (i * fw + x) * dst.channels;
+                let fa = ((y0 + i) * fw + x) * dst.channels;
+                for c in 0..dst.channels {
                     let mut acc = 0.0f32;
                     if c < coarse.channels {
                         for &(sy, wy) in ytaps {
@@ -594,12 +680,11 @@ pub fn laplacian_from_gaussian(fine: &Plane, coarse: &Plane) -> Plane {
                             }
                         }
                     }
-                    band[d + c] = fine.data[fa + c] - acc;
+                    band[d + c] = fine[fa + c] - acc;
                 }
             }
         }
     });
-    out
 }
 
 /// 从最粗层起原地逐层上采样累加，返回最细层的数据（塔内不再保留副本）。
@@ -615,6 +700,88 @@ pub fn collapse_in_place(tower: &mut [Plane]) -> Vec<f32> {
         accumulate_upsample(&hi[0], &mut lo[l]);
     }
     std::mem::take(&mut tower[0].data)
+}
+
+/// γ2.0 亮度，写入复用缓冲。与 `focus::modified_laplacian` 的灰度趟运算序列逐一
+/// 相同（focus.rs 是只读的另一位工程师成果，这里按原式在本地实现以换取串行段的
+/// 缓冲复用），逐位不变。
+///
+/// γ2.0 luma into a reused buffer. The arithmetic matches `focus::modified_laplacian`'s
+/// luma pass exactly (focus.rs is another engineer's read-only work; the same formula is
+/// reimplemented here to get buffer reuse in the serial segment), bitwise unchanged.
+fn luma_into(frame: &[f32], w: usize, h: usize, gray: &mut [f32]) {
+    crate::par::for_bands(h, gray, w, |y0, _y1, g| {
+        for (i, row) in g.chunks_mut(w).enumerate() {
+            let y = y0 + i;
+            for (x, cell) in row.iter_mut().enumerate() {
+                let j = (y * w + x) * 3;
+                let luma = 0.2126 * frame[j] + 0.7152 * frame[j + 1] + 0.0722 * frame[j + 2];
+                *cell = luma.max(0.0).sqrt();
+            }
+        }
+    });
+}
+
+/// 改进拉普拉斯（边界夹边取），写入复用缓冲。与 `focus::modified_laplacian` 的
+/// 拉普拉斯趟逐一相同，逐位不变。
+///
+/// Modified Laplacian (clamped edges) into a reused buffer. Matches
+/// `focus::modified_laplacian`'s Laplacian pass exactly, bitwise unchanged.
+fn ml_into(gray: &[f32], w: usize, h: usize, out: &mut [f32]) {
+    crate::par::for_bands(h, out, w, |y0, _y1, o| {
+        for (i, row) in o.chunks_mut(w).enumerate() {
+            let y = y0 + i;
+            for (x, cell) in row.iter_mut().enumerate() {
+                let c = gray[y * w + x];
+                let l = gray[y * w + x.saturating_sub(1)];
+                let r = gray[y * w + (x + 1).min(w - 1)];
+                let u = gray[y.saturating_sub(1) * w + x];
+                let d = gray[(y + 1).min(h - 1) * w + x];
+                *cell = (2.0 * c - l - r).abs() + (2.0 * c - u - d).abs();
+            }
+        }
+    });
+}
+
+/// 积分图构建（行间串行归约，口径与 `focus::box_average` 逐字一致），写入复用缓冲。
+/// `sat` 必须满足第 0 行与第 0 列为 0：首次分配即为零，此后这些格子从不被写。
+///
+/// Summed-area table build (serial row-to-row reduction, literally the same convention as
+/// `focus::box_average`) into a reused buffer. `sat`'s row 0 and column 0 must be zero:
+/// fresh allocations are, and those cells are never written afterwards.
+fn build_sat(ml: &[f32], w: usize, h: usize, sat: &mut [f64]) {
+    for y in 0..h {
+        let mut row_sum = 0.0f64;
+        for x in 0..w {
+            row_sum += ml[y * w + x] as f64;
+            sat[(y + 1) * (w + 1) + (x + 1)] = sat[y * (w + 1) + (x + 1)] + row_sum;
+        }
+    }
+}
+
+/// 由积分图出盒平均结果，写入复用缓冲。与 `focus::box_average` 的输出趟逐一相同
+///（窗口收缩、`(sum / area as f64) as f32`），逐位不变。
+///
+/// Box-average output pass from a built table into a reused buffer. Matches
+/// `focus::box_average`'s output pass exactly (shrinking windows,
+/// `(sum / area as f64) as f32`), bitwise unchanged.
+fn box_from_sat(sat: &[f64], w: usize, h: usize, radius: usize, out: &mut [f32]) {
+    crate::par::for_bands(h, out, w, |y0, _y1, band| {
+        for (i, row) in band.chunks_mut(w).enumerate() {
+            let y = y0 + i;
+            let top = y.saturating_sub(radius);
+            let bottom = (y + radius + 1).min(h);
+            for (x, cell) in row.iter_mut().enumerate() {
+                let left = x.saturating_sub(radius);
+                let right = (x + radius + 1).min(w);
+                let area = ((right - left) * (bottom - top)) as f32;
+                let sum = sat[bottom * (w + 1) + right] + sat[top * (w + 1) + left]
+                    - sat[top * (w + 1) + right]
+                    - sat[bottom * (w + 1) + left];
+                *cell = (sum / area as f64) as f32;
+            }
+        }
+    });
 }
 
 /// 4096 桶直方图求「权重下限分位」，口径与 `compute_owner_map` 逐字一致。
@@ -733,6 +900,75 @@ fn accumulate_level(out: &mut Plane, wsum: &mut [f32], plane: &Plane, weight: &[
     );
 }
 
+/// 把一层的拉普拉斯贡献**不落盘**地累进输出塔和权重和塔：`L = fine − upsample(coarse)`
+/// 逐像素现算，算完立刻 `out += wt * L`、`wsum += wt`。
+///
+/// 逐位不变论证：旧两步版先 `lap[c] = fine[c] − acc`（f32 舍入一次、落盘）再
+/// `out[c] += wt * lap[c]`；这里 `(fine[c] − acc)` 同样只做一次 f32 舍入就直接乘
+/// `wt`——减法、乘法、加法的舍入序列逐一相同。tap 遍历顺序（ytaps 外层、xtaps 内层）
+/// 与 `laplacian_into` 一致；`wt <= 0` 的像素旧版算了 lap 但不使用，这里干脆不算。
+/// 按行带并行（逐位不变），帧间顺序由调用方的串行帧循环保证。
+///
+/// Accumulate one level's Laplacian contribution **without materialising it**:
+/// `L = fine - upsample(coarse)` is computed per pixel and immediately folded as
+/// `out += wt * L`, `wsum += wt`. Bitwise argument: the old two-step form first stored
+/// `lap[c] = fine[c] - acc` (one f32 rounding) then did `out[c] += wt * lap[c]`; here
+/// `(fine[c] - acc)` takes the same single f32 rounding before multiplying by `wt` -- the
+/// subtraction/multiplication/addition rounding sequence matches exactly. The tap order
+/// (ytaps outer, xtaps inner) matches `laplacian_into`; pixels with `wt <= 0` had their
+/// lap computed but unused in the old code, and are simply not computed here. Parallelised
+/// by row bands (bitwise unchanged); the inter-frame order is guaranteed by the caller's
+/// serial frame loop.
+#[allow(clippy::too_many_arguments)]
+fn accumulate_laplacian_level(
+    out: &mut Plane,
+    wsum: &mut [f32],
+    fine: &[f32],
+    coarse: &Plane,
+    xt: &[Vec<(usize, f32)>],
+    yt: &[Vec<(usize, f32)>],
+    weight: &[f32],
+) {
+    let w = out.w;
+    crate::par::for_bands2(
+        out.h,
+        &mut out.data,
+        w * 3,
+        wsum,
+        w,
+        |y0, _y1, oband, wband| {
+            for (i, wrow) in wband.chunks_mut(w).enumerate() {
+                let y = y0 + i;
+                let ytaps = &yt[y];
+                for (x, ws) in wrow.iter_mut().enumerate() {
+                    let p = y * w + x;
+                    let wt = weight[p];
+                    if wt > 0.0 {
+                        let o = p * 3;
+                        let b = (i * w + x) * 3;
+                        let xtaps = &xt[x];
+                        for c in 0..3 {
+                            let mut acc = 0.0f32;
+                            if c < coarse.channels {
+                                for &(sy, wy) in ytaps {
+                                    for &(sx, wx) in xtaps {
+                                        acc += wy
+                                            * wx
+                                            * coarse.data
+                                                [(sy * coarse.w + sx) * coarse.channels + c];
+                                    }
+                                }
+                            }
+                            oband[b + c] += wt * (fine[o + c] - acc);
+                        }
+                        *ws += wt;
+                    }
+                }
+            }
+        },
+    );
+}
+
 /// 逐帧流式融合，返回线性 RGB `f32`（`w*h*3`）。
 ///
 /// 输入契约与 [`crate::focus::focus_stack`] 相同（已对齐、逐帧 `w*h*3`）；调用方
@@ -766,36 +1002,84 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
     } else {
         options.threshold.clamp(0.0, 100.0)
     };
-    // Pass A：只留一个峰值面，既求分位线也认「全帧无细节」，不驻留任何测度塔。
-    // `threshold=0` 时下限就是 0，于是门限等价于「这一格有没有任何纹理」——这与
-    // 深度图法的「0 = 关闭兜底」不同，金字塔里 0 表示「分位线取在零」。
+    // Pass A（本轮重写）：测度链每帧只跑**一遍**。旧版 Pass A 调 `focus::measure_peak`、
+    // Pass B 又对每帧调一遍完全相同的 `focus::measure_plane`——亮度 → 改进拉普拉斯 →
+    // 积分图 → 盒平均整条链每帧跑两遍，这就是「进入多尺度」固定开销的大头。现在同一趟
+    // 里：峰值面（跨帧取改进拉普拉斯最大，最后一次盒平均）求分位线，每帧**盒平均后**
+    // 的测度面缓存进 `measures` 供 Pass B 直接使用。缓存 8 帧 × 96 MB 量级，Pass B
+    // 逐帧消费、用完即释放。`radius = 0` 时盒平均是恒等，缓存面就是 ml 本身。
+    // 逐位不变：峰值取最大与 `measure_peak` 同一比较同一顺序；每帧缓存面与
+    // `measure_plane` 的返回值逐位相同（luma / 拉普拉斯 / 积分图 / 盒的算式与顺序
+    // 原样照搬，缓冲复用不改变任何像素的运算序列）。
     //
-    // 这个面由 `focus::measure_peak` 一次给出：逐帧取改进拉普拉斯的最大值，**最后一次**
-    // 盒平均。早先这里是「每帧一张全分辨率测度面再逐点取最大」，等于把整条测度链
-    // （luma + 拉普拉斯 + 积分图 + 盒）跑两遍——Pass B 还要再跑一遍，这就是本法比
-    // Weighted 慢一倍的主因。两种口径的关系（`t = 0` 严格等价、`t > 0` 有 1e-7 漂移）
-    // 写在 `measure_peak` 的文档里。
-    //
-    // Pass A: keep one "peak" plane, used for both the percentile cut and the
-    // "no frame has detail here" test; never a tower of measures. With `threshold=0` the
-    // cut sits at zero, so the gate becomes "is there any texture in this cell" -- unlike
-    // the depth map's "0 = fallback off", here 0 means "put the percentile cut at zero".
-    //
-    // That plane comes from a single `focus::measure_peak` call: per-frame modified
-    // Laplacian maxima, box-averaged **once** at the end. It used to be "one full-resolution
-    // measure plane per frame, then a pointwise max", which ran the whole measure chain
-    // (luma + Laplacian + integral image + box) twice -- Pass B runs it once more, and that
-    // was the main reason this method was twice as slow as Weighted. How the two forms
-    // relate (strictly equivalent at `t = 0`, order-1e-7 drift at `t > 0`) is documented on
-    // `measure_peak`.
-    let best = focus::measure_peak(frames, w, h, radius);
+    // Pass A (rewritten this round): the measure chain runs **once** per frame. The old
+    // code called `focus::measure_peak` in Pass A and then re-ran the identical
+    // `focus::measure_plane` per frame in Pass B -- luma, modified Laplacian, summed-area
+    // table, box average, the whole chain twice per frame, which was the bulk of the
+    // fixed cost of entering multi-scale. Now a single pass produces both the peak plane
+    // (cross-frame modified-Laplacian maxima, box-averaged once, for the percentile cut)
+    // and, per frame, the **box-averaged** measure plane cached in `measures` for Pass B
+    // to consume directly. The cache is on the order of 8 x 96 MB and shrinks frame by
+    // frame as Pass B consumes it. With `radius = 0` the box average is the identity and
+    // the cached plane is ml itself. Bitwise unchanged: the running max uses the same
+    // comparison in the same order as `measure_peak`, and each cached plane is bitwise
+    // what `measure_plane` returned (the luma / Laplacian / SAT / box formulas are copied
+    // verbatim; reusing buffers changes no pixel's arithmetic sequence).
+    let n = w * h;
+    let mut peak = vec![0.0f32; n];
+    let mut gray = vec![0.0f32; n];
+    let mut ml = vec![0.0f32; n];
+    let mut sat = vec![0.0f64; (w + 1) * (h + 1)];
+    let mut measures: Vec<Vec<f32>> = Vec::with_capacity(count);
+    for f in frames {
+        luma_into(f, w, h, &mut gray);
+        ml_into(&gray, w, h, &mut ml);
+        crate::par::for_bands(h, &mut peak, w, |y0, _y1, band| {
+            for (i, row) in band.chunks_mut(w).enumerate() {
+                let y = y0 + i;
+                for (x, cell) in row.iter_mut().enumerate() {
+                    let p = y * w + x;
+                    if ml[p] > *cell {
+                        *cell = ml[p];
+                    }
+                }
+            }
+        });
+        let mut m = vec![0.0f32; n];
+        if radius == 0 {
+            m.copy_from_slice(&ml);
+        } else {
+            build_sat(&ml, w, h, &mut sat);
+            box_from_sat(&sat, w, h, radius, &mut m);
+        }
+        measures.push(m);
+    }
+    drop(gray);
+    drop(ml);
+    let best: Vec<f32> = if radius == 0 {
+        drop(sat);
+        peak
+    } else {
+        let mut b = vec![0.0f32; n];
+        build_sat(&peak, w, h, &mut sat);
+        box_from_sat(&sat, w, h, radius, &mut b);
+        drop(peak);
+        drop(sat);
+        b
+    };
     let cut = percentile_cut(&best, t).unwrap_or(0.0);
+    // 旧版这里 gate 一遍、weak 又一遍（两次全图遍历、两张常驻面）。现在只建 gate：
+    // 「无细节」的整块退回在塌缩后直接查 `masks[0]`（它就是 gate 本身，逐位同值）。
+    //
+    // The old code built `gate` in one full pass and `weak` in another (two whole-image
+    // traversals, two resident planes). Now only `gate` is built: the wholesale fallback
+    // after collapse reads `masks[0]` directly (it *is* gate, bitwise the same values).
     let gate: Vec<f32> = best
         .iter()
         .map(|&b| if b > cut { 1.0 } else { 0.0 })
         .collect();
-    let weak: Vec<bool> = gate.iter().map(|&g| g <= 0.0).collect();
-    let masks = mask_pyramid(&gate, w, h, levels);
+    drop(best);
+    let masks = mask_pyramid(gate, w, h, levels);
     let dims = level_dims(w, h, levels);
     let mut out_tower: Vec<Plane> = dims
         .iter()
@@ -809,12 +1093,53 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
     // untouched and tightens exactly one level when levels=2.
     let tight_from = (levels - 2).max(1);
 
-    // Pass B：逐帧流式；每帧只保留相邻两层的高斯面与权重面。
+    // Pass B 的逐层 scratch 预分配一次、跨帧复用（帧循环串行，不存在多线程共享可变
+    // scratch 的问题）：`g_buf[l]` / `w_buf[l]` 是第 l+1 层的高斯/权重面，`w0` 是最细层
+    // 权重面。拉普拉斯**不再落盘**——`fine − upsample(coarse)` 在累加处逐像素现算
+    // （见 `accumulate_laplacian_level`），旧版这一面每帧每层一张（最细层 288 MB），
+    // 写一遍读一遍纯属搬运。旧版每帧每层还要 fresh 分配这些面，每帧约 1 GB churn。
     //
-    // Pass B: stream frame by frame, keeping only two adjacent Gaussian and weight planes.
-    for f in frames {
-        let m = focus::measure_plane(f, w, h, radius);
-        let mut w0 = vec![0.0f32; w * h];
+    // Pass B's per-level scratch is preallocated once and reused across frames (the frame
+    // loop is serial, so there is no shared-mutable-scratch hazard): `g_buf[l]` /
+    // `w_buf[l]` hold level l+1's Gaussian/weight planes, `w0` the finest-level weight
+    // plane. The Laplacian is **never materialised** -- `fine - upsample(coarse)` is
+    // computed per pixel right at the accumulation site (see
+    // `accumulate_laplacian_level`); the old code wrote a full plane per frame per level
+    // (288 MB at the finest level) and read it straight back, pure shuffling, freshly
+    // allocated every time (~1 GB churn per frame).
+    let mut g_buf: Vec<Plane> = Vec::with_capacity(levels - 1);
+    let mut w_buf: Vec<Plane> = Vec::with_capacity(levels - 1);
+    for l in 1..levels {
+        let (dw, dh) = dims[l];
+        g_buf.push(Plane::zeros(dw, dh, 3));
+        w_buf.push(Plane::zeros(dw, dh, 1));
+    }
+    let mut w0 = vec![0.0f32; n];
+    // 上/下采样的 tap 表每层只算一次（旧版在 laplacian 里每帧每层重建，最细层一次
+    // 一万个小 Vec）。表内容与 `taps` 逐位相同。
+    //
+    // The up/down-sampling tap tables are built once per level (the old code rebuilt them
+    // inside the Laplacian every frame per level -- ten thousand small Vecs a time at the
+    // finest level). The tables are bitwise what `taps` returns.
+    let tap_cache: Vec<(TapTable, TapTable)> = (0..levels - 1)
+        .map(|l| {
+            let (fw, fh) = dims[l];
+            let (cw, ch) = dims[l + 1];
+            (taps(fw, cw), taps(fh, ch))
+        })
+        .collect();
+
+    // Pass B：逐帧流式。第 0 层的「高斯面」**直接借用帧数据本身**（交错 RGB 的排布
+    // 与 `Plane::from_rgb` 拷出来的完全一样，整幅 288 MB 拷贝纯属浪费），测度面从
+    // `measures` 缓存取、用完即还。
+    //
+    // Pass B: stream frame by frame. Level 0's "Gaussian plane" **borrows the frame data
+    // itself** (the interleaved RGB layout is exactly what `Plane::from_rgb` would copy,
+    // so the full 288 MB copy was pure waste), and the measure plane comes from the
+    // `measures` cache, released right after use.
+    for (fi, f) in frames.iter().enumerate() {
+        let m = std::mem::take(&mut measures[fi]);
+        w0.fill(0.0);
         // 逐像素独立，按行带并行（逐位不变）。
         //
         // Per-pixel independent, parallelised by row bands (bitwise unchanged).
@@ -823,42 +1148,78 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
                 let y = y0 + i;
                 for (x, cell) in row.iter_mut().enumerate() {
                     let p = y * w + x;
-                    if gate[p] > 0.0 {
+                    if masks[0][p] > 0.0 {
                         let mm = m[p];
                         *cell = mm * mm * mm * mm;
                     }
                 }
             }
         });
-        let mut g = Plane::from_rgb(f, w, h);
-        let mut wplane = Plane::from_mono(&w0, w, h);
+        drop(m);
+
         for l in 0..levels - 1 {
-            let g_next = reduce(&g);
-            let w_next = reduce(&wplane);
-            let lap = laplacian_from_gaussian(&g, &g_next);
+            // 第 l 层的细层面：第 0 层借用帧数据与 w0，更粗层读上一层在 g_buf / w_buf
+            // 里的输出。`split_at_mut` 让「读上一层」与「写本层输出」并存。
+            //
+            // Level l's fine planes: level 0 borrows the frame and w0; coarser levels read
+            // the previous level's output in g_buf / w_buf. `split_at_mut` lets "read the
+            // previous level" coexist with "write this level's output".
+            let split_g;
+            let split_w;
+            let (fine, fw, fh, wsrc, g_next, w_next): (
+                &[f32],
+                usize,
+                usize,
+                &[f32],
+                &mut Plane,
+                &mut Plane,
+            ) = if l == 0 {
+                (f, w, h, &w0, &mut g_buf[0], &mut w_buf[0])
+            } else {
+                split_g = g_buf.split_at_mut(l);
+                split_w = w_buf.split_at_mut(l);
+                let gp = &split_g.0[l - 1];
+                let wp = &split_w.0[l - 1];
+                (
+                    gp.data.as_slice(),
+                    gp.w,
+                    gp.h,
+                    wp.data.as_slice(),
+                    &mut split_g.1[0],
+                    &mut split_w.1[0],
+                )
+            };
+            reduce_into(fine, fw, fh, 3, g_next);
+            reduce_into(wsrc, fw, fh, 1, w_next);
             let (dw, dh) = dims[l];
             let n = dw * dh;
-            // 收紧层要现算一个权重面，其余层**直接借用**当前帧的权重面：老版本在这里
-            // `.clone()`，每帧每层白拷一张（第 0 层 24 MP 单通道 = 96 MB，6 层合计
-            // 每次 128 MB 的纯拷贝），而 `accumulate_level` 只读不写。
+            // 收紧层要现算一个权重面，其余层**直接借用**当前层的权重面（旧版在这里
+            // `.clone()` 过一张纯拷贝）。
             //
             // Tightened levels need a freshly computed weight plane; every other level
-            // **borrows** the current frame's plane. The old code `.clone()`d it -- a pure
-            // copy of 128 MB per frame per side (level 0 alone is 96 MB at 24 MP) that
-            // `accumulate_level` never wrote to.
+            // **borrows** the current level's plane (the old code `.clone()`d a pure copy
+            // here once).
             let weight: std::borrow::Cow<'_, [f32]> = if l >= tight_from {
                 let inv = 1.0 / count as f32;
                 std::borrow::Cow::Owned((0..n).map(|p| masks[l][p] * inv).collect())
             } else {
-                std::borrow::Cow::Borrowed(wplane.data.as_slice())
+                std::borrow::Cow::Borrowed(wsrc)
             };
-            accumulate_level(&mut out_tower[l], &mut wsum_tower[l], &lap, &weight);
-            g = g_next;
-            wplane = w_next;
+            let (xt, yt) = &tap_cache[l];
+            accumulate_laplacian_level(
+                &mut out_tower[l],
+                &mut wsum_tower[l],
+                fine,
+                g_next,
+                xt,
+                yt,
+                &weight,
+            );
         }
-        // 最粗层留 G_L，永远是等权（levels-1 >= tight_from）。
+        // 最粗层留 G_L（g_buf 的最后一个输出），永远是等权（levels-1 >= tight_from）。
         //
-        // The coarsest level keeps G_L and is always equal-weight (levels-1 >= tight_from).
+        // The coarsest level keeps G_L (g_buf's last output) and is always equal-weight
+        // (levels-1 >= tight_from).
         let (dw, dh) = dims[levels - 1];
         let n = dw * dh;
         let inv = 1.0 / count as f32;
@@ -866,21 +1227,36 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
         accumulate_level(
             &mut out_tower[levels - 1],
             &mut wsum_tower[levels - 1],
-            &g,
+            &g_buf[levels - 2],
             &weight,
         );
     }
 
-    // 权重和近零的格子：由参考帧自己的拉普拉斯塔补上，仍然只驻留相邻两层。
+    // 权重和近零的格子：由参考帧自己的拉普拉斯塔补上。参考帧的塔直接复用 g_buf /
+    // lap_buf（尺寸恰好一致，逐位同一套 reduce / laplacian 算式）。
     //
     // For cells whose weight sum is near zero, fill from the reference frame's own
-    // Laplacian tower -- still only two adjacent planes resident.
+    // Laplacian tower. The reference tower reuses g_buf / lap_buf (the sizes match, and
+    // the reduce / laplacian arithmetic is bitwise the same code path).
     let needs_fallback = wsum_tower.iter().any(|ws| ws.iter().any(|&v| v < WSUM_EPS));
     if needs_fallback {
-        let mut g = Plane::from_rgb(frames[reference], w, h);
+        let rf = frames[reference];
         for l in 0..levels - 1 {
-            let g_next = reduce(&g);
-            let lap = laplacian_from_gaussian(&g, &g_next);
+            let split_g;
+            let (fine, fw, fh, g_next): (&[f32], usize, usize, &mut Plane) = if l == 0 {
+                (rf, w, h, &mut g_buf[0])
+            } else {
+                split_g = g_buf.split_at_mut(l);
+                let gp = &split_g.0[l - 1];
+                (gp.data.as_slice(), gp.w, gp.h, &mut split_g.1[0])
+            };
+            reduce_into(fine, fw, fh, 3, g_next);
+            // 兜底阶段测度缓存已全部释放，这一张逐层现算的拉普拉斯面是瞬态的。
+            //
+            // By fallback time the measure cache is fully released; this per-level
+            // Laplacian plane is transient.
+            let mut lap = Plane::zeros(fw, fh, 3);
+            laplacian_into(fine, fw, fh, g_next, &mut lap);
             for p in 0..lap.w * lap.h {
                 if wsum_tower[l][p] < WSUM_EPS {
                     for c in 0..3 {
@@ -889,8 +1265,8 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
                     }
                 }
             }
-            g = g_next;
         }
+        let g = &g_buf[levels - 2];
         for p in 0..g.w * g.h {
             if wsum_tower[levels - 1][p] < WSUM_EPS {
                 for c in 0..3 {
@@ -925,8 +1301,12 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
     // pixels **after** collapse, using the finest-level gate, is the precise meaning of
     // "use the reference frame here", and keeps NaN out of the result.
     let rf = frames[reference];
+    // masks[0] 就是 gate（逐位同值）；旧版在这里查的是由 gate 派生的 weak 布面。
+    //
+    // masks[0] *is* gate (bitwise the same values); the old code consulted `weak`, a bool
+    // plane derived from gate.
     for p in 0..w * h {
-        if weak[p] {
+        if masks[0][p] <= 0.0 {
             let j = p * 3;
             out[j] = rf[j];
             out[j + 1] = rf[j + 1];
