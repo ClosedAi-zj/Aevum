@@ -9,6 +9,8 @@
 //!   每帧交给 egui 的那部分开销。端到端帧时还要加上上传、呈现与垂直同步，本夹具看不到。
 //! - 另记**切换首帧**（第 0 帧，冷缓存）：面板切过去的头一帧是用户真正看见卡顿的地方，
 //!   它的数字并进报告，但不进中位/p95 的判据（判据只卡稳态，见 `perf_budget` 判据）。
+//! - **墙钟对机器负载敏感**：测之前把编译、导出这类重活停掉。带负载测出来的数字偏高，
+//!   那是机器在忙，不是界面变慢——两台机器差出两倍也正常，只比同机同负载下的前后。
 //!
 //! # 场景
 //!
@@ -26,6 +28,9 @@
 //!   not an end-to-end frame time.
 //! - The first frame after a switch (cold caches) is reported separately as an indicator but
 //!   is not part of the median/p95 budget.
+//! - Wall clock is load sensitive: stop compiles and exports before measuring. A number taken
+//!   under load is the machine being busy, not the UI getting slower; two machines differing
+//!   by 2x is normal, so only compare before/after on the same box under the same load.
 //! - Scenario A walks the six modules in both the default-collapsed and fully-expanded
 //!   states (12 groups). One `Context` is shared by the whole run (fonts and styles are
 //!   warm in a real session); each group gets a fresh demo state. Scenario B drives the
