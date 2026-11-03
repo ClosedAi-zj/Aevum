@@ -1040,8 +1040,245 @@ fn cull_evaluate_and_extract_end_to_end() {
     );
     assert_eq!(result["copied"], 2);
     assert_eq!(result["excluded"], 1);
-    let copied: Vec<_> = std::fs::read_dir(&target).expect("目标目录").collect();
-    assert_eq!(copied.len(), 2, "目标目录该有两帧");
+    // 只数帧：目标目录里还会带上 `.aevum/measures.json`（提取按设计把测光账一起
+    // 搬走，无头测光和 GUI 现在共用同一本账，所以这里会真的存在）。
+    //
+    // Count frames only: the target also carries `.aevum/measures.json` (extraction ships
+    // the metering ledger by design, and headless and the GUI now share one, so it is
+    // actually there).
+    let copied = std::fs::read_dir(&target)
+        .expect("目标目录")
+        .filter(|e| {
+            e.as_ref()
+                .is_ok_and(|e| e.path().extension().is_some_and(|x| x == "png"))
+        })
+        .count();
+    assert_eq!(copied, 2, "目标目录该有两帧");
 
     reset_session();
+}
+
+/// 把图片内容换成等长垃圾、再把 mtime 拨回原值：`(mtime, len)` 缓存键原样保住，
+/// 解码却必然失败。这样「还能出结果」只可能来自盘上缓存，而不可能是又解了一遍图。
+///
+/// Replace a frame's bytes with same-length garbage and put the original mtime back: the
+/// `(mtime, len)` cache key survives while decoding cannot succeed. Anything that still
+/// yields numbers therefore came from the on-disk cache, not from another decode.
+fn corrupt_keeping_cache_key(path: &Path) {
+    let meta = std::fs::metadata(path).expect("读原图元数据");
+    let modified = meta.modified().expect("原图 mtime");
+    let len = meta.len();
+    std::fs::write(path, vec![0u8; len as usize]).expect("覆盖原图内容");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("重开原图")
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .expect("恢复 mtime");
+    let after = std::fs::metadata(path).expect("读改写后的元数据");
+    assert_eq!(after.len(), len, "缓存键的长度必须不变");
+    assert_eq!(
+        after.modified().unwrap(),
+        modified,
+        "缓存键的 mtime 必须不变"
+    );
+}
+
+/// 两个 f64 相差几个 ULP。只用于非负量（亮度、锐度），负数的位序不是单调的。
+///
+/// How many ULPs apart two f64 are. Only for non-negative values (luma, sharpness); the
+/// bit order of negatives is not monotonic.
+fn ulps_apart(a: f64, b: f64) -> u64 {
+    (a.to_bits() as i128 - b.to_bits() as i128).unsigned_abs() as u64
+}
+
+/// 现测与读账之间允许的全部偏差：**不超过 1 ULP**。
+///
+/// 这 1 ULP 不是这次改动带来的，是 `serde_json` 默认的浮点解析只为速度、不保证
+/// 逐位往返（`float_roundtrip` 特性没开）——GUI 第二次打开同一序列时也吃同一份
+/// 精度。判据咬死它：再多一位就说明无头侧换了算法（长边、色彩口径或缩放方式）。
+///
+/// The entire budget between a fresh measure and a cache read: **at most 1 ULP**.
+///
+/// That ULP is not from this change; `serde_json`'s default float parsing favours speed
+/// and does not promise a bit-exact round trip (`float_roundtrip` is off), and the GUI
+/// eats the same precision on its second open. The assertion pins it: one bit more means
+/// the headless side changed the algorithm (long side, colour weights or resampling).
+fn assert_metrics_close(
+    got: &aevum_core::metrics::FrameMetrics,
+    want: &aevum_core::metrics::FrameMetrics,
+    tag: &str,
+) {
+    for (name, a, b) in [
+        ("mean", got.mean, want.mean),
+        ("median", got.median, want.median),
+        ("center", got.center, want.center),
+        ("sharp", got.sharp, want.sharp),
+    ] {
+        assert!(
+            ulps_apart(a, b) <= 1,
+            "{tag} {name} 差了 {} ULP：{a} vs {b}（换算法了？）",
+            ulps_apart(a, b)
+        );
+    }
+}
+
+/// 同一份账上读两次必须逐位相同：两边的差只该来自落盘精度，不该来自实现。
+///
+/// Two reads of the same ledger must be bit-identical: any difference must come from the
+/// storage precision, never from the implementation.
+fn assert_metrics_bit_eq(
+    got: &aevum_core::metrics::FrameMetrics,
+    want: &aevum_core::metrics::FrameMetrics,
+    tag: &str,
+) {
+    assert_eq!(got.mean.to_bits(), want.mean.to_bits(), "{tag} mean");
+    assert_eq!(got.median.to_bits(), want.median.to_bits(), "{tag} median");
+    assert_eq!(got.center.to_bits(), want.center.to_bits(), "{tag} center");
+    assert_eq!(got.sharp.to_bits(), want.sharp.to_bits(), "{tag} sharp");
+}
+
+fn means_of(v: &[Option<aevum_core::metrics::FrameMetrics>]) -> Vec<Option<f64>> {
+    v.iter().map(|m| m.map(|x| x.mean)).collect()
+}
+
+fn sharp_of(v: &[Option<aevum_core::metrics::FrameMetrics>]) -> Vec<Option<f64>> {
+    v.iter().map(|m| m.map(|x| x.sharp)).collect()
+}
+
+/// 无头测光先读 GUI 落在盘上的 `.aevum/measures.json`：原图已不可解码仍然出数，
+/// 数值与 GUI 那趟的偏差 ≤ 1 ULP，裁决一条不差。
+///
+/// 变异验证：把 `session::measure_paths` 里的 `measures::measure_sequence` 改回
+/// `metrics::measure_many`，这条必红（「所有帧都读不出来」）。
+///
+/// Headless metering reads the `.aevum/measures.json` the GUI left on disk: with the
+/// originals no longer decodable it still produces numbers, within 1 ULP of the GUI pass,
+/// with not one verdict changed.
+///
+/// Mutation check: swap `measures::measure_sequence` back to `metrics::measure_many` in
+/// `session::measure_paths` and this goes red ("no frame could be read").
+#[test]
+fn headless_metrics_read_the_gui_disk_cache_without_decoding() {
+    let temp = TempDir::new("cache-read");
+    let seq_dir = temp.path().join("frames");
+    make_sequence(&seq_dir);
+    let paths: Vec<PathBuf> = (0..3)
+        .map(|i| seq_dir.join(format!("f{i:02}.png")))
+        .collect();
+
+    let cache = aevum_core::measures::cache_path(&seq_dir);
+    assert!(!cache.is_file(), "序列目录还不该有测光缓存");
+    // GUI 侧入口先测一遍，账必须真的落盘。
+    let (gui_metrics, gui_means, issues) =
+        aevum_core::measures::measure_sequence(&seq_dir, &paths, 512);
+    assert!(issues.is_empty(), "{issues:?}");
+    assert!(cache.is_file(), "GUI 侧测完必须落盘：{}", cache.display());
+
+    // 抹掉原图内容、保住缓存键。先证明这笔抹除是动真格的：现测必须全军覆没。
+    for p in &paths {
+        corrupt_keeping_cache_key(p);
+    }
+    let (probe, _, probe_issues) = aevum_core::metrics::measure_many(&paths, 512);
+    assert!(
+        probe.iter().all(Option::is_none) && probe_issues.len() == paths.len(),
+        "原图还能解码，这条判据就没咬住任何东西：{probe_issues:?}"
+    );
+
+    // 新建无头会话：不解图也必须把这一序列的测光填出来。
+    let mut session = aevum_mcp::Session {
+        seq: Some(aevum_core::sequence::Sequence::open(&seq_dir).expect("扫序列目录")),
+        ..Default::default()
+    };
+    session
+        .ensure_metrics()
+        .expect("原图已不可解码，无头仍应命中盘上测光缓存");
+
+    let got = session.metrics.as_ref().expect("ensure_metrics 刚灌过测光");
+    assert_eq!(got.len(), paths.len());
+    for i in 0..paths.len() {
+        let got_m = got[i].expect("命中缓存就该有指标");
+        let want_m = gui_metrics[i].expect("GUI 那趟也测到了这一帧");
+        assert_metrics_close(&got_m, &want_m, &format!("第 {i} 帧"));
+        let got_d = session.def_means[i].expect("命中缓存就该有线性测光");
+        let want_d = gui_means[i].expect("GUI 那趟也有线性测光");
+        assert!(
+            ulps_apart(got_d.luma, want_d.luma) <= 1,
+            "第 {i} 帧 luma：{} vs {}",
+            got_d.luma,
+            want_d.luma
+        );
+        for c in 0..3 {
+            assert!(
+                ulps_apart(got_d.rgb[c], want_d.rgb[c]) <= 1,
+                "第 {i} 帧 rgb[{c}]：{} vs {}",
+                got_d.rgb[c],
+                want_d.rgb[c]
+            );
+        }
+    }
+
+    // GUI 自己也拿同一份账再读一次：两边读的是同一本账，数必须逐位相同。
+    let (gui_cached, _, issues) = aevum_core::measures::measure_sequence(&seq_dir, &paths, 512);
+    assert!(issues.is_empty(), "{issues:?}");
+    for i in 0..paths.len() {
+        assert_metrics_bit_eq(
+            &got[i].expect("无头读到了账"),
+            &gui_cached[i].expect("GUI 读到了账"),
+            &format!("第 {i} 帧"),
+        );
+    }
+
+    // 1 ULP 的落盘精度不许改变任何一条裁决。
+    let rule = aevum_core::cull::CullRule::default();
+    let fresh = aevum_core::cull::evaluate(&means_of(&gui_metrics), &sharp_of(&gui_metrics), &rule);
+    let cached = aevum_core::cull::evaluate(&means_of(got), &sharp_of(got), &rule);
+    assert_eq!(cached.frames, fresh.frames, "读账后的逐帧裁决与现测不一致");
+    assert_eq!(
+        cached.rejected_indices(),
+        fresh.rejected_indices(),
+        "读账后的判废下标与现测不一致"
+    );
+}
+
+/// 反向：无头先测，写回的账必须是 GUI 读得懂的同一份格式——原图抹掉后 GUI 侧
+/// 入口仍能拿到同样的数（偏差 ≤ 1 ULP，同为落盘精度）。
+///
+/// The other direction: what headless writes must be the same format the GUI reads, so
+/// after the originals are gone the GUI entry point still returns the same numbers
+/// (within 1 ULP, the storage precision again).
+#[test]
+fn headless_metrics_write_a_cache_the_gui_can_read() {
+    let temp = TempDir::new("cache-write");
+    let seq_dir = temp.path().join("frames");
+    make_sequence(&seq_dir);
+    let paths: Vec<PathBuf> = (0..3)
+        .map(|i| seq_dir.join(format!("f{i:02}.png")))
+        .collect();
+
+    let cache = aevum_core::measures::cache_path(&seq_dir);
+    assert!(!cache.is_file(), "序列目录还不该有测光缓存");
+
+    let mut session = aevum_mcp::Session {
+        seq: Some(aevum_core::sequence::Sequence::open(&seq_dir).expect("扫序列目录")),
+        ..Default::default()
+    };
+    session.ensure_metrics().expect("无头测光");
+    assert!(
+        cache.is_file(),
+        "无头测完必须按 GUI 的格式落盘：{}",
+        cache.display()
+    );
+    let headless = session.metrics.clone().expect("刚测过");
+
+    for p in &paths {
+        corrupt_keeping_cache_key(p);
+    }
+    let (gui_metrics, _, issues) = aevum_core::measures::measure_sequence(&seq_dir, &paths, 512);
+    assert!(issues.is_empty(), "GUI 读同一份账不该报错：{issues:?}");
+    for i in 0..paths.len() {
+        let got_m = gui_metrics[i].expect("GUI 命中无头写的账");
+        let want_m = headless[i].expect("无头那趟测到了这一帧");
+        assert_metrics_close(&got_m, &want_m, &format!("第 {i} 帧"));
+    }
 }

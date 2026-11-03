@@ -31,7 +31,8 @@ use aevum_core::deflicker::{Analysis, FrameMeans};
 use aevum_core::develop::Ev;
 use aevum_core::grade::GradeParams;
 use aevum_core::interp;
-use aevum_core::metrics::{self, FrameMetrics};
+use aevum_core::measures;
+use aevum_core::metrics::FrameMetrics;
 use aevum_core::project::{self, AlignState, ProjectFile};
 use aevum_core::queue::{self, QueueItem, QueueStatus};
 use aevum_core::sequence::Sequence;
@@ -619,11 +620,21 @@ impl Session {
     /// 分块调用 core 的并行测光，块与块之间检查取消请求，这样后台测光能被
     /// `aevum_cancel` 在几帧之内停下，而不是等整段跑完。
     ///
+    /// 走的是与 GUI 同一个入口 `measures::measure_sequence`：先命中
+    /// `<序列根>/.aevum/measures.json`，没命中的帧才解码，解出来的值按同一份
+    /// 格式写回。GUI 和无头因此共用一本账，谁先测过，另一边都不用再解一遍图。
+    ///
     /// Measure once at a 512 long side the first time it is needed, then reuse.
     ///
     /// Calls core's parallel measurement in chunks and checks for cancellation
     /// between chunks, so a background measurement stops within a few frames of
     /// `aevum_cancel` instead of running to the end.
+    ///
+    /// It goes through `measures::measure_sequence`, the same entry point the GUI
+    /// uses: frames already in `<sequence root>/.aevum/measures.json` are read
+    /// from it, only the misses are decoded, and the fresh numbers are written
+    /// back in the same format. GUI and headless therefore share one ledger, and
+    /// whichever side measured first spares the other a decode pass.
     pub fn ensure_metrics(&mut self) -> Result<(), String> {
         if self.metrics.is_some() {
             return Ok(());
@@ -632,6 +643,7 @@ impl Session {
         if self.is_running() {
             return Err("有后台任务正在运行，先等它结束或调用 aevum_cancel".to_owned());
         }
+        let root = self.require_root()?;
         let paths = self.require_seq()?.paths();
         if paths.is_empty() {
             return Err("序列没有帧".to_owned());
@@ -641,7 +653,7 @@ impl Session {
             self.shared.begin(JobKind::Measure, paths.len());
         }
         let shared = Arc::clone(&self.shared);
-        let result = measure_paths(&paths, &shared);
+        let result = measure_paths(&root, &paths, &shared, true);
         if own_job {
             match &result {
                 Ok(_) => shared.finish_ok(),
@@ -757,9 +769,28 @@ impl Session {
 
 /// 逐帧测光（可被打断）。调用方负责 `shared.begin(JobKind::Measure, n)`。
 ///
+/// `root` 是序列根，也是盘上测光缓存 `<root>/.aevum/measures.json` 的归属；
+/// 每块都走 `measures::measure_sequence`，所以命中缓存与写回缓存跟 GUI 完全
+/// 同一套实现，不是两份「应该等价」的代码。`reuse_cache == false` 时改走
+/// `measure_sequence_fresh`：`aevum_measure --refresh` 要能强制重算，不能被
+/// 缓存键 `(mtime, len)` 里那点陈旧度挡住。
+///
 /// Per-frame measurement (interruptible). The caller is responsible for
 /// `shared.begin(JobKind::Measure, n)`.
-pub fn measure_paths(paths: &[PathBuf], shared: &JobShared) -> Result<JobOutcome, String> {
+///
+/// `root` is the sequence root and owns the on-disk metering cache at
+/// `<root>/.aevum/measures.json`. Each chunk goes through
+/// `measures::measure_sequence`, so cache hits and write-backs share one
+/// implementation with the GUI instead of two copies that are merely supposed
+/// to agree. With `reuse_cache == false` it goes through `measure_sequence_fresh`
+/// instead: `aevum_measure --refresh` has to be able to force a recompute and must
+/// not be stopped by whatever staleness the `(mtime, len)` key allows.
+pub fn measure_paths(
+    root: &Path,
+    paths: &[PathBuf],
+    shared: &JobShared,
+    reuse_cache: bool,
+) -> Result<JobOutcome, String> {
     let n = paths.len();
     if n == 0 {
         return Err("序列没有帧".to_owned());
@@ -774,7 +805,11 @@ pub fn measure_paths(paths: &[PathBuf], shared: &JobShared) -> Result<JobOutcome
         if shared.cancel_requested() {
             return Err("测光已取消".to_owned());
         }
-        let (values, part_defs, errors) = metrics::measure_many(part, MEASURE_LONG_SIDE);
+        let (values, part_defs, errors) = if reuse_cache {
+            measures::measure_sequence(root, part, MEASURE_LONG_SIDE)
+        } else {
+            measures::measure_sequence_fresh(root, part, MEASURE_LONG_SIDE)
+        };
         for (i, value) in values.into_iter().enumerate() {
             measured[done + i] = value;
         }

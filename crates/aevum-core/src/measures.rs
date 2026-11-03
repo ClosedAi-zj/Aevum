@@ -184,6 +184,33 @@ fn save(root: &Path, long_side: u32, frames: BTreeMap<String, Entry>) {
 ///
 /// Cached version of `metrics::measure_many`, with exactly the same return shape.
 pub fn measure_sequence(root: &Path, paths: &[PathBuf], long_side: u32) -> MeasurePass {
+    measure_sequence_run(root, paths, long_side, true)
+}
+
+/// 同上，但忽略账上已有的数，全部现测（`aevum_measure --refresh` 用）。
+///
+/// 现测的数照旧合并写回：只覆盖这几帧的条目，别的帧的账不动。存在的理由是缓存键
+/// 是 `(mtime, len)`——内容变了而这两个数没变的帧（从备份还原、工具原地改写不改
+/// 时间戳）在带缓存的口径下永远读旧数，得有一条能强制重算的路。
+///
+/// Same as above but ignores the numbers already on the ledger and measures every frame
+/// (used by `aevum_measure --refresh`).
+///
+/// The fresh numbers are still merged back: only the entries for these frames are
+/// overwritten and other frames' entries are left alone. It exists because the key is
+/// `(mtime, len)`: a frame whose content changed while both stayed the same (restored
+/// from a backup, rewritten in place by a tool that preserves timestamps) would otherwise
+/// read stale numbers forever, so there has to be a way to force a recompute.
+pub fn measure_sequence_fresh(root: &Path, paths: &[PathBuf], long_side: u32) -> MeasurePass {
+    measure_sequence_run(root, paths, long_side, false)
+}
+
+fn measure_sequence_run(
+    root: &Path,
+    paths: &[PathBuf],
+    long_side: u32,
+    read_cache: bool,
+) -> MeasurePass {
     let mut cached = load(root, long_side);
     let stamps: Vec<Option<(u64, u64)>> = paths.iter().map(|p| stamp(p)).collect();
     let keys: Vec<String> = paths.iter().map(|p| cache_key(root, p)).collect();
@@ -193,7 +220,7 @@ pub fn measure_sequence(root: &Path, paths: &[PathBuf], long_side: u32) -> Measu
     let mut missing = Vec::new();
     for (i, key) in keys.iter().enumerate() {
         match (stamps[i], cached.get(key)) {
-            (Some(st), Some(e)) if e.matches(st) => {
+            (Some(st), Some(e)) if read_cache && e.matches(st) => {
                 metrics[i] = Some(e.metrics());
                 means[i] = Some(e.means());
             }
@@ -275,6 +302,41 @@ mod tests {
         for m in &m2 {
             assert_eq!(m.unwrap().sharp, 12345.0);
         }
+    }
+
+    #[test]
+    fn fresh_ignores_the_ledger_but_still_merges_into_it() {
+        let dir = temp_dir("fresh");
+        let a = dir.join("a.png");
+        let b = dir.join("b.png");
+        write_frame(&a, 24, 16, [30, 30, 30]);
+        write_frame(&b, 24, 16, [200, 200, 200]);
+        let (_, _, issues) = measure_sequence(&dir, std::slice::from_ref(&a), 512);
+        assert!(issues.is_empty());
+
+        // 先量 b，账上有它；再把 a 的账面锐度改成算不出来的数。
+        let (_, _, issues) = measure_sequence(&dir, std::slice::from_ref(&b), 512);
+        assert!(issues.is_empty());
+        let text = std::fs::read_to_string(cache_path(&dir)).unwrap();
+        let mut file: serde_json::Value = serde_json::from_str(&text).unwrap();
+        file["frames"]["a.png"]["sharp"] = serde_json::json!(12345.0);
+        std::fs::write(cache_path(&dir), file.to_string()).unwrap();
+
+        // 带缓存读：读回那笔假账（前提成立，否则这条判据测不到东西）。
+        let (cached, _, _) = measure_sequence(&dir, &[a.clone(), b.clone()], 512);
+        assert_eq!(cached[0].unwrap().sharp, 12345.0);
+
+        // 强制重算：a 被现测覆盖，b 的账照旧保留。
+        let (fresh, _, issues) = measure_sequence_fresh(&dir, &[a, b], 512);
+        assert!(issues.is_empty());
+        assert_ne!(fresh[0].unwrap().sharp, 12345.0, "refresh 没绕过账上旧数");
+        let file: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(cache_path(&dir)).unwrap()).unwrap();
+        assert_ne!(file["frames"]["a.png"]["sharp"], 12345.0);
+        assert!(
+            file["frames"]["b.png"]["sharp"].is_number(),
+            "refresh 把别的帧的账抹掉了"
+        );
     }
 
     #[test]

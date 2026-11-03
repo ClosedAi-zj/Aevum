@@ -338,6 +338,8 @@ fn measure(session: &mut Session, args: &Value) -> Result<Value, String> {
         let seq = session.require_seq()?;
         (seq.len(), seq.paths())
     };
+    // 盘上测光缓存挂在序列根上，和无头/ GUI 共用同一个入口时要用到它。
+    let root = session.require_root()?;
     if n == 0 {
         return Err("序列没有帧".to_owned());
     }
@@ -348,7 +350,8 @@ fn measure(session: &mut Session, args: &Value) -> Result<Value, String> {
         let handle = thread::Builder::new()
             .name("aevum-measure".to_owned())
             .spawn(move || {
-                let result = measure_paths(&paths, &worker);
+                // refresh 走强制重算，其余走盘上账（与 GUI 同一本）。
+                let result = measure_paths(&root, &paths, &worker, !refresh);
                 worker.finish(result);
             })
             .map_err(|e| {
@@ -366,7 +369,7 @@ fn measure(session: &mut Session, args: &Value) -> Result<Value, String> {
             "note": "用 aevum_align_status 查询进度，aevum_cancel 取消。"
         }));
     }
-    let result = measure_paths(&paths, &shared);
+    let result = measure_paths(&root, &paths, &shared, !refresh);
     session.complete_job(result)?;
     measure_summary(session)
 }
@@ -1840,25 +1843,25 @@ fn timeblend_merge(session: &mut Session, args: &Value) -> Result<Value, String>
 
 /// 筛选评估：按四条判据逐帧裁决（曝光越界 / 相邻突变 / 清晰度 / 读不出来）。
 ///
-/// 与 GUI 的 `cull.evaluate` 同判据，但测光来源不同：GUI 走 `measures::measure_sequence`
-/// （先命中盘上 `measures.json`），无头走 `Session::ensure_metrics` → `metrics::measure_many`
-/// （512 长边，会话内存内现测、之后复用，**不读盘上缓存**）。正确性不受影响，只是 GUI
-/// 已测过的序列在无头这边会再解一遍图；口径差异已记 `docs/遗留台账.md` C7。
+/// 与 GUI 的 `cull.evaluate` 同判据、同测光来源：两边都走
+/// `measures::measure_sequence`（先命中盘上 `<序列根>/.aevum/measures.json`，512 长边）。
+/// GUI 已经测过的序列，无头这边直接读账，不再解一遍图；无头测过的序列，GUI 打开时
+/// 同样命中。缓存整份读写失败会静默退化成全量现测，不影响裁决。
 /// GUI 的 `apply` 是把判废帧标成「排除」的会话态，无头会话没有旗标存储，这里只评估
 /// 不标记；剔除走 `aevum_cull_extract` 的 `exclude` 显式列帧下标。
 ///
 /// Cull evaluation: judge every frame with the four rules (exposure band / adjacent
 /// jumps / sharpness / unreadable).
 ///
-/// Same rules as the GUI's `cull.evaluate`, but the metering source differs: the GUI goes
-/// through `measures::measure_sequence` (hitting the on-disk `measures.json` first), while
-/// headless goes through `Session::ensure_metrics` → `metrics::measure_many` (512 long
-/// side, measured into session memory and reused, **never reading the on-disk cache**).
-/// Correctness is unaffected; a sequence the GUI already metered simply gets decoded again
-/// headless-side, and the divergence is recorded as C7 in `docs/遗留台账.md`. The GUI's
-/// `apply` marks rejected frames "excluded" in session state, which a headless session
-/// does not store -- evaluation only here; exclusion happens through
-/// `aevum_cull_extract`'s explicit `exclude` index list.
+/// Same rules and the same metering source as the GUI's `cull.evaluate`: both go
+/// through `measures::measure_sequence` (hitting `<sequence root>/.aevum/measures.json`
+/// first, 512 long side). A sequence the GUI already metered is read from that ledger
+/// headless-side instead of being decoded again, and a sequence metered headless is hit
+/// by the GUI when it opens. A failed cache read or write degrades silently to a full
+/// re-measure and never changes a verdict. The GUI's `apply` marks rejected frames
+/// "excluded" in session state, which a headless session does not store -- evaluation
+/// only here; exclusion happens through `aevum_cull_extract`'s explicit `exclude` index
+/// list.
 fn cull_evaluate(session: &mut Session, args: &Value) -> Result<Value, String> {
     session.ensure_metrics()?;
     let metrics = session.metrics.as_ref().expect("ensure_metrics 刚灌过测光");
@@ -3654,10 +3657,10 @@ fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_measure",
-            description: "逐帧测光（均值/中值/中心/锐度），返回统计与降采样序列；已测过时复用缓存，refresh 可强制重测。",
+            description: "逐帧测光（均值/中值/中心/锐度），返回统计与降采样序列；先复用会话内存与盘上 `<序列根>/.aevum/measures.json`（与 GUI 同一本账），refresh 可强制重算。",
             input_schema: object(
                 json!({
-                    "refresh": {"type": "boolean", "default": false, "description": "true 时忽略已缓存的测光结果，重新逐帧测量"},
+                    "refresh": {"type": "boolean", "default": false, "description": "true 时忽略会话内存与盘上账上的测光结果，重新逐帧测量（测出来的数仍写回账）"},
                     "background": {"type": "boolean", "default": false, "description": "true 时后台测光并立即返回，用 aevum_align_status 查进度"}
                 }),
                 &[],
@@ -3950,7 +3953,7 @@ fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_cull_evaluate",
-            description: "按四条判据逐帧裁决并给出理由：曝光越界（EV）、与相邻帧的突变、清晰度低于序列中位的比例、读不出来；立即返回。测光在无头会话内存里进行（512 长边，第一次调用现测、之后会话内复用），**不读取盘上的测光缓存**——GUI 测过的序列，无头这边仍会整段重测（口径差异见 docs/遗留台账 C7）。只评估不标记：GUI 侧的 apply（把判废帧标成「排除」）是会话态，无头剔除走 aevum_cull_extract 的 exclude 参数。",
+            description: "按四条判据逐帧裁决并给出理由：曝光越界（EV）、与相邻帧的突变、清晰度低于序列中位的比例、读不出来；立即返回。测光与 GUI 同一条路径（512 长边）：先读盘上 `<序列根>/.aevum/measures.json`，没有的帧才解码，测完按同一格式写回。所以 GUI 已经测过的序列，无头这边直接出裁决、不再解一遍图，反之亦然；缓存读写失败会静默退化成现测，不影响裁决。只评估不标记：GUI 侧的 apply（把判废帧标成「排除」）是会话态，无头剔除走 aevum_cull_extract 的 exclude 参数。",
             input_schema: object(
                 json!({
                     "suggest": {"type": "boolean", "description": "用序列自身的亮度中位数绝对偏差推曝光区间（3×1.4826×MAD，下限 0.5 EV）；给了则覆盖 ev_low/ev_high"},
