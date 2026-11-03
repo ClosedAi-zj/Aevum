@@ -1003,7 +1003,58 @@ fn direct_pipeline_matches_frame_route() {
     assert_eq!(log.first().unwrap().stage, Stage::Frames);
     assert_eq!(log.last().unwrap().stage, Stage::Encode);
     assert_eq!(log.last().unwrap().done, 6);
-    assert!(log.windows(2).all(|w| w[1].done >= w[0].done));
+
+    // `done` 是**阶段内**计数，不是全局计数：写帧阶段数的是「已经喂进编码器的帧」，
+    // 编码阶段数的是 ffmpeg 自己回报的已编码帧（`-progress` 的 `frame=`），后者从 1
+    // 重新数。ffmpeg 只在编码真的跨过一个统计周期（默认 0.5 s）时才吐中间块；一吐，
+    // 日志就是 `… (Frames, 6), (Encode, 1) …`——跨阶段比大小必然「回退」，而这正是
+    // 消息里带 `Stage` 的原因：界面分别显示「写帧 6/6」和「编码 1/6」。
+    //
+    // 所以单调性只能**按阶段**钉，再补两条：阶段只许 Frames → Encode 走一次（不许
+    // 回头），且每个阶段都真的走到 `total`（防止「单调但半路停住」也被判绿）。
+    //
+    // 复现记录（QA，2026-11-03）：把直连的喂料按帧号错开 700 ms 后，ffmpeg 吐
+    // `frame=1 → frame=3 → frame=6`，旧断言当场红在 `(Frames,6) → (Encode,1)`；
+    // 换成按阶段钉之后，同一份慢喂料是绿的。
+    //
+    // `done` is a **per-stage** count, not a global one: the Frames stage counts frames fed
+    // into the encoder, while the Encode stage counts what ffmpeg reports back (`frame=`
+    // from `-progress`), which restarts at 1. ffmpeg only emits intermediate blocks when the
+    // encode actually spans a stats period (0.5 s by default); once it does, the log reads
+    // `… (Frames, 6), (Encode, 1) …`, so comparing across the boundary is guaranteed to
+    // "regress" -- and that is exactly why the message carries `Stage`: the UI shows
+    // "writing frame 6/6" and then "encoding 1/6".
+    //
+    // Monotonicity is therefore pinned per stage, plus two more: the stage only moves
+    // Frames -> Encode once (never backwards), and each stage really reaches `total`
+    // (so "monotone but stops halfway" cannot pass either).
+    let mut stages: Vec<(Stage, Vec<usize>)> = Vec::new();
+    for p in &log {
+        let same = matches!(stages.last(), Some((stage, _)) if *stage == p.stage);
+        if same {
+            stages.last_mut().unwrap().1.push(p.done);
+        } else {
+            stages.push((p.stage, vec![p.done]));
+        }
+    }
+    for (stage, dones) in &stages {
+        assert!(
+            dones.windows(2).all(|w| w[1] >= w[0]),
+            "{stage:?} 阶段内进度回退：{dones:?}"
+        );
+        assert_eq!(
+            dones.last().copied(),
+            Some(6),
+            "{stage:?} 阶段没走到 6 帧：{dones:?}"
+        );
+    }
+    assert!(
+        stages
+            .windows(2)
+            .all(|w| w[0].0 == Stage::Frames && w[1].0 == Stage::Encode),
+        "阶段只许 Frames → Encode 走一次，不许回头：{:?}",
+        stages.iter().map(|s| s.0).collect::<Vec<_>>()
+    );
 }
 
 #[test]
