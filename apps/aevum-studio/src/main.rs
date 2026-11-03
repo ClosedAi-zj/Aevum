@@ -35,6 +35,13 @@ macro_rules! warn {
 }
 
 fn main() -> ExitCode {
+    // 冷启动计时从**进程进来第一行**开始：argv 解析、配置读取、字体装配、窗口创建、
+    // 首帧布局都算在内。放到 eframe 起窗之后就只能量到「窗口起来以后」，
+    // 而那正是用户最不在意的一段。
+    //
+    // Cold-start clock starts on the very first line of `main`: argv parsing, settings,
+    // font assembly, window creation and the first frame are all inside it.
+    let boot_clock = std::time::Instant::now();
     // --mcp 必须在任何 eframe/窗口初始化之前处理：agent 调用时不能弹窗，
     // 也不能因为没有显示器就失败。
     let argv: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
@@ -61,6 +68,7 @@ fn main() -> ExitCode {
     let mut selftest = false;
     let mut bench_ui = false;
     let mut bench_preview = false;
+    let mut bench_startup = false;
     let mut demo_edit = false;
     let mut shot_queue = false;
     let mut shot_end = false;
@@ -89,6 +97,7 @@ fn main() -> ExitCode {
             "--selftest" => selftest = true,
             "--bench-ui" => bench_ui = true,
             "--bench-preview" => bench_preview = true,
+            "--bench-startup" => bench_startup = true,
             "--demo" => demo = true,
             "--demo-edit" => demo_edit = true,
             "--shot-queue" => shot_queue = true,
@@ -240,16 +249,88 @@ fn main() -> ExitCode {
         ..Default::default()
     };
 
+    // 只在 `--bench-startup` 时把首帧和「进程进来」之间的时长钉住；平时这条路上
+    // 一个多出来的 Instant 都不留。
+    //
+    // Only under `--bench-startup` is the first frame pinned to the process entry time;
+    // the normal path carries no extra state.
+    let boot_probe = bench_startup.then_some(boot_clock);
+
     match eframe::run_native(
         aevum_core::brand::TITLE,
         options,
-        Box::new(move |cc| Ok(Box::new(AevumApp::new(cc, startup)))),
+        Box::new(move |cc| {
+            let app = AevumApp::new(cc, startup);
+            Ok(match boot_probe {
+                Some(started) => Box::new(StartupProbe::new(app, started)) as Box<dyn eframe::App>,
+                None => Box::new(app) as Box<dyn eframe::App>,
+            })
+        }),
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             warn!("启动失败：{e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// 冷启动探针：把 [`AevumApp`] 包一层，首帧画完就打一行、然后关窗退出。
+///
+/// # 口径
+///
+/// 「启动到首帧」= `main()` 第一行到**第一次 `ui()` 返回**的墙钟，含 argv 解析、
+/// `settings.json` 读取、字体装配、窗口创建、首帧布局与绘制提交。**不含 GPU 呈现**
+/// （egui 把形状交了就算，真正上屏在这一帧之后）——我们卡的是 CPU 侧的启动成本，
+/// 交叉编译机/CI 上显卡差异不该进这个数。
+///
+/// 为什么不用外面「等窗口出现」：那要轮询 `MainWindowHandle`，Windows 的窗口
+/// 动画、DWM 合成会把噪声推到 200ms 以上，量不出代码退化；要那个数请用
+/// `tools/ux_probe.ps1`（它是给「人感受到的可交互时刻」用的，不是给回归用的）。
+///
+/// # Timing basis
+///
+/// "Startup to first frame" is the wall clock from the first line of `main()` to the
+/// return of the first `ui()`: argv parsing, settings load, font assembly, window
+/// creation, first-frame layout and draw submission. It **excludes GPU presentation**;
+/// this is the CPU-side startup cost, so graphics-driver differences do not leak in.
+///
+/// A process-side "wait for the window to appear" would add Windows animation and DWM
+/// compositing noise (200ms+), which cannot show a code regression. `tools/ux_probe.ps1`
+/// measures that user-perceived moment instead and is not used as a fence.
+struct StartupProbe {
+    inner: AevumApp,
+    started: std::time::Instant,
+    reported: bool,
+}
+
+impl StartupProbe {
+    fn new(inner: AevumApp, started: std::time::Instant) -> Self {
+        Self {
+            inner,
+            started,
+            reported: false,
+        }
+    }
+}
+
+impl eframe::App for StartupProbe {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        eframe::App::ui(&mut self.inner, ui, frame);
+        if self.reported {
+            return;
+        }
+        self.reported = true;
+        let ms = self.started.elapsed().as_secs_f64() * 1000.0;
+        say!("启动到首帧 = {ms:.0}ms（窗口创建 + 首帧 UI + 首个贴图上传）");
+        // 立刻关窗：基准进程不许挂在事件循环里等用户。
+        //
+        // Close right away so the benchmark process does not sit in the event loop.
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        eframe::App::clear_color(&self.inner, visuals)
     }
 }
 
@@ -295,6 +376,7 @@ fn print_help() {
     say!(
         "  --bench-preview   无显示器跑首屏预览基准（清缓存后量解码/调色/成图，样张取自 samples/cameras）"
     );
+    say!("  --bench-startup   起窗量到首帧画完为止（毫秒），打印后立刻退出；脚本跑 5 次取中位");
     say!("  --mcp             以 MCP stdio server 无头运行，供 agent 调用");
     say!("  --mcp --attach <control.json>");
     say!("                    附着到正在运行的 GUI，把工具调用转给窗口（界面实时更新）");
