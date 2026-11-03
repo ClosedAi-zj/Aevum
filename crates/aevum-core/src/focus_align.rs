@@ -516,16 +516,27 @@ pub fn estimate(
     }
     // 代理按 1/2 分辨率建（长边封顶 2048），相邻两帧同时驻留即可链式累计。
     //
+    // 链式实现：只留上一帧代理，`block_shifts` 用完即弃——原来这里 `collect` 了全部 n 张
+    // （24MP×32 约 768 MB），与这段注释的说法正好相反。后面的 `gain_stats` 用的是原始
+    // 帧、自己另建 1/8 RGB 代理，不依赖这些 1/2 代理，所以可以边算边丢。
+    //
     // Proxies are built at half resolution (long side capped at 2048); keeping two
     // neighbouring frames resident is enough for chained accumulation.
-    let proxies: Vec<MonoProxy> = frames.iter().map(|f| proxy_luma(f, w, h)).collect();
-    let mut fields: Vec<BlockField> = Vec::with_capacity(proxies.len());
+    //
+    // The chain keeps only the previous proxy and drops each one after `block_shifts` -- the
+    // old code `collect`ed all n of them (about 768 MB at 24MP x 32), the opposite of what the
+    // note above claims. The later `gain_stats` works from the raw frames and builds its own
+    // 1/8 RGB proxies, so it does not depend on these 1/2 proxies and they can go as we go.
+    let mut fields: Vec<BlockField> = Vec::with_capacity(frames.len());
     fields.push(BlockField::zeros());
-    for k in 1..proxies.len() {
+    let mut prev = proxy_luma(frames[0], w, h);
+    for k in 1..frames.len() {
         if cancelled() {
             return None;
         }
-        fields.push(block_shifts(&proxies[k - 1], &proxies[k], radius));
+        let cur = proxy_luma(frames[k], w, h);
+        fields.push(block_shifts(&prev, &cur, radius));
+        prev = cur;
     }
     let offsets = chain_offsets(&fields);
     let blocks = chain_blocks(&fields);

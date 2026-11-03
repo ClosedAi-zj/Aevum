@@ -132,23 +132,38 @@ pub fn merge(frames: &[&[f32]], w: usize, h: usize) -> Vec<f32> {
         return frames[0].to_vec();
     }
     // 第 0 层权重：三因子相乘，再跨输入逐像素归一。
-    let raw: Vec<Vec<f32>> = frames.par_iter().map(|f| weight_map(f, w, h)).collect();
-    let weights: Vec<Vec<f32>> = (0..n)
-        .into_par_iter()
-        .map(|i| {
-            let mut out = vec![0.0f32; w * h];
-            out.par_iter_mut().enumerate().for_each(|(p, slot)| {
-                let sum: f32 = raw.iter().map(|map| map[p]).sum();
-                *slot = if sum > 1e-9 {
-                    raw[i][p] / sum
-                } else {
-                    1.0 / n as f32
-                };
-            });
-            out
-        })
-        .collect();
-
+    //
+    // 归一化要「所有帧权重和」才能做，而把 n 张全幅权重面同时留在内存里正是膨胀的来源
+    // （24MP×9 约 +1.7 GB）。改成两趟流式：
+    //
+    //   第一趟：逐帧算权重面，只把分母（跨帧权重和）留下；
+    //   第二趟：逐帧**重算**权重面、就地除以分母，喂给 `accumulate` 后立刻释放。
+    //
+    // 为什么选「重算」而不是「缓存后逐帧释放」：`weight_map` 是纯函数，缓存要跨帧留着
+    // 才有意义，而逐帧释放就意味着缓存期结束前必须拿全部分母——缓存只能落盘。重算只是
+    // 把这趟算术再做一遍（无 I/O、无精度损失），换来 (n−1)·w·h·4 字节的峰值下降
+    // （24MP×9 约 768 MB），且分母仍按帧序逐帧累加，加法序列与原来的
+    // `raw.iter().map(|map| map[p]).sum()` 逐位相同，归一化顺序不变。
+    //
+    // Level-0 weights are the product of the three factors, then normalised per pixel across
+    // inputs. Normalising needs the sum over **all** frames, and holding n full-resolution
+    // weight planes at once is exactly where the memory went (about +1.7 GB at 24MP x 9).
+    // Two streaming passes now: the first computes one weight plane per frame and keeps only
+    // the denominator; the second **recomputes** that plane, divides it in place, hands it to
+    // `accumulate` and drops it. Recomputing rather than caching-then-releasing: `weight_map`
+    // is pure, and a cache is only worth anything if it spans frames -- releasing per frame
+    // means the cache must be complete before the denominator is known, which means spilling
+    // to disk. Recomputing just redoes the same arithmetic (no I/O, no precision loss) for
+    // (n-1)*w*h*4 bytes less peak (about 768 MB at 24MP x 9). The denominator still
+    // accumulates frame by frame in frame order, so the addition sequence is bitwise
+    // identical to the old `raw.iter().map(|map| map[p]).sum()`.
+    let mut den = vec![0.0f32; w * h];
+    for f in frames {
+        let raw = weight_map(f, w, h);
+        den.par_iter_mut()
+            .zip(raw.par_iter())
+            .for_each(|(d, r)| *d += *r);
+    }
     let levels = pyramid_levels(w, h);
     // 塌缩累加器：每层一张 RGB，逐帧往里加「该层权重 × 该层拉普拉斯」。
     let mut acc: Vec<Vec<f32>> = (0..=levels)
@@ -158,7 +173,15 @@ pub fn merge(frames: &[&[f32]], w: usize, h: usize) -> Vec<f32> {
         })
         .collect();
     for i in 0..n {
-        accumulate(frames[i], &weights[i], w, h, levels, &mut acc);
+        // 第二趟：重算这一帧的权重面，就地归一，交给 `accumulate` 后随作用域释放。
+        //
+        // Pass two: recompute this frame's weight plane, normalise in place, hand it to
+        // `accumulate`, and let it go out of scope.
+        let mut wgt = weight_map(frames[i], w, h);
+        wgt.par_iter_mut().zip(den.par_iter()).for_each(|(v, d)| {
+            *v = if *d > 1e-9 { *v / *d } else { 1.0 / n as f32 };
+        });
+        accumulate(frames[i], &wgt, w, h, levels, &mut acc);
     }
 
     // 从最粗一层往下塌缩：上采样到下一层尺寸再相加。

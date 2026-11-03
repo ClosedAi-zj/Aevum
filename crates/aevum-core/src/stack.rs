@@ -172,19 +172,36 @@ pub fn combine(
     }
 
     let mut out = vec![0.0f32; n];
-    let mut vals = vec![0.0f32; frames.len()];
-
-    for i in 0..n {
-        for (k, f) in frames.iter().enumerate() {
-            vals[k] = f[i];
+    let row = w * 3;
+    let nf = frames.len();
+    // 行带并行：每条带只碰自己的像素，带内帧序与串行版逐元素相同，所以选择（含排序的
+    // 稳定性与同值同序）逐位不变。取值缓冲与 MAD 临时缓冲按带各一份、跨像素复用——
+    // 原来每个像素 `collect` 一个 `dev: Vec`，24MP 三通道就是 7200 万次堆分配。
+    //
+    // Row-band parallel: a band touches only its own pixels, and inside a band the frame
+    // order matches the serial version element for element, so the selection (including the
+    // stable sort and its tie order) is bitwise unchanged. One sample buffer and one MAD
+    // scratch per band, reused across pixels -- the old code `collect`ed a fresh `dev: Vec`
+    // per pixel, 72 million heap allocations on a 24MP three-channel frame.
+    crate::par::for_bands(h, &mut out, row, |y0, _y1, band| {
+        let mut vals = vec![0.0f32; nf];
+        let mut dev = Vec::with_capacity(nf);
+        for (r, band_row) in band.chunks_mut(row).enumerate() {
+            let base = (y0 + r) * row;
+            for (c, slot) in band_row.iter_mut().enumerate() {
+                let i = base + c;
+                for (k, f) in frames.iter().enumerate() {
+                    vals[k] = f[i];
+                }
+                *slot = match opts.mode {
+                    Mode::Lighten => vals.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+                    Mode::Average => vals.iter().sum::<f32>() / nf as f32,
+                    Mode::Median => median_of(&mut vals),
+                    Mode::SigmaClip => sigma_clip(&mut vals, &mut dev, opts.clip_sigma),
+                };
+            }
         }
-        out[i] = match opts.mode {
-            Mode::Lighten => vals.iter().copied().fold(f32::NEG_INFINITY, f32::max),
-            Mode::Average => vals.iter().sum::<f32>() / frames.len() as f32,
-            Mode::Median => median_of(&mut vals),
-            Mode::SigmaClip => sigma_clip(&mut vals, opts.clip_sigma),
-        };
-    }
+    });
 
     if opts.fill_gaps {
         fill_holes(&mut out, w, h);
@@ -207,11 +224,17 @@ fn median_of(vals: &mut [f32]) -> f32 {
 
 /// σ 截尾平均：中值 + MAD 估离散度，剔掉 k·σ 之外的样本，剩下的取均值。
 ///
+/// `dev` 是 MAD 的临时缓冲，由调用方跨像素复用（长度每次都被重写成 `vals.len()`）。
+///
 /// Sigma-clipped mean: median + MAD for the spread, drop samples beyond k·σ, average the rest.
-fn sigma_clip(vals: &mut [f32], k: f32) -> f32 {
+///
+/// `dev` is the MAD scratch, reused across pixels by the caller (its length is rewritten to
+/// `vals.len()` every call).
+fn sigma_clip(vals: &mut [f32], dev: &mut Vec<f32>, k: f32) -> f32 {
     let med = median_of(vals);
-    let mut dev: Vec<f32> = vals.iter().map(|v| (v - med).abs()).collect();
-    let mad = median_of(&mut dev);
+    dev.clear();
+    dev.extend(vals.iter().map(|v| (v - med).abs()));
+    let mad = median_of(dev.as_mut_slice());
     let sigma = 1.4826 * mad;
     if sigma <= 0.0 {
         // 全等（或全零，或非有限）：截尾没有意义，直接给中值。
@@ -353,7 +376,8 @@ mod tests {
     fn sigma_clip_drops_the_outlier_and_keeps_the_rest() {
         let mut vals: Vec<f32> = vec![0.10; 20];
         vals[7] = 0.95;
-        let clipped = sigma_clip(&mut vals.clone(), 3.0);
+        let mut dev = Vec::new();
+        let clipped = sigma_clip(&mut vals.clone(), &mut dev, 3.0);
         assert!(
             (clipped - 0.10).abs() < 1e-5,
             "截尾后应接近 0.10，实得 {clipped}"
@@ -363,7 +387,7 @@ mod tests {
     #[test]
     fn sigma_clip_is_not_a_no_op_on_a_uniform_stack() {
         let mut vals = vec![0.33f32; 8];
-        assert!((sigma_clip(&mut vals, 3.0) - 0.33).abs() < 1e-6);
+        assert!((sigma_clip(&mut vals, &mut Vec::new(), 3.0) - 0.33).abs() < 1e-6);
     }
 
     #[test]
