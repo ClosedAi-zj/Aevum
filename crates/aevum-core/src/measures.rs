@@ -245,7 +245,20 @@ fn measure_sequence_run(
                 }
                 touched = true;
             }
-            Err(e) => issues.push((i, format!("{e}"))),
+            Err(e) => {
+                // 解不出来的帧不许把旧账留在账本上：后续带缓存的调用（键 `(mtime,len)`
+                // 仍匹配）会把它当成有效结果，坏帧就被当好帧裁决。删掉只是让下一次重测，
+                // 比留一条与事实不符的数安全。
+                //
+                // A frame that fails to decode must not leave its old entry behind: a later
+                // cached call (the `(mtime,len)` key still matches) would accept it and a
+                // broken frame would be judged as good. Dropping it only costs a retry, which
+                // beats keeping a number that no longer describes the file.
+                if cached.remove(&keys[i]).is_some() {
+                    touched = true;
+                }
+                issues.push((i, format!("{e}")))
+            }
         }
     }
     issues.sort_by_key(|(i, _)| *i);
@@ -336,6 +349,55 @@ mod tests {
         assert!(
             file["frames"]["b.png"]["sharp"].is_number(),
             "refresh 把别的帧的账抹掉了"
+        );
+    }
+
+    #[test]
+    fn a_frame_that_stops_decoding_loses_its_ledger_entry() {
+        // 场景：账上有这帧的好数，之后文件坏了但 `(mtime, 长度)` 没变（等长覆盖 + 把
+        // mtime 拨回）。刷新失败后旧账必须被删掉——否则下一次带缓存的调用会拿旧数把
+        // 坏帧当好帧裁决，而「读不出来」本身正是 cull 的一条判据。
+        //
+        // Scenario: the ledger holds good numbers, then the file goes bad while
+        // `(mtime, length)` stays put (same-length overwrite plus a restored mtime). A
+        // failed refresh must drop the old entry; otherwise the next cached call judges a
+        // broken frame with the stale numbers, and "cannot be read" is itself a cull rule.
+        let dir = temp_dir("ledger-bad-frame");
+        let a = dir.join("a.png");
+        let b = dir.join("b.png");
+        write_frame(&a, 24, 16, [120, 90, 60]);
+        write_frame(&b, 24, 16, [10, 20, 30]);
+        let (m, _, issues) = measure_sequence(&dir, &[a.clone(), b.clone()], 512);
+        assert!(issues.is_empty());
+        let good = m[0].unwrap().sharp;
+
+        // 等长垃圾覆盖 + mtime 拨回：键不变，解码必失败。
+        let meta = std::fs::metadata(&a).unwrap();
+        let modified = meta.modified().unwrap();
+        let len = meta.len() as usize;
+        std::fs::write(&a, vec![0xABu8; len]).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&a)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+
+        let (_, _, issues) = measure_sequence_fresh(&dir, std::slice::from_ref(&a), 512);
+        assert_eq!(issues.len(), 1, "坏文件在 refresh 下必须报一条");
+        let file: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(cache_path(&dir)).unwrap()).unwrap();
+        assert!(
+            file["frames"].get("a.png").is_none(),
+            "解不出来的帧不许留在账上（refresh 失败也一视同仁）"
+        );
+
+        // 不带 refresh 的调用也不许把旧数还给调用方。
+        let (again, _, issues) = measure_sequence(&dir, std::slice::from_ref(&a), 512);
+        assert_eq!(issues.len(), 1, "带缓存的调用同样要报读不出来");
+        assert!(
+            again[0].is_none(),
+            "旧账（sharp={good}）不许冒充坏文件的测光结果"
         );
     }
 
