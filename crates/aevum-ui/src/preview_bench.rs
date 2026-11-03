@@ -17,6 +17,9 @@
 //!   不是在外面另跑一遍估算的，所以三段一定落在同一次渲染上；`rest` = 总中位 − 两段，
 //!   含取景、成图与直方图。
 //! - 样张在 `samples/cameras/`，不入库；没有样张时返回空表，判据打一行跳过。
+//! - **一次只跑一条**：`PREVIEW_SRC` 是进程级单例，两条渲染并行会互相插队——别人的
+//!   「清缓存」正好落在你的「渲染」之后，量出来的就是等锁的时间（见过 +40ms 与 +250ms
+//!   两种）。判据那边用一把文件内的锁把两条测试串起来。
 //!
 //! # Measurement basis
 //!
@@ -27,7 +30,11 @@
 //! `grade` columns are recorded by `render_preview_file` itself (`PreviewPhases`), so all three
 //! segments belong to the same render rather than to a separate estimate; `rest` is the total
 //! minus both. Samples live in `samples/cameras/` and are not committed, so a missing directory
-//! yields an empty table and the fence prints a skip line.
+//! yields an empty table and the fence prints a skip line. Run one render at a time:
+//! `PREVIEW_SRC` is a process-wide singleton, so two concurrent renders interleave -- someone
+//! else's "clear the cache" lands right after your "render it" and you measure lock waiting
+//! instead (both +40ms and +250ms have been seen). The fence serialises its two tests with a
+//! file-local lock for exactly this reason.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
