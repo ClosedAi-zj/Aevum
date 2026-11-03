@@ -1015,8 +1015,13 @@ mod tests {
         // 规则本身的确定性单测（不依赖 image 的解码行为）。字节形状都是最小化的：
         // ① 最小完整流（SOI + SOS + EOI）→ true；② 完整流 + EOI 后厂商尾注 → true——
         // 正是真机 Panasonic 的形状，旧规则在这里误杀；③ SOS 后无 EOI（熵数据中途截断）
-        // → false；④ EXIF 缩略图嵌在 APP1 里（自带 SOI/EOI）、主流 SOS 之后截断 → false
-        // ——这是「按最后一个 SOS 裸扫」会漏掉的形状，按段走能把 APP1 连壳跳过；
+        // ③ SOS 后无 EOI（熵数据中途截断）→ false；
+        // ④a EXIF 缩略图嵌在 APP1 里（自带 SOI/EOI）、主流 SOS 之后截断 → false
+        // ——注意这个形状对裸扫版没有判别力（裸扫恰好也能判 false），留它只因
+        // 它本身是合法的截断形状；
+        // ④b 缩略图自带完整 SOI+SOS+EOI、主流整体缺失 → false——裸扫版会拿
+        // 缩略图的 SOS 当「最后一个 SOS」、拿它的 EOI 当终点而误判 true，
+        // 只有按段走能把它抓出来，这才是对裸扫回归真正有牙的形状；
         // ⑤ 连 SOI 都没有 → false。
         assert!(super::jpeg_stream_complete(&[
             0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9
@@ -1027,12 +1032,17 @@ mod tests {
         assert!(!super::jpeg_stream_complete(&[
             0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0x12, 0x34
         ]));
-        // APP1 len=6：载荷 = 缩略图的 SOI+EOI（4 字节）+ 2 字节填充。
+        // APP1 len=6：载荷 = 缩略图的 SOI+EOI（4 字节）+ 2 字节填充。（④a）
         assert!(!super::jpeg_stream_complete(&[
             0xFF, 0xD8, // SOI
             0xFF, 0xE1, 0x00, 0x06, 0xFF, 0xD8, 0xFF, 0xD9, 0x00, 0x00, // APP1 含缩略图
             0xFF, 0xDA, 0x00, 0x02, // 主流 SOS
             0x56, 0x78, // 熵数据，截断处没有 EOI
+        ]));
+        // ④b：APP1 len=9，载荷 = 缩略图的完整 SOI+SOS(空)+EOI（7 字节），没有主流。
+        assert!(!super::jpeg_stream_complete(&[
+            0xFF, 0xD8, // SOI
+            0xFF, 0xE1, 0x00, 0x09, 0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9, // APP1
         ]));
         // 同上但主流收了尾：缩略图 EOI 在前不算数，主流自己的 EOI 才是终点。
         assert!(super::jpeg_stream_complete(&[
