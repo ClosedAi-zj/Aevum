@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# 提交门槛：版本一致性 → 格式 → clippy（警告即失败）→ 全量测试 → 界面布局自检。
+# 提交门槛：版本一致性 → 格式 → clippy（警告即失败）→ 全量测试 → 界面布局自检 → 帧时预算（release）。
 #
 # 用法（Git Bash）：
 #   acceptance/check.sh                 # 本机默认离线，用已缓存的依赖
 #   CARGO_FLAGS= acceptance/check.sh    # CI 上允许联网解析依赖
 #
-# 五步任何一步红就停，别把脏改动带进 scripts/package.sh。
+# 六步任何一步红就停，别把脏改动带进 scripts/package.sh。
 set -euo pipefail
 
 # 本脚本在 acceptance/ 下，上一层才是仓库根（cargo 必须在根上跑）。
@@ -26,18 +26,18 @@ CARGO_FLAGS="${CARGO_FLAGS---offline}"
 # + 文档双语一致性（中英分册之后：缺孪生、缺切换链接、死链都是静默失效）
 # + 代码注释双语（模块级 //! 与 pub 项的 /// 必须有英文块）。
 # 只读文件、不碰 cargo，所以 CARGO_FLAGS（CI 联网 / 本机 --offline）对它无影响。
-echo "==> 0/5 版本与文档一致性（Cargo.toml 真源 → lock / README / CHANGELOG；中英孪生；注释双语）"
+echo "==> 0/6 版本与文档一致性（Cargo.toml 真源 → lock / README / CHANGELOG；中英孪生；注释双语）"
 python "$ROOT/acceptance/check_version.py"
 python "$ROOT/acceptance/check_docs.py"
 python "$ROOT/tools/doc_lint.py"
 
-echo "==> 1/5 格式"
+echo "==> 1/6 格式"
 "${CARGO[@]}" fmt --all -- --check
 
-echo "==> 2/5 clippy（-D warnings）"
+echo "==> 2/6 clippy（-D warnings）"
 "${CARGO[@]}" clippy --workspace --all-targets $CARGO_FLAGS -- -D warnings
 
-echo "==> 3/5 全量测试（含与 Python 基准的金标比对）"
+echo "==> 3/6 全量测试（含与 Python 基准的金标比对）"
 # 导出类用例需要 ffmpeg，**没有就是红**（它们以前是「找不到就跳过」，于是 12 个用例
 # 在本机与 CI 上都没跑过，AVIF 导出坏了一整轮没人知道）。探针顺序按「用户实际拿到
 # 的那个」优先：包内 ffmpeg（dist/aevum/tools，与发行包逐字节相同）→ AEVUM_FFMPEG
@@ -58,10 +58,18 @@ else
 fi
 "${CARGO[@]}" test --workspace $CARGO_FLAGS
 
-echo "==> 4/5 界面布局自检（无显示器）"
+echo "==> 4/6 界面布局自检（无显示器）"
 "${CARGO[@]}" build -p aevum-studio $CARGO_FLAGS
 exe="$ROOT/target/debug/aevum.exe"
 [ -f "$exe" ] || exe="$ROOT/target/debug/aevum-studio"
 "$exe" --selftest
+
+# 第 5 关：帧时预算必须跑 **release**。
+# preview_budget 的 300ms 是绝对预算，判据只在 release 下断言（dev 档 opt-level 1
+# 会让「机器慢」冒充「退化」；dev 只打表）。前五关全是 dev，等于这条预算从来没被卡过。
+# 代价：冷编译约 3.5 分钟，热跑 8 秒；不值得为省这点时间留一个不卡的闸门。
+echo "==> 5/6 帧时预算（release：首屏 300ms / 面板 16ms 是绝对值，dev 档只打表不断言）"
+"${CARGO[@]}" test -p aevum-ui --release --test suite preview_budget $CARGO_FLAGS
+"${CARGO[@]}" test -p aevum-ui --release --test suite perf_budget $CARGO_FLAGS
 
 echo "==> 门槛全绿"

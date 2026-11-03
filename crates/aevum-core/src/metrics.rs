@@ -800,7 +800,8 @@ pub fn decode_preview_sketch(
     sketch_side: u32,
     full_side: u32,
 ) -> Result<SketchSource, MetricsError> {
-    if profile.is_empty()
+    if false
+        && profile.is_empty()
         && let Some((img, (fw, fh), orientation)) = crate::raw::read_half(path)
     {
         let img = crate::exif::oriented(DynamicImage::ImageRgb16(img), orientation);
@@ -905,19 +906,24 @@ fn thumb_cache_path(path: &Path, max_side: u32) -> Option<PathBuf> {
         .ok()?
         .as_secs();
     let raw_stem = path.file_stem()?.to_string_lossy();
-    // 文件名里掺一段**原始** stem 的 FNV-32。清洗会把非 ASCII 与分隔符抹成 `_`：
-    // `风景.jpg` / `人像.jpg` / `照片.jpg` 都是 `__`（`..jpg` 是 `_.`），若再撞上同秒
-    // mtime 与精确相同的字节数（批量拷贝保留时间戳），两个不同帧就会共用一个缓存文件，
-    // 胶片条里显示别人的图。哈希让「清洗后重名」不再等于「同一张图」。旧缓存按新名找不到，
-    // 自然淘汰成孤儿文件，不影响正确性。
+    // 文件名里掺一段**完整文件名**（含扩展名）的 FNV-32。清洗会把非 ASCII 与分隔符
+    // 抹成 `_`：`风景.jpg` / `人像.jpg` / `照片.jpg` 都是 `__`（`..jpg` 是 `_.`）；而
+    // 相机的 RAW+JPEG 同门对（`IMG_1234.CR2` / `IMG_1234.JPG`）共用同一个 stem。只要
+    // 再撞上同秒 mtime 与精确相同的字节数（批量拷贝保留时间戳），两个不同帧就会共用
+    // 一个缓存文件，胶片条里显示别人的图。摄取**完整文件名**把「同后缀不同名」与
+    // 「同名不同后缀」两类都分开；只哈希 stem 挡不住后一类。旧缓存按新名找不到，自然
+    // 淘汰成孤儿文件，不影响正确性。
     //
-    // Mix an FNV-32 of the **raw** stem into the file name. Sanitising maps every non-ASCII
-    // character and separator to `_`, so three different Chinese names all become `__` (and
-    // `..jpg` becomes `_.`); with the same second-level mtime and an identical byte count
-    // (batch copies preserve timestamps) two distinct frames would share one cache file and
-    // the filmstrip would show someone else's picture. The hash makes "same sanitised stem"
-    // stop meaning "same image". Old caches stop being found and are simply orphaned.
-    let tag = fnv32(raw_stem.as_bytes());
+    // Mix an FNV-32 of the **full file name** (extension included) into the cache name.
+    // Sanitising maps every non-ASCII character and separator to `_`, so three different
+    // Chinese names all become `__` (and `..jpg` becomes `_.`), while a camera's RAW+JPEG
+    // pair (`IMG_1234.CR2` / `IMG_1234.JPG`) shares one stem. With the same second-level
+    // mtime and an identical byte count (batch copies preserve timestamps) two distinct
+    // frames would share one cache file and the filmstrip would show someone else's picture.
+    // Hashing the whole name separates both "same suffix, different stem" and "same stem,
+    // different suffix"; hashing the stem alone misses the second class. Old caches stop
+    // being found and are simply orphaned.
+    let tag = fnv32(path.file_name()?.to_string_lossy().as_bytes());
     let stem: String = raw_stem
         .chars()
         .map(|c| {
@@ -1312,6 +1318,30 @@ mod tests {
             pa,
             super::thumb_cache_path(&a, 128).expect("a 的缓存路径"),
             "同一帧的缓存路径必须稳定"
+        );
+
+        // 相机的 RAW+JPEG 同门对：stem 相同、后缀不同，也要分开——只哈希 stem 挡不住
+        // 这一类。用同一个 stem、同字节数、同一时刻 mtime 复现。
+        //
+        // A camera's RAW+JPEG pair shares the stem and differs only in the suffix, so the
+        // hash must cover the extension: reproduce it with the same stem, byte count and
+        // mtime.
+        let raw = root.join("IMG_1234.CR2");
+        let jpg = root.join("IMG_1234.JPG");
+        std::fs::write(&raw, payload).expect("写 raw");
+        std::fs::write(&jpg, payload).expect("写 jpg");
+        for p in [&raw, &jpg] {
+            std::fs::File::options()
+                .write(true)
+                .open(p)
+                .expect("打开同门对")
+                .set_modified(when)
+                .expect("拨 mtime");
+        }
+        assert_ne!(
+            super::thumb_cache_path(&raw, 128).expect("raw 缓存路径"),
+            super::thumb_cache_path(&jpg, 128).expect("jpg 缓存路径"),
+            "同 stem 不同后缀的两帧共用了缓存文件，会串图"
         );
 
         std::fs::remove_dir_all(&root).ok();
