@@ -24,13 +24,23 @@
 //! 阈值取 300ms 端到端上限，不另留余量：口径已经声明只算 `render_preview_file` 的
 //! CPU 墙钟（不含 GPU 上传与呈现），比真实首屏**乐观**，所以这里再放水就等于不测。
 //!
-//! ## 只在 release 下卡（debug 照量、只打印）
+//! 预算只针对 **24MP RAW**。JPEG 的草图走的是兜底路径（整幅解码再 2×2 均值减半，
+//! 见 `metrics::decode_preview_sketch`），它没有半尺寸入口，数字只作参考、不设闸——
+//! 一台更慢的机器上它会先破 300ms，那不是这次动的路（本机 240.1ms，另一台机器量到
+//! 307.5ms，两者都在「机器抖动」的量级里）。
 //!
-//! 这条量的是 24MP 传感器数据的解包与重采样，几百兆内存流量。dev 档（opt-level 1）的
-//! 同一段代码本机实测 279.9ms（release 228.0ms），慢机器上更多——门褴在 debug 下卡
-//! 300ms 会把「机器慢」报成「代码退化」。所以 `cfg!(debug_assertions)` 时照常量、照常
-//! 打表，只跳过断言：数字仍在验收日志里，要它真的红就跑
-//! `cargo test --release -p aevum-ui preview`。
+//! ## 两道断言，各自在什么时候判
+//!
+//! | 断言 | dev（门槛 `cargo test`） | release |
+//! |------|--------------------------|---------|
+//! | 比值 `草图/全量 ≤ 0.90` | **判** | 判 |
+//! | 绝对值 `草图 ≤ 300ms` | 只打印 | 判 |
+//!
+//! 绝对值量的是 24MP 传感器数据的解包与重采样（几百兆内存流量），dev 档（opt-level 1）
+//! 的同一段代码本机实测 253.8ms、release 223.1ms，慢机器上更多——在 dev 卡 300ms 会把
+//! 「机器慢」报成「代码退化」。比值那条不吃机器快慢，所以**放进了门槛**：门槛跑
+//! `cargo test`（dev）时它是这里唯一会红的闸，退化回「整幅解码再减半」时比值约 1.0。
+//! 想要绝对值也真的红，跑 `cargo test --release -p aevum-ui preview`。
 //!
 //! ## 本机实测（2026-11-03，release，Windows 11，样张 `samples/cameras/`）
 //!
@@ -189,20 +199,6 @@ fn preview_sketch_first_screen_within_budget() {
     }
     println!("{table}");
 
-    // debug 下只打印不判：这条量的是 24MP 数据的解包与重采样，dev 档（opt-level 1）
-    // 的同一段代码是本机 release 的 1.2 倍上下、慢机器上更多——门槛跑 `cargo test`
-    // 时不卡它，数字照样留在日志里；要它真的红，跑
-    // `cargo test --release -p aevum-ui preview`。
-    //
-    // In debug this only prints: the measurement is 24MP unpack plus resampling, and the dev
-    // profile (opt-level 1) runs 1.2x the release time here and more on a slow box. The
-    // gate (`cargo test`) therefore does not assert it, but the numbers still land in the
-    // log; to make it bite, run `cargo test --release -p aevum-ui preview`.
-    if cfg!(debug_assertions) {
-        println!("debug 档：只打印不判（预算按 release 口径）。");
-        return;
-    }
-
     let sketch = rows
         .iter()
         .find(|r| r.sketch && r.file == RAW_SAMPLE)
@@ -212,22 +208,44 @@ fn preview_sketch_first_screen_within_budget() {
         .find(|r| !r.sketch && r.file == RAW_SAMPLE)
         .unwrap_or_else(|| panic!("没有 {RAW_SAMPLE} 的全量行：\n{table}"));
 
-    assert!(
-        sketch.median_ms <= BUDGET_MS,
-        "24MP RAW 草图首屏中位 {:.1}ms 越过 {BUDGET_MS:.0}ms：\n{table}",
-        sketch.median_ms
-    );
-    // 相对判据：草图必须真的比全量便宜（否则它又在按 1600 整幅解码）。
+    // 相对判据**两种档位都判**：它不依赖机器快慢，是「草图有没有真的按小尺寸解」的
+    // 结构性事实。门槛跑 `cargo test`（dev 档）时，这条是这条判据在门槛里唯一会红的
+    // 闸——绝对值只在 release 下卡（见下）。
     //
-    // The relative check: the sketch has to be genuinely cheaper than the full preview,
-    // otherwise it is decoding 1600-wide again.
+    // The relative check runs in **both** profiles: it does not depend on machine speed, it
+    // is a structural fact about whether the sketch really decoded small. In the gate's dev
+    // run this is the only assertion here that can go red; the absolute budget is release
+    // only (below).
     let ratio = sketch.median_ms / full.median_ms.max(f64::MIN_POSITIVE);
     assert!(
         ratio <= SKETCH_VS_FULL_RATIO,
         "草图 {:.1}ms 是全量 {:.1}ms 的 {ratio:.2} 倍（上限 {SKETCH_VS_FULL_RATIO:.2}）——\
-         草图又在整幅解码：\n{table}",
+         草图又在整幅解码。先看表：两行是**先后**量的（不是交错），机器抖一下就会\n\
+         「草图尖、全量静」，重跑一次再判定，别照着数字改代码：\n{table}",
         sketch.median_ms,
         full.median_ms
+    );
+
+    // 绝对值只在 release 下卡：它量的是 24MP 数据的解包与重采样，dev 档（opt-level 1）
+    // 的同一段代码比 release 慢 1.2 倍上下、慢机器上更多，在 dev 卡 300ms 会把「机器
+    // 慢」报成「代码退化」。dev 下数字照打，留在验收日志里。
+    //
+    // The absolute budget is release-only: it measures 24MP unpack plus resampling, and the
+    // dev profile (opt-level 1) is 1.2x slower here and more on a slow box, so a dev 300ms
+    // gate would report "slow machine" as "regression". Dev still prints the numbers into
+    // the acceptance log.
+    if cfg!(debug_assertions) {
+        println!(
+            "debug 档：绝对值只打印不判（草图 {:.1}ms / 上限 {BUDGET_MS:.0}ms）。\
+             要它真的红跑 cargo test --release -p aevum-ui preview",
+            sketch.median_ms
+        );
+        return;
+    }
+    assert!(
+        sketch.median_ms <= BUDGET_MS,
+        "24MP RAW 草图首屏中位 {:.1}ms 越过 {BUDGET_MS:.0}ms：\n{table}",
+        sketch.median_ms
     );
 }
 
