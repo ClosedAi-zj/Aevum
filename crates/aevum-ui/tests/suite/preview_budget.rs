@@ -22,14 +22,30 @@
 //!
 //! | 样本 | 档位 | 改前中位 | 改后中位 | 解码 | 调色 | 其余 |
 //! |------|------|---------:|---------:|-----:|-----:|-----:|
-//! | PANA0450.RW2 (24MP) | 草图 | 312.4 | 228.0 | 224.7 | 0.5 | 2.8 |
-//! | PANA0450.RW2 (24MP) | 全量 | 297.3 | 297.3 | 285.8 | 2.1 | 9.3 |
-//! | PANA0198.JPG | 草图 | 267.9 | 261.7 | 259.0 | 0.5 | 2.2 |
-//! | PANA0198.JPG | 全量 | 289.5 | 233.5 | 223.8 | 1.7 | 8.1 |
+//! | PANA0450.RW2 (24MP) | 草图 | 312.4 | 223.1 | 220.0 | 0.7 | 2.4 |
+//! | PANA0450.RW2 (24MP) | 全量 | 297.3 | 289.7 | 277.4 | 1.6 | 10.7 |
+//! | PANA0198.JPG | 草图 | 267.9 | 240.1 | 237.3 | 0.5 | 2.2 |
+//! | PANA0198.JPG | 全量 | 289.5 | 219.9 | 211.4 | 1.5 | 7.0 |
 //!
 //! 改前的草图是「整幅解到 1600 再 2×2 减半」：解码成本和全量一模一样（308.5ms），
 //! 减半只省下调色那 1ms。改后草图按 800 边直接解（RAW 走半尺寸去马赛克），解码
-//! 224.7ms——省掉的正是「展开成 24MP RGB 再缩回来」这一来一回。
+//! 220ms 上下——省掉的正是「展开成 24MP RGB 再缩回来」这一来一回。
+//!
+//! **同一台机上分次运行会漂**：这台机器上同时还有别的编译在跑，同一份代码的全量一列
+//! 见过 282.9–446.5ms、JPEG 见过 219.9–475.2ms。所以绝对值只作参考，退化要靠下面
+//! 那条相对判据抓。
+//!
+//! ## 变异验证（提交后做的）
+//!
+//! 把 `metrics::decode_preview_sketch` 的半尺寸分支短路（`if false &&`，即草图退回
+//! 「整幅解码到 1600 再减半」）：
+//!
+//! | 变异 | 草图 | 全量 | 比值 | 300ms 那条 | 比值那条 |
+//! |------|-----:|-----:|-----:|-----------|---------|
+//! | 断掉半尺寸分支 | 292.9 | 282.9 | 1.04 | **绿**（还没到 300） | **红** |
+//!
+//! 这正是加相对判据的理由：改前代码在这台机上的绝对值本来就在 286–350ms 之间漂，
+//! 300ms 的上限一个人挡不住退化。
 //!
 //! # 第二条：草图路径不许改到全量预览的像素
 //!
@@ -67,6 +83,22 @@ use aevum_ui::{preview_checksum, preview_first_screen_rows};
 ///
 /// End-to-end first-screen ceiling in milliseconds.
 const BUDGET_MS: f64 = 300.0;
+
+/// 草图相对全量最多只能花这么点（同一台机、同一次运行里量）。
+///
+/// 上限本身挡不住退化：本机同一段改前代码在不同时刻量到 286.6–349.5ms（机器状态与
+/// 内存压力的差别就有这么大），300ms 的绝对值会时红时绿。所以再加一条**相对的**：
+/// 草图既然按 800 边解，就**必须**比全量便宜——退化回「整幅解码再减半」时两者相等，
+/// 比值约 1.0，这条立刻红。本机实测改后 224.8/293.3 = 0.77，阈值 0.90 两边都留着
+/// 一成以上的余量。
+///
+/// The absolute ceiling cannot catch the regression on its own: the same pre-change code
+/// measured 286.6-349.5ms at different moments on this machine, so a 300ms gate flips colour
+/// with machine state. Hence a **relative** check: a sketch decoded at 800 must be cheaper
+/// than the full preview; falling back to "decode fully, then halve" makes the two equal
+/// (ratio ~1.0) and turns this red immediately. Measured 224.8/293.3 = 0.77 here, so 0.90
+/// leaves more than ten percent of headroom on both sides.
+const SKETCH_VS_FULL_RATIO: f64 = 0.90;
 
 /// 24MP RAW 样本：本机 `samples/cameras/` 里那张 6000×4000 的 RW2。
 ///
@@ -157,14 +189,31 @@ fn preview_sketch_first_screen_within_budget() {
         return;
     }
 
-    let row = rows
+    let sketch = rows
         .iter()
         .find(|r| r.sketch && r.file == RAW_SAMPLE)
         .unwrap_or_else(|| panic!("没有 {RAW_SAMPLE} 的草图行：\n{table}"));
+    let full = rows
+        .iter()
+        .find(|r| !r.sketch && r.file == RAW_SAMPLE)
+        .unwrap_or_else(|| panic!("没有 {RAW_SAMPLE} 的全量行：\n{table}"));
+
     assert!(
-        row.median_ms <= BUDGET_MS,
+        sketch.median_ms <= BUDGET_MS,
         "24MP RAW 草图首屏中位 {:.1}ms 越过 {BUDGET_MS:.0}ms：\n{table}",
-        row.median_ms
+        sketch.median_ms
+    );
+    // 相对判据：草图必须真的比全量便宜（否则它又在按 1600 整幅解码）。
+    //
+    // The relative check: the sketch has to be genuinely cheaper than the full preview,
+    // otherwise it is decoding 1600-wide again.
+    let ratio = sketch.median_ms / full.median_ms.max(f64::MIN_POSITIVE);
+    assert!(
+        ratio <= SKETCH_VS_FULL_RATIO,
+        "草图 {:.1}ms 是全量 {:.1}ms 的 {ratio:.2} 倍（上限 {SKETCH_VS_FULL_RATIO:.2}）——\
+         草图又在整幅解码：\n{table}",
+        sketch.median_ms,
+        full.median_ms
     );
 }
 
