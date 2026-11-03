@@ -16,6 +16,8 @@ bash scripts/shots-readme.sh
 脚本做三件事：
 
 1. 把 `samples/cameras/` 的四张 PANA 样张拷进 `target/readme-shots/` 当一个序列
+   （PANA180 用真名当第一帧——当前帧就是自然序最靠前的那个；三张配角在 staging 里
+   改名 `PANA2001–2003` 排到它后面，胶片条只显示帧序号，改名不上镜）
    （staging 目录开在 `target/` 下：`.gitignore` 已盖住它，`git status` 保持干净，
    而且界面信息面板显示的序列根路径每次重截都完全一致）；
 2. 逐张调 `aevum.exe --open <staging> --shot assets/shots/<名字>.png …`；
@@ -42,10 +44,10 @@ target/release/aevum.exe --open <staging> --shot assets/shots/develop.png --modu
 
 | 文件 | 用途 |
 |---|---|
-| `PANA0001.RW2` | staging 的第 1 帧（夜景城市，显影首帧） |
-| `PANA0450.RW2` | staging 的第 2 帧 |
-| `PANA1631.RW2` | staging 的第 3 帧 |
-| `PANA0198.JPG` | staging 的第 4 帧 |
+| `PANA180.RW2` | **主图**（横幅日落，Orientation=1）；staging 里用真名当第 1 帧 |
+| `PANA1631.RW2` | staging 第 2 帧（改名 `PANA2001.RW2`）——**竖拍**（Orientation=8），在胶片条里验证竖幅转正 |
+| `PANA0450.RW2` | staging 第 3 帧（改名 `PANA2002.RW2`） |
+| `PANA0198.JPG` | staging 第 4 帧（改名 `PANA2003.JPG`） |
 
 约束：**只用这四张**。不许往 `samples/cameras/` 里加文件，也不许把夹具图（合成生成的
 演示序列）放进 README——夹具图是给判据用的，README 是给人看的。staging 是**拷贝**，

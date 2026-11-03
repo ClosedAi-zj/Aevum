@@ -49,13 +49,16 @@ fn root() -> PathBuf {
 /// Renaming means changing all three at once -- deliberately not "one side is the truth".
 const SHOTS: [&str; 5] = ["develop", "sequence", "deflicker", "compose", "render"];
 
-/// staging 用的四张真实样张。
+/// staging 用的四张真实样张（`samples/cameras/` 里的真名）。进 staging 后三张配角
+/// 改名排在 PANA180 之后（自然序保证它当第一帧），映射见 `scripts/shots-readme.sh`。
 ///
-/// The four real samples used for staging.
+/// The four real samples used for staging (real names under `samples/cameras/`). Inside
+/// staging the three companions are renamed to sort after PANA180 (natural order makes it
+/// the first frame); the mapping lives in `scripts/shots-readme.sh`.
 const SAMPLES: [&str; 4] = [
-    "PANA0001.RW2",
-    "PANA0450.RW2",
+    "PANA180.RW2",
     "PANA1631.RW2",
+    "PANA0450.RW2",
     "PANA0198.JPG",
 ];
 

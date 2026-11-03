@@ -17,8 +17,11 @@ bash scripts/shots-readme.sh
 The script does three things:
 
 1. copies the four PANA samples from `samples/cameras/` into `target/readme-shots/` to serve
-   as one sequence (the staging directory lives under `target/`: it is already gitignored, so
-   `git status` stays clean, and the sequence root shown in the info panel is identical on
+   as one sequence (PANA180 keeps its real name as the first frame -- the current frame is
+   whatever sorts first in natural order; the three companions are renamed `PANA2001-2003`
+   inside staging to sort after it, and the filmstrip prints frame numbers only, so the
+   renames never show; the staging directory lives under `target/`: it is already gitignored,
+   so `git status` stays clean, and the sequence root shown in the info panel is identical on
    every run);
 2. calls `aevum.exe --open <staging> --shot assets/shots/<name>.png …` once per shot;
 3. applies the **60 KB blank guard** to each (the same line as `scripts/shots.sh`) -- a flat
@@ -45,10 +48,10 @@ target/release/aevum.exe --open <staging> --shot assets/shots/develop.png --modu
 
 | File | Role |
 |---|---|
-| `PANA0001.RW2` | frame 1 of the staging sequence (night city, develop's first frame) |
-| `PANA0450.RW2` | frame 2 |
-| `PANA1631.RW2` | frame 3 |
-| `PANA0198.JPG` | frame 4 |
+| `PANA180.RW2` | **the hero** (landscape sunset, Orientation=1); keeps its real name as frame 1 of staging |
+| `PANA1631.RW2` | frame 2 of staging (renamed `PANA2001.RW2`) -- a **portrait** shot (Orientation=8), kept in the strip to prove the upright fix |
+| `PANA0450.RW2` | frame 3 of staging (renamed `PANA2002.RW2`) |
+| `PANA0198.JPG` | frame 4 of staging (renamed `PANA2003.JPG`) |
 
 Constraints: **these four only**. Never add files to `samples/cameras/`, and never put
 fixture images (synthesised demo sequences) into the README -- fixtures are for the tests,

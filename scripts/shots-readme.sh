@@ -2,7 +2,7 @@
 # 重新生成 README 引用的五张截图（assets/shots/{develop,sequence,deflicker,compose,render}.png）。
 #
 # 与 scripts/shots.sh 的区别：那边是开发期的全量 UI 快照（几十张、演示序列），
-# 这边只管 README 引用的五张，而且**必须用真实样张**（samples/cameras/ 的 PANA 四张），
+# 这边只管 README 引用的五张，而且**必须用真实样张**（samples/cameras/ 的 PANA 四张，PANA180 当主图），
 # 不用演示夹具——README 是给别人看的，图里得是真照片。
 #
 # 用法：
@@ -56,11 +56,27 @@ if command -v python >/dev/null 2>&1; then
 fi
 mkdir -p "$STAGING"
 
-for f in PANA0001.RW2 PANA0450.RW2 PANA1631.RW2 PANA0198.JPG; do
-    src="samples/cameras/$f"
+# PANA180（横幅日落，Orientation=1）当主图：序列当前帧 = 自然序第一帧，所以它在
+# staging 里必须排最前（180 < 2001）。三张配角在 staging 里改名排到它后面——胶片条
+# 只显示帧序号（timeline.rs 的 `format!("{:04}")`），改名不上镜；真名记在
+# docs/README-截图*.md 与 readme_shots.rs 的 SAMPLES。PANA1631 是竖拍
+# （EXIF Orientation=8），留它在胶片条里验证竖幅转正。
+#
+# PANA180 (a landscape sunset, Orientation=1) is the hero: the current frame is the
+# first in natural order, so it must sort first in staging (180 < 2001). The three
+# companions are renamed inside staging to sort after it -- the filmstrip prints frame
+# numbers only (`format!("{:04}")` in timeline.rs), so the renames never show; the real
+# names live in docs/README-截图*.md and SAMPLES in readme_shots.rs. PANA1631 is a
+# portrait shot (EXIF Orientation=8) and stays in the strip to prove the upright fix.
+copy_staging() {
+    local src="samples/cameras/$1" dst="$2"
     [ -f "$src" ] || { echo "缺样张 $src" >&2; exit 1; }
-    cp "$src" "$STAGING/$f"
-done
+    cp "$src" "$STAGING/$dst"
+}
+copy_staging PANA180.RW2  PANA180.RW2
+copy_staging PANA1631.RW2 PANA2001.RW2
+copy_staging PANA0450.RW2 PANA2002.RW2
+copy_staging PANA0198.JPG PANA2003.JPG
 
 mkdir -p assets/shots
 
