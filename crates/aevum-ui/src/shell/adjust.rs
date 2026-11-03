@@ -3138,11 +3138,17 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         }
         if busy {
             if let Some((done, total, stage)) = state.export_progress() {
-                let frac = if total > 0 {
-                    done as f32 / total as f32
-                } else {
-                    0.0
-                };
+                // 进度条按阶段分区间：`done` 是**阶段内**计数（写帧 0..total，编码又从 1
+                // 起数），直接当比例会让进度条在阶段切换时从 100% 退回十几——用户看到
+                // 条子倒退，会以为任务重启了。写帧占 0–70%、编码占 70–100%，两段各自
+                // 单调，接缝只跨一次。文案仍然分阶段显示，不做「假一体化」。
+                //
+                // The bar maps stages to ranges: `done` is a **per-stage** count (frames
+                // 0..total, then the encode restarts at 1), so using it directly makes the
+                // bar fall from 100% back to the teens at the switch, which reads as "the
+                // job restarted". Frames take 0-70%, encode 70-100%; each segment is
+                // monotone and the seam is crossed once. The text still names the stage.
+                let frac = export_bar_fraction(stage, done, total);
                 let text = match stage {
                     aevum_core::export::Stage::Frames => {
                         crate::i18n::tr_fmt("写帧 {} / {}", &[&done, &total])
@@ -3999,5 +4005,60 @@ mod focus_hint_tests {
         assert!(text.contains("失败"), "失败要直说：{text}");
         assert_eq!(colour, danger(), "失败必须是危险色，不许画成成功");
         assert_ne!(colour, accent(), "危险色不能与强调色相同");
+    }
+}
+
+/// 导出进度条的显示比例：把阶段内完成度映射到该阶段占的区间（写帧 0–70%、编码
+/// 70–100%）。`done` 是**阶段内**计数（写帧从 0 数到 total，编码又按 ffmpeg 回报
+/// 从 1 起数），直接当全局比例会让条子在阶段切换时后退——用户会以为任务重启。
+///
+/// Export bar fraction: maps a per-stage done/total onto the range that stage owns
+/// (frames 0-70%, encode 70-100%). Feeding the per-stage count straight into the ratio
+/// makes the bar step backwards at the switch, which reads as "the job restarted".
+fn export_bar_fraction(stage: aevum_core::export::Stage, done: usize, total: usize) -> f32 {
+    use aevum_core::export::Stage;
+    let inner = if total > 0 {
+        (done as f32 / total as f32).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let (lo, hi) = match stage {
+        Stage::Frames => (0.0f32, 0.7f32),
+        Stage::Encode => (0.7f32, 1.0f32),
+    };
+    lo + (hi - lo) * inner
+}
+
+#[cfg(test)]
+/// 导出进度条的阶段区间映射：全程单调、接缝不回退、两段都走到满格。
+mod export_bar_tests {
+    use super::*;
+    use aevum_core::export::Stage;
+
+    #[test]
+    fn the_bar_never_goes_backwards_across_the_stage_seam() {
+        // 写帧走完是 70%，编码第一帧就已经越过它——旧算法在这一步从 100% 退回 17%。
+        let mut last = 0.0f32;
+        let mut path = Vec::new();
+        for done in 0..=6 {
+            let f = export_bar_fraction(Stage::Frames, done, 6);
+            assert!(f >= last, "写帧阶段回退：{done} → {f} < {last}");
+            last = f;
+            path.push(f);
+        }
+        assert!((last - 0.7).abs() < 1e-6, "写帧阶段最高只到 70%：{last}");
+        // 编码阶段从 ffmpeg 的 1 起数（首块通常是 frame=1），必须 ≥ 70%。
+        for done in 1..=6 {
+            let f = export_bar_fraction(Stage::Encode, done, 6);
+            assert!(f >= last, "接缝回退：编码 {done}/6 → {f} < {last}");
+            assert!(f <= 1.0, "比例越过 100%：{f}");
+            last = f;
+            path.push(f);
+        }
+        assert!((last - 1.0).abs() < 1e-6, "编码走完必须是 100%：{last}");
+        // 首尾都要在 [0,1] 内，且空 total 不产生 NaN。
+        assert_eq!(export_bar_fraction(Stage::Frames, 0, 0), 0.0);
+        assert!(export_bar_fraction(Stage::Encode, 0, 0) >= 0.7);
+        assert!(path.iter().all(|f| (0.0..=1.0).contains(f)));
     }
 }
