@@ -1057,4 +1057,189 @@ mod tests {
         std::fs::remove_file(&padded).ok();
         std::fs::remove_dir(&dir).ok();
     }
+
+    // ---- 缩略图磁盘缓存的守卫判据 ----
+    //
+    // 缓存在用户盘上待过：可能被截断、被别的程序覆盖、被换成一张 4 GB 的巨图。
+    // 下面三条判据分别钉住「超限拒绝」「正常命中」「坏文件」三种形状；超限那条必须
+    // 在把 `cap` 放宽到 `u32::MAX`（等于删掉上限）时变红，否则它只是在测「文件坏了」。
+    //
+    // ---- Teeth for the thumbnail disk-cache guard ----
+    //
+    // The cache has lived on the user's disk: it may be truncated, overwritten by another
+    // program, or swapped for a 4 GB image. The three tests below pin "oversize rejected",
+    // "normal hit", and "broken file"; the oversize one must go red when `cap` is widened to
+    // `u32::MAX` (i.e. the cap is removed), otherwise it only tests "the file was broken".
+
+    /// 每个用例一个独立目录：文件名带测试名与进程号，并行跑也不打架。
+    ///
+    /// One directory per case: the name carries the test name and pid, so parallel runs
+    /// do not collide.
+    fn thumb_case(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root =
+            std::env::temp_dir().join(format!("aevum-thumb-cache-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("建临时目录");
+        // 源帧只用元数据（mtime + 字节数）算缓存路径，内容是什么无关紧要。
+        //
+        // The source frame only contributes metadata (mtime + byte count) to the cache path;
+        // its contents do not matter.
+        let src = root.join("frame.jpg");
+        std::fs::write(&src, b"src-frame-placeholder").expect("写源帧占位");
+        (root, src)
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for &b in bytes {
+            crc ^= b as u32;
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+            }
+        }
+        !crc
+    }
+
+    fn png_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut crc_src = Vec::with_capacity(4 + data.len());
+        crc_src.extend_from_slice(kind);
+        crc_src.extend_from_slice(data);
+        let mut out = Vec::with_capacity(12 + data.len());
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        out.extend_from_slice(&crc32(&crc_src).to_be_bytes());
+        out
+    }
+
+    /// 一张「结构合法、只有尺寸离谱」的 PNG：IHDR 里写多少就号称多少，IDAT 是合法的
+    /// 空 zlib 流。CRC 都算对，好让解码器一定走到尺寸判定，而不是先被 CRC/格式挡掉。
+    ///
+    /// A PNG that is structurally valid and only absurd in size: IHDR claims whatever is
+    /// asked, IDAT is a valid empty zlib stream. The CRCs are correct so the decoder really
+    /// reaches the dimension check instead of tripping over a CRC or format error first.
+    fn png_declaring(width: u32, height: u32) -> Vec<u8> {
+        let mut ihdr = Vec::with_capacity(13);
+        ihdr.extend_from_slice(&width.to_be_bytes());
+        ihdr.extend_from_slice(&height.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]); // 8 位 RGB，非隔行
+        let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        out.extend_from_slice(&png_chunk(b"IHDR", &ihdr));
+        // zlib 头 + 空的 final 定长块 + 空流的 adler32。
+        out.extend_from_slice(&png_chunk(
+            b"IDAT",
+            &[0x78, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01],
+        ));
+        out.extend_from_slice(&png_chunk(b"IEND", &[]));
+        out
+    }
+
+    #[test]
+    fn thumb_cache_hit_returns_the_same_pixels() {
+        let (root, src) = thumb_case("hit");
+        let max_side = 128u32;
+        let img = RgbaImage::from_fn(64, 48, |x, y| {
+            image::Rgba([(x * 3) as u8, (y * 5) as u8, 200, 255])
+        });
+        super::write_thumb_cache(&src, max_side, &img);
+
+        let hit = super::read_thumb_cache(&src, max_side).expect("刚写下的缓存必须命中");
+        assert_eq!((hit.width(), hit.height()), (64, 48), "尺寸不许被守卫改掉");
+        assert_eq!(hit.as_raw(), img.as_raw(), "像素必须逐字节一致");
+
+        // 路径里带 max_side：换了目标尺寸就该是另一个文件，也就不能命中。
+        //
+        // max_side is part of the path: a different target size is a different file and
+        // must not hit.
+        assert_ne!(
+            super::thumb_cache_path(&src, max_side),
+            super::thumb_cache_path(&src, max_side * 2)
+        );
+        assert!(
+            super::read_thumb_cache(&src, max_side * 2).is_none(),
+            "不同尺寸不得共用缓存"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn oversized_thumb_cache_is_a_miss() {
+        let (root, src) = thumb_case("oversize");
+        let max_side = 128u32;
+        let cap = max_side * 4;
+        let cache = super::thumb_cache_path(&src, max_side).expect("缓存路径");
+        std::fs::create_dir_all(cache.parent().expect("缓存目录")).expect("建缓存目录");
+
+        // 宽度只超出一格，但整张图是真实可解的：不设上限就能解出来。没有这一句，
+        // 「读不出来」也可能只是因为夹具坏了，抓不到「把上限删掉」这次变异。
+        //
+        // Only slightly over the cap, but genuinely decodable: without the limit it decodes.
+        // Without that check, "returns None" could just mean the fixture was broken, and
+        // removing the cap would not be caught.
+        let wide = image::RgbImage::from_pixel(cap + 8, 4, image::Rgb([200, 40, 40]));
+        wide.save_with_format(&cache, image::ImageFormat::Png)
+            .expect("写夹具");
+        let healthy = image::ImageReader::open(&cache)
+            .expect("打开夹具")
+            .decode()
+            .expect("夹具本身必须可解");
+        assert_eq!(healthy.width(), cap + 8);
+
+        assert!(
+            super::read_thumb_cache(&src, max_side).is_none(),
+            "长边超过 {cap} 的缓存必须当作没命中，交给慢路径重算"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn thumb_cache_declaring_gigantic_dimensions_is_a_miss() {
+        let (root, src) = thumb_case("huge-dims");
+        let cache = super::thumb_cache_path(&src, 128).expect("缓存路径");
+        std::fs::create_dir_all(cache.parent().expect("缓存目录")).expect("建缓存目录");
+        // 65535² 的 8 位 RGB 解出来约 12.9 GB——正是注释里「128px 缓存解出 4 GB」
+        // 那种形状。路径上必须是一声不响的 None，且不能真去分配。
+        //
+        // 65535² in 8-bit RGB is about 12.9 GB — exactly the "a 128px cache expanding to
+        // 4 GB" shape from the comment. It must be a quiet `None`, with no real allocation.
+        std::fs::write(&cache, png_declaring(65535, 65535)).expect("写巨图头");
+        assert!(
+            super::read_thumb_cache(&src, 128).is_none(),
+            "声称 65535² 的缓存必须当作没命中"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn garbage_or_truncated_thumb_cache_is_a_miss() {
+        let (root, src) = thumb_case("broken");
+        let max_side = 128u32;
+        let cache = super::thumb_cache_path(&src, max_side).expect("缓存路径");
+        std::fs::create_dir_all(cache.parent().expect("缓存目录")).expect("建缓存目录");
+
+        std::fs::write(&cache, b"\x89PNG\r\n\x1a\n not really a png").expect("写垃圾");
+        assert!(
+            super::read_thumb_cache(&src, max_side).is_none(),
+            "非图片垃圾必须当作没命中"
+        );
+
+        // 截断：先写一张合法缓存，再从中间砍断。半张图不许当缓存用。
+        //
+        // Truncation: write a valid cache, then cut it in half. Half an image is not a cache.
+        let img = RgbaImage::from_pixel(64, 48, image::Rgba([10, 20, 30, 255]));
+        super::write_thumb_cache(&src, max_side, &img);
+        let bytes = std::fs::read(&cache).expect("读回缓存");
+        assert!(bytes.len() > 40, "缓存夹具太小：{} B", bytes.len());
+        std::fs::write(&cache, &bytes[..bytes.len() / 2]).expect("写截断缓存");
+        assert!(
+            super::read_thumb_cache(&src, max_side).is_none(),
+            "截断的缓存必须当作没命中"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
 }
