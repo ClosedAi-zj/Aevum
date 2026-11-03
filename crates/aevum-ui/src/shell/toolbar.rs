@@ -690,10 +690,34 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
     // 插件在飞时这一格归插件：名字 + 进度 + 一枚取消，毕竟它是用户刚刚
     // 亲手点下去的那个活。同一时刻只讲一个长任务的故事。
     let plugin_run = state.plugin_running();
+    // 全局长任务一格：导出 / 队列带阶段，合并 / 对齐 / 体检只有 n/m。同一时刻只显示
+    // 最先命中的那一个，和「状态栏只讲一个故事」的口径一致。
+    //
+    // One global long-task slot: export/queue carry a stage, merge/align/QA only n/m. The
+    // first match wins, matching the "one story in the status bar" rule.
     let prog = state
         .export_progress()
-        .map(|p| ("导出", p))
-        .or_else(|| state.queue_progress().map(|p| ("队列", p)));
+        .map(|(done, total, stage)| ("导出", done, total, Some(stage)))
+        .or_else(|| {
+            state
+                .queue_progress()
+                .map(|(done, total, stage)| ("队列", done, total, Some(stage)))
+        })
+        .or_else(|| {
+            state
+                .merge_progress()
+                .map(|(kind, done, total)| (kind.cn(), done, total, None))
+        })
+        .or_else(|| {
+            state
+                .align_progress()
+                .map(|(done, total)| ("对齐", done, total, None))
+        })
+        .or_else(|| {
+            state
+                .qa_progress()
+                .map(|(done, total)| ("体检", done, total, None))
+        });
     ui.horizontal_centered(|ui| {
         ui.add_space(8.0);
         // 常驻告警：护带目录搬不动 / 只读 / 被同名文件占住这类「用户点保存之前
@@ -741,31 +765,54 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                 state.plugin_cancel();
             }
             ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
-        } else if let Some((what, (done, total, stage))) = prog {
-            let stage = match stage {
-                aevum_core::export::Stage::Frames => "写帧",
-                aevum_core::export::Stage::Encode => "编码",
-            };
+        } else if let Some((what, done, total, stage)) = prog {
             let pct = if total > 0 {
                 done as f32 * 100.0 / total as f32
             } else {
                 0.0
             };
+            let line = match stage {
+                Some(stage) => {
+                    let stage = match stage {
+                        aevum_core::export::Stage::Frames => "写帧",
+                        aevum_core::export::Stage::Encode => "编码",
+                    };
+                    crate::i18n::tr_fmt(
+                        "{}中·{} ({}/{} {}%)",
+                        &[
+                            &crate::i18n::tr(what),
+                            &crate::i18n::tr(stage),
+                            &done,
+                            &total,
+                            &format!("{pct:.0}"),
+                        ],
+                    )
+                }
+                // 合并 / 对齐 / 体检没有编码阶段，别硬凑一个空的阶段名。
+                None => {
+                    crate::i18n::tr_fmt("正在{}… ({}/{})", &[&crate::i18n::tr(what), &done, &total])
+                }
+            };
             ui.label(
-                RichText::new(crate::i18n::tr_fmt(
-                    "{}中·{} ({}/{} {}%)",
-                    &[
-                        &crate::i18n::tr(what),
-                        &crate::i18n::tr(stage),
-                        &done,
-                        &total,
-                        &format!("{pct:.0}"),
-                    ],
-                ))
-                .size(SIZE_SMALL)
-                .monospace()
-                .color(accent()),
+                RichText::new(line)
+                    .size(SIZE_SMALL)
+                    .monospace()
+                    .color(accent()),
             );
+            // 剩余时间只用「当前显示的这个任务」的历史采样，换了任务或进度回退
+            // （新任务从 0 起）就重新开表，免得把上一轮的速率借给下一轮。
+            //
+            // ETA uses only this task's samples; a task change or a reset to 0 starts a
+            // fresh table so one run's rate never leaks into the next.
+            if let Some(secs) = state.eta_secs(what, done, total) {
+                ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
+                ui.label(
+                    RichText::new(crate::i18n::tr_fmt("约剩 {}s", &[&secs]))
+                        .size(SIZE_SMALL)
+                        .monospace()
+                        .color(muted()),
+                );
+            }
             // 续跑跳过的那几帧由导出线程数完写进原子量，所以这一格是晚一拍才出现的。
             let skipped = state.export_skipped();
             if skipped > 0 {
@@ -818,16 +865,44 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                 );
             }
         }
-        let msg = state.error.clone().unwrap_or_else(|| state.status.clone());
-        ui.label(
-            RichText::new(theme::ellipsis(&msg, 64))
-                .size(SIZE_SMALL)
-                .color(if state.error.is_some() {
-                    danger()
-                } else {
-                    dim()
-                }),
-        );
+        // 错误条是顶层失败唯一的常驻出口。一段长文本挤在状态栏里必然被截断，所以
+        // 悬停给全文、点一下（或点 ×）清掉这一条；打开新序列时仍由 `open_paths`
+        // 统一清空，那里不改。
+        //
+        // The status-bar error is the only persistent home for a top-level failure. Long
+        // text is necessarily truncated here, so hovering shows it in full and clicking
+        // either the text or the × dismisses it. Opening a new sequence still clears it
+        // wholesale in `open_paths`.
+        if let Some(err) = state.error.clone() {
+            let resp = ui
+                .add(
+                    egui::Label::new(
+                        RichText::new(theme::ellipsis(&err, 52))
+                            .size(SIZE_SMALL)
+                            .color(danger()),
+                    )
+                    .selectable(false)
+                    .sense(Sense::click()),
+                )
+                .on_hover_text(format!("{err}\n{}", crate::i18n::t!("点击清除这条错误")));
+            if resp.clicked() {
+                state.error = None;
+            }
+            let clear = ui
+                .add(egui::Button::new(
+                    RichText::new("×").size(SIZE_SMALL).color(danger()),
+                ))
+                .on_hover_text(crate::i18n::t!("清除这条错误"));
+            if clear.clicked() {
+                state.error = None;
+            }
+        } else {
+            ui.label(
+                RichText::new(theme::ellipsis(&state.status, 64))
+                    .size(SIZE_SMALL)
+                    .color(dim()),
+            );
+        }
         // 边车提示：检测到同目录 .xmp 时给一枚一键应用。不做静默套用——
         // 改不改参数要让用户亲手按下这一下（策略：提示 + 一键应用）。
         if state.error.is_none()
@@ -897,7 +972,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
         let (done, total) = state.plugin_progress;
         (total > 0).then_some(done as f32 / total as f32)
     } else {
-        prog.and_then(|(_, (done, total, _))| (total > 0).then_some(done as f32 / total as f32))
+        prog.and_then(|(_, done, total, _)| (total > 0).then_some(done as f32 / total as f32))
     };
     if let Some(f) = thin {
         let f = f.clamp(0.0, 1.0);

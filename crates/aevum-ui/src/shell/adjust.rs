@@ -211,7 +211,11 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
             ui,
             "测光完成",
             format!("{valid}"),
-            if state.measuring { accent() } else { text() },
+            if state.measuring.is_some() {
+                accent()
+            } else {
+                text()
+            },
         );
         let res = state
             .resolution
@@ -595,9 +599,9 @@ fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
                 ),
             )
             .on_disabled_hover_text(if n == 1 {
-                "单张照片没有要对齐的邻居"
+                crate::i18n::t!("单张照片没有要对齐的邻居")
             } else {
-                "先打开素材"
+                crate::i18n::t!("先打开素材")
             })
             .clicked()
         {

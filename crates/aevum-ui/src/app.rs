@@ -544,7 +544,7 @@ impl AevumApp {
         // 体检那张必须等测光落定：没有测光表，每一帧都会被判成「读不出来」，
         // 拍到的是一屏假红灯。起完任务把计时器归零，让清单先渲染完再按快门。
         if shot.qa && !shot.qa_started {
-            if self.state.measuring || self.state.seq.is_none() {
+            if self.state.measuring.is_some() || self.state.seq.is_none() {
                 ctx.request_repaint_after(Duration::from_millis(80));
                 return;
             }
@@ -560,7 +560,7 @@ impl AevumApp {
         }
         let elapsed = shot.started.elapsed();
         let ready = elapsed >= Duration::from_millis(900)
-            && !self.state.measuring
+            && self.state.measuring.is_none()
             && !self.state.qa_busy
             && self.state.texture.is_some();
         if !ready && elapsed < Duration::from_secs(30) {

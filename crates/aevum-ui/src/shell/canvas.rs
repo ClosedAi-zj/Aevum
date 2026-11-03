@@ -448,11 +448,11 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui) {
     }
     draw_mask_overlay(&p, state, img, resp.hover_pos());
 
-    if state.preview_inflight || state.measuring {
+    if state.preview_inflight || state.measuring.is_some() {
         chip_label(
             &p,
             Pos2::new(content.right() - 10.0, content.top() + 10.0),
-            if state.measuring {
+            if state.measuring.is_some() {
                 "测光中"
             } else {
                 "渲染中"

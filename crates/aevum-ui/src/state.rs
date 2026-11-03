@@ -743,7 +743,7 @@ pub enum MergeKind {
 }
 
 impl MergeKind {
-    fn cn(self) -> &'static str {
+    pub(crate) fn cn(self) -> &'static str {
         match self {
             Self::Hdr => "HDR 合并",
             Self::Pano => "全景拼接",
@@ -880,7 +880,15 @@ enum Msg {
     Thumbs(Vec<ThumbMsg>),
     LibThumbs(Vec<LibThumbMsg>),
     Saved(String),
-    Error(String),
+    /// 预览解码失败。**不碰 `export_busy`**：预览可以随时重算，导出是独占的长任务，
+    /// 两者共用一个错误消息会让一次预览失败把导出锁解开，用户就能起第二路导出写同一份
+    /// 成片。导出的失败由 `ExportFailed` 自己收尾。
+    ///
+    /// Preview decode failure. It must **not** touch `export_busy`: a preview can be retried
+    /// at any time, while an export is an exclusive long task. Sharing one error message let a
+    /// preview failure unlock the export and start a second writer on the same output; export
+    /// failures are closed by `ExportFailed` only.
+    PreviewFailed(String),
     Aligned {
         token: u64,
         report: AlignReport,
@@ -892,9 +900,16 @@ enum Msg {
     },
     ExportFailed(String),
     /// HDR / 全景合并的后台任务回包：成功带成片 JSON，失败带中文原因。
-    /// `token` 是发任务时的 `reload_token`，换了序列的迟到回包直接丢。
+    /// `token` 是发任务时的 `reload_token`，换了序列的迟到回包直接丢；`job` 是本次
+    /// 合并任务的编号，只有当前任务才有权清 `merge_busy`——旧任务的迟到回包不能把
+    /// 新任务的忙碌标记抹掉。
+    ///
+    /// `token` is the `reload_token` at launch, so a late reply from a switched-away sequence
+    /// is dropped; `job` identifies the merge run, and only the current run may clear
+    /// `merge_busy` — a stale reply must not wipe the new run's busy flag.
     Merged {
         token: u64,
+        job: u64,
         kind: MergeKind,
         result: Result<Value, String>,
     },
@@ -931,6 +946,31 @@ enum Msg {
         failed: usize,
         cancelled: bool,
     },
+}
+
+/// 状态栏剩余时间的滑动窗口。
+///
+/// 只留最近 8 秒、最多 16 个 `(时刻, 已完成)` 采样：既够抹平单帧抖动，也不会把
+/// 任务刚起跑时那一下的慢速一直背到收尾。任务换了或进度回退就整窗重开。
+///
+/// Sliding window behind the status bar's remaining-time estimate. It keeps at most 16
+/// `(instant, done)` samples from the last eight seconds: enough to smooth single-frame
+/// jitter, without carrying the slow start all the way to the end. A task change or a
+/// progress reset starts a fresh window.
+#[derive(Default)]
+struct EtaWindow {
+    /// 采样所属的任务名（`导出` / `队列` / `HDR 合并` …）。
+    ///
+    /// The task the samples belong to.
+    key: String,
+    /// `(时刻, 已完成数)`，按时间升序。
+    ///
+    /// `(instant, done)` pairs, oldest first.
+    samples: Vec<(Instant, usize)>,
+    /// 上一次看到的进度值，用来识别「回退到 0 = 换了一轮」。
+    ///
+    /// The last progress value seen; a drop back to 0 means a new run.
+    last_done: usize,
 }
 
 pub struct AppState {
@@ -1033,7 +1073,15 @@ pub struct AppState {
     /// never applied automatically; the status bar offers an "apply sidecar" button, and the
     /// parameters change only once it is clicked (see `apply_sidecar_hint`).
     pub sidecar_hint: Option<PathBuf>,
-    pub measuring: bool,
+    /// 打开序列后的测光进度：`Some(帧数)` 表示正在测量这么多帧，`None` 表示已经测完。
+    /// 存帧数而不是一个 bool，是因为状态栏那句「正在测量 N 帧…」要能一直说到
+    /// `Msg::Loaded` 落账为止——中途任何一次状态改写都不该把它换成一个假的汇总。
+    ///
+    /// Metering progress after opening a sequence: `Some(frame count)` while that many frames
+    /// are being measured, `None` once done. A count rather than a bool so the "measuring N
+    /// frames…" status can stand until `Msg::Loaded` lands, and no intermediate status write
+    /// replaces it with a summary that claims the work is already done.
+    pub measuring: Option<usize>,
 
     pub params: GradeParams,
     pub preset: String,
@@ -1750,7 +1798,18 @@ pub struct AppState {
     pub merge_error: Option<String>,
     merge_done: Arc<AtomicUsize>,
     merge_total: Arc<AtomicUsize>,
+    /// 当前合并任务的取消旗。**每个 job 新开一个**：沿用同一个原子会让新任务
+    /// `store(false)` 把旧任务的取消要求抹掉，旧线程继续往成片里写。
+    ///
+    /// Cancel flag of the current merge. A fresh atom **per job**: sharing one lets a new
+    /// run's `store(false)` undo the old run's cancellation, and the old thread keeps writing.
     cancel_merge: Arc<AtomicBool>,
+    /// 合并任务编号，每次 `start_merge` 递增；回包按它对号，旧任务的迟到回包既不落账
+    /// 也不清忙碌标记。
+    ///
+    /// Merge run id, bumped by every `start_merge`; replies are matched against it so a stale
+    /// reply neither records results nor clears the busy flag.
+    merge_job: u64,
 
     /// 序列体检的后台任务。测光随导入那趟就算好了，这里只是逐帧 `stat` 一遍
     /// 再跑判定——五千帧的 `stat` 也要 100ms 量级，所以与合并同构放后台，
@@ -1791,6 +1850,11 @@ pub struct AppState {
     cancel_queue: Arc<AtomicBool>,
 
     last_auto_save: Instant,
+    /// 状态栏「约剩 Xs」的取样窗口，只服务当前显示的那个长任务。
+    ///
+    /// Sampling window behind the status bar's "about Xs left"; it serves only the long task
+    /// currently on screen.
+    eta: EtaWindow,
     /// 上一次真正写进工程文件的内容。当前状态和它一致就不碰盘。
     /// `None` 表示这份序列还没存过（打开序列后的第一次心跳必存）。
     saved_snap: Option<Snapshot>,
@@ -2285,7 +2349,7 @@ impl AppState {
             error: None,
             notices: Vec::new(),
             sidecar_hint: None,
-            measuring: false,
+            measuring: None,
             params: GradeParams::default(),
             preset: "原始".to_owned(),
             auto_note: None,
@@ -2522,6 +2586,7 @@ impl AppState {
             merge_done: Arc::new(AtomicUsize::new(0)),
             merge_total: Arc::new(AtomicUsize::new(0)),
             cancel_merge: Arc::new(AtomicBool::new(false)),
+            merge_job: 0,
             qa_busy: false,
             qa_findings: Vec::new(),
             qa_run: false,
@@ -2539,6 +2604,7 @@ impl AppState {
             queue_stage: Arc::new(AtomicU8::new(0)),
             cancel_queue: Arc::new(AtomicBool::new(false)),
             last_auto_save: Instant::now(),
+            eta: EtaWindow::default(),
             saved_snap: None,
             saved_stamp: None,
             reload_token: 0,
@@ -2632,11 +2698,6 @@ impl AppState {
         let token = self.reload_token;
         let n = seq.len();
         let single = seq.is_single();
-        let first = seq
-            .frames
-            .first()
-            .map(|f| f.path.display().to_string())
-            .unwrap_or_default();
 
         let root = seq.root.clone();
         let seq_name = seq.display_name();
@@ -2707,9 +2768,14 @@ impl AppState {
         self.merge_result = None;
         self.merge_error = None;
         if self.merge_busy {
-            // 换序列时正在跑的合并作废：回包带 token，迟到那条会在 poll 里被丢掉。
+            // 换序列时正在跑的合并作废：只转取消旗，忙碌标记留给旧 job 自己的回包清。
+            // 这里若抢清 `merge_busy`，用户就能在新序列上再起一个合并，而旧线程还在
+            // 往上一份成片里写——同一个出口两条线程。
+            //
+            // A sequence switch only raises the cancel flag; the busy flag waits for the old
+            // run's own reply. Clearing it here would let a second merge start while the old
+            // thread is still writing the previous output.
             self.cancel_merge.store(true, Ordering::SeqCst);
-            self.merge_busy = false;
         }
         // 体检清单是这一段的诊断结论，换序列必须清空，否则上一段的坏帧还挂在表里。
         self.qa_findings.clear();
@@ -2730,7 +2796,7 @@ impl AppState {
         self.playing = false;
         self.scroll_to_selected = true;
         self.error = None;
-        self.measuring = true;
+        self.measuring = Some(n);
         self.resolution = None;
         self.source_note = None;
         self.status = if single {
@@ -2814,11 +2880,11 @@ impl AppState {
             })));
             ctx2.request_repaint();
         });
-        self.status = if single {
-            crate::i18n::tr_fmt("单张 · {}", &[&first])
-        } else {
-            crate::i18n::tr_fmt("{} 帧 · 首帧 {}", &[&n, &first])
-        };
+        // 状态栏留在「正在测量 N 帧…」：这时候测光才刚起跑，先把帧数写在前面
+        // 等于告诉用户已经读完了。真正的汇总由 `Msg::Loaded` 落账时替换。
+        //
+        // Keep the "measuring N frames…" status: the metering pass has only just started, and
+        // writing the summary here would claim it is already done. `Msg::Loaded` replaces it.
     }
 
     /// 关闭当前序列，回到空状态；不碰磁盘上的素材。
@@ -2886,9 +2952,14 @@ impl AppState {
         self.merge_result = None;
         self.merge_error = None;
         if self.merge_busy {
-            // 换序列时正在跑的合并作废：回包带 token，迟到那条会在 poll 里被丢掉。
+            // 换序列时正在跑的合并作废：只转取消旗，忙碌标记留给旧 job 自己的回包清。
+            // 这里若抢清 `merge_busy`，用户就能在新序列上再起一个合并，而旧线程还在
+            // 往上一份成片里写——同一个出口两条线程。
+            //
+            // A sequence switch only raises the cancel flag; the busy flag waits for the old
+            // run's own reply. Clearing it here would let a second merge start while the old
+            // thread is still writing the previous output.
             self.cancel_merge.store(true, Ordering::SeqCst);
-            self.merge_busy = false;
         }
         // 体检清单是这一段的诊断结论，换序列必须清空，否则上一段的坏帧还挂在表里。
         self.qa_findings.clear();
@@ -2905,7 +2976,7 @@ impl AppState {
         self.reset_mask_state();
         self.resolution = None;
         self.source_note = None;
-        self.measuring = false;
+        self.measuring = None;
         self.playing = false;
         self.zoom = 1.0;
         self.fit_scale = 1.0;
@@ -2913,7 +2984,7 @@ impl AppState {
         self.module = Module::Sequence;
         self.last_saved = None;
         self.error = None;
-        self.status = "打开一个帧文件夹，或把文件夹拖进窗口".to_owned();
+        self.status = crate::i18n::t!("打开一个帧文件夹，或把文件夹拖进窗口").to_owned();
         self.history_reset("空状态");
     }
 
@@ -3205,7 +3276,7 @@ impl AppState {
                     // 首帧 EXIF 到手就能匹配镜头配置文件：命中折进参数，
                     // 预览标脏，没命中留一行说明。
                     self.match_lens_profile();
-                    self.measuring = false;
+                    self.measuring = None;
                     self.recompute_deflicker();
                     self.preview_dirty = true;
                     let valid = self.metrics.iter().filter(|m| m.is_some()).count();
@@ -3329,9 +3400,8 @@ impl AppState {
                     self.last_saved = Some(path.clone());
                     self.status = crate::i18n::tr_fmt("已保存 {}", &[&path]);
                 }
-                Msg::Error(e) => {
+                Msg::PreviewFailed(e) => {
                     self.preview_inflight = false;
-                    self.export_busy = false;
                     self.error = Some(e);
                 }
                 Msg::Aligned { token, report } => {
@@ -3379,21 +3449,31 @@ impl AppState {
                     self.export_busy = false;
                     self.export_stage = None;
                     if e.contains("已取消") {
-                        self.status = "导出已取消".to_owned();
+                        self.status = crate::i18n::t!("导出已取消").to_owned();
                     } else {
                         self.error = Some(crate::i18n::tr_fmt("导出失败：{}", &[&e]));
                     }
                 }
                 Msg::Merged {
                     token,
+                    job,
                     kind,
                     result,
                 } => {
-                    if token != self.reload_token {
+                    // 只有当前这个 job 的回包能动忙碌标记：换序列时旧的取消旗已经立起来，
+                    // 但旧线程可能还在两帧之间，`merge_busy` 要等它自己收尾。
+                    //
+                    // Only the current run's reply may touch the busy flag: on a sequence
+                    // switch the old cancel flag is raised, but the old thread may still be
+                    // between frames, so `merge_busy` waits for it to finish on its own.
+                    if job != self.merge_job {
                         continue;
                     }
                     self.merge_busy = false;
                     self.merge_kind = None;
+                    if token != self.reload_token {
+                        continue;
+                    }
                     // 面板那两行回显按任务种类分头落账：HDR 的失败不该顶掉全景的结果。
                     let (last, err) = match kind {
                         MergeKind::Hdr => (&mut self.hdr_last, &mut self.hdr_error),
@@ -5084,7 +5164,7 @@ impl AppState {
             "missing_frames": issues,
             "missing_count": self.issues.len(),
             "measured": self.metrics.iter().filter(|m| m.is_some()).count(),
-            "measuring": self.measuring,
+            "measuring": self.measuring.is_some(),
             "selected": self.selected + 1,
             "frame_name": frame_name,
             "exif": self.exif_json(),
@@ -5953,7 +6033,14 @@ impl AppState {
                 self.focus_error = None;
             }
         }
-        self.cancel_merge.store(false, Ordering::SeqCst);
+        self.merge_job += 1;
+        let run = self.merge_job;
+        // 新任务新开一个取消旗：上一轮的旗（可能已经立着）与这一轮无关，绝不能拿它
+        // 当共同开关——旧线程还在跑时把它清零，等于让旧任务继续写盘。
+        //
+        // A fresh cancel flag per run: the previous one (possibly already raised) must not be
+        // shared, or clearing it while the old thread is still alive revives that run.
+        self.cancel_merge = Arc::new(AtomicBool::new(false));
         self.merge_done.store(0, Ordering::Relaxed);
         // 进度 = 读好的帧数 + 最后那一段（融合或拼接再写盘）。
         self.merge_total.store(frames + 1, Ordering::Relaxed);
@@ -5969,6 +6056,7 @@ impl AppState {
             let result = run_merge_job(&job, &done, &total, &cancel);
             let _ = tx.send(Msg::Merged {
                 token,
+                job: run,
                 kind,
                 result,
             });
@@ -6071,7 +6159,7 @@ impl AppState {
         self.cancel_qa.store(false, Ordering::SeqCst);
         self.qa_done.store(0, Ordering::Relaxed);
         self.qa_total.store(n + 1, Ordering::Relaxed);
-        self.status = "正在体检…".to_owned();
+        self.status = crate::i18n::t!("正在体检…").to_owned();
 
         let token = self.reload_token;
         let tx = self.tx.clone();
@@ -6113,7 +6201,7 @@ impl AppState {
     pub fn stop_qa(&mut self) {
         if self.qa_busy {
             self.cancel_qa.store(true, Ordering::SeqCst);
-            self.status = "正在取消体检…（批间生效）".to_owned();
+            self.status = crate::i18n::t!("正在取消体检…（批间生效）").to_owned();
         }
     }
 
@@ -8865,7 +8953,10 @@ impl AppState {
                     })));
                 }
                 Err(e) => {
-                    let _ = tx.send(Msg::Error(crate::i18n::tr_fmt("预览失败：{}", &[&e])));
+                    let _ = tx.send(Msg::PreviewFailed(crate::i18n::tr_fmt(
+                        "预览失败：{}",
+                        &[&e],
+                    )));
                 }
             }
             ctx2.request_repaint();
@@ -10409,9 +10500,9 @@ impl AppState {
         // 交给下面那条导出线程，结果写进原子量由状态栏的 100ms 心跳去读。
         self.export_skipped_shared.store(0, Ordering::Relaxed);
         self.status = if self.render_resume {
-            "正在导出…（续跑：先数已导出的帧）".to_owned()
+            crate::i18n::t!("正在导出…（续跑：先数已导出的帧）").to_owned()
         } else {
-            "正在导出…".to_owned()
+            crate::i18n::t!("正在导出…").to_owned()
         };
 
         let token = self.reload_token;
@@ -10490,8 +10581,54 @@ impl AppState {
     pub fn stop_export(&mut self) {
         if self.export_busy {
             self.cancel_export.store(true, Ordering::SeqCst);
-            self.status = "正在取消导出…".to_owned();
+            self.status = crate::i18n::t!("正在取消导出…").to_owned();
         }
+    }
+
+    /// 状态栏「约剩 Xs」：按最近 8 秒的推进速度估。
+    ///
+    /// 只吃「当前显示的任务」的采样：任务换了、或者进度回退（新任务从 0 起），就把
+    /// 窗口清空重开，免得上一轮的速率借给下一轮。同一进度值重复画帧不记样本，否则
+    /// 界面帧率会被误当成任务的推进速度；`done` 为 0 或已经到终点时直接不给数字。
+    ///
+    /// ETA for the status bar, from the last eight seconds of progress. Only the task
+    /// currently on screen contributes samples: switching tasks, or a progress reset,
+    /// starts a fresh window so one run's rate never leaks into the next. Repeated frames
+    /// at the same progress value are not sampled -- otherwise the UI frame rate would be
+    /// mistaken for the task's throughput. No number at `done == 0` or at completion.
+    pub fn eta_secs(&mut self, task: &str, done: usize, total: usize) -> Option<u64> {
+        if done == 0 || total == 0 || done >= total {
+            self.eta = EtaWindow::default();
+            return None;
+        }
+        let now = Instant::now();
+        if self.eta.key != task || done < self.eta.last_done {
+            self.eta = EtaWindow {
+                key: task.to_owned(),
+                ..EtaWindow::default()
+            };
+        }
+        self.eta.last_done = done;
+        if self.eta.samples.last().is_none_or(|(_, d)| *d != done) {
+            self.eta.samples.push((now, done));
+        }
+        // 只留最近 8 秒、最多 16 个点；至少留一个，否则永远算不出速率。
+        while self.eta.samples.len() > 16
+            || (self.eta.samples.len() > 1
+                && now.duration_since(self.eta.samples[0].0) > Duration::from_secs(8))
+        {
+            self.eta.samples.remove(0);
+        }
+        let (t0, d0) = *self.eta.samples.first()?;
+        let secs = now.duration_since(t0).as_secs_f32();
+        if secs <= 0.0 || done <= d0 {
+            return None;
+        }
+        let rate = (done - d0) as f32 / secs;
+        if rate <= 0.0 {
+            return None;
+        }
+        Some(((total - done) as f32 / rate).ceil() as u64)
     }
 
     pub fn export_progress(&self) -> Option<(usize, usize, Stage)> {
@@ -10775,7 +10912,7 @@ impl AppState {
     pub fn stop_queue(&mut self) {
         if self.queue_busy {
             self.cancel_queue.store(true, Ordering::SeqCst);
-            self.status = "正在取消队列…".to_owned();
+            self.status = crate::i18n::t!("正在取消队列…").to_owned();
         }
     }
 
@@ -11411,7 +11548,7 @@ impl AppState {
                     let _ = tx.send(Msg::Saved(path.display().to_string()));
                 }
                 Err(e) => {
-                    let _ = tx.send(Msg::Error(crate::i18n::tr_fmt("导出失败：{}", &[&e])));
+                    let _ = tx.send(Msg::ExportFailed(e));
                 }
             }
             ctx2.request_repaint();
@@ -11982,6 +12119,30 @@ struct FrameExport<'a> {
     render: RenderOptions,
 }
 
+/// 单帧导出的渲染那一刀：动态范围决定要不要让白以上活下来。
+///
+/// 这是和批量导出同一个开关（`export::render_frame_raw`）。少了它，单帧 HDR 导出
+/// 会在写盘前就被钳回 [0,1]，PQ 编码器再努力也只能接到一片白——用户看到的
+/// 仍是 SDR 成片，只是文件名写着 HDR。
+///
+/// The render pass for a single still export: the dynamic range decides whether brightness
+/// above white survives. This is the same switch the batch path uses; without it a single
+/// HDR still is clamped to [0,1] before the encoder, so PQ only ever sees flat white.
+fn grade_still_buffer(
+    buf: &mut [f32],
+    w: usize,
+    h: usize,
+    params: &GradeParams,
+    gain: Ev,
+    dynamic: OutputDynamic,
+) {
+    if dynamic == OutputDynamic::HdrPq {
+        aevum_core::render_preview_hdr(buf, w, h, params, gain);
+    } else {
+        aevum_core::render_preview(buf, w, h, params, gain);
+    }
+}
+
 fn render_full_file(job: FrameExport<'_>) -> Result<(), String> {
     let FrameExport {
         src,
@@ -12009,7 +12170,7 @@ fn render_full_file(job: FrameExport<'_>) -> Result<(), String> {
         off: [framing.off[0] * scale, framing.off[1] * scale],
     };
 
-    aevum_core::render_preview(&mut buf, w, h, params, gain);
+    grade_still_buffer(&mut buf, w, h, params, gain, render.dynamic);
     let (mut out_buf, ow, oh) = shift_crop(&buf, w, h, framing, crop);
     // 尾部动作交给 core：色域搬运 + ICC + 输出锐化 + EXIF + 容器编码，
     // 和批量导出共用同一条路，两条不许各调一刀。`deep` 是单帧有意保留的差别：
@@ -14228,6 +14389,26 @@ mod preview_tests {
             }
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 单帧导出的 HDR 分支必须真的走 `render_hdr`：曝光拉高后白以上要活到写盘，
+    /// 而 SDR 那条路会把它钳成纯白。两条逐笔对比，防止开关又被写回恒 SDR。
+    #[test]
+    fn still_export_keeps_highlights_only_on_the_hdr_path() {
+        let params = GradeParams {
+            exposure: 4.0,
+            ..GradeParams::default()
+        };
+        let mut hdr = vec![0.5f32, 0.5, 0.5];
+        grade_still_buffer(&mut hdr, 1, 1, &params, Ev::NONE, OutputDynamic::HdrPq);
+        let peak = hdr.iter().copied().fold(0.0f32, f32::max);
+        assert!(peak > 1.0, "HDR 单帧导出不该把白以上钳掉：{peak}");
+        let mut sdr = vec![0.5f32, 0.5, 0.5];
+        grade_still_buffer(&mut sdr, 1, 1, &params, Ev::NONE, OutputDynamic::Sdr);
+        assert!(
+            sdr.iter().all(|v| *v <= 1.0 + 1e-6),
+            "SDR 必须钳到白：{sdr:?}"
+        );
     }
 }
 
@@ -17076,6 +17257,10 @@ mod command_tests {
             .unwrap_err();
         assert!(too_few.contains("至少要 2 帧"), "{too_few}");
         assert!(!state.merge_busy, "校验失败不该起任务");
+        // 上一轮留下的取消旗（哪怕已经立着）不能传给新任务：共用一根旗时新任务
+        // `store(false)` 会复活旧 job，反过来旧旗也会立刻取消新 job。
+        state.cancel_merge.store(true, Ordering::SeqCst);
+        let old_flag = state.cancel_merge.clone();
         let out_dir = dir.join("HDR");
         let ok = state
             .run_ui_command(
@@ -17088,6 +17273,14 @@ mod command_tests {
         assert_eq!(ok["kind"], json!("hdr"));
         assert_eq!(ok["frames"], json!(2));
         assert!(state.merge_busy, "启动后应标记忙碌");
+        assert!(
+            !Arc::ptr_eq(&old_flag, &state.cancel_merge),
+            "每个合并 job 必须新开一根取消旗"
+        );
+        assert!(
+            !state.cancel_merge.load(Ordering::SeqCst),
+            "新任务不能被上一轮的旗立刻取消"
+        );
         wait_merge(&mut state, &ctx);
         let done = state.merge_result.clone().expect("合并结果落账");
         assert_eq!(done["kind"], json!("hdr"));
@@ -18021,6 +18214,93 @@ mod command_tests {
         assert!(state.status.contains("正在取消"), "{}", state.status);
     }
 
+    /// 预览失败只解预览在飞标记，不许碰导出的独占锁：否则一次解码失败就能让用户
+    /// 在导出仍在写盘时起第二路导出，两份线程写同一个文件。
+    #[test]
+    fn preview_failure_keeps_the_export_lock() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        state.export_busy = true;
+        state.preview_inflight = true;
+        state
+            .tx
+            .send(Msg::PreviewFailed("预览失败：坏帧".to_owned()))
+            .expect("投递预览失败");
+        state.poll(&ctx);
+        assert!(state.export_busy, "预览失败不该解导出锁");
+        assert!(!state.preview_inflight, "预览在飞标记要落回来");
+        assert!(
+            state.error.as_deref().unwrap_or_default().contains("坏帧"),
+            "失败原因要进错误条：{:?}",
+            state.error
+        );
+    }
+
+    /// 合并回包按 job 对号：旧任务（已换序列）的迟到回包不能清掉当前任务的忙碌标记；
+    /// 当前任务的回包即使 token 已过期，也要负责清标记，只是不落账。
+    #[test]
+    fn stale_merge_reply_cannot_clear_the_current_run() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        state.merge_busy = true;
+        state.merge_kind = Some(MergeKind::Hdr);
+        state.merge_job = 7;
+        state.reload_token = 3;
+        state
+            .tx
+            .send(Msg::Merged {
+                token: 3,
+                job: 6,
+                kind: MergeKind::Hdr,
+                result: Err("旧任务".to_owned()),
+            })
+            .expect("投递旧回包");
+        state.poll(&ctx);
+        assert!(state.merge_busy, "旧 job 的回包不该清当前任务的忙碌标记");
+        assert_eq!(state.merge_kind, Some(MergeKind::Hdr));
+        assert!(state.merge_error.is_none(), "旧 job 的失败也不该落账");
+
+        state
+            .tx
+            .send(Msg::Merged {
+                token: 2,
+                job: 7,
+                kind: MergeKind::Hdr,
+                result: Ok(json!({"path": "旧序列成片.avif"})),
+            })
+            .expect("投递当前任务回包");
+        state.poll(&ctx);
+        assert!(!state.merge_busy, "当前任务的回包要负责清忙碌标记");
+        assert!(
+            state.merge_result.is_none(),
+            "换过序列的成片路径不该落到新序列的账上"
+        );
+    }
+
+    /// 换序列只转取消旗，不抢清 `merge_busy`：清早了用户就能再起一个合并，而旧线程
+    /// 还在往上一份成片里写。
+    #[test]
+    fn sequence_switch_cancels_but_does_not_release_merge_busy() {
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        let dir = super::history_tests::two_frame_dir("merge-switch");
+        state.merge_busy = true;
+        state.merge_kind = Some(MergeKind::Hdr);
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.display().to_string()}),
+            )
+            .expect("打开序列");
+        assert!(state.merge_busy, "忙碌标记要等旧 job 自己的回包清");
+        assert!(
+            state.cancel_merge.load(Ordering::SeqCst),
+            "换序列要转取消旗"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 体检用的序列：编号 001…026，缺 010；005 全黑、014 糊成一团、020 与 021 逐字节相同。
     ///
     /// 每帧都是同一张 8×6 色盘的换序——48 格各用一次，所以**均值一分不动**，只有纹理
@@ -18061,12 +18341,88 @@ mod command_tests {
     fn wait_measure(state: &mut AppState, ctx: &Context) {
         for _ in 0..4000 {
             state.poll(ctx);
-            if !state.measuring {
+            if state.measuring.is_none() {
                 return;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
         panic!("测光没收尾");
+    }
+
+    /// 打开序列后的「正在测量 N 帧…」必须站得住：状态栏不能在这一趟里被一句看起来
+    /// 像汇总的文案提前顶掉；`measuring` 要带着帧数，直到 `Msg::Loaded` 落账才清。
+    ///
+    /// Opening a sequence must keep "measuring N frames…" standing: this pass must not
+    /// overwrite it with copy that reads like a finished summary, and `measuring` carries the
+    /// frame count until `Msg::Loaded` lands.
+    #[test]
+    fn opening_a_sequence_keeps_the_measuring_status_until_loaded() {
+        let dir = temp_dir("measure-status");
+        for i in 0..3u8 {
+            let img = image::RgbImage::from_pixel(8, 6, image::Rgb([i * 10, 20, 30]));
+            img.save(dir.join(format!("f{i:03}.png")))
+                .expect("写测试帧");
+        }
+        let ctx = Context::default();
+        let mut state = AppState::new();
+        state
+            .run_ui_command(
+                &ctx,
+                "sequence.open",
+                &json!({"root": dir.display().to_string()}),
+            )
+            .expect("打开序列");
+        assert_eq!(
+            state.measuring,
+            Some(3),
+            "测光期间要记住在测多少帧，而不是一个裸 bool"
+        );
+        assert!(
+            state.status.contains("正在测量") && state.status.contains('3'),
+            "状态栏在测光完成前就被改写了：{}",
+            state.status
+        );
+        wait_measure(&mut state, &ctx);
+        assert!(state.measuring.is_none(), "测光结束后要清掉");
+        assert!(
+            state.status.contains("可读"),
+            "测光完成后的汇总没落账：{}",
+            state.status
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 「约剩」要有两个有跨度的采样点才出现；done=0 或已到终点都不显示，换任务重新开表。
+    ///
+    /// The remaining-time estimate appears only after two samples with a real time span; it
+    /// stays hidden at done=0 or at completion, and a task switch starts a fresh window.
+    #[test]
+    fn eta_needs_two_samples_and_resets_between_tasks() {
+        let mut state = AppState::new();
+        assert_eq!(
+            state.eta_secs("导出", 0, 10),
+            None,
+            "done=0 不该显示剩余时间"
+        );
+        assert_eq!(state.eta_secs("导出", 3, 3), None, "已到终点不该显示");
+        assert_eq!(
+            state.eta_secs("导出", 1, 10),
+            None,
+            "只有一个采样点算不出速率"
+        );
+        std::thread::sleep(Duration::from_millis(30));
+        let eta = state.eta_secs("导出", 2, 10).expect("两个采样点应给出估计");
+        assert!(eta > 0, "剩余秒数为 0：{eta}");
+        assert_eq!(
+            state.eta_secs("合并", 3, 10),
+            None,
+            "换了任务要重新开表，不能借上一轮的速率"
+        );
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(
+            state.eta_secs("合并", 4, 10).is_some(),
+            "新任务第二点之后应重新有估计"
+        );
     }
 
     fn wait_qa(state: &mut AppState, ctx: &Context) {

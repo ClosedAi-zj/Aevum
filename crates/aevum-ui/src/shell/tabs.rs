@@ -57,7 +57,7 @@ pub(super) fn info_tab(state: &mut AppState, ui: &mut Ui) {
                 kv(ui, "中位", format!("{:.1}", m.median * 255.0), muted());
                 kv(ui, "中心", format!("{:.1}", m.center * 255.0), muted());
                 kv(ui, "锐度", format!("{:.0}", m.sharp), muted());
-            } else if state.measuring {
+            } else if state.measuring.is_some() {
                 ui.label(
                     RichText::new(crate::i18n::t!("测光中…"))
                         .size(SIZE_SMALL)
