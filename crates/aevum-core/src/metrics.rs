@@ -800,8 +800,7 @@ pub fn decode_preview_sketch(
     sketch_side: u32,
     full_side: u32,
 ) -> Result<SketchSource, MetricsError> {
-    if false
-        && profile.is_empty()
+    if profile.is_empty()
         && let Some((img, (fw, fh), orientation)) = crate::raw::read_half(path)
     {
         let img = crate::exif::oriented(DynamicImage::ImageRgb16(img), orientation);
