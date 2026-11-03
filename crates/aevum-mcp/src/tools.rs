@@ -3953,7 +3953,7 @@ fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_cull_evaluate",
-            description: "按四条判据逐帧裁决并给出理由：曝光越界（EV）、与相邻帧的突变、清晰度低于序列中位的比例、读不出来；立即返回。测光与 GUI 同一条路径（512 长边）：先读盘上 `<序列根>/.aevum/measures.json`，没有的帧才解码，测完按同一格式写回。所以 GUI 已经测过的序列，无头这边直接出裁决、不再解一遍图，反之亦然；缓存读写失败会静默退化成现测，不影响裁决。只评估不标记：GUI 侧的 apply（把判废帧标成「排除」）是会话态，无头剔除走 aevum_cull_extract 的 exclude 参数。",
+            description: "按四条判据逐帧裁决并给出理由：曝光越界（EV）、与相邻帧的突变、清晰度低于序列中位的比例、读不出来；立即返回。测光与 GUI 同一条路径（512 长边）：先读盘上 `<序列根>/.aevum/measures.json`，没有的帧才解码，测完按同一格式写回。所以 GUI 已经测过的序列，无头这边直接出裁决、不再解一遍图，反之亦然；缓存读写失败会静默退化成现测，不影响裁决。账的键是 `(mtime, 字节数)`：文件内容变了但这两项没变（复制工具保留时间戳覆盖同名文件）时，用 `aevum_measure --refresh` 强制重算再评估。只评估不标记：GUI 侧的 apply（把判废帧标成「排除」）是会话态，无头剔除走 aevum_cull_extract 的 exclude 参数。",
             input_schema: object(
                 json!({
                     "suggest": {"type": "boolean", "description": "用序列自身的亮度中位数绝对偏差推曝光区间（3×1.4826×MAD，下限 0.5 EV）；给了则覆盖 ev_low/ev_high"},
