@@ -38,9 +38,13 @@
 //!
 //! 绝对值量的是 24MP 传感器数据的解包与重采样（几百兆内存流量），dev 档（opt-level 1）
 //! 的同一段代码本机实测 253.8ms、release 223.1ms，慢机器上更多——在 dev 卡 300ms 会把
-//! 「机器慢」报成「代码退化」。比值那条不吃机器快慢，所以**放进了门槛**：门槛跑
-//! `cargo test`（dev）时它是这里唯一会红的闸，退化回「整幅解码再减半」时比值约 1.0。
-//! 想要绝对值也真的红，跑 `cargo test --release -p aevum-ui preview`。
+//! 「机器慢」报成「代码退化」。比值那条不吃机器快慢，所以**dev 也判**：门槛第 3 步
+//! （`cargo test`）跑的就是它，退化回「整幅解码再减半」时比值约 1.0，当场红。
+//!
+//! 绝对值也不会漏：门槛第 5 步专门用 **release** 跑 `preview_budget` + `perf_budget`
+//! （`acceptance/check.sh` 5/6）。所以这里两道闸在门槛里都被踩过一遍，dev 那道只是
+//! 让退化在不编 release 的时候也能很快看见。手动跑同一条：
+//! `cargo test --release -p aevum-ui preview`。
 //!
 //! ## 本机实测（2026-11-03，release，Windows 11，样张 `samples/cameras/`）
 //!
