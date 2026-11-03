@@ -263,3 +263,105 @@ fn heic_is_rejected_by_name_not_guessed() {
         "错误串里要有 `heic`，否则用户不知道该转什么：{err}"
     );
 }
+
+/// 竖拍 RAW 在**每条解码路**上都必须转正：全量、草图、逻辑尺寸，宽高关系跟着
+/// EXIF 方向码走，且彼此一致。
+///
+/// 事故：README 主图里夜景城市横躺 90°，而胶片条缩略图是正的。根因是 rawler 0.8.0
+/// 把 `RawImage.orientation` 硬编码成 Normal（rawimage.rs 两处 `// TODO fixme`），
+/// 后端对任何文件都报 1，`decode` 信了它就不转——只有走内嵌 JPEG 的缩略图用了
+/// `exif::read` 才是正的。修复是后端报 1 时回落 `exif::read`（`resolve_orientation`）。
+///
+/// 判据的不变量：`read_full` 的像素是**未转正**的传感器排布（它的宽高关系当基准），
+/// 方向码 2–4 只翻不换边、5–8 换边；所以「解码结果是否横」必须等于
+/// 「传感器横 XOR 方向码换边」。全量与草图两条路各自核一遍，互相不一致也红。
+///
+/// Portrait RAWs must come out upright on **every** decode route: full preview, sketch and
+/// the logical size must all follow the EXIF orientation code and agree with each other.
+///
+/// Incident: the README hero showed a night city lying on its side while the filmstrip
+/// thumbnail stood upright. Root cause: rawler 0.8.0 hardcodes `RawImage.orientation` to
+/// Normal (two `// TODO fixme` sites in rawimage.rs), so the backend reported 1 for every
+/// file and `decode` trusted it -- only the embedded-JPEG thumbnails used `exif::read` and
+/// came out upright. The fix falls back to `exif::read` when the backend reports 1
+/// (`resolve_orientation`).
+///
+/// The invariant: `read_full`'s pixels are the **unrotated** sensor layout (its width/height
+/// relation is the baseline); codes 2-4 flip without swapping sides, 5-8 swap. So "decoded is
+/// landscape" must equal "sensor is landscape XOR the code swaps". Both routes are checked
+/// independently, and disagreeing with each other is red too.
+#[test]
+fn every_raw_sample_is_upright_in_every_route() {
+    use aevum_core::raw;
+
+    let files: Vec<PathBuf> = samples()
+        .into_iter()
+        .filter(|p| raw::is_raw_name(p))
+        .collect();
+    if files.is_empty() {
+        eprintln!("跳过：没有 RAW 样张");
+        return;
+    }
+    for path in &files {
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        // read_full 自身也包住：它跑的同样是不可信字节。
+        let full = std::panic::catch_unwind(AssertUnwindSafe(|| raw::read_full(path)));
+        let Ok(Ok((mosaic, _route, backend_orientation))) = full else {
+            // 解不动的样张归矩阵判据管；这里只对解得动的立规矩。
+            eprintln!("{name}: 解码失败（归矩阵判据管），跳过");
+            continue;
+        };
+        // 方向码的**基准是 exif::read，不是后端**：基准若也从解码栈里拿，撤掉回落
+        // 的变异会让两边一起变，判据自洽地绿（本轮牙口测试真踩了）。exif::read 直接
+        // 读文件头，独立于解码栈。后端非 1 时（CR3 那类 exif 读不到的容器）以后端为准；
+        // exif 读出了非 1 时，后端必须与它一致——这正是「报 1 时回落」的合同。
+        let exif_orientation = aevum_core::exif::read(path).orientation;
+        if exif_orientation != 1 {
+            assert_eq!(
+                backend_orientation, exif_orientation,
+                "{name}: exif 方向码 {exif_orientation}，后端却报 {backend_orientation}——\
+                 竖拍在这里躺平（README 主图事故的根因）"
+            );
+        }
+        let orientation = if exif_orientation != 1 {
+            exif_orientation
+        } else {
+            backend_orientation
+        };
+        let sensor_landscape = mosaic.width() > mosaic.height();
+        let swaps = (5..=8).contains(&orientation);
+        let expect_landscape = sensor_landscape != swaps;
+
+        let decoded = metrics::decode_rgb(path, 200)
+            .unwrap_or_else(|e| panic!("{name}: 全量解码失败（{e}），不配「能解却躺平」"));
+        assert_eq!(
+            decoded.width() > decoded.height(),
+            expect_landscape,
+            "{name}: 方向码 {orientation}，传感器{}、全量解出 {}×{}——宽高关系没跟着方向码走\
+            （画布躺平就是这么来的）",
+            if sensor_landscape { "横" } else { "竖" },
+            decoded.width(),
+            decoded.height()
+        );
+
+        let sketch = metrics::decode_preview_sketch(path, "", 200, 400)
+            .unwrap_or_else(|e| panic!("{name}: 草图解码失败（{e}）"));
+        assert_eq!(
+            sketch.w > sketch.h,
+            expect_landscape,
+            "{name}: 草图 {}×{} 与全量方向不一致",
+            sketch.w,
+            sketch.h
+        );
+        assert_eq!(
+            sketch.full.0 > sketch.full.1,
+            expect_landscape,
+            "{name}: 草图报的全量逻辑尺寸 {:?} 方向不对",
+            sketch.full
+        );
+    }
+}

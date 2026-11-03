@@ -44,6 +44,50 @@ use super::{RawError, RawPath, Rgb16Image};
 /// Backend name, carried in `RawDecode.backend` and `active_backend_name()`.
 pub const NAME: &str = "rawler";
 
+/// 从 rawler 的 `RawImage` 得到 EXIF 方向码（1–8），并在 rawler 缺席时回落 `exif::read`。
+///
+/// rawler 0.8.0 把 `RawImage.orientation` **硬编码成 Normal**（rawimage.rs 两处
+/// `orientation: Orientation::Normal, //cam.orientation, // TODO fixme`），所以这个
+/// match 对任何文件都吐 1——竖拍（EXIF Orientation 5–8）在这里躺平：画布横躺、
+/// 草图同躺，只有走内嵌 JPEG 的缩略图是正的（那边用 `exif::read`）。实测
+/// PANA0001.RW2（Orientation=8）：后端报 1、像素 6000×4000 未转正。
+///
+/// 所以 **1 不可信，要回落**：`crate::exif::read` 读标准 Orientation 标签，RW2/NEF/
+/// ARW/DNG 的 TIFF 头里都有。后端哪天真报了非 1（比如 CR3 的 BMFF 容器，exif::read
+/// 进不去、只能靠容器解出方向），**以后端为准**——回落只发生在后端说「没转」的时候，
+/// 两条信息源不打架。
+///
+/// EXIF orientation code (1-8) from rawler's `RawImage`, falling back to `exif::read` when
+/// rawler has nothing. rawler 0.8.0 **hardcodes** `RawImage.orientation` to Normal (two
+/// `// TODO fixme` sites in rawimage.rs), so the match below yields 1 for every file and
+/// portrait shots (EXIF Orientation 5-8) lie flat here: canvas sideways, sketch sideways,
+/// while the embedded-JPEG thumbnail stands upright (that path uses `exif::read`). Measured
+/// on PANA0001.RW2 (Orientation=8): backend reports 1, pixels 6000x4000 unrotated.
+///
+/// So **1 is not trustworthy and triggers the fallback**: `crate::exif::read` reads the
+/// standard Orientation tag from the TIFF header, which RW2/NEF/ARW/DNG all carry. If the
+/// backend ever reports a real non-1 value (e.g. CR3's BMFF container, which `exif::read`
+/// cannot enter and only the container parse can orient), **the backend wins** -- the
+/// fallback fires only when the backend says "no rotation", so the two sources never fight.
+fn resolve_orientation(img: &RawImage, path: &Path) -> u8 {
+    let from_backend = match img.orientation {
+        rawler::Orientation::Normal => 1,
+        rawler::Orientation::HorizontalFlip => 2,
+        rawler::Orientation::Rotate180 => 3,
+        rawler::Orientation::VerticalFlip => 4,
+        rawler::Orientation::Transpose => 5,
+        rawler::Orientation::Rotate90 => 6,
+        rawler::Orientation::Transverse => 7,
+        rawler::Orientation::Rotate270 => 8,
+        rawler::Orientation::Unknown => 1,
+    };
+    if from_backend == 1 {
+        crate::exif::read(path).orientation
+    } else {
+        from_backend
+    }
+}
+
 /// trait 形态的适配器：留给将来「按后端显式选择」的调用方（如诊断面板强制
 /// 指定后端对比解码结果）。当前路由走 [`decode_full`] 直接函数入口。
 ///
@@ -80,19 +124,9 @@ pub fn decode_full(path: &Path) -> Result<RawDecode, RawError> {
     let img = super::guard::decode_guard(NAME, || {
         rawler::decode_file(path).map_err(|e| RawError::Rawler(e.to_string()))
     })?;
-    // 方向跟着 rawler 走：CR3 是 BMFF 容器，我们的 exif::read 读不到它的
-    // 方向标记，而 rawler 解容器时顺带就有——竖拍躺平就是漏了这一步。
-    let orientation = match img.orientation {
-        rawler::Orientation::Normal => 1,
-        rawler::Orientation::HorizontalFlip => 2,
-        rawler::Orientation::Rotate180 => 3,
-        rawler::Orientation::VerticalFlip => 4,
-        rawler::Orientation::Transpose => 5,
-        rawler::Orientation::Rotate90 => 6,
-        rawler::Orientation::Transverse => 7,
-        rawler::Orientation::Rotate270 => 8,
-        rawler::Orientation::Unknown => 1,
-    };
+    // 方向的真相源与回落见 `resolve_orientation` 的文档：rawler 0.8.0 硬编码 Normal，
+    // 后端报 1 时回落 exif::read，两条信息源不打架。
+    let orientation = resolve_orientation(&img, path);
     let (image, _full) = to_rgb16(img, false)?;
     Ok(RawDecode {
         image,
@@ -119,20 +153,11 @@ pub fn decode_half(path: &Path) -> Result<(Rgb16Image, (u32, u32), u8), RawError
     let img = super::guard::decode_guard(NAME, || {
         rawler::decode_file(path).map_err(|e| RawError::Rawler(e.to_string()))
     })?;
-    // 方向码与 `decode_full` 同一套映射：草图与全量要按同一个方向摆。
-    // Same orientation mapping as `decode_full`: the sketch and the full preview must be
-    // upright the same way.
-    let orientation = match img.orientation {
-        rawler::Orientation::Normal => 1,
-        rawler::Orientation::HorizontalFlip => 2,
-        rawler::Orientation::Rotate180 => 3,
-        rawler::Orientation::VerticalFlip => 4,
-        rawler::Orientation::Transpose => 5,
-        rawler::Orientation::Rotate90 => 6,
-        rawler::Orientation::Transverse => 7,
-        rawler::Orientation::Rotate270 => 8,
-        rawler::Orientation::Unknown => 1,
-    };
+    // 方向码与 `decode_full` 同一出处（`resolve_orientation`）：草图与全量要按同一个
+    // 方向摆。
+    // The orientation code shares `decode_full`'s source (`resolve_orientation`): the sketch
+    // and the full preview must be upright the same way.
+    let orientation = resolve_orientation(&img, path);
     let (image, full) = to_rgb16(img, true)?;
     Ok((image, full, orientation))
 }
