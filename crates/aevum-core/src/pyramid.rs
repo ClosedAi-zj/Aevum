@@ -82,6 +82,37 @@
 //! 代价说明：Pass B 期间测度缓存驻留最高约 7×96 MB，是峰值内存的主要新增项；若
 //! 再压内存，只能减缓存面或换编码（f16 不满足逐位要求），无免费午餐。
 //!
+//! 第五轮（同日）：先打点拿分段构成（同轮 3 次取中位，中位 5.01 s，本机当轮比上表慢：
+//! 同轮 Weighted 1.58 s）：Pass A 0.84 s（其中 build_sat 0.27 s）、第 0 层 2.41 s、
+//! 深层 0.86 s、塌缩 0.77 s、归一 0.06 s。两个候选杠杆都实测掉了：
+//! ① tap 表扁平化——同机交替 A/B 两轮、各 3 次取中位，旧 4.972 / 4.576 s 对新
+//! 4.901 / 4.698 s，**噪声级中性**（输出校验和逐位相同），已回退；
+//! ② build_sat 列带并行——0.20–0.24 → 0.33–0.35 s，**负收益**，已回退（原因见
+//! `build_sat` 注释）。第 0 层 2.41 s 的结构性原因是 `accumulate_laplacian_level`
+//! 每通道一条 30 项串行加法链，受 f32 加法延迟（4 cycle）限制而非带宽：24 MP×8 帧
+//! ÷ 10 线程 × 每像素约 360 cycle ≈ 2.3 s，与实测吻合。**跨像素条带展开已实施并
+//! 实测**（每像素自己的加法顺序不变，两个相邻像素 × 3 通道 = 6 条独立链同时在飞）：
+//! 同轮同机、Weighted 1.619 s 作基线，旧版 4.349 s（2.69×）→ 新版 **3.375 s
+//! （2.08×）**，提速 **22.4%**，输出校验和 10682679.462086 逐位相同；≤3× 基线达标。
+//!
+//! Round five (same day): stage instrumentation first (median of 3 in one session; the
+//! machine was slower than the table above -- same-session Weighted was 1.58 s): Pass A
+//! 0.84 s (build_sat 0.27 s of it), level 0 2.41 s, deep levels 0.86 s, collapse 0.77 s,
+//! normalise 0.06 s. Both candidate levers were settled by measurement:
+//! ① flattening the tap tables -- two interleaved A/B rounds on one machine, median of 3
+//! each, 4.972 / 4.576 s (old) against 4.901 / 4.698 s (new), **neutral within noise**
+//! (output checksum bitwise identical), reverted;
+//! ② column-band parallel build_sat -- 0.20-0.24 -> 0.33-0.35 s, a **net loss**, reverted
+//! (reason in the `build_sat` docs). Level 0's 2.41 s is structurally a 30-term serial
+//! f32 addition chain per channel in `accumulate_laplacian_level`, bound by add latency
+//! (4 cycles) rather than bandwidth: 24 MP x 8 frames / 10 threads x ~360 cycles per
+//! pixel is about 2.3 s, matching the measurement. **Pixel-strip unrolling is implemented
+//! and measured** (each pixel keeps its own addition order; two adjacent pixels x 3
+//! channels = six independent chains run side by side): same session and machine, with
+//! Weighted at 1.619 s as the baseline, the old code took 4.349 s (2.69x) and the new
+//! code **3.375 s (2.08x)** -- **22.4% faster**, output checksum 10682679.462086 bitwise
+//! identical; the <=3x baseline is met.
+//!
 //! 历史注：多线程轮之前，本法慢主要慢在 `focus::measure_plane` 每帧跑两遍（Pass A 求
 //! 分位线、Pass B 求权重）；本轮起每帧只跑一遍，见上。
 //!
@@ -746,9 +777,28 @@ fn ml_into(gray: &[f32], w: usize, h: usize, out: &mut [f32]) {
 /// 积分图构建（行间串行归约，口径与 `focus::box_average` 逐字一致），写入复用缓冲。
 /// `sat` 必须满足第 0 行与第 0 列为 0：首次分配即为零，此后这些格子从不被写。
 ///
+/// 性能轮试过按行块拆两步并行（横向 rowsum 按行并行 + 纵向按列带扫描，每元素的加法
+/// 序列都能逐位保持），24 MP 实测**净负收益**：build_sat 段 0.20–0.24 s（串行）→
+/// 0.33–0.35 s（并行，+50%，同轮 5 次取中位）。结构性原因：纵向链条
+/// `sat[y+1] = sat[y] + rowsum[y]` 的前缀依赖在 x 上，列带并行必须先把 rowsum 整面
+/// 算出来存住——多出一张 w×h 的 f64 中间面写一遍读一遍（24 MP 每次 +384 MB 流量，
+/// 总流量 480 → 864 MB），带宽聚合省下的时间填不平这笔账。逐位一致的积分图构建本质
+/// 是内存带宽瓶颈，串行单趟已接近该结构下的最优，**保留串行**。
+///
 /// Summed-area table build (serial row-to-row reduction, literally the same convention as
 /// `focus::box_average`) into a reused buffer. `sat`'s row 0 and column 0 must be zero:
 /// fresh allocations are, and those cells are never written afterwards.
+///
+/// The performance round tried a row-block two-step parallel form (horizontal rowsums by
+/// row plus a vertical sweep by column band, every element's addition sequence bitwise
+/// preserved); at 24 MP it measured a clear **net loss**: the build_sat segment went from
+/// 0.20-0.24 s (serial) to 0.33-0.35 s (parallel, +50%, median of 5, same session). The
+/// structural reason: the vertical chain `sat[y+1] = sat[y] + rowsum[y]` has its prefix
+/// dependency along x, so column-band parallelism must first materialise the whole rowsum
+/// plane -- one extra w x h f64 intermediate written and read back (+384 MB of traffic per
+/// call at 24 MP, total 480 -> 864 MB), and bandwidth aggregation cannot pay for it. A
+/// bitwise-exact SAT build is memory-bandwidth bound, and the serial single pass is
+/// already near-optimal for this structure, so the **serial form stays**.
 fn build_sat(ml: &[f32], w: usize, h: usize, sat: &mut [f64]) {
     for y in 0..h {
         let mut row_sum = 0.0f64;
@@ -919,6 +969,20 @@ fn accumulate_level(out: &mut Plane, wsum: &mut [f32], plane: &Plane, weight: &[
 /// lap computed but unused in the old code, and are simply not computed here. Parallelised
 /// by row bands (bitwise unchanged); the inter-frame order is guaranteed by the caller's
 /// serial frame loop.
+/// 条带宽度：一次同时推进两个相邻像素。之所以是**常量而不是参数**：条带体里每条像素
+/// 的累加器是分开命名的局部变量（`a00..a02` / `a10..a12`），改这个数必须同时改函数体。
+///
+/// 两个像素 × 三个通道 = 六条独立链，足以遮住 f32 加法 4 cycle 的延迟，又不至于把 tap
+/// 游标挤出寄存器。
+///
+/// Strip width: two adjacent pixels advance together. It is a **constant rather than a
+/// parameter** on purpose: the strip body names each pixel's accumulators separately
+/// (`a00..a02` / `a10..a12`), so changing this number means changing the body too.
+///
+/// Two pixels x three channels is six independent chains -- enough to hide the 4-cycle f32
+/// add latency without pushing the tap cursors out of registers.
+const STRIP: usize = 2;
+
 #[allow(clippy::too_many_arguments)]
 fn accumulate_laplacian_level(
     out: &mut Plane,
@@ -930,6 +994,14 @@ fn accumulate_laplacian_level(
     weight: &[f32],
 ) {
     let w = out.w;
+    let cw = coarse.w;
+    let ch = coarse.channels;
+    let cd = coarse.data.as_slice();
+    // 条带快路径只对 3 通道成立（通道下标直接写成 0/1/2）；其余通道数整行走标量路径。
+    //
+    // The strip fast path only holds for three channels (the channel index is written out
+    // as 0/1/2); any other channel count takes the scalar path for the whole row.
+    let strip = ch == 3;
     crate::par::for_bands2(
         out.h,
         &mut out.data,
@@ -940,28 +1012,95 @@ fn accumulate_laplacian_level(
             for (i, wrow) in wband.chunks_mut(w).enumerate() {
                 let y = y0 + i;
                 let ytaps = &yt[y];
-                for (x, ws) in wrow.iter_mut().enumerate() {
-                    let p = y * w + x;
+                let base = y * w;
+                let mut x = 0;
+                // 条带主体：STRIP 个相邻像素 × 3 个通道 = 6 条互不相关的累加链同时在飞。
+                // 每个像素每条通道的 tap 遍历次序（ytaps 外层、xtaps 内层）与逐像素版
+                // 完全相同，`wy * wx` 也仍是那一次舍入（三条通道共享同一个 `k` 是同一个
+                // 表达式的同一个值），所以每个像素的浮点加法序列逐项不变。
+                //
+                // Strip body: STRIP adjacent pixels x 3 channels = six unrelated
+                // accumulation chains in flight. Every pixel's per-channel tap order
+                // (ytaps outer, xtaps inner) is exactly the scalar one, and `wy * wx` is
+                // still that single rounding (the three channels share one `k`, which is
+                // the same value of the same expression), so each pixel's float addition
+                // sequence is unchanged term by term.
+                while strip && x + STRIP <= w {
+                    let wt0 = weight[base + x];
+                    let wt1 = weight[base + x + 1];
+                    let e0 = &xt[x];
+                    let e1 = &xt[x + 1];
+                    let o = (base + x) * 3;
+                    let b = (i * w + x) * 3;
+                    let mut a00 = 0.0f32;
+                    let mut a01 = 0.0f32;
+                    let mut a02 = 0.0f32;
+                    let mut a10 = 0.0f32;
+                    let mut a11 = 0.0f32;
+                    let mut a12 = 0.0f32;
+                    // 一个像素三个通道各走完自己的 xtaps；`wy` / `row` 来自外层 ytap 迭代。
+                    //
+                    // One pixel's three channels walk their own xtaps; `wy` / `row` come
+                    // from the enclosing ytap iteration.
+                    macro_rules! step {
+                        ($a:ident, $b:ident, $c:ident, $t:expr, $row:ident, $wy:ident, $cd:ident) => {
+                            for &(sx, wx) in $t {
+                                let k = $wy * wx;
+                                let s = $row + sx * 3;
+                                $a += k * $cd[s];
+                                $b += k * $cd[s + 1];
+                                $c += k * $cd[s + 2];
+                            }
+                        };
+                    }
+                    for &(sy, wy) in ytaps {
+                        let row = sy * cw * ch;
+                        step!(a00, a01, a02, e0, row, wy, cd);
+                        step!(a10, a11, a12, e1, row, wy, cd);
+                    }
+                    // `wt > 0` 是逐像素的：某格权重为 0 只跳过它自己的写入，另一格的链
+                    // 与写入照常进行。
+                    //
+                    // `wt > 0` is per pixel: a zero weight only skips that pixel's own
+                    // write, the other pixel's chain and write still happen.
+                    if wt0 > 0.0 {
+                        oband[b] += wt0 * (fine[o] - a00);
+                        oband[b + 1] += wt0 * (fine[o + 1] - a01);
+                        oband[b + 2] += wt0 * (fine[o + 2] - a02);
+                        wrow[x] += wt0;
+                    }
+                    if wt1 > 0.0 {
+                        oband[b + 3] += wt1 * (fine[o + 3] - a10);
+                        oband[b + 4] += wt1 * (fine[o + 4] - a11);
+                        oband[b + 5] += wt1 * (fine[o + 5] - a12);
+                        wrow[x + 1] += wt1;
+                    }
+                    x += STRIP;
+                }
+                // 行尾不足一个条带的部分（以及非 3 通道的整行）逐像素处理，算式与
+                // 展开前逐字相同。
+                //
+                // The row tail shorter than one strip (and any non-3-channel row) runs the
+                // scalar path, verbatim the pre-unrolling formula.
+                for xx in x..w {
+                    let p = base + xx;
                     let wt = weight[p];
                     if wt > 0.0 {
                         let o = p * 3;
-                        let b = (i * w + x) * 3;
-                        let xtaps = &xt[x];
+                        let b = (i * w + xx) * 3;
+                        let xtaps = &xt[xx];
                         for c in 0..3 {
                             let mut acc = 0.0f32;
-                            if c < coarse.channels {
+                            if c < ch {
                                 for &(sy, wy) in ytaps {
                                     for &(sx, wx) in xtaps {
-                                        acc += wy
-                                            * wx
-                                            * coarse.data
-                                                [(sy * coarse.w + sx) * coarse.channels + c];
+                                        acc += wy * wx * coarse.data[(sy * cw + sx) * ch + c];
                                     }
                                 }
                             }
                             oband[b + c] += wt * (fine[o + c] - acc);
                         }
-                        *ws += wt;
+                        wrow[xx] += wt;
                     }
                 }
             }
@@ -1314,4 +1453,196 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// LCG（xorshift64*）伪随机源：夹具必须可复现，不能用 `rand`。
+    ///
+    /// A deterministic LCG (xorshift64*) for fixtures; reproducibility matters, `rand` is
+    /// not a dependency.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn new(seed: u64) -> Self {
+            Self(seed | 1)
+        }
+
+        fn next_u32(&mut self) -> u32 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            (x >> 32) as u32
+        }
+
+        /// `[0, 1)` 的 f32。
+        ///
+        /// An f32 in `[0, 1)`.
+        fn unit(&mut self) -> f32 {
+            (self.next_u32() >> 8) as f32 / (1u32 << 24) as f32
+        }
+    }
+
+    /// `accumulate_laplacian_level` 的**逐字参照**：原循环原样抄下来（逐像素、逐通道、
+    /// ytaps 外层 xtaps 内层），串行，不做任何条带展开。它代表改动前那条唯一的实现，
+    /// 也是「展开版必须逐位等于谁」的答案。
+    ///
+    /// A **verbatim reference** for `accumulate_laplacian_level`: the original loop copied
+    /// as-is (per pixel, per channel, ytaps outer and xtaps inner), serial, with no strip
+    /// unrolling. It stands for the single implementation that existed before the change
+    /// and answers "the unrolled version must be bitwise equal to what".
+    fn accumulate_laplacian_level_reference(
+        out: &mut Plane,
+        wsum: &mut [f32],
+        fine: &[f32],
+        coarse: &Plane,
+        xt: &[Vec<(usize, f32)>],
+        yt: &[Vec<(usize, f32)>],
+        weight: &[f32],
+    ) {
+        let w = out.w;
+        for y in 0..out.h {
+            let ytaps = &yt[y];
+            for x in 0..w {
+                let p = y * w + x;
+                let wt = weight[p];
+                if wt > 0.0 {
+                    let o = p * 3;
+                    let b = p * 3;
+                    let xtaps = &xt[x];
+                    for c in 0..3 {
+                        let mut acc = 0.0f32;
+                        if c < coarse.channels {
+                            for &(sy, wy) in ytaps {
+                                for &(sx, wx) in xtaps {
+                                    acc += wy
+                                        * wx
+                                        * coarse.data[(sy * coarse.w + sx) * coarse.channels + c];
+                                }
+                            }
+                        }
+                        out.data[b + c] += wt * (fine[o + c] - acc);
+                    }
+                    wsum[p] += wt;
+                }
+            }
+        }
+    }
+
+    /// 跑一组夹具，逐位比较 `accumulate_laplacian_level` 与逐字参照。
+    ///
+    /// Run one fixture and compare `accumulate_laplacian_level` against the verbatim
+    /// reference, bit by bit.
+    fn check_fixture(fw: usize, fh: usize, coarse_ch: usize, seed: u64) {
+        let cw = fw.div_ceil(2);
+        let ch = fh.div_ceil(2);
+        let mut rng = Lcg::new(seed);
+
+        // 细层故意不走 reduce 的尺寸（直接给一张随机面），只要求与 coarse 尺寸相容。
+        //
+        // The fine plane is random rather than a `reduce` output; only dimensional
+        // compatibility with `coarse` is required.
+        let fine: Vec<f32> = (0..fw * fh * 3).map(|_| rng.unit() * 2.0 - 1.0).collect();
+        let coarse_data: Vec<f32> = (0..cw * ch * coarse_ch)
+            .map(|_| rng.unit() * 2.0 - 1.0)
+            .collect();
+        let coarse = Plane {
+            w: cw,
+            h: ch,
+            channels: coarse_ch,
+            data: coarse_data,
+        };
+        // 权重面：每 5 个像素掐掉 1 个（wt = 0，走「跳过该像素」分支），其余取正值，
+        // 且含小于 1 与大于 1 的量级，避免乘法退化成恒等。掐的是 `p % 5 == 4` 而不是
+        // `== 0`：后者会让 1×1 夹具一个正权重都不剩。
+        //
+        // Weight plane: one pixel in five is zeroed (the "skip this pixel" branch), the
+        // rest are positive and span orders below and above one so the multiply cannot
+        // degenerate into an identity. The zeroed slot is `p % 5 == 4` rather than `== 0`,
+        // otherwise the 1x1 fixture has no positive weight at all.
+        let weight: Vec<f32> = (0..fw * fh)
+            .map(|p| if p % 5 == 4 { 0.0 } else { rng.unit() * 2.0 })
+            .collect();
+        assert!(weight.iter().any(|&v| v > 0.0));
+        if fw * fh >= 5 {
+            assert!(weight.contains(&0.0));
+        }
+
+        let xt = taps(fw, cw);
+        let yt = taps(fh, ch);
+
+        let mut out_ref = Plane::zeros(fw, fh, 3);
+        let mut wsum_ref = vec![0.0f32; fw * fh];
+        accumulate_laplacian_level_reference(
+            &mut out_ref,
+            &mut wsum_ref,
+            &fine,
+            &coarse,
+            &xt,
+            &yt,
+            &weight,
+        );
+
+        let mut out_new = Plane::zeros(fw, fh, 3);
+        let mut wsum_new = vec![0.0f32; fw * fh];
+        accumulate_laplacian_level(
+            &mut out_new,
+            &mut wsum_new,
+            &fine,
+            &coarse,
+            &xt,
+            &yt,
+            &weight,
+        );
+
+        assert_eq!(wsum_ref.len(), wsum_new.len());
+        for p in 0..fw * fh {
+            assert_eq!(
+                wsum_ref[p].to_bits(),
+                wsum_new[p].to_bits(),
+                "wsum 在第 {p} 个像素 ({}, {}) 不逐位相同",
+                p % fw,
+                p / fw
+            );
+        }
+        for i in 0..fw * fh * 3 {
+            assert_eq!(
+                out_ref.data[i].to_bits(),
+                out_new.data[i].to_bits(),
+                "输出在第 {i} 个样本（像素 ({}, {}) 通道 {}）不逐位相同：ref={} new={}",
+                (i / 3) % fw,
+                i / 3 / fw,
+                i % 3,
+                out_ref.data[i],
+                out_new.data[i]
+            );
+        }
+    }
+
+    /// 条带展开是**逐位安全**的优化：每个像素自己的加法链顺序不变，只是几条独立链
+    /// 并排跑。判据用一张逐字参照实现做锚：任何改动（先乘后加换次序、交换两个 tap、
+    /// 把 `wt * (fine - acc)` 改写成别的等价式）都必须让它变红。
+    ///
+    /// Strip unrolling is a **bitwise-safe** optimisation: each pixel keeps its own
+    /// addition-chain order, several independent chains simply run side by side. The
+    /// assertion anchors on a verbatim reference implementation, so any deviation (a
+    /// different multiply/add order, two taps swapped, `wt * (fine - acc)` rewritten into
+    /// any "equivalent" form) must turn it red.
+    #[test]
+    fn laplacian_strip_unrolling_bitwise_unchanged() {
+        // 奇数宽高（行尾不足一个条带的尾巴必须走到）、常规尺寸（整条带铺满）、
+        // 单通道粗层（`c < coarse.channels` 的另一侧）。
+        //
+        // Odd dimensions (the tail shorter than one strip must be exercised), an ordinary
+        // size (strips tile the row exactly), and a single-channel coarse plane (the other
+        // side of `c < coarse.channels`).
+        for &(fw, fh) in &[(37usize, 23usize), (64, 16), (5, 3), (1, 1)] {
+            check_fixture(fw, fh, 3, 0x2545_f491_4f6c_dd1d);
+            check_fixture(fw, fh, 1, 0x9e37_79b9_7f4a_7c15);
+        }
+    }
 }
