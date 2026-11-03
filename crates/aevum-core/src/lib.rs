@@ -48,6 +48,8 @@ pub mod measures;
 pub mod metrics;
 pub mod pano;
 pub mod paths;
+
+mod par;
 pub mod plugin;
 pub mod plugin_host;
 pub mod preview;

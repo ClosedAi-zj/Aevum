@@ -30,24 +30,35 @@
 //! |---|---|---|---|
 //! | Weighted | 1.95 s | 2.88 GB | 732 MB |
 //! | Pyramid（优化前） | 29.7 s | 4.43 GB | **2.10 GB** |
-//! | Pyramid（优化后） | 24.4 s | 4.43 GB | **2.10 GB** |
-//! | 优化收益 | **−18%（15.0× → 12.5×）** | 持平 | 持平 |
+//! | Pyramid（优化后·单线程轮） | 24.4 s | 4.43 GB | **2.10 GB** |
+//! | Pyramid（优化后·多线程轮） | **5.97 s** | **4.14 GB** | **1.82 GB** |
+//! | 优化收益 | 单线程轮 −18%（15.0× → 12.5×）；多线程轮 −77%（同轮 11.3× → **4.56×**） | −6.5% | −13% |
 //!
-//! 优化三件事（2026-11-03）：① `focus::measure_peak`——逐帧每层只算一遍改进拉普拉斯
-//! 取逐像素最大再盒平均，Pass A 的分位线改由子采样峰值估计。`t = 0` 时与旧路径逐像素
-//! 严格等价（第四轮回归实测：128×128 夹具 49152/49152 像素 max|Δ| = 0）；`t > 0` 时
-//! **不再等价**——`box(max ml)` 与 `max(box ml)` 不可交换，分位线也取自不同分布：
-//! 纹理尺度与盒窗（radius = 2）可比时差异可观（块状纹理夹具 threshold = 25 实测
-//! 65% 像素不同、max|Δ| = 0.23），纹理细于窗宽时趋近零；② `reduce` 重写为可分离行流式
+//! 优化三件事（2026-11-03 单线程轮）：① `focus::measure_peak`——逐帧每层只算一遍改进
+//! 拉普拉斯取逐像素最大再盒平均，Pass A 的分位线改由子采样峰值估计。`t = 0` 时与旧路径
+//! 逐像素严格等价（第四轮回归实测：128×128 夹具 49152/49152 像素 max|Δ| = 0）；`t > 0`
+//! 时**不再等价**——`box(max ml)` 与 `max(box ml)` 不可交换，分位线也取自不同分布：
+//! 纹理尺度与盒窗（radius = 2）可比时差异可观（块状纹理夹具 threshold = 25 实测 65%
+//! 像素不同、max|Δ| = 0.23），纹理细于窗宽时趋近零；② `reduce` 重写为可分离行流式
 //! 加环形缓冲，消掉每输出像素两次 `collect()` 堆分配；③ Pass B 权重面 `.clone()` 改
-//! `Cow::Borrowed`，省掉每帧每层一次 128 MB 纯拷贝。**峰值内存没降**：瓶颈在塔驻留
-//! （`best` / `gate` 全分辨率面与掩膜塔），不在拷贝——Cow 省的是拷贝期的瞬时峰值，
-//! 没碰到驻留基线。**剩余 12.5×** 的大头是塔本身的逐层下采样/上采样/展开与逐像素混合
-//! 的内存带宽工作，测度计算已不是主要项；再往下压要动算法结构（如减层数、块处理），
-//! 不在本轮范围。
+//! `Cow::Borrowed`，省掉每帧每层一次 128 MB 纯拷贝。
 //!
-//! 两轮实测的 Weighted 基线有抖动（优化前那轮 1.97 s / 3.19 GB / 864 MB，本轮复测
-//! 1.95 s / 2.88 GB / 732 MB），倍数一律按**同轮**基线计。早先按「输出塔 384 MB +
+//! 多线程一轮（2026-11-03 同日第三轮）：把「同层内逐像素独立」的运算全部按行带并行
+//! （`par.rs`，`std::thread::scope`，零新依赖）：测度链（γ2.0 亮度、改进拉普拉斯、
+//! 盒平均输出趟、跨帧取最大）、`reduce`（每带自带 5 行环形缓冲，带界重复算一两行）、
+//! `accumulate_upsample`、`laplacian_from_gaussian`（**逐像素融合**上采样与减法，省掉
+//! 一张 288 MB 全分辨率中间面与一整面写+读）、`accumulate_level`、Pass B 的权重四次方。
+//! 帧循环保持串行（out_tower 的 f32 累加顺序不动），积分图构建、直方图分位、塌缩的
+//! 层间顺序也不动——每个输出像素的浮点加法序列与串行版逐一相同，**全程逐位不变**：
+//! 探针 `T10_DUMP` 改前改后各 288 MB 逐字节 `cmp` 相同，Weighted 校验和不变。峰值内存
+//! **反而下降**（4.43 → 4.14 GB）：并行省的不只是时间，融合拉普拉斯少了一张中间面，
+//! 驻留基线也跟着降了 288 MB。多线程轮的 Weighted 基线复测为 2.285 s / 3.09 GB /
+//! 768 MB（机器抖动），优化后 Weighted 自己也降到 1.31 s——测度链并行它同样受益；
+//! 倍数一律按**同轮**基线计。
+//!
+//! 各轮实测的 Weighted 基线有抖动（优化前那轮 1.97 s / 3.19 GB / 864 MB，单线程轮
+//! 1.95 s / 2.88 GB / 732 MB，多线程轮 2.285 s / 3.09 GB / 768 MB），倍数一律按
+//! **同轮**基线计。早先按「输出塔 384 MB +
 //! 权重塔 128 MB」推算的 ≈1.0 GB **是错的**（差 2 倍多）：那个算式漏了 Pass A 的
 //! `best` / `gate` 两个全分辨率面（各 96 MB）、掩膜塔（128 MB）、每帧的测度面（96 MB）
 //! 与当前帧的拉普拉斯面（288 MB）。这些数都是实测值，不是推算值；改实现就重测，
@@ -97,8 +108,37 @@
 //! | Method | Wall clock | Process peak | Fusion delta |
 //! |---|---|---|---|
 //! | Weighted | 1.97 s | 3.19 GB | 864 MB |
-//! | Pyramid | 29.7 s | 4.43 GB | **2.10 GB** |
-//! | Ratio | **15.0x** | 1.39x | **2.4x** |
+//! | Pyramid (before) | 29.7 s | 4.43 GB | **2.10 GB** |
+//! | Pyramid (after, single-thread round) | 24.4 s | 4.43 GB | **2.10 GB** |
+//! | Pyramid (after, multithread round) | **5.97 s** | **4.14 GB** | **1.82 GB** |
+//! | Gain | single-thread −18% (15.0x → 12.5x); multithread −77% (same-session 11.3x → **4.56x**) | −6.5% | −13% |
+//!
+//! The single-thread round did three things (2026-11-03): ① `focus::measure_peak` -- the
+//! modified Laplacian once per frame per level, per-pixel max, then one box average, with
+//! Pass A's percentile cut estimated from the subsampled peaks (`t = 0` strictly equivalent,
+//! `t > 0` not, see the round-4 regression notes); ② `reduce` rewritten as a separable
+//! row-streaming pass with a ring buffer, removing two `collect()` heap allocations per
+//! output pixel; ③ Pass B's weight planes switched from `.clone()` to `Cow::Borrowed`,
+//! saving one 128 MB pure copy per frame per level.
+//!
+//! The multithread round (same day, third round) parallelises everything that is
+//! "per-pixel independent within a level" by row bands (`par.rs`, `std::thread::scope`,
+//! zero new dependencies): the measure chain (γ2.0 luma, modified Laplacian, box-average
+//! output pass, cross-frame max), `reduce` (each band keeps its own 5-row ring, one or two
+//! horizontal rows recomputed at band edges), `accumulate_upsample`,
+//! `laplacian_from_gaussian` (upsampling and subtraction **fused per pixel**, dropping one
+//! 288 MB full-resolution intermediate plane and a whole-plane write+read),
+//! `accumulate_level`, and Pass B's fourth-power weights. The frame loop stays serial (the
+//! f32 accumulation order into `out_tower` is untouched), and so do the summed-area table
+//! build, the histogram percentile and the collapse's level order -- every output pixel's
+//! float addition sequence matches the serial version exactly, **bitwise unchanged**: the
+//! probe's `T10_DUMP` dumps before/after (288 MB each) compare equal byte for byte with
+//! `cmp`, and the Weighted checksum is unchanged. The peak memory **went down** (4.43 →
+//! 4.14 GB): parallelism saved more than time -- the fused Laplacian drops an intermediate
+//! plane, so the resident baseline shrank by 288 MB too. The multithread round's Weighted
+//! baseline re-measured at 2.285 s / 3.09 GB / 768 MB (machine jitter); after the change
+//! Weighted itself dropped to 1.31 s -- the parallelised measure chain benefits it as well.
+//! Ratios are always computed against the **same-session** baseline.
 //!
 //! The earlier arithmetic ("output tower 384 MB + weight tower 128 MB") guessed about
 //! 1.0 GB and **is wrong by more than 2x**: it forgot Pass A's two full-resolution `best` /
@@ -304,50 +344,57 @@ pub fn reduce(src: &Plane) -> Plane {
         })
         .collect();
     // 环形缓冲：输出行 y 要源行 2y-2..=2y+2，相邻输出行只滑动两行，所以 5 个槽刚好
-    // 装下当前活跃窗口；源行按升序按需计算，绝不重算。
+    // 装下当前活跃窗口；源行按升序按需计算，绝不重算。按**输出行带**并行：每带自带
+    // 一个 5 行环形缓冲，只在带界上重复算一两行横向卷积（同一行两次算出的值逐位相同，
+    // 只是重复劳动）；每带的行内运算与串行版逐一相同，逐位不变。
     //
     // Ring buffer: output row y needs source rows 2y-2..=2y+2 and consecutive output rows
     // slide by two, so five slots cover the live window; source rows are computed on demand
-    // in increasing order and never recomputed.
-    let mut ring: Vec<Vec<f32>> = (0..5).map(|_| vec![0.0f32; dw * ch]).collect();
-    let mut done_row: isize = -1;
+    // in increasing order and never recomputed. Parallelised by **output row bands**: each
+    // band keeps its own 5-row ring and recomputes one or two horizontal rows at band edges
+    // (the same row computed twice is bitwise identical, just duplicated work); the
+    // per-row arithmetic inside a band matches the serial version exactly, bitwise.
     let mut out = vec![0.0f32; dw * dh * ch];
-    for y in 0..dh {
-        let sy = (2 * y) as isize;
-        let mut need = [0usize; 5];
-        for (k, slot) in need.iter_mut().enumerate() {
-            *slot = (sy + k as isize - 2).clamp(0, src.h as isize - 1) as usize;
-        }
-        for &r in &need {
-            if (r as isize) <= done_row {
-                continue;
+    crate::par::for_bands(dh, &mut out, dw * ch, |y0, y1, oband| {
+        let mut ring: Vec<Vec<f32>> = (0..5).map(|_| vec![0.0f32; dw * ch]).collect();
+        let mut done_row: isize = -1;
+        for (i, y) in (y0..y1).enumerate() {
+            let sy = (2 * y) as isize;
+            let mut need = [0usize; 5];
+            for (k, slot) in need.iter_mut().enumerate() {
+                *slot = (sy + k as isize - 2).clamp(0, src.h as isize - 1) as usize;
             }
-            let slot = r % 5;
-            let dst_row = &mut ring[slot];
-            let src_row = r * src.w * ch;
-            for (x, idx) in xi.iter().enumerate() {
-                let d = x * ch;
+            for &r in &need {
+                if (r as isize) <= done_row {
+                    continue;
+                }
+                let slot = r % 5;
+                let dst_row = &mut ring[slot];
+                let src_row = r * src.w * ch;
+                for (x, idx) in xi.iter().enumerate() {
+                    let d = x * ch;
+                    for c in 0..ch {
+                        let mut acc = 0.0f32;
+                        for k in 0..5 {
+                            acc += K5[k] * src.data[src_row + idx[k] * ch + c];
+                        }
+                        dst_row[d + c] = acc;
+                    }
+                }
+                done_row = r as isize;
+            }
+            for x in 0..dw {
+                let d = (i * dw + x) * ch;
                 for c in 0..ch {
                     let mut acc = 0.0f32;
                     for k in 0..5 {
-                        acc += K5[k] * src.data[src_row + idx[k] * ch + c];
+                        acc += K5[k] * ring[need[k] % 5][x * ch + c];
                     }
-                    dst_row[d + c] = acc;
+                    oband[d + c] = acc;
                 }
             }
-            done_row = r as isize;
         }
-        for x in 0..dw {
-            let d = (y * dw + x) * ch;
-            for c in 0..ch {
-                let mut acc = 0.0f32;
-                for k in 0..5 {
-                    acc += K5[k] * ring[need[k] % 5][x * ch + c];
-                }
-                out[d + c] = acc;
-            }
-        }
-    }
+    });
     Plane {
         w: dw,
         h: dh,
@@ -452,27 +499,34 @@ pub fn upsample(src: &Plane, tw: usize, th: usize) -> Plane {
 /// 把 `src` 上采样后**原地累加**进 `dst`（`dst` 的尺寸就是目标尺寸）。
 ///
 /// 塌缩用的就是这条：不另开一张全分辨率缓冲，直接把粗层的插值结果加进细层。
+/// 逐像素独立（每个像素只读写自己的格子），按行带并行；每像素的 tap 遍历顺序
+/// （ytaps 外层、xtaps 内层）与串行版一致，逐位不变。
 ///
 /// Upsample `src` and accumulate it **in place** into `dst` (`dst` carries the target
 /// size). Collapse uses exactly this: no extra full-resolution buffer, just add the coarse
-/// interpolation into the finer level.
+/// interpolation into the finer level. Per-pixel independent (each pixel touches only its
+/// own cell), parallelised by row bands; the per-pixel tap order (ytaps outer, xtaps
+/// inner) matches the serial version, bitwise unchanged.
 pub fn accumulate_upsample(src: &Plane, dst: &mut Plane) {
     let xt = taps(dst.w, src.w);
     let yt = taps(dst.h, src.h);
-    for (y, ytaps) in yt.iter().enumerate() {
-        for (x, xtaps) in xt.iter().enumerate() {
-            let d = (y * dst.w + x) * dst.channels;
-            for c in 0..dst.channels.min(src.channels) {
-                let mut acc = 0.0f32;
-                for &(sy, wy) in ytaps {
-                    for &(sx, wx) in xtaps {
-                        acc += wy * wx * src.data[(sy * src.w + sx) * src.channels + c];
+    let row = dst.w * dst.channels;
+    crate::par::for_bands(dst.h, &mut dst.data, row, |y0, y1, band| {
+        for (i, ytaps) in yt[y0..y1].iter().enumerate() {
+            for (x, xtaps) in xt.iter().enumerate() {
+                let d = (i * dst.w + x) * dst.channels;
+                for c in 0..dst.channels.min(src.channels) {
+                    let mut acc = 0.0f32;
+                    for &(sy, wy) in ytaps {
+                        for &(sx, wx) in xtaps {
+                            acc += wy * wx * src.data[(sy * src.w + sx) * src.channels + c];
+                        }
                     }
+                    band[d + c] += acc;
                 }
-                dst.data[d + c] += acc;
             }
         }
-    }
+    });
 }
 
 /// 由一帧交错 RGB 建高斯塔：`G_0` 是原帧，之后逐级 `reduce`，长度恰为 `levels`。
@@ -502,14 +556,49 @@ pub fn gaussian_pyramid(frame: &[f32], w: usize, h: usize, levels: usize) -> Vec
 
 /// `L_l = G_l − upsample(G_{l+1})`。两个参数就是「相邻的那一对」，不给整塔。
 ///
+/// 上采样与减法**逐像素融合**：不再先写一张全分辨率 `up` 中间面（最细层 288 MB）
+/// 再整面读回相减，而是在每个目标像素处按同样的 tap 顺序算出插值值直接从细层里减。
+/// 每像素的运算序列（ytaps 外层、xtaps 内层求和，再做 `fine − acc`）与旧的两步版
+/// 逐一相同，逐位不变；省掉一次 288 MB 的分配与一整面的写+读。
+///
 /// `L_l = G_l - upsample(G_{l+1})`. The two arguments are exactly the adjacent pair; no
-/// whole tower is needed.
+/// whole tower is needed. Upsampling and subtraction are **fused per pixel**: instead of
+/// writing a full-resolution intermediate `up` plane (288 MB at the finest level) and
+/// reading it back for the subtraction, each target pixel computes the interpolated value
+/// with the same tap order and subtracts it from the fine plane right there. The per-pixel
+/// arithmetic sequence (ytaps outer, xtaps inner sum, then `fine - acc`) matches the old
+/// two-step form exactly, bitwise unchanged; it saves one 288 MB allocation plus a full
+/// plane write+read.
 pub fn laplacian_from_gaussian(fine: &Plane, coarse: &Plane) -> Plane {
-    let up = upsample(coarse, fine.w, fine.h);
-    let mut out = fine.clone();
-    for (o, u) in out.data.iter_mut().zip(up.data.iter()) {
-        *o -= u;
-    }
+    let xt = taps(fine.w, coarse.w);
+    let yt = taps(fine.h, coarse.h);
+    let mut out = Plane::zeros(fine.w, fine.h, fine.channels);
+    let row = fine.w * fine.channels;
+    crate::par::for_bands(fine.h, &mut out.data, row, |y0, y1, band| {
+        for (i, ytaps) in yt[y0..y1].iter().enumerate() {
+            for (x, xtaps) in xt.iter().enumerate() {
+                // `d` 是带内偏移（band 从行 y0 起），读 fine 用绝对偏移 `fa`。
+                //
+                // `d` is the band-local offset (the band starts at row y0); reading `fine`
+                // uses the absolute offset `fa`.
+                let d = (i * fine.w + x) * fine.channels;
+                let fa = ((y0 + i) * fine.w + x) * fine.channels;
+                for c in 0..fine.channels {
+                    let mut acc = 0.0f32;
+                    if c < coarse.channels {
+                        for &(sy, wy) in ytaps {
+                            for &(sx, wx) in xtaps {
+                                acc += wy
+                                    * wx
+                                    * coarse.data[(sy * coarse.w + sx) * coarse.channels + c];
+                            }
+                        }
+                    }
+                    band[d + c] = fine.data[fa + c] - acc;
+                }
+            }
+        }
+    });
     out
 }
 
@@ -609,19 +698,39 @@ fn fuse_single_scale(frames: &[&[f32]], w: usize, h: usize, radius: usize) -> Ve
 
 /// 把一帧在某一层的贡献按权重累进输出塔和权重和塔。
 ///
+/// 逐像素独立（每个像素只读写自己的格子），按行带并行；每像素的累加顺序与串行版
+/// 一致，逐位不变。帧间顺序仍由调用方的串行帧循环保证。
+///
 /// Accumulate one frame's contribution at one level into the output and weight-sum towers.
+/// Per-pixel independent (each pixel touches only its own cell), parallelised by row
+/// bands; the per-pixel accumulation order matches the serial version, bitwise. The
+/// inter-frame order is still guaranteed by the caller's serial frame loop.
 fn accumulate_level(out: &mut Plane, wsum: &mut [f32], plane: &Plane, weight: &[f32]) {
-    let n = out.w * out.h;
-    for p in 0..n {
-        let wt = weight[p];
-        if wt > 0.0 {
-            for c in 0..3 {
-                let o = out.offset(p, c);
-                out.data[o] += wt * plane.data[o];
+    let w = out.w;
+    crate::par::for_bands2(
+        out.h,
+        &mut out.data,
+        w * 3,
+        wsum,
+        w,
+        |y0, _y1, oband, wband| {
+            for (i, wrow) in wband.chunks_mut(w).enumerate() {
+                let y = y0 + i;
+                for (x, ws) in wrow.iter_mut().enumerate() {
+                    let p = y * w + x;
+                    let wt = weight[p];
+                    if wt > 0.0 {
+                        let o = p * 3;
+                        let b = (i * w + x) * 3;
+                        for c in 0..3 {
+                            oband[b + c] += wt * plane.data[o + c];
+                        }
+                        *ws += wt;
+                    }
+                }
             }
-            wsum[p] += wt;
-        }
-    }
+        },
+    );
 }
 
 /// 逐帧流式融合，返回线性 RGB `f32`（`w*h*3`）。
@@ -705,15 +814,22 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
     // Pass B: stream frame by frame, keeping only two adjacent Gaussian and weight planes.
     for f in frames {
         let m = focus::measure_plane(f, w, h, radius);
-        let mut w0 = Vec::with_capacity(w * h);
-        for p in 0..w * h {
-            let mm = m[p];
-            w0.push(if gate[p] > 0.0 {
-                mm * mm * mm * mm
-            } else {
-                0.0
-            });
-        }
+        let mut w0 = vec![0.0f32; w * h];
+        // 逐像素独立，按行带并行（逐位不变）。
+        //
+        // Per-pixel independent, parallelised by row bands (bitwise unchanged).
+        crate::par::for_bands(h, &mut w0, w, |y0, _y1, band| {
+            for (i, row) in band.chunks_mut(w).enumerate() {
+                let y = y0 + i;
+                for (x, cell) in row.iter_mut().enumerate() {
+                    let p = y * w + x;
+                    if gate[p] > 0.0 {
+                        let mm = m[p];
+                        *cell = mm * mm * mm * mm;
+                    }
+                }
+            }
+        });
         let mut g = Plane::from_rgb(f, w, h);
         let mut wplane = Plane::from_mono(&w0, w, h);
         for l in 0..levels - 1 {

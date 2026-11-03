@@ -250,7 +250,6 @@ pub(crate) fn measure_plane(frame: &[f32], w: usize, h: usize, radius: usize) ->
     }
     box_average(&ml, w, h, radius)
 }
-
 /// 多帧的**峰值**测度：先逐帧取改进拉普拉斯的最大值，再盒平均一次。
 ///
 /// 金字塔的分位阈值只需要它，不需要每帧一张全分辨率测度面——那是它比 Weighted 慢
@@ -286,13 +285,25 @@ pub(crate) fn measure_plane(frame: &[f32], w: usize, h: usize, radius: usize) ->
 pub(crate) fn measure_peak(frames: &[&[f32]], w: usize, h: usize, radius: usize) -> Vec<f32> {
     let n = w * h;
     let mut peak = vec![0.0f32; n];
+    // 帧循环保持串行：max 虽然顺序无关，但每帧一张全分辨率 ml 面并行帧间会翻倍内存；
+    // 帧内的逐像素三趟（灰度、拉普拉斯、取最大）各自按行分块并行，逐位不变。
+    //
+    // The frame loop stays serial: max is order-independent but one full-resolution ml
+    // plane per in-flight frame would double the memory; the per-frame per-pixel passes
+    // (luma, Laplacian, max) are each parallelised by row bands, bitwise unchanged.
     for f in frames {
         let ml = modified_laplacian(f, w, h);
-        for (p, &m) in ml.iter().enumerate() {
-            if m > peak[p] {
-                peak[p] = m;
+        crate::par::for_bands(h, &mut peak, w, |y0, _y1, band| {
+            for (i, row) in band.chunks_mut(w).enumerate() {
+                let y = y0 + i;
+                for (x, cell) in row.iter_mut().enumerate() {
+                    let p = y * w + x;
+                    if ml[p] > *cell {
+                        *cell = ml[p];
+                    }
+                }
             }
-        }
+        });
     }
     if radius == 0 {
         return peak;
@@ -305,30 +316,41 @@ pub(crate) fn measure_peak(frames: &[&[f32]], w: usize, h: usize, radius: usize)
 /// The modified Laplacian on γ2.0 luma, per pixel, before any box averaging (O(n)).
 pub(crate) fn modified_laplacian(frame: &[f32], w: usize, h: usize) -> Vec<f32> {
     let n = w * h;
-    // γ2.0 亮度：sqrt 是把线性亮度抬到感知域最便宜的一步。
+    // γ2.0 亮度：sqrt 是把线性亮度抬到感知域最便宜的一步。逐像素独立，按行分块并行
+    //（每像素的运算序列与串行版逐一相同，逐位不变）。
     //
-    // γ2.0 luma: sqrt is the cheapest step that lifts linear luma into the perceptual domain.
+    // γ2.0 luma: sqrt is the cheapest step that lifts linear luma into the perceptual
+    // domain. Per-pixel independent, parallelised by row bands (each pixel's arithmetic
+    // sequence matches the serial version exactly, bitwise unchanged).
     let mut gray = vec![0.0f32; n];
-    for (p, g) in gray.iter_mut().enumerate() {
-        let j = p * 3;
-        let luma = 0.2126 * frame[j] + 0.7152 * frame[j + 1] + 0.0722 * frame[j + 2];
-        *g = luma.max(0.0).sqrt();
-    }
-    // 改进拉普拉斯，边界夹边取。
-    //
-    // Modified Laplacian with clamped edges.
-    let mut ml = vec![0.0f32; n];
-    for y in 0..h {
-        for x in 0..w {
-            let p = y * w + x;
-            let c = gray[p];
-            let l = gray[y * w + x.saturating_sub(1)];
-            let r = gray[y * w + (x + 1).min(w - 1)];
-            let u = gray[y.saturating_sub(1) * w + x];
-            let d = gray[(y + 1).min(h - 1) * w + x];
-            ml[p] = (2.0 * c - l - r).abs() + (2.0 * c - u - d).abs();
+    crate::par::for_bands(h, &mut gray, w, |y0, _y1, g| {
+        for (i, row) in g.chunks_mut(w).enumerate() {
+            let y = y0 + i;
+            for (x, cell) in row.iter_mut().enumerate() {
+                let j = (y * w + x) * 3;
+                let luma = 0.2126 * frame[j] + 0.7152 * frame[j + 1] + 0.0722 * frame[j + 2];
+                *cell = luma.max(0.0).sqrt();
+            }
         }
-    }
+    });
+    // 改进拉普拉斯，边界夹边取。同样按行分块并行（逐位不变）。
+    //
+    // Modified Laplacian with clamped edges, also parallelised by row bands (bitwise
+    // unchanged).
+    let mut ml = vec![0.0f32; n];
+    crate::par::for_bands(h, &mut ml, w, |y0, _y1, out| {
+        for (i, row) in out.chunks_mut(w).enumerate() {
+            let y = y0 + i;
+            for (x, cell) in row.iter_mut().enumerate() {
+                let c = gray[y * w + x];
+                let l = gray[y * w + x.saturating_sub(1)];
+                let r = gray[y * w + (x + 1).min(w - 1)];
+                let u = gray[y.saturating_sub(1) * w + x];
+                let d = gray[(y + 1).min(h - 1) * w + x];
+                *cell = (2.0 * c - l - r).abs() + (2.0 * c - u - d).abs();
+            }
+        }
+    });
     ml
 }
 
@@ -354,20 +376,27 @@ pub(crate) fn box_average(ml: &[f32], w: usize, h: usize, radius: usize) -> Vec<
             sat[(y + 1) * (w + 1) + (x + 1)] = sat[y * (w + 1) + (x + 1)] + row_sum;
         }
     }
+    // 积分图的构建是行间串行归约，保持原样；输出逐像素独立，按行分块并行（逐位不变）。
+    //
+    // Building the SAT stays a serial row-to-row reduction; the output pass is per-pixel
+    // independent and parallelised by row bands (bitwise unchanged).
     let mut out = vec![0.0f32; n];
-    for y in 0..h {
-        let top = y.saturating_sub(radius);
-        let bottom = (y + radius + 1).min(h);
-        for x in 0..w {
-            let left = x.saturating_sub(radius);
-            let right = (x + radius + 1).min(w);
-            let area = ((right - left) * (bottom - top)) as f32;
-            let sum = sat[bottom * (w + 1) + right] + sat[top * (w + 1) + left]
-                - sat[top * (w + 1) + right]
-                - sat[bottom * (w + 1) + left];
-            out[y * w + x] = (sum / area as f64) as f32;
+    crate::par::for_bands(h, &mut out, w, |y0, _y1, band| {
+        for (i, row) in band.chunks_mut(w).enumerate() {
+            let y = y0 + i;
+            let top = y.saturating_sub(radius);
+            let bottom = (y + radius + 1).min(h);
+            for (x, cell) in row.iter_mut().enumerate() {
+                let left = x.saturating_sub(radius);
+                let right = (x + radius + 1).min(w);
+                let area = ((right - left) * (bottom - top)) as f32;
+                let sum = sat[bottom * (w + 1) + right] + sat[top * (w + 1) + left]
+                    - sat[top * (w + 1) + right]
+                    - sat[bottom * (w + 1) + left];
+                *cell = (sum / area as f64) as f32;
+            }
         }
-    }
+    });
     out
 }
 
