@@ -55,6 +55,16 @@ use crate::history::{self, History, Snapshot};
 use crate::icons::Glyph;
 
 pub const PREVIEW_SIDE: u32 = 1600;
+/// 草图贴图的长边：全量预览的一半，也是首屏真正要的那一档。
+///
+/// 草图只出现在画布临时贴图上——全量预览、直方图/曲线分析、导出仍取 [`PREVIEW_SIDE`]
+/// 那一档的整幅解码结果（见 `decoded_preview_source`）。
+///
+/// Long side of the sketch texture: half of the full preview, and the size the first screen
+/// actually needs. The sketch only ever reaches the canvas's temporary texture -- the full
+/// preview, histogram/curve analysis and export keep using the [`PREVIEW_SIDE`] decode
+/// (`decoded_preview_source`).
+pub const SKETCH_SIDE: u32 = 800;
 pub const THUMB_SIDE: u32 = 128;
 pub const PLAY_FPS: f32 = 24.0;
 /// 播放时提前取回多少帧的缩略图。按 24fps 算是两秒的画面，够盖住一次机身预览
@@ -11832,8 +11842,16 @@ fn render_preview_file(
     want_original: bool,
     hdr_fold: bool,
 ) -> Result<PreviewParts, String> {
+    // 基准开着的时候把解码与调色各量一段（见 `PreviewPhases`）；关着时这里只是一次
+    // relaxed 原子读，热路径上没有别的代价。
+    //
+    // While the benchmark is on, decode and grade are timed separately (see
+    // `PreviewPhases`); when it is off this is a single relaxed atomic load.
+    let trace = PREVIEW_TRACE_ON.load(Ordering::Relaxed);
+    let t0 = Instant::now();
     let stamp = source_stamp(path);
     let (mut buf, w, h, full) = decoded_preview_source(path, stamp, sketch, &params.dcp_profile)?;
+    let decode_dt = t0.elapsed();
     let (fw, fh) = full;
     let scale = match full_size {
         Some((img_w, _)) if img_w > 0 => fw as f64 / img_w as f64,
@@ -11866,12 +11884,22 @@ fn render_preview_file(
             &params.dcp_profile,
         ))
     };
+    // 草图坐标 = 全量坐标 × (草图边长 / 全量边长)。不能写死 0.5：草图按 `SKETCH_SIDE`
+    // 解码，边长比是算出来的（1600×1067 的草图是 800×533，比正好 0.5；小图原样不减半，
+    // 比就是 1.0）。取景框与位移必须按这个比换算，否则松手换全量时构图会跳。
+    //
+    // Sketch coordinates are full coordinates times (sketch side / full side). The ratio is
+    // computed rather than pinned at 0.5: the sketch decodes at `SKETCH_SIDE`, so for a
+    // 1600x1067 preview it is 800x533 (exactly 0.5) while a picture small enough not to be
+    // scaled keeps 1.0. Framing and offset must follow it or the composition jumps when the
+    // full frame replaces the sketch.
     let (crop, framing) = if sketch {
+        let k = w as f64 / fw.max(1) as f64;
         (
-            crop.and_then(|c| scale_crop(c, 0.5, w, h)),
+            crop.and_then(|c| scale_crop(c, k, w, h)),
             Framing {
                 angle_deg: framing.angle_deg,
-                off: [framing.off[0] * 0.5, framing.off[1] * 0.5],
+                off: [framing.off[0] * k, framing.off[1] * k],
             },
         )
     } else {
@@ -11884,6 +11912,7 @@ fn render_preview_file(
     // HDR inspection: render keeping above-white, then fold it into the visible range. Both
     // steps are needed -- rendering alone gets clamped when the texture is made (identical to
     // SDR), and folding alone has nothing above white to fold.
+    let t1 = Instant::now();
     if sketch {
         if hdr_fold {
             aevum_core::render_preview_hdr_sketch(&mut buf, w, h, params, gain);
@@ -11897,6 +11926,16 @@ fn render_preview_file(
     }
     if hdr_fold {
         aevum_core::fold_above_white_in_place(&mut buf);
+    }
+    let grade_dt = t1.elapsed();
+    if trace {
+        *PREVIEW_PHASES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(PreviewPhases {
+            decode: decode_dt,
+            grade: grade_dt,
+            src: [w, h],
+        });
     }
     let (graded, gw, gh) = shift_crop(&buf, w, h, framing, crop);
     // 取景框作用在「拉直 + 裁切之后」的那一幅上，走的是导出同一条采样路
@@ -11919,101 +11958,229 @@ fn render_preview_file(
     Ok((graded, original, [logical.0 as u32, logical.1 as u32], hist))
 }
 
-/// 解码一张预览尺寸的源图，带单槽缓存。
+/// 解码一张预览尺寸的源图。全量与草图各占一槽。
 ///
 /// 拖一次推子能连发十几帧渲染，而源图在拖动期间一个字都不会变：6000×4000 的原片
-/// 解码加缩放到 1600 边要 400ms 上下，比整条调色链还贵，每帧重算是卡顿的第一来源。
-/// 只留一槽是刻意的——换帧时旧帧立刻让位，常驻内存封顶一张预览图。
+/// 解码加缩放到 1600 边要 300ms 上下，比整条调色链还贵，每帧重算是卡顿的第一来源。
+/// 每档只留一槽是刻意的——换帧时旧帧立刻让位，常驻内存封顶两张预览图。
 ///
-/// `half` 要的是减半副本（拖动草图的源）：第一次用的时候从全量源图 2×2 均值降下来，
-/// 之后也挂在同一槽里复用。
+/// `half` 要的是草图（拖动与首屏的源）：**按 [`SKETCH_SIDE`] 直接解小图**，不再
+/// 「整幅解到 1600 再减半」——后者把解码成本原样付了一遍，减半只省了调色那 1ms。
+/// 草图槽记着全量预览的边长（逻辑尺寸靠它报，草图与全量必须一致），但**不含**全量
+/// 像素：全量预览、直方图/曲线分析、导出照旧走 `half = false` 那一槽的整幅解码结果。
+/// 草图欠一张全量这件事没变，见 `preview_owes_full`。
+///
+/// 草图的像素与全量**不完全相同**：RAW 走的是半尺寸去马赛克（2×2 单元估计，不展开），
+/// 其余源退回整幅解码再 2×2 均值减半。两条路的舍入不同，差一两个码值属预期——草图只
+/// 在拖动与首屏上出现几帧，随后必然被全量替换。
+///
+/// Decodes one preview-sized source. Full and sketch each hold their own slot. `half` is the
+/// sketch (drag and first screen) and **decodes small at [`SKETCH_SIDE`]** instead of decoding
+/// to 1600 and halving -- the latter paid the decode in full and saved only the 1ms grade.
+/// The sketch slot remembers the full preview's side lengths (the logical size has to match)
+/// but holds **no** full pixels: the full preview, histogram/curve analysis and export keep
+/// using the `half = false` slot. The sketch still owes a full frame (`preview_owes_full`).
+/// Sketch pixels are **not** bit-identical to the full preview: RAW goes through the
+/// half-resolution demosaic (2x2 cell estimates, never expanded) and every other source falls
+/// back to a full decode plus a 2x2 mean. The rounding differs by a code value or two, which
+/// is expected -- the sketch only lives for the drag and the first screen.
 fn decoded_preview_source(
     path: &std::path::Path,
     stamp: SourceStamp,
     half: bool,
     profile: &str,
 ) -> Result<PreviewSourceView, String> {
-    let mut slot = source_slot(path, stamp, profile)?;
-    let src = slot.as_mut().expect("source_slot 填过才有返回值");
-    let full = (src.w, src.h);
-    if !half {
-        return Ok((src.rgb.clone(), src.w, src.h, full));
+    let (mut slots, sketch) = source_slot(path, stamp, profile, half)?;
+    let src = if sketch {
+        slots.sketch.as_mut()
+    } else {
+        slots.full.as_mut()
     }
-    if src.half.is_none() {
-        src.half = Some(downscale_half(&src.rgb, src.w, src.h));
-    }
-    let h = src.half.as_ref().expect("刚算过");
-    Ok((h.rgb.clone(), h.w, h.h, full))
+    .expect("source_slot 填过才有返回值");
+    Ok((src.rgb.clone(), src.w, src.h, src.full))
 }
 
-/// 缓存槽：没有、换了帧、换了相机配置或换了去马赛克方法就重新解码，
+/// 缓存槽：没有、换了帧、换了相机配置、换了去马赛克方法或换了档位就重新解码，
 /// 然后把锁交给调用方。
 fn source_slot(
     path: &std::path::Path,
     stamp: SourceStamp,
     profile: &str,
-) -> Result<std::sync::MutexGuard<'static, Option<PreviewSource>>, String> {
-    let mut slot = PREVIEW_SRC
+    sketch: bool,
+) -> Result<(std::sync::MutexGuard<'static, PreviewSlots>, bool), String> {
+    let side = if sketch { SKETCH_SIDE } else { PREVIEW_SIDE };
+    let mut slots = PREVIEW_SRC
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let slot = if sketch {
+        &mut slots.sketch
+    } else {
+        &mut slots.full
+    };
     // 去马赛克方法是解码侧配置：诊断面板切换后旧缓存必须作废重解。
     let demosaic = aevum_core::raw::demosaic_method();
     let fresh = !matches!(
         slot.as_ref(),
         Some(c) if c.path == path
             && c.stamp == stamp
-            && c.side == PREVIEW_SIDE
+            && c.side == side
             && c.profile == profile
             && c.demosaic == demosaic
     );
     if fresh {
-        let (buf, w, h) = metrics::decode_profile_preview(path, profile, PREVIEW_SIDE)
-            .map_err(|e| crate::i18n::err_text(&e))?;
-        if w == 0 || h == 0 {
+        let (buf, w, h, full) = if sketch {
+            metrics::decode_preview_sketch(path, profile, SKETCH_SIDE, PREVIEW_SIDE)
+                .map_err(|e| crate::i18n::err_text(&e))?
+        } else {
+            let (buf, w, h) = metrics::decode_profile_preview(path, profile, PREVIEW_SIDE)
+                .map_err(|e| crate::i18n::err_text(&e))?;
+            (buf, w, h, (w, h))
+        };
+        if w == 0 || h == 0 || full.0 == 0 || full.1 == 0 {
             return Err("解码结果为空".to_owned());
         }
         *slot = Some(PreviewSource {
             path: path.to_path_buf(),
             stamp,
-            side: PREVIEW_SIDE,
+            side,
             profile: profile.to_owned(),
             demosaic,
             w,
             h,
             rgb: buf,
-            half: None,
+            full,
         });
     }
-    Ok(slot)
+    Ok((slots, sketch))
 }
 
-/// 2×2 均值减半。宽高为奇数时最后一列/行并到边缘，尺寸取 `floor(n/2)`。
-fn downscale_half(src: &[f32], w: usize, h: usize) -> HalfSource {
-    let hw = (w / 2).max(1);
-    let hh = (h / 2).max(1);
-    let mut rgb = vec![0.0f32; hw * hh * 3];
-    rgb.par_chunks_mut(hw * 3).enumerate().for_each(|(y, row)| {
-        let y0 = (y * 2).min(h - 1);
-        let y1 = (y * 2 + 1).min(h - 1);
-        for x in 0..hw {
-            let x0 = (x * 2).min(w - 1);
-            let x1 = (x * 2 + 1).min(w - 1);
-            let a = (y0 * w + x0) * 3;
-            let b = (y0 * w + x1) * 3;
-            let c = (y1 * w + x0) * 3;
-            let d = (y1 * w + x1) * 3;
-            let o = x * 3;
-            for k in 0..3 {
-                row[o + k] = (src[a + k] + src[b + k] + src[c + k] + src[d + k]) * 0.25;
-            }
-        }
-    });
-    HalfSource { w: hw, h: hh, rgb }
+/// 基准用的分步耗时：解码与调色各一段，其余由调用方从总时间里减出来。
+///
+/// 只在 `PREVIEW_TRACE_ON` 打开时记录。关着的时候热路径上只有一次 relaxed 原子读。
+///
+/// Per-phase timings for the benchmark: one segment for decode and one for grading; the rest
+/// is derived from the total. Recorded only while `PREVIEW_TRACE_ON` is set; when it is off the
+/// hot path pays a single relaxed atomic load.
+#[derive(Clone, Copy, Default, Debug)]
+pub(crate) struct PreviewPhases {
+    /// 解码（含相机配置与缩放）耗时。
+    ///
+    /// Time spent decoding (including the camera profile and the scaling).
+    pub decode: Duration,
+    /// 调色耗时。
+    ///
+    /// Time spent grading.
+    pub grade: Duration,
+    /// 送进调色的缓冲尺寸。
+    ///
+    /// Size of the buffer handed to grading.
+    pub src: [usize; 2],
+}
+
+/// 分步计时的开关。
+///
+/// The switch for per-phase timing.
+static PREVIEW_TRACE_ON: AtomicBool = AtomicBool::new(false);
+/// 最近一次分步计时。
+///
+/// The latest per-phase timings.
+static PREVIEW_PHASES: Mutex<Option<PreviewPhases>> = Mutex::new(None);
+
+/// 打开分步计时并清掉上一份结果。
+///
+/// Turn per-phase timing on and drop the previous record.
+pub(crate) fn trace_start_for_bench() {
+    *PREVIEW_PHASES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    PREVIEW_TRACE_ON.store(true, Ordering::Relaxed);
+}
+
+/// 关掉分步计时并取回最近一份结果。
+///
+/// Turn per-phase timing off and take the latest record.
+pub(crate) fn trace_take_for_bench() -> Option<PreviewPhases> {
+    PREVIEW_TRACE_ON.store(false, Ordering::Relaxed);
+    PREVIEW_PHASES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
+}
+
+/// 基准与判据用的探针：走 `render_preview_file` 原路，把结果摊开给外面量。
+///
+/// 只给 `preview_bench`（`--bench-preview` 与首屏预算判据）用，不参与界面逻辑。
+///
+/// Probe for the benchmark and its fence: it runs the same `render_preview_file` path and
+/// hands the result out for measuring. Used only by `preview_bench`; the UI never touches it.
+pub(crate) struct PreviewProbe {
+    /// 调色后的贴图像素（与界面拿到的同一份）。
+    ///
+    /// The graded texture pixels, the same ones the UI receives.
+    pub graded: ColorImage,
+    /// 报给画布的逻辑尺寸。
+    ///
+    /// Logical size reported to the canvas.
+    pub size: [u32; 2],
+    /// 解码与调色各自的耗时，外加送进调色的缓冲尺寸。
+    ///
+    /// Per-phase timings of decode and grade, plus the size of the buffer handed to grading.
+    pub phases: PreviewPhases,
+}
+
+/// 清掉预览源与原图缓存，模拟「这张图第一次被打开」。
+///
+/// 首屏预算量的是冷路径：缓存命中之后草图只需几毫秒，拿那个数字当首屏等于不测。
+///
+/// Clear the preview source and original caches, i.e. "this frame is opened for the first
+/// time". The first-screen budget is about the cold path: with a cache hit the sketch costs a
+/// few milliseconds, and reporting that as the first screen would measure nothing.
+pub(crate) fn clear_preview_caches_for_bench() {
+    *PREVIEW_SRC
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = PreviewSlots::default();
+    *PREVIEW_ORIG
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+}
+
+/// 走一遍 `render_preview_file`（探针版）。
+///
+/// Run one pass of `render_preview_file` (probe flavour).
+pub(crate) fn render_preview_for_bench(
+    path: &std::path::Path,
+    sketch: bool,
+) -> Result<PreviewProbe, String> {
+    trace_start_for_bench();
+    let (graded, _original, size, hist) = render_preview_file(
+        path,
+        &GradeParams::default(),
+        Ev::NONE,
+        None,
+        None,
+        Framing::default(),
+        None,
+        sketch,
+        false,
+        false,
+    )?;
+    let phases = trace_take_for_bench().unwrap_or_default();
+    // 直方图不进探针：判据比对的是像素，直方图每个回包都带着，拷进探针只是多一份。
+    //
+    // The histogram stays out of the probe: the fence compares pixels, and every reply already
+    // carries a histogram, so copying it here would just be another copy.
+    let _ = hist;
+    Ok(PreviewProbe {
+        graded,
+        size,
+        phases,
+    })
 }
 
 struct PreviewSource {
     path: PathBuf,
     stamp: SourceStamp,
+    /// 解码时按哪一个档位（[`PREVIEW_SIDE`] 或 [`SKETCH_SIDE`]）解出来的。
     side: u32,
     /// 解码时套的相机配置路径；换配置必须重新解码。
     profile: String,
@@ -12023,18 +12190,30 @@ struct PreviewSource {
     h: usize,
     /// 归一化到 `[0,1]` 的 sRGB 像素；调用方拿走一份副本再调色。
     rgb: Vec<f32>,
-    /// 拖动草图用的减半副本，第一次要的时候才算。
-    half: Option<HalfSource>,
+    /// **全量预览**的边长（草图槽也记，靠它报画布上的逻辑尺寸）。
+    ///
+    /// Side lengths of the **full** preview; the sketch slot records them too so the canvas
+    /// gets the same logical size in both cases.
+    full: (usize, usize),
 }
 
-struct HalfSource {
-    w: usize,
-    h: usize,
-    rgb: Vec<f32>,
+/// 两档缓存：全量与草图各一槽。加起来仍然封顶两张预览图。
+///
+/// Two slots, full and sketch. Together they still cap out at two preview images.
+#[derive(Default)]
+struct PreviewSlots {
+    full: Option<PreviewSource>,
+    sketch: Option<PreviewSource>,
 }
 
-/// 预览源图缓存。渲染都排在一个在途槽上，同一时刻只有一张图在算，一槽就够。
-static PREVIEW_SRC: Mutex<Option<PreviewSource>> = Mutex::new(None);
+/// 预览源图缓存。渲染都排在在途槽上，同一时刻只有一张图在算，各档一槽就够。
+///
+/// The preview source cache: each tier gets one slot, and only one render is in flight at a
+/// time, so that is enough.
+static PREVIEW_SRC: Mutex<PreviewSlots> = Mutex::new(PreviewSlots {
+    full: None,
+    sketch: None,
+});
 
 /// 「原图」那一路的取景结果：只跟源文件和取景几何有关，参数怎么拖都不变。
 /// 取景、转换再拷一份，拖动期间每帧约 9ms，是草图整帧的三分之一，所以也缓存一份。

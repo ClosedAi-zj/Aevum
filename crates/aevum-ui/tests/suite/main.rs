@@ -27,5 +27,6 @@ mod i18n_errors;
 mod i18n_literals;
 mod mcp_routes_contract;
 mod perf_budget;
+mod preview_budget;
 mod readme_shots;
 mod ui_tokens;

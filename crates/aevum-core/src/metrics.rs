@@ -760,6 +760,110 @@ pub fn decode_profile_preview(
     Ok((resized.into_raw(), nw as usize, nh as usize))
 }
 
+/// 草图解码的回包：（像素、宽、高、全量预览边长）。
+///
+/// The sketch decode's reply: (pixels, width, height, full-preview side lengths).
+pub type SketchSource = (Vec<f32>, usize, usize, (usize, usize));
+
+/// 草图解码：按「目标长边 + 半尺寸」解一张小图，并报出全量预览的边长。
+///
+/// 返回（像素、宽、高、全量预览边长）。像素是 sRGB f32 `[0,1]`，与
+/// [`decode_profile_preview`] 同一口径；尺寸是缩到 `sketch_side` 之后的结果。
+///
+/// # 两条路，一套色彩
+///
+/// - **RAW（rawler 后端）**：走 [`crate::raw::read_half`]，去马赛克停在 2×2 单元估计上，
+///   输出就是传感器边长的一半，再缩到 `sketch_side`。省掉的是「展开成 24MP RGB 再缩
+///   回来」这一来一回，不是色彩管线：容器解析、电平、白平衡、DCP 之后的那条调色链
+///   全都没变。
+/// - **其余（内置 TIFF/DNG、普通图片、带相机配置）**：退回整幅解码再 2×2 均值减半，
+///   与改动前的草图逐像素相同。它们本来就不是 24MP RAW 那条首屏路径。
+///
+/// 全量预览边长按 [`fit_long_side`] 同一套舍入算出来，调用方拿它当画布上的逻辑尺寸：
+/// 草图与全量的逻辑尺寸必须逐像素相等，否则松手换成全量时画面会跳一格。
+///
+/// # Sketch decode: small target plus half resolution, and the full preview's side lengths
+///
+/// Returns (pixels, width, height, full-preview side lengths), pixels in sRGB f32 `[0,1]`
+/// like [`decode_profile_preview`]. For RAW on the rawler backend it goes through
+/// [`crate::raw::read_half`]: the demosaic stops at the 2x2 cell estimates, so the output is
+/// half the sensor's side and is then scaled to `sketch_side`. What disappears is the
+/// expand-to-24MP-and-scale-back round trip, not the colour pipeline -- container parse,
+/// levels, white balance and everything after DCP are untouched. Every other source (built-in
+/// TIFF/DNG, plain pictures, a camera profile) falls back to a full decode plus a 2x2 mean
+/// halving, pixel-identical to the previous sketch. Full-preview side lengths use the same
+/// rounding as [`fit_long_side`]; the canvas needs them so that the sketch and the full
+/// preview report the same logical size.
+pub fn decode_preview_sketch(
+    path: &Path,
+    profile: &str,
+    sketch_side: u32,
+    full_side: u32,
+) -> Result<SketchSource, MetricsError> {
+    if profile.is_empty()
+        && let Some((img, (fw, fh), orientation)) = crate::raw::read_half(path)
+    {
+        let img = crate::exif::oriented(DynamicImage::ImageRgb16(img), orientation);
+        // 转正后宽高互换（5..8 是带 90° 的四种）。全量那边也是先转正再缩，
+        // 这里必须用同一对边长去算逻辑尺寸。
+        //
+        // Orientations 5..8 rotate by 90 degrees, so the sides swap; the full path also
+        // orients before scaling, so the logical size must come from the same pair.
+        let (fw, fh) = if orientation >= 5 { (fh, fw) } else { (fw, fh) };
+        let full = fit_dims(fw as usize, fh as usize, full_side);
+        let small = fit_long_side(&img.to_rgb8(), sketch_side);
+        let (w, h) = (small.width() as usize, small.height() as usize);
+        let pixels = small.as_raw().iter().map(|v| *v as f32 / 255.0).collect();
+        return Ok((pixels, w, h, full));
+    }
+    let (pixels, fw, fh) = decode_profile_preview(path, profile, full_side)?;
+    let (half, hw, hh) = halve_2x2(&pixels, fw, fh);
+    Ok((half, hw, hh, (fw, fh)))
+}
+
+/// [`fit_long_side`] 的尺寸算法（不出像素），供草图算全量预览的逻辑尺寸。
+///
+/// [`fit_long_side`]'s size arithmetic without producing pixels, so the sketch can report the
+/// full preview's logical size.
+fn fit_dims(w: usize, h: usize, max_side: u32) -> (usize, usize) {
+    let long = w.max(h).max(1);
+    if long <= max_side as usize {
+        return (w, h);
+    }
+    let s = max_side as f64 / long as f64;
+    (
+        ((w as f64 * s).round() as usize).max(1),
+        ((h as f64 * s).round() as usize).max(1),
+    )
+}
+
+/// 2×2 均值减半（sRGB f32）。宽高为奇数时最后一列/行并到边缘。
+///
+/// 2x2 mean halving for sRGB f32; the last column/row folds onto the edge when a side is
+/// odd.
+fn halve_2x2(src: &[f32], w: usize, h: usize) -> (Vec<f32>, usize, usize) {
+    let hw = (w / 2).max(1);
+    let hh = (h / 2).max(1);
+    let mut out = vec![0.0f32; hw * hh * 3];
+    out.par_chunks_mut(hw * 3).enumerate().for_each(|(y, row)| {
+        let y0 = (y * 2).min(h - 1);
+        let y1 = (y * 2 + 1).min(h - 1);
+        for x in 0..hw {
+            let x0 = (x * 2).min(w - 1);
+            let x1 = (x * 2 + 1).min(w - 1);
+            let a = (y0 * w + x0) * 3;
+            let b = (y0 * w + x1) * 3;
+            let c = (y1 * w + x0) * 3;
+            let d = (y1 * w + x1) * 3;
+            let o = x * 3;
+            for k in 0..3 {
+                row[o + k] = (src[a + k] + src[b + k] + src[c + k] + src[d + k]) * 0.25;
+            }
+        }
+    });
+    (out, hw, hh)
+}
+
 /// 解码并等比缩到长边不超过 `max_side`，供画布和胶片条用。
 ///
 /// RAW/DNG 先试机身内嵌预览：胶片条要的是一张 128 边的图，为此把 24MP 传感器数据

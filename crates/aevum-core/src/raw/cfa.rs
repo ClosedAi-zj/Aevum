@@ -41,6 +41,82 @@ pub(crate) fn demosaic(mosaic: &[u16], w: usize, h: usize, cfa: Option<[u8; 4]>)
             .for_each(|(px, v)| px.copy_from_slice(&[*v, *v, *v]));
         return rgb;
     };
+    let (est, bw) = cell_estimate(mosaic, w, h, cfa);
+    rgb.par_chunks_mut(w * 3).enumerate().for_each(|(y, row)| {
+        let cells = &est[(y / 2) * bw..][..bw];
+        for x in 0..w {
+            row[x * 3..x * 3 + 3].copy_from_slice(&cells[x / 2]);
+        }
+    });
+    rgb
+}
+
+/// 半尺寸去拜尔：只算 2×2 单元估计，**不展开回全分辨率**。
+///
+/// 拖动草图与首屏要的是 800 边的图，而 [`demosaic`] 会先把 24MP 的单元估计
+/// （6000×4000 → 3000×2000）展开成 24MP 的 RGB（3 通道 × 2 字节 = 144MB），
+/// 再在预览那一层缩到 1600 甚至 800——展开那一步写出去的东西，缩小时又要整幅读
+/// 回来。这里直接交估计表：尺寸减半，像素就是同一套 2×2 均值（**不是**把展开后
+/// 的图缩一半，插值再平均与直接平均能差一两个码值），省掉展开与随之而来的
+/// 整幅缩读。
+///
+/// `cfa` 为 `None`（线性数据）时退成 2×2 均值减半，三通道同值。
+///
+/// 返回（像素、宽、高）。宽高取 `ceil(n/2)`，与 [`demosaic`] 的单元数一致。
+///
+/// Half-resolution demosaic: computes only the 2x2 cell estimates and **never expands
+/// them back to full resolution**. [`demosaic`] expands the 24MP cell grid into 24MP RGB
+/// (144MB) only for the preview layer to scale it to 1600 or 800 again, reading the whole
+/// thing back. This hands out the estimate grid instead: half the size, the same 2x2
+/// averaging (**not** the expanded image scaled by half -- interpolating and then averaging
+/// can differ by a code value or two), and the expansion plus the full-width resample read
+/// disappear. With `cfa == None` (linear data) it degrades to a 2x2 mean, three channels
+/// equal. Returns (pixels, width, height).
+pub(crate) fn demosaic_half(
+    mosaic: &[u16],
+    w: usize,
+    h: usize,
+    cfa: Option<[u8; 4]>,
+) -> (Vec<u16>, usize, usize) {
+    let bw = w.div_ceil(2);
+    let bh = h.div_ceil(2);
+    let Some(cfa) = cfa else {
+        let mut out = vec![0u16; bw * bh * 3];
+        out.par_chunks_mut(bw * 3)
+            .enumerate()
+            .for_each(|(by, row)| {
+                for bx in 0..bw {
+                    let x = (bx * 2).min(w - 1);
+                    let y = (by * 2).min(h - 1);
+                    let x1 = (bx * 2 + 1).min(w - 1);
+                    let y1 = (by * 2 + 1).min(h - 1);
+                    let sum = u32::from(mosaic[y * w + x])
+                        + u32::from(mosaic[y * w + x1])
+                        + u32::from(mosaic[y1 * w + x])
+                        + u32::from(mosaic[y1 * w + x1]);
+                    let v = ((sum + 2) / 4).min(u32::from(u16::MAX)) as u16;
+                    row[bx * 3..bx * 3 + 3].copy_from_slice(&[v, v, v]);
+                }
+            });
+        return (out, bw, bh);
+    };
+    let (est, bw) = cell_estimate(mosaic, w, h, cfa);
+    let mut out = vec![0u16; bw * bh * 3];
+    out.par_chunks_mut(3)
+        .zip(est.par_iter())
+        .for_each(|(px, cell)| px.copy_from_slice(cell));
+    (out, bw, bh)
+}
+
+/// 2×2 单元估计：每个单元一个 RGB 三元组，缺的通道用邻居扩散补。
+///
+/// 返回（估计表、每行单元数）。估计表是半分辨率的——[`demosaic`] 把它展开回全分辨
+/// 率，[`demosaic_half`] 直接交出去。
+///
+/// The 2x2 cell estimates: one RGB triple per cell, missing channels filled from
+/// neighbours. Returns (cells, cells per row). The grid is half resolution: [`demosaic`]
+/// expands it back, [`demosaic_half`] hands it out as is.
+fn cell_estimate(mosaic: &[u16], w: usize, h: usize, cfa: [u8; 4]) -> (Vec<[u16; 3]>, usize) {
     let bw = w.div_ceil(2);
     let bh = h.div_ceil(2);
     let mut est = vec![[0u16; 3]; bw * bh];
@@ -113,13 +189,7 @@ pub(crate) fn demosaic(mosaic: &[u16], w: usize, h: usize, cfa: Option<[u8; 4]>)
             break;
         }
     }
-    rgb.par_chunks_mut(w * 3).enumerate().for_each(|(y, row)| {
-        let cells = &est[(y / 2) * bw..][..bw];
-        for x in 0..w {
-            row[x * 3..x * 3 + 3].copy_from_slice(&cells[x / 2]);
-        }
-    });
-    rgb
+    (est, bw)
 }
 
 /// 黑场扣除 + 拉满 16 位量程。整数运算，测试能钉住逐位结果。
@@ -607,6 +677,49 @@ mod tests {
             .map(|(px, t)| (px[ch] as i64 - t[ch] as i64).unsigned_abs() as f64)
             .sum::<f64>()
             / n as f64
+    }
+
+    /// 半尺寸去拜尔的像素必须**就是**全尺寸展开出来的那些单元值——草图与全量用同一套
+    /// 2×2 均值，只是草图不再展开。差一位都算错：那意味着两条路的估计算法分了岔。
+    ///
+    /// The half-size demosaic's pixels must be exactly the cell values the full-size
+    /// expansion writes out: both use the same 2x2 means, the sketch merely skips the
+    /// expansion. One code value off would mean the two routes diverged.
+    #[test]
+    fn demosaic_half_is_the_unexpanded_cell_grid() {
+        let (w, h) = (40, 33); // 奇数高：边缘单元被重复一次，正好一起钉住
+        let (mosaic, _full) = stripe_bayer(w, h);
+        let full = demosaic(&mosaic, w, h, Some(RGGB));
+        let (half, hw, hh) = demosaic_half(&mosaic, w, h, Some(RGGB));
+        assert_eq!((hw, hh), (w.div_ceil(2), h.div_ceil(2)), "半尺寸边长");
+        assert_eq!(half.len(), hw * hh * 3);
+        for cy in 0..hh {
+            for cx in 0..hw {
+                let o = (cy * hw + cx) * 3;
+                // 展开把单元值铺到它覆盖的左上像素上（奇数时即边缘那一个）。
+                let (x, y) = ((cx * 2).min(w - 1), (cy * 2).min(h - 1));
+                let f = (y * w + x) * 3;
+                assert_eq!(
+                    &half[o..o + 3],
+                    &full[f..f + 3],
+                    "单元 ({cx},{cy}) 与展开后的对应像素不一致"
+                );
+            }
+        }
+    }
+
+    /// 无 CFA（线性数据）时半尺寸退成 2×2 均值，三通道同值。
+    ///
+    /// Without a CFA (linear data) the half route degrades to a 2x2 mean with all three
+    /// channels equal.
+    #[test]
+    fn demosaic_half_without_cfa_averages_blocks() {
+        let (w, h) = (4, 2);
+        let mosaic: Vec<u16> = (0..w * h).map(|i| (i as u16) * 10).collect();
+        let (half, hw, hh) = demosaic_half(&mosaic, w, h, None);
+        assert_eq!((hw, hh), (2, 1));
+        // (0+10+40+50)/4 = 25，(20+30+60+70)/4 = 45
+        assert_eq!(half, vec![25, 25, 25, 45, 45, 45]);
     }
 
     #[test]

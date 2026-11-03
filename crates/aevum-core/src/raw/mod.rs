@@ -766,6 +766,43 @@ pub fn read_full(path: impl AsRef<Path>) -> Result<(Rgb16Image, RawPath, u8), Ra
     Ok((decoded.image, decoded.path, decoded.orientation))
 }
 
+/// 半分辨率传感器直解（只走 rawler 后端）；走不了就报 `None`，调用方退回 [`read_full`]。
+///
+/// 用途单一：画布草图与首屏只要 800 边，而 [`read_full`] 会把 24MP 的 2×2 单元估计
+/// **展开**成 24MP RGB（144MB）再让预览层缩到 800——展开写出去的东西缩小时原样读回。
+/// 这条路口径与 [`read_full`] 完全一致（同一趟容器解析、同一套电平/去马赛克/白平衡），
+/// 只是去马赛克停在估计表上：像素尺寸减半，结果仍是传感器直解（[`RawPath::Sensor`]）。
+///
+/// 为什么返回 `Option` 而不是错误：走不了半尺寸**不是**解码失败——内置 TIFF/DNG 路与
+/// 三通道线性数据根本没有半尺寸入口，对它们报错只会让调用方多写一段「是不是真错」的
+/// 判断。返回 `None` 说「这条路没有」，整幅解码那边该报什么错照报。
+///
+/// 第二、三个返回值是**全分辨率的（未转正）边长**与 EXIF 方向码：草图要拿它们报逻辑
+/// 尺寸，而逻辑尺寸必须和全量预览逐像素一致（`1600×1067` 不是 `800×533` 乘二——
+/// 四舍五入差一格）。
+///
+/// Half-resolution sensor decode (rawler backend only); `None` means "this route does not
+/// apply here" and the caller falls back to [`read_full`]. Used by the canvas sketch and the
+/// first screen, which need an 800px side: [`read_full`] expands the 24MP 2x2 estimates into
+/// 24MP RGB (144MB) only for the preview layer to scale it back down. This route shares the
+/// container parse, levels, demosaic and white balance with [`read_full`] and stops the
+/// demosaic at the estimate grid, so the pixels are still a sensor decode
+/// ([`RawPath::Sensor`]). The second and third return values are the full-resolution
+/// (unrotated) side lengths and the EXIF orientation -- the sketch reports its logical size
+/// from them, and that size has to match the full preview exactly (`1600x1067` is not
+/// `800x533` doubled).
+pub fn read_half(path: impl AsRef<Path>) -> Option<(Rgb16Image, (u32, u32), u8)> {
+    #[cfg(feature = "raw-rawler")]
+    {
+        rawler_backend::decode_half(path.as_ref()).ok()
+    }
+    #[cfg(not(feature = "raw-rawler"))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 /// 只要机身内嵌的 JPEG 预览，绝不去马赛克。
 ///
 /// 给「几百像素就够」的用途（胶片条、任何列表缩略图）：24MP RAW 走完整解码要

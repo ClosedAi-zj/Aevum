@@ -23,6 +23,7 @@ mod i18n_en;
 pub mod icons;
 pub mod layout;
 pub mod platform;
+pub mod preview_bench;
 pub mod settings;
 pub mod shell;
 pub mod state;
@@ -32,6 +33,9 @@ pub mod widgets;
 pub use app::{AevumApp, Startup};
 pub use bench_ui::{BenchRow, bench_ui, bench_ui_rows};
 pub use control::ControlServer;
+pub use preview_bench::{
+    PreviewRow, preview_checksum, preview_first_screen, preview_first_screen_rows,
+};
 pub use state::AppState;
 
 /// 无显示器自检：跑两遍布局，确认加载态与空状态都真的画出了东西。

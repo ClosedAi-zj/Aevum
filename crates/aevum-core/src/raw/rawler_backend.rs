@@ -93,7 +93,7 @@ pub fn decode_full(path: &Path) -> Result<RawDecode, RawError> {
         rawler::Orientation::Rotate270 => 8,
         rawler::Orientation::Unknown => 1,
     };
-    let image = to_rgb16(img)?;
+    let (image, _full) = to_rgb16(img, false)?;
     Ok(RawDecode {
         image,
         path: RawPath::Sensor,
@@ -102,8 +102,51 @@ pub fn decode_full(path: &Path) -> Result<RawDecode, RawError> {
     })
 }
 
+/// 半分辨率解码：同一趟 rawler 解析，去拜尔只算 2×2 单元估计，不展开回全分辨率。
+///
+/// 首屏草图只要 800 边，而 [`decode_full`] 会先把 24MP 的单元估计展开成 24MP RGB 再
+/// 缩——展开写出去的 144MB，缩小时原样读回来。这里直接交半尺寸（传感器边长的一半），
+/// 交出去的像素仍是同一套 2×2 均值与同一套白平衡增益，只是不再展开。
+///
+/// 返回（半尺寸像素、全分辨率边长（未转正））。三通道线性数据（rawler 报 `cpp == 3`）
+/// 没有 CFA 可估，直接报错交给调用方退回整幅解码——那条路本来就不是 24MP 的常态。
+///
+/// Half-resolution decode: the same rawler parse, with demosaic stopping at the 2x2 cell
+/// estimates instead of expanding them back to full resolution. Returns (half-size pixels,
+/// full-resolution side lengths before orientation). Three-channel linear data (`cpp == 3`)
+/// has no CFA to estimate and reports an error so the caller falls back to the full decode.
+pub fn decode_half(path: &Path) -> Result<(Rgb16Image, (u32, u32), u8), RawError> {
+    let img = super::guard::decode_guard(NAME, || {
+        rawler::decode_file(path).map_err(|e| RawError::Rawler(e.to_string()))
+    })?;
+    // 方向码与 `decode_full` 同一套映射：草图与全量要按同一个方向摆。
+    // Same orientation mapping as `decode_full`: the sketch and the full preview must be
+    // upright the same way.
+    let orientation = match img.orientation {
+        rawler::Orientation::Normal => 1,
+        rawler::Orientation::HorizontalFlip => 2,
+        rawler::Orientation::Rotate180 => 3,
+        rawler::Orientation::VerticalFlip => 4,
+        rawler::Orientation::Transpose => 5,
+        rawler::Orientation::Rotate90 => 6,
+        rawler::Orientation::Transverse => 7,
+        rawler::Orientation::Rotate270 => 8,
+        rawler::Orientation::Unknown => 1,
+    };
+    let (image, full) = to_rgb16(img, true)?;
+    Ok((image, full, orientation))
+}
+
 /// rawler 的 `RawImage` → 我们的 `Rgb16Image`：裁有效区、扣电平、去拜尔、白平衡。
-fn to_rgb16(img: RawImage) -> Result<Rgb16Image, RawError> {
+///
+/// `half` 为真时只算 2×2 单元估计（半尺寸），见 [`decode_half`]；否则走全分辨率。
+/// 第二个返回值是全分辨率的（未转正）边长，`half` 为假时就是图像自己的边长。
+///
+/// rawler's `RawImage` -> our `Rgb16Image`: crop to the active area, subtract levels,
+/// demosaic, white balance. With `half` the demosaic stops at the 2x2 estimates (see
+/// [`decode_half`]). The second return value is the full-resolution (unrotated) side
+/// lengths; without `half` that is simply the image's own size.
+fn to_rgb16(img: RawImage, half: bool) -> Result<(Rgb16Image, (u32, u32)), RawError> {
     let (w, h) = (img.width, img.height);
     if w == 0
         || h == 0
@@ -149,6 +192,8 @@ fn to_rgb16(img: RawImage) -> Result<Rgb16Image, RawError> {
         _ => (0, 0, img.width, img.height),
     };
 
+    let mut out_w = w;
+    let mut out_h = h;
     let mut rgb = match img.cpp {
         // 单通道：马赛克 → 扣电平 → 去拜尔（内置同一套粗估器）。
         // active_area 裁剪偏移为奇数时 2×2 图案错相位——新左上角是原图
@@ -157,15 +202,28 @@ fn to_rgb16(img: RawImage) -> Result<Rgb16Image, RawError> {
             let cfa = cfa_pattern(&img)?.map(|p| shift_cfa(p, ox, oy));
             let mut mosaic = crop_samples(&img, ox, oy, w, h, 1, black, white)?;
             cfa::scale_levels(&mut mosaic, black.round() as u32, white.round() as u32);
-            // 走方法注册表：诊断面板可切换（cell_average 为默认，与内置路径同口径）。
-            cfa::demosaic_with(cfa::selected_demosaic(), &mosaic, w, h, cfa)
+            if half {
+                // 半尺寸：直接交 2×2 单元估计，省掉展开与随后的整幅缩读。
+                // Half size: hand out the 2x2 estimates, skipping the expansion and the
+                // full-width resample read that follows it.
+                let (rgb, hw, hh) = cfa::demosaic_half(&mosaic, w, h, cfa);
+                out_w = hw;
+                out_h = hh;
+                rgb
+            } else {
+                // 走方法注册表：诊断面板可切换（cell_average 为默认，与内置路径同口径）。
+                cfa::demosaic_with(cfa::selected_demosaic(), &mosaic, w, h, cfa)
+            }
         }
         // 三通道：线性 RGB，逐元素扣电平即可（scale_levels 对交错缓冲逐元素算术不变）。
-        3 => {
+        3 if !half => {
             let mut rgb = crop_samples(&img, ox, oy, w, h, 3, black, white)?;
             cfa::scale_levels(&mut rgb, black.round() as u32, white.round() as u32);
             rgb
         }
+        // 三通道没有 CFA 可估：半尺寸这条路说不出口，交回调用方退回整幅解码。
+        // Three channels have no CFA to estimate; the half route does not apply here.
+        3 => return Err(RawError::UnsupportedSamples(3)),
         other => return Err(RawError::UnsupportedSamples(other as u16)),
     };
 
@@ -174,10 +232,12 @@ fn to_rgb16(img: RawImage) -> Result<Rgb16Image, RawError> {
         cfa::apply_gains(&mut rgb, gains);
     }
 
-    Rgb16Image::from_raw(w as u32, h as u32, rgb).ok_or(RawError::TooLarge {
-        width: w as u32,
-        height: h as u32,
-    })
+    let image =
+        Rgb16Image::from_raw(out_w as u32, out_h as u32, rgb).ok_or(RawError::TooLarge {
+            width: out_w as u32,
+            height: out_h as u32,
+        })?;
+    Ok((image, (w as u32, h as u32)))
 }
 
 /// 2×2 图案按裁剪偏移平移相位：`p` 是相对原图 (0,0) 的布局，
