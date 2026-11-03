@@ -587,19 +587,62 @@ fn decode_dispatch(path: &Path) -> Result<(DynamicImage, PixelOrigin), MetricsEr
     ))
 }
 
-/// JPEG 流完整性：最后一个 EOI（FF D9）之后只许剩填充字节（≤0x20 或 0xFF）。
-/// 没有任何 EOI → 必然截断；EOI 在前段且后面还有实质数据 → 熵数据没写完，也是截断。
+/// JPEG 流完整性：从首个 SOI 起按段结构走，最后一个 SOS 的熵数据必须以 EOI 收尾。
 ///
-/// JPEG stream completeness: only padding bytes (≤0x20 or 0xFF) may follow the last EOI
-/// (FF D9). No EOI at all -> definitely truncated; an EOI early in the file followed by
-/// substantial payload -> the entropy data never finished, also truncated.
+/// 为什么不按「最后一个 EOI 之后只许填充」判：真机（Panasonic）的 JPEG 在主流 EOI
+/// 之后还有几百字节厂商尾注元数据，那条规则会把完好的真机文件误杀成截断。
+/// 为什么不按「最后一个 SOS 之后有没有 EOI」裸扫：EXIF 缩略图是嵌在 APP1 载荷里的
+/// 完整 JPEG（自带 SOI/SOS/EOI），裸扫会把缩略图的 SOS 当主流的。所以老老实实按段
+/// 走：常规段按长度跳过（APP1 连同里面的缩略图整体跳过），SOS 之后进入熵数据扫描。
+/// 熵数据经过字节填充（数据里的 0xFF 一律写成 0xFF 0x00），流内唯一的合法标记是
+/// RSTn，所以扫描不会把数据误认成标记边界。截断的流死在熵数据中途：走不到 EOI
+/// 就撞上 EOF → false；完整流在 EOI 收尾，EOI 之后的尾注/填充不再看 → true。
 fn jpeg_stream_complete(bytes: &[u8]) -> bool {
-    let last_eoi = (0..bytes.len().saturating_sub(1))
-        .rev()
-        .find(|&i| bytes[i] == 0xFF && bytes[i + 1] == 0xD9);
-    match last_eoi {
-        None => false,
-        Some(eoi) => bytes[eoi + 2..].iter().all(|&b| b <= 0x20 || b == 0xFF),
+    // 首个 SOI（FF D8）：没有就不是 JPEG 流。
+    let Some(start) =
+        (0..bytes.len().saturating_sub(1)).find(|&i| bytes[i] == 0xFF && bytes[i + 1] == 0xD8)
+    else {
+        return false;
+    };
+    let mut i = start + 2;
+    loop {
+        // 扫到下一个标记：0xFF 后跟非填充（0x00/0xFF）、非 RSTn 的字节。
+        let marker = loop {
+            let Some(off) = bytes[i..].iter().position(|&b| b == 0xFF) else {
+                return false; // EOF 前再无 0xFF：熵数据没写完
+            };
+            i += off;
+            match bytes.get(i + 1).copied() {
+                None => return false,                            // 0xFF 是最后一个字节：截断
+                Some(0x00) => i += 2, // 熵数据字节填充：0xFF 0x00 代表数据 0xFF
+                Some(0xFF) => i += 1, // 填充串：越过这个 0xFF 继续
+                Some(m) if (0xD0..=0xD7).contains(&m) => i += 2, // RSTn：流内合法标记
+                Some(m) => break m,
+            }
+        };
+        match marker {
+            // EOI：流完整收尾。之后的字节（厂商尾注/填充）不再看。
+            0xD9 => return true,
+            // TEM / 独立 SOI：无长度段。
+            0x01 | 0xD8 => i += 2,
+            _ => {
+                // 常规段：跳过 FF xx + 2 字节长度 + 载荷。SOS 的长度只盖头部，
+                // 熵数据的边界未知，跳完头部由下一轮扫描去找终止标记。
+                let Some(len) = bytes
+                    .get(i + 2..i + 4)
+                    .map(|l| u16::from_be_bytes([l[0], l[1]]) as usize)
+                else {
+                    return false; // 长度字段被截断
+                };
+                if len < 2 {
+                    return false; // 长度不含自身，小于 2 是坏流
+                }
+                i += 2 + len;
+                if i > bytes.len() {
+                    return false; // 段载荷被截断
+                }
+            }
+        }
     }
 }
 
@@ -969,16 +1012,35 @@ mod tests {
             "EOI 后补零的完整 JPEG 必须照常解码"
         );
 
-        // 规则本身的确定性单测（不依赖 image 的解码行为）：
-        // ① 完整流 + 填充 → true；② 无 EOI → false；③ 早期 EOI（EXIF 内嵌缩略图的
-        // 形状）后跟大段非填充 → false——这正是「带缩略图的 JPEG 截断在主数据中途」
-        // 的字节形状，靠「最后一个 EOI 之后只许填充」把它抓出来。
-        assert!(super::jpeg_stream_complete(&[0x12, 0xFF, 0xD9, 0x00, 0x00]));
-        assert!(super::jpeg_stream_complete(&[0xFF, 0xD9]));
-        assert!(!super::jpeg_stream_complete(&[0x12, 0x34, 0x56]));
-        assert!(!super::jpeg_stream_complete(&[
-            0xFF, 0xD9, 0xAB, 0xCD, 0xEF, 0x11, 0x22, 0x33
+        // 规则本身的确定性单测（不依赖 image 的解码行为）。字节形状都是最小化的：
+        // ① 最小完整流（SOI + SOS + EOI）→ true；② 完整流 + EOI 后厂商尾注 → true——
+        // 正是真机 Panasonic 的形状，旧规则在这里误杀；③ SOS 后无 EOI（熵数据中途截断）
+        // → false；④ EXIF 缩略图嵌在 APP1 里（自带 SOI/EOI）、主流 SOS 之后截断 → false
+        // ——这是「按最后一个 SOS 裸扫」会漏掉的形状，按段走能把 APP1 连壳跳过；
+        // ⑤ 连 SOI 都没有 → false。
+        assert!(super::jpeg_stream_complete(&[
+            0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9
         ]));
+        assert!(super::jpeg_stream_complete(&[
+            0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9, 0xAB, 0xCD, 0xEF
+        ]));
+        assert!(!super::jpeg_stream_complete(&[
+            0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0x12, 0x34
+        ]));
+        // APP1 len=6：载荷 = 缩略图的 SOI+EOI（4 字节）+ 2 字节填充。
+        assert!(!super::jpeg_stream_complete(&[
+            0xFF, 0xD8, // SOI
+            0xFF, 0xE1, 0x00, 0x06, 0xFF, 0xD8, 0xFF, 0xD9, 0x00, 0x00, // APP1 含缩略图
+            0xFF, 0xDA, 0x00, 0x02, // 主流 SOS
+            0x56, 0x78, // 熵数据，截断处没有 EOI
+        ]));
+        // 同上但主流收了尾：缩略图 EOI 在前不算数，主流自己的 EOI 才是终点。
+        assert!(super::jpeg_stream_complete(&[
+            0xFF, 0xD8, //
+            0xFF, 0xE1, 0x00, 0x06, 0xFF, 0xD8, 0xFF, 0xD9, 0x00, 0x00, //
+            0xFF, 0xDA, 0x00, 0x02, 0x56, 0x78, 0xFF, 0xD9,
+        ]));
+        assert!(!super::jpeg_stream_complete(&[0x12, 0x34, 0x56]));
 
         std::fs::remove_file(&full).ok();
         std::fs::remove_file(&cut).ok();

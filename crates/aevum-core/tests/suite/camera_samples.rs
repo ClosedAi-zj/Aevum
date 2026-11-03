@@ -175,6 +175,60 @@ fn every_camera_sample_ends_in_a_named_outcome() {
     eprintln!("相机样张矩阵（{} 张）：\n{report}", files.len());
 }
 
+/// 真机 JPEG 样张必须解成 `Ok`，不是「具名失败也行」。
+///
+/// 这条单独成判据的原因写在事故里：JPEG 是完整支持的格式，但 1.5.1 的完整性
+/// 校验按「最后一个 EOI 之后只许填充」判，把真机 Panasonic（主流 EOI 后带
+/// 376 字节厂商尾注）误杀成「文件不完整」。矩阵判据抓不到它——矩阵的通过
+/// 条件是「落在三类之一」，`DecodeFailed` 恰好算绿。已支持格式的真机样张
+/// 标准必须更高：解不出 `Ok` 永远红。
+///
+/// Real-camera JPEG samples must decode to `Ok`, not merely a "named failure".
+///
+/// The reason this is a separate assertion is written in an incident: JPEG is a fully
+/// supported format, but the 1.5.1 completeness check judged "only padding may follow
+/// the last EOI" and killed a real Panasonic file (376 bytes of vendor trailer after the
+/// main EOI) as "incomplete". The matrix cannot catch it -- its pass condition is "lands
+/// in one of the classes", and `DecodeFailed` counts as green. A real sample of a
+/// supported format must be held to a higher bar: failing to decode to `Ok` is always red.
+#[test]
+fn every_camera_jpeg_sample_decodes_ok() {
+    let jpegs: Vec<PathBuf> = samples()
+        .into_iter()
+        .filter(|p| {
+            p.extension().is_some_and(|e| {
+                matches!(e.to_string_lossy().to_lowercase().as_str(), "jpg" | "jpeg")
+            })
+        })
+        .collect();
+    if jpegs.is_empty() {
+        eprintln!("跳过：没有 JPEG 样张");
+        return;
+    }
+    for path in &jpegs {
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| metrics::decode(path)));
+        match outcome {
+            Err(_) => panic!("{name}：解码 panic 了"),
+            Ok(Ok(img)) => {
+                assert!(
+                    img.width() > 0 && img.height() > 0,
+                    "{name}：解出 0 像素等于没解"
+                );
+            }
+            Ok(Err(err)) => panic!(
+                "{name}：JPEG 是完整支持的格式，真机样张解成 `{}` 不许过——这大概率是 \
+                 完整性校验或解码路径又误杀了一种真机写卡形状（{err}）",
+                classify(&err)
+            ),
+        }
+    }
+}
+
 /// HEIC 必须按后缀具名拒绝，不许「猜格式再报格式不明」。
 ///
 /// 这条单独成判据而不是并进矩阵：矩阵里它只是「三类之一」，而这里的断言是
