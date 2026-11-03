@@ -24,12 +24,35 @@ CARGO_FLAGS="${CARGO_FLAGS---offline}"
 
 # 第 0 关：版本号一致性（1.0.0 验收清单 B5，beta.2 当天就漂移过一次 README）
 # + 文档双语一致性（中英分册之后：缺孪生、缺切换链接、死链都是静默失效）
-# + 代码注释双语（模块级 //! 与 pub 项的 /// 必须有英文块）。
+# + 代码注释双语（模块级 //! 与 pub 项的 /// 必须有英文块）
+# + 变异残留扫描（见下）
 # 只读文件、不碰 cargo，所以 CARGO_FLAGS（CI 联网 / 本机 --offline）对它无影响。
-echo "==> 0/6 版本与文档一致性（Cargo.toml 真源 → lock / README / CHANGELOG；中英孪生；注释双语）"
+echo "==> 0/6 版本与文档一致性（Cargo.toml 真源 → lock / README / CHANGELOG；中英孪生；注释双语；变异残留）"
 python "$ROOT/acceptance/check_version.py"
 python "$ROOT/acceptance/check_docs.py"
 python "$ROOT/tools/doc_lint.py"
+
+# 变异残留扫描。**这条是为了堵一个真实事故**：2026-11-03 一个 `if false &&` 被提交进
+# HEAD，预览草图的半尺寸快路在出货代码里死掉，而六关照样全绿——因为时延判据只量墙钟，
+# 关掉快路后仍在预算内。事后判据改成了结构证据，但「变异被顺手提交」这件事本身还得有
+# 一道零成本的闸。
+#
+# 判定：行首到命中点之间出现 `/` 的行按注释放过（`/// 提到 todo!()` 是合法文档）；
+# 真实代码里「除号后面紧跟这几个词」的写法不存在，所以不会误放过。
+#
+# Mutation residue. This closes a real incident: on 2026-11-03 an `if false &&` was
+# committed, the preview sketch's half-size fast path was dead in shipped code, and the six
+# gates stayed green because the latency criterion only measures wall clock and the disabled
+# path still fit the budget. The criterion is now structural, but "a mutation got committed"
+# still deserves a zero-cost gate. Lines with a `/` before the match are treated as comments.
+residue="$(git grep -nE '^[^/]*[^/](if false[ &{]|dbg!\(|todo!\(|unimplemented!\()' -- '*.rs' || true)"
+if [ -n "$residue" ]; then
+    # 别在双引号里写反引号：`` `if false` `` 会被 shell 当命令执行（这条自己踩过一次）。
+    echo '✗ 代码里还有变异/调试残留（if false / dbg! / todo!() / unimplemented!()）：'
+    echo "$residue"
+    echo "  这些要么是变异验证没还原，要么是占位实现。还原或补实现后再提交。"
+    exit 1
+fi
 
 echo "==> 1/6 格式"
 "${CARGO[@]}" fmt --all -- --check
