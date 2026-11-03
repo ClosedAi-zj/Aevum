@@ -76,7 +76,13 @@ def sh(*args):
 
 
 def tracked_text_files():
-    for line in sh("git", "ls-files").splitlines():
+    # -z + quotepath=off：git 默认把非 ASCII 路径转义成八进制（中文文件名会变成
+    # "docs/\351..."），Path 直接当真会 is_file()=False，整批中文文档被**静默跳过**
+    #（隔离 worktree 验证真踩过：291 行残留全是中文名文件）。
+    out = sh("git", "-c", "core.quotepath=off", "ls-files", "-z")
+    for line in out.split("\0"):
+        if not line:
+            continue
         p = Path(line)
         if p.suffix.lower() in TEXT_EXTS and p.is_file():
             yield p
@@ -266,7 +272,8 @@ def main():
         ct.write_text(t, encoding="utf-8")
         lock = ROOT / "Cargo.lock"
         t = lock.read_text(encoding="utf-8")
-        for member in ("aevum-core", "aevum-ui", "aevum-mcp", "aevum-studio"):
+        # 包名此时已被通用替换改成新前缀，用新名匹配。
+        for member in tuple(f"{bin_name}-{m}" for m in ("core", "ui", "mcp", "studio")):
             t = re.sub(r'(name = "%s"\nversion = ")[^"]+(")' % re.escape(member),
                        rf"\g<1>{ver}\g<2>", t)
         lock.write_text(t, encoding="utf-8")
@@ -276,8 +283,20 @@ def main():
             t = p.read_text(encoding="utf-8")
             t = re.sub(pat, rf"\g<1>{ver}\g<2>", t, count=1)
             p.write_text(t, encoding="utf-8")
-        for cl, heading in (("CHANGELOG.md", f"## {ver} — 未发布"),
-                            ("CHANGELOG.en.md", f"## {ver} — unreleased")):
+        # 「版本方案」段里的第二处（README.md:158 / README.en.md:184）。
+        for readme, pat in (("README.md", r"(版本号以 `Cargo\.toml` 为唯一真源，当前为 `)[^`]+(`)"),
+                            # 英文 README 里 `1.5.1` 换行在 "is" 之后，正则要跨行。
+                            ("README.en.md", r"(the current release is\s+`)[^`]+(`)")):
+            p = ROOT / readme
+            t = p.read_text(encoding="utf-8")
+            t2 = re.sub(pat, rf"\g<1>{ver}\g<2>", t, count=1)
+            if t2 == t:
+                print(f"  ⚠ {readme}：版本方案段的版本号没匹配上，请手工核对")
+            p.write_text(t2, encoding="utf-8")
+        # 节标题照既有格式带 v 前缀（`## v1.5.1 — 2026-11-03`），不带 v 会被
+        # check_version 当成「最新版本节缺失」。
+        for cl, heading in (("CHANGELOG.md", f"## v{ver} — 未发布"),
+                            ("CHANGELOG.en.md", f"## v{ver} — unreleased")):
             p = ROOT / cl
             t = p.read_text(encoding="utf-8")
             anchor = t.find("---")
