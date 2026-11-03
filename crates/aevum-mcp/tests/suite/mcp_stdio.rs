@@ -5,7 +5,7 @@
 use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
@@ -917,8 +917,13 @@ fn pano_merge_stitches_overlapping_frames() {
 /// Focus test sequence: three 16 px horizontal bands; only frame k carries texture in
 /// band k, every other band is box-blurred.
 fn make_focus_sequence(dir: &Path, frames: usize) {
+    make_focus_sequence_sized(dir, frames, 48);
+}
+
+/// 同上一条，但边长可调：取消判据要靠「解码一张图需要几毫秒」来保证
+/// `aevum_cancel` 必然赶在某次帧间检查之前到位，48×32 太快压不住竞态。
+fn make_focus_sequence_sized(dir: &Path, frames: usize, side: usize) {
     std::fs::create_dir_all(dir).expect("建序列目录");
-    const SIDE: usize = 48;
     // 竖条纹：周期 4px，`(x/2)%2` 在 200/55 之间交替。对比度要足够大，
     // 8 位量化与羽化都吃不出亏损。
     //
@@ -940,10 +945,10 @@ fn make_focus_sequence(dir: &Path, frames: usize) {
         }
         (acc / 4) as u8
     }
-    let band = SIDE / frames;
+    let band = side / frames;
     for k in 0..frames {
         let lo = k * band;
-        let image = image::RgbImage::from_fn(SIDE as u32, SIDE as u32, |x, y| {
+        let image = image::RgbImage::from_fn(side as u32, side as u32, |x, y| {
             let (x, y) = (x as usize, y as usize);
             let v = if y >= lo && y < lo + band {
                 stripes(x)
@@ -1587,4 +1592,70 @@ fn focus_merge_alignment_warps_by_the_estimated_block_field_not_a_global_transla
         best < 0.05,
         "成片两半幅必须同时贴回 f0（best_ox={best_ox}, mean|Δ|={best}）：块场被丢或退回全局平移都会红"
     );
+}
+
+/// 合并期间 cancel 必须能被受理：`background: true` 把合成起成后台任务，
+/// stdio 主循环空闲下来，`aevum_cancel` 在长任务运行中就能置位旗标；解码
+/// 循环在帧与帧之间读到旗标就停，报「已取消」，不落成片。
+///
+/// 确定性来源：1200×1200 的 PNG 解码一张要几毫秒，而 cancel 请求在 started
+/// 回包之后微秒级就能到位——取消检查点必然被取消先赶上有余。
+///
+/// Cancellation must land mid-merge: `background: true` turns the merge into a
+/// background job, so the stdio main loop is free to serve `aevum_cancel` while
+/// it runs; the decode loop checks the flag between frames, reports 「已取消」
+/// and writes no output.
+///
+/// Why this is deterministic: decoding one 1200x1200 PNG takes milliseconds while
+/// the cancel request lands microseconds after the started reply -- the flag is
+/// set well before any late checkpoint could matter.
+#[test]
+fn focus_merge_background_answers_cancel_mid_merge() {
+    let temp = TempDir::new("focus-cancel");
+    let seq_dir = temp.path().join("frames");
+    make_focus_sequence_sized(&seq_dir, 4, 1200);
+    let mut server = Server::start();
+    server.request(
+        "initialize",
+        json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
+    );
+    server.notify("notifications/initialized");
+    ok_json(&server.call(
+        "aevum_open_sequence",
+        json!({"root": seq_dir.display().to_string()}),
+    ));
+
+    let out_dir = temp.path().join("focus-cancel-out");
+    let started = ok_json(&server.call(
+        "aevum_focus_merge",
+        json!({
+            "frames": [0, 1, 2, 3],
+            "out_dir": out_dir.display().to_string(),
+            "background": true,
+            "confirm": true
+        }),
+    ));
+    assert_eq!(started["background"], json!(true), "{started}");
+
+    // 任务运行中请求取消：必须受理（cancelled=true），且登记的是 export 类任务。
+    let cancelled = ok_json(&server.call("aevum_cancel", json!({})));
+    assert_eq!(cancelled["cancelled"], json!(true), "{cancelled}");
+    assert_eq!(cancelled["job"], json!("export"), "{cancelled}");
+
+    // 轮询到任务停下，然后它必须报「已取消」而不是把成片写完。
+    let mut status = ok_json(&server.call("aevum_align_status", json!({})));
+    for _ in 0..400 {
+        if status["running"] == json!(false) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+        status = ok_json(&server.call("aevum_align_status", json!({})));
+    }
+    assert_eq!(status["running"], json!(false), "{status}");
+    let error = status["last_error"].as_str().unwrap_or_default();
+    assert!(error.contains("已取消"), "该报「已取消」：{status}");
+    let leftover = std::fs::read_dir(&out_dir)
+        .expect("输出目录应已建出")
+        .count();
+    assert_eq!(leftover, 0, "取消后不该落成片：{leftover} 个文件");
 }

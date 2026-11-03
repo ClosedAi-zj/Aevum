@@ -23,7 +23,7 @@ use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Instant;
 
-use aevum_core::align::{self, AlignIssue, AlignOptions, AlignReport, Estimator};
+use aevum_core::align::{self, AlignIssue, AlignOptions, AlignReport, CropRect, Estimator};
 use aevum_core::audio::{AudioCodec, AudioOptions};
 use aevum_core::colorspace::ColorSpace;
 use aevum_core::crop::Motion;
@@ -1090,17 +1090,137 @@ fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
     fs::create_dir_all(&out_dir)
         .map_err(|e| format!("建输出目录失败：{}", clip_echo(&e.to_string())))?;
 
-    let paths = session.require_seq()?.paths();
+    let background = opt_bool(args, "background")?.unwrap_or(false);
+    let format = parse_format(opt_str(args, "format")?.unwrap_or("png8"))?;
+    let (sharpen_for, sharpen_strength) = opt_sharpen(args)?;
+    let dynamic = opt_dynamic(args)?;
     // 有对齐结果就套统一裁切 + 逐帧位移，与静帧导出同一条几何路。
     let (crop, offsets) = session.alignment(n);
-    let rect = crop.map(|c| (c.x as usize, c.y as usize, c.w as usize, c.h as usize));
-    let mut buffers: Vec<Vec<f32>> = Vec::with_capacity(indices.len());
+    let options = RenderOptions {
+        quality: opt_quality(args)?,
+        keep_exif: opt_bool(args, "keep_exif")?.unwrap_or(false),
+        xmp_sidecar: opt_bool(args, "xmp_sidecar")?.unwrap_or(false),
+        sharpen_for,
+        sharpen_strength,
+        color_space: color_space_for(dynamic, opt_color_space(args)?),
+        dynamic,
+        watermark: opt_watermark(args)?,
+        out_dir: out_dir.clone(),
+        metadata: session.metadata(),
+        ..RenderOptions::still(format)
+    };
+    // 执行计划在校验完成后一次性从会话取齐：后台线程只拿计划跑，不再碰会话。
+    let plan = FocusMergePlan {
+        indices,
+        paths: session.require_seq()?.paths(),
+        crop,
+        offsets,
+        opts,
+        align,
+        out_dir,
+        options,
+    };
+    if background {
+        return start_focus_merge_background(session, plan);
+    }
+    // 同步路径也走同一个任务槽：`begin` 顺手清掉上一轮遗留的取消旗标，
+    // 否则一次取消会让下一次同步合并刚起步就被自己的旧旗标打死。
+    let shared = Arc::clone(&session.shared);
+    shared.begin(JobKind::Export, plan.indices.len());
+    let result = run_focus_merge(plan, &shared);
+    match &result {
+        Ok(_) => shared.finish_ok(),
+        Err(e) => shared.finish(Err(e.clone())),
+    }
+    result
+}
+
+/// `aevum_focus_merge` 的执行计划：校验阶段一次取齐，跑的人不再读会话。
+///
+/// The execution plan for `aevum_focus_merge`: gathered once during validation, so
+/// the runner never touches the session again.
+struct FocusMergePlan {
+    indices: Vec<usize>,
+    paths: Vec<PathBuf>,
+    crop: Option<CropRect>,
+    offsets: Vec<[f64; 2]>,
+    opts: aevum_core::focus::Options,
+    align: bool,
+    out_dir: PathBuf,
+    options: RenderOptions,
+}
+
+/// 后台跑 `aevum_focus_merge`：起线程、登记任务、立即返回。
+///
+/// Run `aevum_focus_merge` in the background: spawn the thread, register the job
+/// and return immediately.
+fn start_focus_merge_background(
+    session: &mut Session,
+    plan: FocusMergePlan,
+) -> Result<Value, String> {
+    let total = plan.indices.len();
+    let shared = Arc::clone(&session.shared);
+    shared.begin(JobKind::Export, total);
+    let worker = Arc::clone(&shared);
+    let handle = thread::Builder::new()
+        .name("aevum-focus".to_owned())
+        .spawn(move || {
+            let result = run_focus_merge(plan, &worker);
+            worker.finish(result.map(|summary| {
+                let path = summary
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .map(PathBuf::from)
+                    .unwrap_or_default();
+                JobOutcome::Export { path, summary }
+            }));
+        })
+        .map_err(|e| {
+            let message = format!("启动后台焦点合成失败：{e}");
+            shared.finish(Err(message.clone()));
+            message
+        })?;
+    session.start_background(shared, handle);
+    Ok(json!({
+        "started": true,
+        "background": true,
+        "frames": total,
+        "progress": {"done": 0, "total": total},
+        "note": "用 aevum_align_status 查询进度，aevum_cancel 取消。"
+    }))
+}
+
+/// 真正的合并执行体：解码 → 自动对齐 → 逐块 warp → 融合 → 写成片。
+///
+/// `shared` 既是进度出口也是取消旗标的来源；`aevum_cancel` 置位的旗标与这里
+/// 读到的是同一块内存，长任务期间 status / cancel 都能应答（任务在后台线程，
+/// stdio 主循环空闲）。
+///
+/// The actual merge runner: decode → auto-align → per-block warp → fuse → write.
+///
+/// `shared` is both the progress outlet and the source of the cancel flag: the flag
+/// `aevum_cancel` sets is the same memory read here, and because the job runs on a
+/// background thread the stdio main loop stays free to answer status / cancel.
+fn run_focus_merge(plan: FocusMergePlan, shared: &JobShared) -> Result<Value, String> {
+    let cancelled = || shared.cancel_requested();
+    let total = plan.indices.len();
+    // 有对齐结果就套统一裁切 + 逐帧位移，与静帧导出同一条几何路。
+    let rect = plan
+        .crop
+        .map(|c| (c.x as usize, c.y as usize, c.w as usize, c.h as usize));
+    let mut buffers: Vec<Vec<f32>> = Vec::with_capacity(total);
     let mut dims: Option<(usize, usize)> = None;
-    for i in &indices {
-        let (rgb, w, h) = export::load_rgb_f32(&paths[*i]).map_err(|e| format!("读帧失败：{e}"))?;
+    shared.set_stage(STAGE_FRAMES, 0, total);
+    for (done, i) in plan.indices.iter().enumerate() {
+        // 帧与帧之间查取消：后台任务里这是真旗标，`aevum_cancel` 一到就停。
+        if cancelled() {
+            return Err("焦点合成已取消".to_owned());
+        }
+        let (rgb, w, h) =
+            export::load_rgb_f32(&plan.paths[*i]).map_err(|e| format!("读帧失败：{e}"))?;
         let framing = Framing {
             angle_deg: 0.0,
-            off: offsets.get(*i).copied().unwrap_or([0.0, 0.0]),
+            off: plan.offsets.get(*i).copied().unwrap_or([0.0, 0.0]),
         };
         let (buf, got) = if rect.is_none() && framing.is_identity() {
             (rgb, (w as usize, h as usize))
@@ -1115,12 +1235,13 @@ fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
             Some(prev) if prev != got => {
                 return Err(format!(
                     "第 {} 帧与第 {i} 帧对齐后尺寸不一致（{}×{} vs {}×{}）：先跑对齐或裁成同尺寸",
-                    indices[0], prev.0, prev.1, got.0, got.1
+                    plan.indices[0], prev.0, prev.1, got.0, got.1
                 ));
             }
             Some(_) => {}
         }
         buffers.push(buf);
+        shared.set_stage(STAGE_FRAMES, done + 1, total);
     }
     let (mut w, mut h) = dims.unwrap_or((0, 0));
     // 自动对齐：默认不动任何像素（`align: false` 这条路的成片与从前逐点一致）。
@@ -1129,25 +1250,15 @@ fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
     // point-for-point identical to before).
     let mut align_status = "off";
     let mut align_gain = 0.0f32;
-    if align {
+    if plan.align {
         let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();
         // 手动序列对齐的位移不叠（拍板 ⑥）：只保留它的裁切框，位移完全由本次估计给出。
         //
-        // 取消闭包恒为 false 是**故意的**，不是没接：`focus_merge` 走同步调用，
-        // 跑完才回包，`aevum_cancel` 那一行在它跑完之前读不进来；它也不是后台 job，
-        // `cancel()` 找的是注册过的 job。在这条路径上接真旗标只是装饰。要真能取消，
-        // 得先把它改成 `background: true` + `session.start_background`。
-        //
         // Manual sequence-alignment offsets are never stacked on top (ruling 6): only its
         // crop rectangle survives, and the offsets come entirely from this estimate.
-        //
-        // The always-false cancel closure is **deliberate**, not unwired: `focus_merge` is
-        // synchronous and only replies when it finishes, so `aevum_cancel` is never read
-        // before then; nor is it a background job, which is what `cancel()` looks for. A
-        // real flag on this path would be decoration. Genuine cancellation requires moving
-        // it to `background: true` + `session.start_background` first.
-        let report = aevum_core::focus_align::estimate(&refs, w, h, opts.radius, crop, &|| false)
-            .ok_or_else(|| "自动对齐被要求中止".to_owned())?;
+        let report =
+            aevum_core::focus_align::estimate(&refs, w, h, plan.opts.radius, plan.crop, &cancelled)
+                .ok_or_else(|| "自动对齐被要求中止".to_owned())?;
         align_status = report.status.key();
         align_gain = report.gain;
         if report.status == aevum_core::focus_align::AlignStatus::Adopted {
@@ -1157,15 +1268,17 @@ fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
             // Per-block warp with 24 px seam feathering; the output window follows ruling 6:
             // the whole frame when a manual crop exists, otherwise the common window derived
             // from the estimated offsets.
-            let window = match crop {
+            let window = match plan.crop {
                 Some(_) => None,
                 None => report
                     .crop
                     .map(|c| (c.x as usize, c.y as usize, c.w as usize, c.h as usize)),
             };
-            let mut warped: Vec<Vec<f32>> = Vec::with_capacity(buffers.len());
             let mut out_dims = (0usize, 0usize);
-            for (i, buf) in buffers.iter().enumerate() {
+            for (i, buf) in buffers.iter_mut().enumerate() {
+                if cancelled() {
+                    return Err("焦点合成已取消".to_owned());
+                }
                 let field = report.blocks.get(i).map(Vec::as_slice).unwrap_or(&[]);
                 // w/h 必须全程是**原帧**尺寸：窗口（auto_crop 的裁切）比整幅小，
                 // 若在循环里把 w/h 改成第 0 帧的输出尺寸，第 1 帧起就拿裁切后的
@@ -1186,49 +1299,52 @@ fn focus_merge(session: &mut Session, args: &Value) -> Result<Value, String> {
                 if i == 0 {
                     out_dims = (nw, nh);
                 }
-                warped.push(out);
+                // 原地逐帧替换：新帧一落位旧帧立即 drop，两套全幅不再同时驻留
+                // （24MP×8 凭空省下 ~2.3 GB 峰值）。
+                //
+                // In-place per-frame replacement: the source frame drops the moment the
+                // warped one lands, so two full-frame sets never coexist (~2.3 GB of peak
+                // saved for 24MP×8).
+                *buf = out;
             }
-            buffers = warped;
             // 从这里起 w/h 是成片尺寸（所有帧的窗口一致，尺寸必然相同）。
             w = out_dims.0;
             h = out_dims.1;
         }
     }
+    if cancelled() {
+        return Err("焦点合成已取消".to_owned());
+    }
+    shared.set_stage(STAGE_ENCODE, total, total);
     let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();
     // 报错走焦点语境的文案：`StackError::cn()` 说的是「堆栈」，对焦包围的用户看着别扭。
-    let mut fused = aevum_core::focus::focus_stack(&refs, w, h, &opts)
+    let mut fused = aevum_core::focus::focus_stack(&refs, w, h, &plan.opts)
         .map_err(|e| format!("焦点合成失败：{}", aevum_core::focus::error_text(e)))?;
 
-    let format = parse_format(opt_str(args, "format")?.unwrap_or("png8"))?;
-    let (sharpen_for, sharpen_strength) = opt_sharpen(args)?;
-    let dynamic = opt_dynamic(args)?;
-    let options = RenderOptions {
-        quality: opt_quality(args)?,
-        keep_exif: opt_bool(args, "keep_exif")?.unwrap_or(false),
-        xmp_sidecar: opt_bool(args, "xmp_sidecar")?.unwrap_or(false),
-        sharpen_for,
-        sharpen_strength,
-        color_space: color_space_for(dynamic, opt_color_space(args)?),
-        dynamic,
-        watermark: opt_watermark(args)?,
-        out_dir: out_dir.clone(),
-        metadata: session.metadata(),
-        ..RenderOptions::still(format)
-    };
-    let dst = out_dir.join(format!(
+    let format = plan.options.format;
+    let dst = plan.out_dir.join(format!(
         "focus_{:06}_{}f.{}",
-        indices[0],
-        indices.len(),
+        plan.indices[0],
+        total,
         format.ext()
     ));
     let deep = format == StillFormat::Tiff16;
-    export::write_single_still(&paths[indices[0]], &dst, &mut fused, w, h, deep, &options)
-        .map_err(|e| format!("写焦点合成成片失败：{}", clip_echo(&e.to_string())))?;
+    export::write_single_still(
+        &plan.paths[plan.indices[0]],
+        &dst,
+        &mut fused,
+        w,
+        h,
+        deep,
+        &plan.options,
+    )
+    .map_err(|e| format!("写焦点合成成片失败：{}", clip_echo(&e.to_string())))?;
+    let count = plan.indices.len();
     Ok(json!({
         "path": dst.display().to_string(),
         "kind": "focus",
-        "frames": indices.len(),
-        "indices": indices,
+        "frames": count,
+        "indices": plan.indices,
         "width": w,
         "height": h,
         // 机器键，**不发中文 reason**：MCP 客户端没有 i18n 漏斗。
@@ -3750,6 +3866,7 @@ fn build_commands() -> Vec<Command> {
                     "smooth_z": {"type": "integer", "minimum": 0, "maximum": 16, "default": 1, "description": "深度图去斑半径（px，模值滤波），只对 depthmap 生效"},
                     "feather": {"type": "number", "minimum": 0, "maximum": 64, "default": 2, "description": "过渡羽化半径（px），小于 0.5 视为硬切，只对 depthmap 生效"},
                     "out_dir": {"type": "string", "description": "输出目录（不能是序列根或其上级）；省略用序列根下 焦点合成/"},
+                    "background": {"type": "boolean", "default": false, "description": "true 时后台合成并立即返回，用 aevum_align_status 查进度，aevum_cancel 取消；长任务期间 status / cancel 都能应答"},
                     "format": {"type": "string", "enum": ["png8", "tiff16", "jpeg", "webp", "avif"], "default": "png8"},
                     "quality": {"type": "integer", "minimum": 1, "maximum": 100, "description": "压缩质量，只对 jpeg / avif 生效"},
                     "dynamic": {"type": "string", "enum": ["sdr", "hdr-pq"], "default": "sdr", "description": "输出动态范围：sdr=标准，hdr-pq=PQ（SMPTE ST 2084）+ BT.2020 + 10bit，参考白按 203 nits 落地、>1 的高光沿曲线尾部继续上升；hdr-pq 目前只有 avif 装得下，色域固定 rec2020（传别的会报错）"},
