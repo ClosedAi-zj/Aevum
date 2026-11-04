@@ -185,11 +185,44 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // disagree for tens of frames (the canvas ends up sitting on the dock tabs -- see
     // `text_never_overlaps_in_any_module`). The layout constants are right here, and
     // deriving the edge from them beats depending on a third party's internal state.
-    let right_inset =
-        if state.show_strip { STRIP_W } else { 0.0 } + if state.show_dock { DOCK_W } else { 0.0 };
+    // 内侧那一侧要按 `layout.dock_side` 算：右坞时夹右边、左坞时夹左边。老写法
+    // 一律当右边算，用户把面板摆到左边（布局预设允许，且会落盘）画布就凭空少
+    // 372px，右半边留白。
+    //
+    // The inset goes on the side the dock actually sits on: clamp the right edge for a
+    // right dock, the left edge for a left one. The old code always clamped the right,
+    // so moving the panes to the left (a persisted layout choice) stole 372 px from the
+    // canvas and left a blank band on the right.
+    let strip_w = if state.show_strip { STRIP_W } else { 0.0 };
+    let dock_w = if state.show_dock { DOCK_W } else { 0.0 };
+    let right_inset = strip_w + if dock_left { 0.0 } else { dock_w };
+    let left_inset = if dock_left { dock_w } else { 0.0 };
+    // 中间区自己也得钉住：`right_inset` 只交代画布**内部**怎么排，管不了
+    // CentralPanel 占多宽。而 CentralPanel 拿的是「所有面板之后剩下的空间」——
+    // 右坞内容一旦比 372 宽，egui 会把面板 rect 整体往右推（`set_rect_size` 保
+    // 右边界），剩下的空间就伸进面板里，画布底色盖掉页签与推子左缘（2026-11-05
+    // 合成模块英文界面实测：溢出 86px）。给 CentralPanel 一个算出来的 max_rect，
+    // 它就永远压不到面板上，不管面板内容多长。
+    //
+    // The centre area needs pinning too: `right_inset` only says how the canvas lays
+    // itself out, not how wide CentralPanel may be, and CentralPanel takes whatever is
+    // left after all panels. Let the dock content exceed 372 px and egui pushes the
+    // panel rect right (`set_rect_size` keeps the right edge), the remainder then spills
+    // into the panel, and the canvas fill paints over the tabs and the left edge of the
+    // sliders (measured on the English Merge module, 2026-11-05: 86 px of overflow).
+    // Handing CentralPanel a computed max_rect keeps it off the panel no matter how long
+    // the panel's content gets.
+    let mut centre = root.available_rect_before_wrap();
+    centre.min.x = centre.min.x.max(full.left() + left_inset);
+    centre.max.x = centre
+        .max
+        .x
+        .min(full.right() - right_inset)
+        .max(centre.min.x + 1.0);
+    let mut centre_ui = root.new_child(egui::UiBuilder::new().max_rect(centre).id_salt("centre"));
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(surround()))
-        .show(root, |ui| canvas_panel(state, ui, right_inset));
+        .show(&mut centre_ui, |ui| canvas_panel(state, ui, right_inset));
 
     state.history_commit();
     presets_window(state, &ctx);

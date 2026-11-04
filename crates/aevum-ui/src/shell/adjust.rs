@@ -865,41 +865,36 @@ pub(crate) fn copies_group(state: &mut AppState, ui: &mut Ui) {
 }
 
 fn hdr_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
-    let mut go = false;
     let busy = state.merge_kind == Some(MergeKind::Hdr);
     // 快照对账：参数真的变了才置落盘脏标记（见 stack_group 的说明）。
     let before_around = state.hdr_around;
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(crate::i18n::t!("从当前帧起，前后各取"))
-                .size(SIZE_SMALL)
-                .color(dim()),
-        );
-        ui.add_enabled(
+    let cap = both_sides_caption(state.hdr_around);
+    span_row(
+        ui,
+        crate::i18n::t!("从当前帧起，前后各取"),
+        &mut state.hdr_around,
+        1..=4,
+        busy,
+        cap,
+    );
+    let go = ui
+        .add_enabled(
             !busy,
-            egui::DragValue::new(&mut state.hdr_around)
-                .range(1..=4)
-                .speed(0.2),
-        );
-        ui.label(
-            RichText::new(both_sides_caption(state.hdr_around))
-                .size(SIZE_SMALL)
-                .color(dim()),
-        );
-        go = ui
-            .add_enabled(
-                !busy,
-                egui::Button::new(
-                    RichText::new(if busy { "合并中…" } else { "合并" }).size(SIZE_CHROME),
-                )
-                .min_size(Vec2::new(0.0, BAR_H))
-                .corner_radius(radius_control()),
+            egui::Button::new(
+                RichText::new(if busy {
+                    crate::i18n::t!("合并中…")
+                } else {
+                    crate::i18n::t!("合并")
+                })
+                .size(SIZE_CHROME),
             )
-            .on_hover_text(crate::i18n::t!(
-                "把这一段包围曝光融成一张静帧，写进输出目录"
-            ))
-            .clicked();
-    });
+            .min_size(Vec2::new(0.0, BAR_H))
+            .corner_radius(radius_control()),
+        )
+        .on_hover_text(crate::i18n::t!(
+            "把这一段包围曝光融成一张静帧，写进输出目录"
+        ))
+        .clicked();
     if go {
         let args = serde_json::json!({"around": state.hdr_around, "confirm": true});
         if let Err(e) = state.run_ui_command(ctx, "hdr.merge", &args) {
@@ -925,44 +920,33 @@ fn hdr_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
 }
 
 fn pano_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
-    let mut go = false;
     let busy = state.merge_kind == Some(MergeKind::Pano);
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(crate::i18n::t!("当前帧后再拼"))
-                .size(SIZE_SMALL)
-                .color(dim()),
-        );
-        ui.add_enabled(
+    span_row(
+        ui,
+        crate::i18n::t!("当前帧后再拼"),
+        &mut state.pano_around,
+        1..=11,
+        busy,
+        crate::i18n::t!("张").to_owned(),
+    );
+    let go = ui
+        .add_enabled(
             !busy,
-            egui::DragValue::new(&mut state.pano_around)
-                .range(1..=11)
-                .speed(0.2),
-        );
-        ui.label(
-            RichText::new(crate::i18n::t!("张"))
-                .size(SIZE_SMALL)
-                .color(dim()),
-        );
-        go = ui
-            .add_enabled(
-                !busy,
-                egui::Button::new(
-                    RichText::new(if busy {
-                        crate::i18n::t!("拼接中…")
-                    } else {
-                        crate::i18n::t!("拼接")
-                    })
-                    .size(SIZE_CHROME),
-                )
-                .min_size(Vec2::new(0.0, BAR_H))
-                .corner_radius(radius_control()),
+            egui::Button::new(
+                RichText::new(if busy {
+                    crate::i18n::t!("拼接中…")
+                } else {
+                    crate::i18n::t!("拼接")
+                })
+                .size(SIZE_CHROME),
             )
-            .on_hover_text(crate::i18n::t!(
-                "把当前帧与其后相邻几张接成一张全景，写进输出目录"
-            ))
-            .clicked();
-    });
+            .min_size(Vec2::new(0.0, BAR_H))
+            .corner_radius(radius_control()),
+        )
+        .on_hover_text(crate::i18n::t!(
+            "把当前帧与其后相邻几张接成一张全景，写进输出目录"
+        ))
+        .clicked();
     if go {
         // pano_around 就是「当前帧之后再接几张」，与 pano.merge 的 around 同义。
         let args = serde_json::json!({"around": state.pano_around, "confirm": true});
@@ -1003,24 +987,15 @@ fn stack_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         state.stack_sigma,
         state.stack_fill,
     );
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(crate::i18n::t!("从当前帧起，前后各取"))
-                .size(SIZE_SMALL)
-                .color(dim()),
-        );
-        ui.add_enabled(
-            !busy,
-            egui::DragValue::new(&mut state.stack_around)
-                .range(1..=32)
-                .speed(0.2),
-        );
-        ui.label(
-            RichText::new(both_sides_caption(state.stack_around))
-                .size(SIZE_SMALL)
-                .color(dim()),
-        );
-    });
+    let cap = both_sides_caption(state.stack_around);
+    span_row(
+        ui,
+        crate::i18n::t!("从当前帧起，前后各取"),
+        &mut state.stack_around,
+        1..=32,
+        busy,
+        cap,
+    );
     ui.horizontal_wrapped(|ui| {
         for mode in Mode::ALL {
             let picked = bar_chip(ui, mode.cn(), state.stack_mode == mode)
@@ -1122,6 +1097,82 @@ fn both_sides_caption(around: u32) -> String {
 fn forward_caption(around: u32, cap: usize) -> String {
     // 只往后取 N 帧 = 当前帧 + 之后 N 帧，共 N+1；超过 cap 就得分段。
     crate::i18n::tr_fmt("帧（共 {} 帧，上限 {}）", &[&(around + 1), &cap])
+}
+
+/// 取帧行：「说明 + 数字 + 括号解释」，**按实测宽度选行数**。
+///
+/// 为什么不用 `ui.horizontal_wrapped`：egui 的折行布局对**文本**不可靠——在
+/// `horizontal_wrapped` 里，一个需要折行的 `Label` 会被重新按整行宽度排版并画回
+/// 行首，于是「从当前帧起，前后各取」和「帧（共 3 帧）」叠在同一位置（判据
+/// `ui_tokens::text_never_overlaps_in_any_module` 当场红）。而原来的 `ui.horizontal`
+/// 不许折行，英文
+/// 「From the current frame, take 1 frames on each side (3 frames in all)」有 418px，
+/// 比 344px 的面板宽 86px —— 后果不是「文字被裁」这么轻：egui 在内容溢出时会把
+/// 面板 rect 整体往右推（`set_rect_size` 保右边界），右坞一挪，后面声明的工具轨和
+/// 中间画布跟着错位，画布底色直接盖掉面板左缘的页签。
+///
+/// 所以这里自己量：三段都用 `layout_no_wrap` 量出真实宽度，塞得下就一行，
+/// 塞不下就把说明提出来单独一行（垂直布局里的 `Label` 折行是可靠的），再不行
+/// 三段各一行。行数只由实测宽度决定，与语言、字号档位都无关。
+///
+/// The frame-span row: "lead-in + number + parenthetical", **line count chosen from
+/// measured widths**.
+///
+/// Why not `ui.horizontal_wrapped`: egui's wrapping layout is unreliable for *text* --
+/// a `Label` that needs to wrap is re-laid out at full row width and painted back at the
+/// row origin, so "从当前帧起，前后各取" and "帧（共 3 帧）" land on top of each other
+/// (`ui_tokens::text_never_overlaps_in_any_module` catches it). The old `ui.horizontal`
+/// cannot wrap at all, and the English "From the current frame, take 1 frames on each
+/// side (3 frames in all)" measures 418 px against a 344 px panel -- 86 px too wide. The
+/// damage is worse than clipped text: egui pushes the whole panel rect right when content
+/// overflows (`set_rect_size` keeps the right edge), and with the dock moved the tool rail
+/// and the central canvas declared after it shift too, painting the canvas fill over the
+/// dock's left edge.
+///
+/// So the widths are measured here: `layout_no_wrap` for each piece, one row when it
+/// fits, otherwise the lead-in gets its own line (a `Label` wraps reliably in a vertical
+/// layout), and three rows when even the number plus the caption is too wide. The line
+/// count follows measurement alone -- independent of language and font step.
+fn span_row(
+    ui: &mut Ui,
+    lead: &str,
+    n: &mut u32,
+    range: std::ops::RangeInclusive<u32>,
+    busy: bool,
+    caption: String,
+) {
+    let f = font(SIZE_SMALL);
+    let p = ui.painter().clone();
+    let lead_label = || RichText::new(lead).size(SIZE_SMALL).color(dim());
+    let w_lead = p.layout_no_wrap(lead.to_owned(), f.clone(), dim()).size().x;
+    let w_cap = p.layout_no_wrap(caption.clone(), f.clone(), dim()).size().x;
+    let gap = ui.spacing().item_spacing.x;
+    // DragValue 按内容自适应宽，`interact_size.x` 是它的下限：按下限估，宁可早折行。
+    let dv = ui.spacing().interact_size.x;
+    let avail = ui.available_width();
+    let number = |ui: &mut Ui, n: &mut u32| {
+        ui.add_enabled(
+            !busy,
+            egui::DragValue::new(n).range(range.clone()).speed(0.2),
+        );
+    };
+    if w_lead + gap + dv + gap + w_cap <= avail {
+        ui.horizontal(|ui| {
+            ui.label(lead_label());
+            number(ui, n);
+            ui.label(RichText::new(caption).size(SIZE_SMALL).color(dim()));
+        });
+    } else if dv + gap + w_cap <= avail {
+        ui.label(lead_label());
+        ui.horizontal(|ui| {
+            number(ui, n);
+            ui.label(RichText::new(caption).size(SIZE_SMALL).color(dim()));
+        });
+    } else {
+        ui.label(lead_label());
+        number(ui, n);
+        ui.label(RichText::new(caption).size(SIZE_SMALL).color(dim()));
+    }
 }
 
 /// 焦点组的「先对齐」提示：序列开着、还没对齐、且这一组帧够长时才值得提醒。
@@ -1301,27 +1352,15 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     .on_hover_text(crate::i18n::t!(
         "先估每帧的 8×6 网格位移，再逐块补偿：对焦时的呼吸式轻微缩放也能压住。收益不足 0.5% 会自动回退成不做（成片与关闭时逐点一致）；估计失败照样出图，只是按未对齐几何。默认关闭"
     ));
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(crate::i18n::t!("从当前帧起，向后多取"))
-                .size(SIZE_SMALL)
-                .color(dim()),
-        );
-        ui.add_enabled(
-            !busy,
-            egui::DragValue::new(&mut state.focus_around)
-                .range(1..=31)
-                .speed(0.2),
-        );
-        ui.label(
-            RichText::new(forward_caption(
-                state.focus_around,
-                aevum_core::focus::MAX_FRAMES,
-            ))
-            .size(SIZE_SMALL)
-            .color(dim()),
-        );
-    });
+    let cap = forward_caption(state.focus_around, aevum_core::focus::MAX_FRAMES);
+    span_row(
+        ui,
+        crate::i18n::t!("从当前帧起，向后多取"),
+        &mut state.focus_around,
+        1..=31,
+        busy,
+        cap,
+    );
     // 测度半径与无细节阈值是深度图法的两根主梁，各挂一句口径说明。
     //
     // The measure radius and the featureless threshold are the two girders of the depth-map
@@ -1586,27 +1625,15 @@ fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             }
         }
     });
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(crate::i18n::t!("从当前帧起，向后多取"))
-                .size(SIZE_SMALL)
-                .color(dim()),
-        );
-        ui.add_enabled(
-            !busy,
-            egui::DragValue::new(&mut state.tb_around)
-                .range(1..=31)
-                .speed(0.2),
-        );
-        ui.label(
-            RichText::new(forward_caption(
-                state.tb_around,
-                aevum_core::timeblend::MAX_FRAMES,
-            ))
-            .size(SIZE_SMALL)
-            .color(dim()),
-        );
-    });
+    let cap = forward_caption(state.tb_around, aevum_core::timeblend::MAX_FRAMES);
+    span_row(
+        ui,
+        crate::i18n::t!("从当前帧起，向后多取"),
+        &mut state.tb_around,
+        1..=31,
+        busy,
+        cap,
+    );
     if state.tb_layout == Layout::Bands {
         ui.horizontal(|ui| {
             ui.label(

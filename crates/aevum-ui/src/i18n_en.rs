@@ -479,6 +479,8 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("右侧竖条", "Right rail"),
     ("右侧面板", "Right panel"),
     ("右键「关键词」加词或去词；筛选条按词收窄", "Right-click a keyword to add or remove it; the filter bar narrows by keyword"),
+    ("合并", "Merge"),
+    ("合并中…", "Merging…"),
     ("合成", "Merge"),
     ("合成中…", "Blending…"),
     ("合成前自动对齐", "Auto-align before stacking"),
