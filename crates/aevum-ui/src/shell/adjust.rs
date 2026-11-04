@@ -1944,6 +1944,8 @@ fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
         ("grade", adjust_grade(state, ui)),
         ("detail", adjust_detail(state, ui)),
         ("optics", adjust_optics(state, ui)),
+        ("geometry", adjust_geometry(state, ui)),
+        ("retouch", adjust_retouch(state, ui)),
         ("effects", adjust_effects(state, ui)),
         ("look", adjust_look(state, ui)),
     ] {
@@ -2500,6 +2502,190 @@ fn profiles_body(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
 /// 光学区：ACR 的 Optics 面板——手动校正三项在前，相机/镜头配置文件在后
 /// （配置文件折出的畸变/色差/暗角先于手动值生效，排在后面读起来是"标定打底"）。
 ///
+/// 几何：透视校正。自动一路只修梯形（竖线收敛到一个画外消失点），不修旋转、
+/// 不修枕形畸变——证据不足时宁可不动作，也不猜一个把画面撕歪的四边形。
+///
+/// Geometry: perspective correction. The automatic path fixes keystone only (vertical lines
+/// converging to an off-frame vanishing point); it does not fix rotation or pincushion. With
+/// insufficient evidence it does nothing rather than guess a quad that warps the frame.
+fn adjust_geometry(state: &mut AppState, ui: &mut Ui) -> bool {
+    if !group_header(ui, state, "geometry", "几何", false) {
+        return false;
+    }
+    let mut auto = false;
+    let mut clear = false;
+    ui.horizontal(|ui| {
+        auto = bar_button(ui, "自动直立")
+            .on_hover_text(crate::i18n::t!(
+                "找画面里的竖直主直线，把梯形拉正；只修上下透视，不修旋转与畸变"
+            ))
+            .clicked();
+        clear = bar_button(ui, "清除")
+            .on_hover_text(crate::i18n::t!("卸下透视校正，回到整幅画面"))
+            .clicked();
+    });
+    if auto {
+        state.auto_note = Some(match state.upright_auto() {
+            Ok(()) => {
+                crate::i18n::t!("已按竖直主直线拉正；四边形之外的一圈被裁掉了，这是校正的代价")
+                    .to_owned()
+            }
+            Err(e) => e,
+        });
+    }
+    let mut changed = false;
+    if clear {
+        changed |= state.upright_clear();
+    }
+    // 状态行报的是「上边比下边窄多少」：梯形校正的全部意义就在这个数上，比四个角点
+    // 的坐标好读得多。单位方（没有动作）按「未校正」显示，不报 0.0%。
+    //
+    // The status line reports how much narrower the top edge is than the bottom: that ratio is
+    // the whole point of keystone correction and reads far better than four corner coordinates.
+    // The unit square (no action) shows as "not corrected" rather than 0.0%.
+    match state.params.upright {
+        Some(q) if !q.is_identity() => {
+            let top = (q.p[1].0 - q.p[0].0).abs();
+            let bottom = (q.p[2].0 - q.p[3].0).abs();
+            let pct = if bottom > 1e-9 {
+                (bottom - top) / bottom * 100.0
+            } else {
+                0.0
+            };
+            let label = if pct.abs() < 0.05 {
+                crate::i18n::t!("已启用（四边形接近整幅）").to_owned()
+            } else if pct > 0.0 {
+                crate::i18n::tr_fmt("已拉正 · 上边比下边窄 {:.1}%", &[&pct])
+            } else {
+                crate::i18n::tr_fmt("已拉正 · 上边比下边宽 {:.1}%", &[&(-pct)])
+            };
+            kv(ui, "状态", label, text());
+        }
+        _ => kv(ui, "状态", crate::i18n::t!("未校正"), dim()),
+    }
+    changed
+}
+
+/// 修复：画笔设定 + 已落笔触的撤销。
+///
+/// 落点在画布上（工具条选「修复」），不在这个组里——参数面板负责「笔有多粗」，
+/// 画布负责「点在哪儿」，两者分开才不会做成一个「先输入坐标再回车」的表单。
+///
+/// Repair: brush settings plus undo for placed strokes.
+///
+/// Strokes land on the canvas (pick "Heal" in the tool bar), not in this group: the panel owns
+/// "how big is the brush", the canvas owns "where it goes". Keeping them apart avoids turning
+/// this into a form where you type coordinates and press enter.
+fn adjust_retouch(state: &mut AppState, ui: &mut Ui) -> bool {
+    if !group_header(ui, state, "retouch", "修复", false) {
+        return false;
+    }
+    let mut changed = false;
+    let mode = ui
+        .horizontal(|ui| {
+            let mut hit = false;
+            if bar_chip(ui, "修复", !state.heal_clone).clicked() && state.heal_clone {
+                state.heal_clone = false;
+                state.heal_src = None;
+                hit = true;
+            }
+            if bar_chip(ui, "仿制", state.heal_clone).clicked() && !state.heal_clone {
+                state.heal_clone = true;
+                state.heal_src = None;
+                hit = true;
+            }
+            hit
+        })
+        .inner;
+    changed |= mode;
+
+    changed |= slider_row(
+        ui,
+        "heal-radius",
+        "半径",
+        &mut state.heal_radius,
+        0.5,
+        8.0,
+        2.0,
+        1,
+        false,
+        "%",
+        None,
+        true,
+        "占画面长边的百分比：拖到 2% 大致是一颗灰尘，6% 以上是抹掉一根电线",
+    );
+    changed |= slider_row(
+        ui,
+        "heal-feather",
+        "羽化",
+        &mut state.heal_feather,
+        0.0,
+        100.0,
+        35.0,
+        0,
+        false,
+        "%",
+        None,
+        true,
+        "边缘过渡占半径的比例：0 是硬边，100 从中心淡到边",
+    );
+
+    let n = state.params.retouch.len();
+    kv(
+        ui,
+        "笔触",
+        if n == 0 {
+            crate::i18n::t!("还没有").to_owned()
+        } else {
+            crate::i18n::tr_fmt("{} 笔", &[&n])
+        },
+        if n == 0 { dim() } else { text() },
+    );
+    let mut undo = false;
+    let mut clear = false;
+    ui.horizontal(|ui| {
+        undo = bar_chip(ui, "撤销一笔", false)
+            .on_hover_text(crate::i18n::t!("去掉最后落下的那一笔"))
+            .clicked();
+        clear = bar_chip(ui, "全部清空", false)
+            .on_hover_text(crate::i18n::t!("去掉这台相机这一帧上的全部修复笔触"))
+            .clicked();
+    });
+    if undo {
+        changed |= state.heal_undo();
+    }
+    if clear {
+        changed |= state.heal_clear();
+    }
+
+    // 仿制模式下报一句「下一步是取源」：不然点了没反应，人会以为坏了。
+    //
+    // In clone mode, say "next tap picks the source": otherwise the first tap does nothing and
+    // reads as broken.
+    if state.heal_clone {
+        kv(
+            ui,
+            "仿制源",
+            match state.heal_src {
+                Some(_) => crate::i18n::t!("已取；再点画面即落笔").to_owned(),
+                None => crate::i18n::t!("在画面上点一下取源").to_owned(),
+            },
+            if state.heal_src.is_some() {
+                accent()
+            } else {
+                dim()
+            },
+        );
+    }
+    if !state.heal_can_place() {
+        note(
+            ui,
+            crate::i18n::t!("画布当前不是整幅（拉直 / 推近 / 裁剪中），先复位再落点"),
+        );
+    }
+    changed
+}
+
 /// Optics, mirroring ACR: the three manual corrections first, then the camera/lens
 /// profiles (what the profile derives is applied ahead of the manual sliders, so
 /// reading it last says "the calibration is the base layer").

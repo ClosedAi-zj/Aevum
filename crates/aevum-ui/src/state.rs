@@ -39,10 +39,12 @@ use aevum_core::interp;
 use aevum_core::journal;
 use aevum_core::mask;
 use aevum_core::metrics::{self, FrameMetrics};
+use aevum_core::perspective;
 use aevum_core::project::{self, AlignState, GradeCopy, ProjectFile, RenderState};
 use aevum_core::qa::{self, Finding};
 use aevum_core::queue::{self, QueueItem, QueueStatus};
 use aevum_core::retime::{self, Retime, SpeedKey};
+use aevum_core::retouch;
 use aevum_core::sequence::{Sequence, SequenceError};
 use aevum_core::warp::{self, Framing};
 use aevum_core::watermark::{Spot, Watermark, WatermarkKind};
@@ -603,15 +605,21 @@ impl MotionBox {
 pub enum Tool {
     Hand,
     Zoom,
+    /// 修复画笔：在画面上点按落笔，把斑点处的像素按周边重新生成。
+    ///
+    /// The healing brush: tap on the canvas to lay a stroke that regenerates the patch from
+    /// its surroundings.
+    Heal,
     Crop,
     Compare,
     Grid,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 5] = [
+    pub const ALL: [Tool; 6] = [
         Tool::Hand,
         Tool::Zoom,
+        Tool::Heal,
         Tool::Crop,
         Tool::Compare,
         Tool::Grid,
@@ -621,6 +629,7 @@ impl Tool {
         match self {
             Tool::Hand => "抓手",
             Tool::Zoom => "缩放",
+            Tool::Heal => "修复",
             Tool::Crop => "裁剪",
             Tool::Compare => "对比",
             Tool::Grid => "网格",
@@ -631,6 +640,7 @@ impl Tool {
         match self {
             Tool::Hand => "抓手 (H) · 拖动画布",
             Tool::Zoom => "缩放 (Z) · 单击放大，Alt 单击缩小",
+            Tool::Heal => "修复 (J) · 点按斑点亮斑修复，拖动连成一片；仿制模式下先点源再点目标",
             Tool::Crop => "裁剪 (C) · 画幅与辅助线",
             Tool::Compare => "前后对比 (\\) · 左右分割",
             Tool::Grid => "网格 (G) · 三分线",
@@ -641,6 +651,7 @@ impl Tool {
         match self {
             Tool::Hand => Glyph::Hand,
             Tool::Zoom => Glyph::Zoom,
+            Tool::Heal => Glyph::Heal,
             Tool::Crop => Glyph::Crop,
             Tool::Compare => Glyph::Compare,
             Tool::Grid => Glyph::Grid,
@@ -1651,6 +1662,35 @@ pub struct AppState {
     /// brush's current tool state and does not enter the undo history.
     pub brush_radius: f64,
     pub brush_hardness: f64,
+    /// 修复笔刷半径：占画面**长边**的百分比（0.5~8）。定尺寸的是落笔那一刻的值，
+    /// 之后改推子不回头改已经落下的点——和画笔半径同一条规矩。
+    ///
+    /// Healing-brush radius as a percentage of the frame's **long edge** (0.5-8). Each stroke
+    /// takes the value at the moment it lands; moving the slider later does not resize it,
+    /// the same rule as the mask brush radius.
+    pub heal_radius: f64,
+    /// 修复笔刷羽化：占半径的百分比（0~100）。0 是硬边，100 从中心淡到边缘。
+    ///
+    /// Healing-brush feather as a percentage of the radius (0-100). 0 is a hard edge, 100
+    /// fades from the centre all the way out.
+    pub heal_feather: f64,
+    /// 仿制模式：先点一下**取源**，之后每一点都从「源 + 位移」搬运像素。
+    /// 关着是修复（斑内解拉普拉斯，用周边像素当边界）。
+    ///
+    /// Clone mode: the first tap **picks the source**, and every later tap transports pixels
+    /// from "source plus offset". Off means heal (solve the Laplacian inside the spot with the
+    /// surroundings as the boundary).
+    pub heal_clone: bool,
+    /// 已取的仿制源（整幅归一化坐标）。`None` 表示下一次点击是取源而不是落笔。
+    ///
+    /// The picked clone source (normalized frame coordinates). `None` means the next tap picks
+    /// the source instead of laying a stroke.
+    pub heal_src: Option<(f32, f32)>,
+    /// 上一次落点的画布坐标：拖动时按间距补点，免得一帧一个点把笔触刷成一片。
+    ///
+    /// The canvas position of the last stroke: dragging lays points at a spacing, otherwise one
+    /// point per frame would smear the stroke into a blob.
+    pub heal_last: Option<egui::Pos2>,
     pub brush_flow: f64,
     pub brush_erase: bool,
     /// 吸管取色态：下一次画布单击把像素色相写进选中蒙版的颜色范围。
@@ -2621,6 +2661,11 @@ impl AppState {
             mask_comp: 0,
             mask_drag: None,
             mask_paint: None,
+            heal_radius: 2.0,
+            heal_feather: 35.0,
+            heal_clone: false,
+            heal_src: None,
+            heal_last: None,
             brush_radius: 6.0,
             brush_hardness: 70.0,
             brush_flow: 100.0,
@@ -8839,6 +8884,190 @@ impl AppState {
         history::note("mask", "改局部蒙版");
     }
 
+    // ------------------------------------------------------------ 修复与几何
+
+    /// 预览实际使用的那块取景（非裁剪态）。`None` 表示预览显示整幅。
+    /// 与 `ensure_preview` 用的是同一段判断——两处一旦分叉，画布上的落点就会错位。
+    ///
+    /// The framing the preview actually uses (outside crop-edit mode). `None` means the preview
+    /// shows the whole frame. This is the same decision `ensure_preview` makes: if the two
+    /// diverge, taps on the canvas land in the wrong place.
+    pub fn preview_crop(&self) -> Option<CropRect> {
+        if self.crop_editing() {
+            return (self.rotate != 0.0).then(|| self.crop_view());
+        }
+        let base = if self.align_preview {
+            self.alignment_at(self.selected).0
+        } else {
+            None
+        };
+        self.aspect_crop(base)
+    }
+
+    /// 画布归一化坐标 → 整幅原图归一化坐标。
+    ///
+    /// Canvas-normalized coordinates → whole-frame normalized coordinates.
+    pub fn canvas_to_frame(&self, u: f64, v: f64) -> (f64, f64) {
+        let (w, h) = self.resolution.unwrap_or((1, 1));
+        match self.preview_crop() {
+            Some(c) if c.w > 0 && c.h > 0 => (
+                (f64::from(c.x) + u * f64::from(c.w)) / f64::from(w.max(1)),
+                (f64::from(c.y) + v * f64::from(c.h)) / f64::from(h.max(1)),
+            ),
+            _ => (u, v),
+        }
+    }
+
+    /// 整幅原图归一化坐标 → 画布归一化坐标（落点轮廓回画用）。
+    ///
+    /// Whole-frame normalized coordinates → canvas-normalized coordinates, used to draw the
+    /// outlines of placed strokes.
+    pub fn frame_to_canvas(&self, u: f64, v: f64) -> (f64, f64) {
+        let (w, h) = self.resolution.unwrap_or((1, 1));
+        match self.preview_crop() {
+            Some(c) if c.w > 0 && c.h > 0 => (
+                (u * f64::from(w.max(1)) - f64::from(c.x)) / f64::from(c.w),
+                (v * f64::from(h.max(1)) - f64::from(c.y)) / f64::from(c.h),
+            ),
+            _ => (u, v),
+        }
+    }
+
+    /// 现在能不能在画布上落点。拉直、推近取景、裁剪态下画布显示的都不是整幅，
+    /// 落点会错位——宁可不接，也不要让用户修错地方。
+    ///
+    /// Whether a tap can land right now. Under straightening, a zoomed viewfinder or crop-edit
+    /// mode the canvas does not show the whole frame, so taps would land in the wrong place:
+    /// better to refuse than to repair the wrong spot.
+    pub fn heal_can_place(&self) -> bool {
+        if self.crop_editing() || self.rotate != 0.0 {
+            return false;
+        }
+        let n = self.frame_count();
+        if n == 0 {
+            return false;
+        }
+        self.motion_view_at(self.selected.min(n.saturating_sub(1)), n)
+            .is_none()
+    }
+
+    /// 修复/透视改了参数之后统一走这里：预览重画、预设转自定义、历史记一条。
+    ///
+    /// Everything that changes repair or perspective parameters ends here: the preview is
+    /// redrawn, the preset turns custom, and one history entry is recorded.
+    pub fn retouch_changed(&mut self, note: &str) {
+        self.preview_dirty = true;
+        if self.preset != "自定义" {
+            self.preset = "自定义".to_owned();
+        }
+        history::note("retouch", note);
+    }
+
+    /// 落一笔。`at` 是**整幅归一化**坐标；返回值表示这一下到底有没有落成——
+    /// 仿制模式下第一下是取源，落不成。
+    ///
+    /// Lay one stroke. `at` is in **whole-frame normalized** coordinates; the return value says
+    /// whether it actually landed — in clone mode the first tap only picks the source.
+    pub fn heal_add(&mut self, at: (f64, f64)) -> bool {
+        let r = (self.heal_radius / 100.0).clamp(0.001, f64::from(retouch::SpotSpec::MAX_RADIUS))
+            as f32;
+        let source = if self.heal_clone {
+            let Some(src) = self.heal_src else {
+                self.heal_src = Some((at.0 as f32, at.1 as f32));
+                self.preview_dirty = true;
+                return false;
+            };
+            // 偏移在像素域算、再折成「长边单位」：x 的归一化分母是宽，y 的是高，
+            // 直接相减会得到一个非等比缩放过的偏移。
+            //
+            // The offset is computed in pixels and then folded into long-edge units: `x` is
+            // normalized by the width and `y` by the height, so subtracting them directly
+            // would give a non-uniformly scaled offset.
+            let (w, h) = self.resolution.unwrap_or((1, 1));
+            let long = w.max(h).max(1) as f32;
+            Some((
+                (at.0 as f32 - src.0) * w as f32 / long,
+                (at.1 as f32 - src.1) * h as f32 / long,
+            ))
+        } else {
+            None
+        };
+        self.params.retouch.push(retouch::SpotSpec {
+            x: at.0 as f32,
+            y: at.1 as f32,
+            r,
+            feather: (self.heal_feather / 100.0) as f32,
+            source,
+        });
+        self.retouch_changed("修复笔触");
+        true
+    }
+
+    /// 撤掉最后一笔；画面上没有笔触时返回 `false`（不产生一条空历史）。
+    ///
+    /// Drop the last stroke; returns `false` when there is none, so no empty history entry is
+    /// recorded.
+    pub fn heal_undo(&mut self) -> bool {
+        if self.params.retouch.pop().is_none() {
+            return false;
+        }
+        self.retouch_changed("撤销修复笔触");
+        true
+    }
+
+    /// 清空全部笔触。
+    ///
+    /// Clear every stroke.
+    pub fn heal_clear(&mut self) -> bool {
+        if self.params.retouch.is_empty() {
+            return false;
+        }
+        self.params.retouch.clear();
+        self.retouch_changed("清空修复笔触");
+        true
+    }
+
+    /// 自动直立：用当前帧的草图找主竖线，反推梯形四边形。
+    /// 返回 `Err` 时给的是给用户看的一句话，界面直接显示。
+    ///
+    /// Auto-upright: find the dominant vertical lines in the current frame's sketch and derive
+    /// the keystone quad. On `Err` the string is meant for the user and shown verbatim.
+    pub fn upright_auto(&mut self) -> Result<(), String> {
+        let Some(path) = self
+            .seq
+            .as_ref()
+            .and_then(|s| s.frames.get(self.selected))
+            .map(|f| f.path.clone())
+        else {
+            return Err(crate::i18n::t!("先打开一张照片").to_owned());
+        };
+        let stamp = source_stamp(&path);
+        // 草图就够：`auto_upright` 自己会缩到 640 边再找线，解全幅只是白花几百毫秒。
+        //
+        // The sketch is enough: `auto_upright` shrinks to a 640px edge before looking for
+        // lines, so decoding full size would just waste a few hundred milliseconds.
+        let (buf, w, h, _) = decoded_preview_source(&path, stamp, true, "")?;
+        let q = perspective::auto_upright(&buf, w, h)
+            .ok_or_else(|| crate::i18n::t!("画面里没有可用的竖直主直线").to_owned())?;
+        let q = q
+            .clamped()
+            .ok_or_else(|| crate::i18n::t!("算出的四边形不合法").to_owned())?;
+        self.params.upright = Some(q);
+        self.retouch_changed("自动直立");
+        Ok(())
+    }
+
+    /// 卸下透视校正（回到整幅）。
+    ///
+    /// Drop the perspective correction (back to the whole frame).
+    pub fn upright_clear(&mut self) -> bool {
+        if self.params.upright.take().is_none() {
+            return false;
+        }
+        self.retouch_changed("清除透视校正");
+        true
+    }
+
     // ------------------------------------------------------------- 三层缓存取值
 
     /// 蒙版几何取值：指纹命中直接还缓存切片，零分配（E1/E2/E3 三调用点统一入口）。
@@ -9089,11 +9318,11 @@ impl AppState {
         };
         // 裁剪态下画整块可见区：框外那圈像素得露出来才拖得动，取景框只是覆盖层。
         // 拉直之后可见区就是安全框——转出去的反射角不画出来，画布上不会看到鬼影。
-        let crop = if self.crop_editing() {
-            (self.rotate != 0.0).then(|| self.crop_view())
-        } else {
-            self.aspect_crop(crop)
-        };
+        // 与画布上的落点换算共用 `preview_crop`：两处各写一份，迟早分叉。
+        //
+        // Shares `preview_crop` with the canvas coordinate mapping: two copies would drift.
+        let _ = crop;
+        let crop = self.preview_crop();
         let full_size = self.resolution;
         let framing = Framing {
             angle_deg: self.rotate,
@@ -14029,6 +14258,9 @@ mod focus_depth_tests;
 #[cfg(test)]
 #[path = "state/tests/frame_tests.rs"]
 mod frame_tests;
+#[cfg(test)]
+#[path = "state/tests/heal_tests.rs"]
+mod heal_tests;
 #[cfg(test)]
 #[path = "state/tests/history_tests.rs"]
 mod history_tests;

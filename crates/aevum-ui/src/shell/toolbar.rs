@@ -235,6 +235,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     let hotkey = match t {
                         Tool::Hand => "H",
                         Tool::Zoom => "Z",
+                        Tool::Heal => "J",
                         Tool::Crop => "C",
                         Tool::Compare => "\\",
                         Tool::Grid => "G",

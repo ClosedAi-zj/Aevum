@@ -132,6 +132,7 @@ pub(super) fn handle_input(state: &mut AppState, ctx: &Context) {
         for (key, tool) in [
             (Key::H, Tool::Hand),
             (Key::Z, Tool::Zoom),
+            (Key::J, Tool::Heal),
             (Key::C, Tool::Crop),
         ] {
             if ctx.input(|i| i.key_pressed(key)) {

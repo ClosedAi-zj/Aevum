@@ -45,6 +45,10 @@ pub enum Glyph {
     ///
     /// The Merge module: layers in, one image out.
     Merge,
+    /// 修复画笔：一颗待修的斑，加一枚「重新生成」的十字。
+    ///
+    /// The healing brush: a blemish to repair plus a "regenerate" cross.
+    Heal,
 }
 
 fn pt(r: Rect, x: f32, y: f32) -> Pos2 {
@@ -187,6 +191,18 @@ pub fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32) {
             );
             seg(painter, pt(r, 0.3, 0.42), pt(r, 0.58, 0.42), st);
             seg(painter, pt(r, 0.44, 0.28), pt(r, 0.44, 0.56), st);
+        }
+        Glyph::Heal => {
+            // 一颗斑（圆 + 中心点）加一枚右上角的十字：修复画笔的语义是「把这块
+            // 重新生成掉」，不是「涂一层颜色」，所以用十字而不是橡皮/画笔形状。
+            //
+            // A blemish (circle plus centre dot) with a cross in the upper right: the healing
+            // brush means "regenerate this patch", not "paint over it", so a cross reads better
+            // than an eraser or a brush nib.
+            painter.circle_stroke(pt(r, 0.4, 0.6), s * 0.26, st);
+            painter.circle_filled(pt(r, 0.4, 0.6), s * 0.06, color);
+            seg(painter, pt(r, 0.72, 0.16), pt(r, 0.94, 0.16), st);
+            seg(painter, pt(r, 0.83, 0.05), pt(r, 0.83, 0.27), st);
         }
         Glyph::Crop => {
             seg(painter, pt(r, 0.22, 0.0), pt(r, 0.22, 0.78), st);

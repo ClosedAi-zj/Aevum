@@ -260,6 +260,18 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
                     CursorIcon::ZoomIn
                 }
             }
+            Tool::Heal => {
+                // 不能落点时给「禁止」，比给一个看起来能画的光标要好——后者会让人
+                // 在错的位置点半天才发现什么都没发生。
+                //
+                // A "not allowed" cursor when a tap cannot land beats one that looks ready:
+                // the latter has people tapping the wrong place before noticing nothing happens.
+                if state.heal_can_place() {
+                    CursorIcon::Crosshair
+                } else {
+                    CursorIcon::NotAllowed
+                }
+            }
             Tool::Crop => CursorIcon::Crosshair,
             Tool::Compare => CursorIcon::ResizeHorizontal,
             Tool::Grid => CursorIcon::Crosshair,
@@ -412,6 +424,8 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         crop_overlay(state, ui, &p, img, &resp);
     } else if state.motion_editing() {
         motion_overlay(state, ui, &p, img, &resp);
+    } else if state.module == Module::Develop && state.tool == Tool::Heal {
+        heal_overlay(state, &p, img, &resp);
     }
 
     // 逐帧时间戳叠印：左下角一行「帧号 · 拍摄时间 · 机型曝光」。
@@ -485,6 +499,134 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
 /// 这一层全是矢量：拖动只挪框，一个像素都不重画，所以 24MP 的图也跟手。
 /// 取景态下预览画的是整块可见区（`state.crop_view()`，拉直后即安全框），于是屏幕和
 /// 那幅像素只剩一层等比缩放，换算就在下面两个闭包里。
+/// 修复画笔层：落点、拖动补点，并把已落的笔触与仿制源画在画面上。
+///
+/// Healing-brush layer: lay strokes, top them up while dragging, and draw the placed strokes
+/// and the clone source over the image.
+///
+/// 为什么不在拖动中实时预览「这一笔会变成什么样」：修复要解泊松方程，一个点几毫秒，
+/// 拖动时每帧重算是拿不准的买卖；而修复本身是**立即生效**的（松手前预览已经带着
+/// 这一笔重画过了），所以画一圈轮廓提示位置就够，用户看到的结果就是真的结果。
+///
+/// Why not preview "what this stroke will look like" mid-drag: healing solves a Poisson
+/// equation, a few milliseconds per spot, and recomputing every frame is a bad trade. The
+/// repair already takes effect immediately (the preview redraws with the stroke before the
+/// mouse is released), so an outline marking the position is enough — what the user sees is
+/// the real result.
+fn heal_overlay(state: &mut AppState, p: &egui::Painter, img: Rect, resp: &Response) {
+    let long_px = img.width().max(img.height()).max(1.0);
+    let to_screen = |state: &AppState, u: f64, v: f64| {
+        let (cu, cv) = state.frame_to_canvas(u, v);
+        Pos2::new(
+            img.left() + cu as f32 * img.width(),
+            img.top() + cv as f32 * img.height(),
+        )
+    };
+
+    // 已落的笔触：最后一笔用强调色——撤销撤的就是它，得让人看见撤掉哪一个。
+    //
+    // Placed strokes: the last one takes the accent colour, because that is the one an undo
+    // removes and it should be visible which one that is.
+    let n = state.params.retouch.len();
+    for (i, s) in state.params.retouch.iter().enumerate() {
+        let c = to_screen(state, f64::from(s.x), f64::from(s.y));
+        let r = (f64::from(s.r) * f64::from(long_px)) as f32;
+        let col = if i + 1 == n {
+            accent()
+        } else {
+            Color32::from_white_alpha(110)
+        };
+        p.circle_stroke(c, r.max(2.0), Stroke::new(1.0, col));
+    }
+
+    // 仿制源标记：十字。取源态（还没取）不画，因为此时画的是「下一次点击要取源」。
+    //
+    // Clone source marker: a cross. Nothing is drawn before a source is picked, because at
+    // that point the next tap is the one that picks it.
+    if state.heal_clone {
+        if let Some((su, sv)) = state.heal_src {
+            let c = to_screen(state, f64::from(su), f64::from(sv));
+            let st = Stroke::new(1.2, accent());
+            p.line_segment([c - Vec2::new(7.0, 0.0), c + Vec2::new(7.0, 0.0)], st);
+            p.line_segment([c - Vec2::new(0.0, 7.0), c + Vec2::new(0.0, 7.0)], st);
+        }
+    }
+
+    // 悬停圈：半径就是下一次落笔的半径（改推子立刻看得到）。
+    //
+    // The hover ring: its radius is what the next stroke will use, so moving the slider shows
+    // up at once.
+    if let Some(pos) = resp.hover_pos().filter(|q| img.contains(*q)) {
+        let r = (state.heal_radius / 100.0 * f64::from(long_px)) as f32;
+        p.circle_stroke(
+            pos,
+            r.max(2.0),
+            Stroke::new(1.0, Color32::from_white_alpha(80)),
+        );
+    }
+
+    if resp.drag_stopped() {
+        state.heal_last = None;
+    }
+    if !state.heal_can_place() {
+        return;
+    }
+    let Some(pos) = resp.interact_pointer_pos().filter(|q| img.contains(*q)) else {
+        return;
+    };
+    // 一次按下会同时报 drag_started 与 clicked 两件事，按下那一刻只许落一笔。
+    //
+    // One press reports both drag_started and clicked; only one stroke may land from it.
+    if let Some(last) = state.heal_last
+        && last.distance(pos) < 2.0
+    {
+        return;
+    }
+    if resp.drag_started_by(PointerButton::Primary) || resp.clicked_by(PointerButton::Primary) {
+        heal_place(state, img, pos);
+    } else if resp.dragged_by(PointerButton::Primary) {
+        // 拖动补点的间距取半径的 0.6 倍（下限 4 屏幕像素）：太密会让每一帧都要解几次
+        // 泊松方程，拖起来像在泥里走。
+        //
+        // The drag spacing is 0.6 of the radius (floor of 4 screen pixels): denser would solve
+        // the Poisson equation several times per frame and drag like walking through mud.
+        let step = ((state.heal_radius / 100.0 * f64::from(long_px)) as f32 * 0.6).max(4.0);
+        if state
+            .heal_last
+            .is_none_or(|last| last.distance(pos) >= step)
+        {
+            heal_place(state, img, pos);
+        }
+    }
+}
+
+/// 把一个画布点落成笔触：换算到整幅归一化坐标再交给状态层。
+///
+/// Turn a canvas point into a stroke: convert to whole-frame normalized coordinates and hand
+/// it to the state layer.
+fn heal_place(state: &mut AppState, img: Rect, pos: Pos2) {
+    let u = f64::from((pos.x - img.left()) / img.width().max(1.0));
+    let v = f64::from((pos.y - img.top()) / img.height().max(1.0));
+    if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+        return;
+    }
+    if state.heal_add(state.canvas_to_frame(u, v)) {
+        ui_note(state);
+    }
+    state.heal_last = Some(pos);
+}
+
+/// 落笔后的界面提示：第一笔顺带说一次「这是修复，不是橡皮」，之后不再打扰。
+///
+/// A UI hint after a stroke: the first one also says "this is repair, not an eraser"; later
+/// strokes stay quiet.
+fn ui_note(state: &mut AppState) {
+    if state.params.retouch.len() == 1 {
+        state.auto_note =
+            Some(crate::i18n::t!("修复会按周边像素重新生成，不会把斑点抹成一块灰").to_owned());
+    }
+}
+
 fn crop_overlay(state: &mut AppState, ui: &mut Ui, p: &egui::Painter, img: Rect, resp: &Response) {
     let view = state.crop_view();
     if view.w == 0 || view.h == 0 {

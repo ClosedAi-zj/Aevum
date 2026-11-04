@@ -133,7 +133,11 @@ impl SpotSpec {
         let s = self.sanitise()?;
         let long = w.max(h) as f32;
         let r = s.r * long;
-        if !(r > 0.0) {
+        // 溢出成 `inf` 也算废：`inf` 会让笔触覆盖整幅，解一次泊松要按分钟计。
+        //
+        // Overflowing to `inf` counts as invalid too: `inf` covers the whole frame and one
+        // Poisson solve then takes minutes.
+        if !(r.is_finite() && r > 0.0) {
             return None;
         }
         Some(heal::Spot {
