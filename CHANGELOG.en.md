@@ -15,6 +15,66 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.6.0 — 2026-11-04
+
+Feature release: two new features -- platform delivery presets and deflicker pre-alignment
+(the holy grail) -- plus two semantic fixes in the thumbnail cache.
+
+### Platform delivery presets: size / rate / codec / quality in one click
+
+The four numbers an export asks for are really **platform conventions**, not creative
+parameters. Six built-ins: Douyin vertical, Channels vertical (1080×1920 / 30 / H.264 /
+CRF 20), Xiaohongshu vertical (1080×1440), Bilibili 1080p (1920×1080 / H.264 / CRF 18),
+Bilibili 4K (3840×2160 / H.265 / CRF 20), and Master 1080p (1920×1080 / H.265 / CRF 16).
+
+- The render panel gains a "Platform delivery" group at the top: click a platform and all
+  four numbers land at once; the highlight is **inferred from the numbers**, so changing any
+  one of them extinguishes it immediately.
+- The preset table is editable (`%APPDATA%/aevum-studio/delivery-presets.toml`; the panel's
+  "Preset table..." writes a template): the same key overrides a built-in, new keys append,
+  and a broken table falls back to the built-ins wholesale. No code change needed.
+- The three short-video presets pin 30 fps; Bilibili and Master **leave the frame rate
+  alone** -- for a timelapse the rate is the creative pace, and no platform demands one.
+- MCP: `aevum_export_video` takes an optional `delivery` (a typo is rejected before ffmpeg
+  is even located, listing the valid keys), and `aevum_sequence_info` returns the list.
+
+### Deflicker pre-alignment (holy grail): the day-night transition survives
+
+In a day-to-night timelapse the camera keeps chasing the light, and deflicker cannot tell a
+parameter staircase from real darkening -- it eats either the sunset or the transition. The
+new "Pre-align on EXIF" strips the camera compensation with the exposure triplet, deflickers
+in that scene domain, and folds the gain back: `corr = offset + (EV − EV_ref)`, so the output
+keeps the full transition (assertion: under 2 EV when off, over 6 EV when on).
+
+- Frames without the triplet are **not aligned and not guessed** (correction 0, left to the
+  interpolator); with no EV at all the whole call falls back to plain deflicker -- and both
+  the panel and the reply say so.
+- Panel: the deflicker group gains the switch plus an "N / M frames carry the exposure
+  triplet" coverage line; the switch is stored in the project file.
+- MCP: `aevum_deflicker_analyze` takes an optional `align_exif` and replies with `ev_frames`
+  and `align_note`.
+- Manual: `docs/去闪预对齐.md` (bilingual).
+
+### Two semantic fixes in the thumbnail cache
+
+- A replaced cache file no longer counts as a hit: the hit cap went from "4× the target long
+  side" down to "the target long side" (the write path never exceeds the target, so anything
+  bigger was written by someone else).
+- Very long frame names (paths nearing the 260-character limit) hit the cache again: the name
+  is truncated to a whole-path budget while uniqueness still comes from the hash of the full
+  name; before, such frames recomputed every time -- slower, never wrong.
+
+### Compatibility
+
+- The project file gains one field, `def_align_exif`: an old project without it reads as
+  "off". Additive only, no migration.
+- The MCP tool set is additive only: optional `delivery` on `aevum_export_video`, optional
+  `align_exif` on `aevum_deflicker_analyze`, two extra fields in `aevum_sequence_info` and the
+  open reply; existing parameters and tool names untouched.
+- Presets and parameter persistence, command-line arguments unchanged; the thumbnail cache key
+  is unchanged, so existing caches still hit.
+- Upgrading from 1.5.x: replace the executable, no migration steps.
+
 ## v1.5.2 — 2026-11-04
 
 Patch release: fixes a portrait photos "lying flat" orientation bug in preview and fusion.
