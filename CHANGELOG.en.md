@@ -15,6 +15,94 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.9.0 — 2026-11-05
+
+Feature release: the two P0 gaps are filled in -- a **repair brush** and **perspective correction**
+(including hand-dragged corners), section headers gained an "eye" bypass, headings are genuinely
+bold, and the built-in updater landed. Also fixes three layout and wording problems that made the
+interface look broken.
+
+### Repair brush (`J`)
+
+Paint straight on the canvas to take out dust, blemishes, a wire. "Heal" solves a Laplace problem
+over the surrounding ring and fills the hole in; "clone" samples from an offset. Radius, feather,
+undo one stroke and clear-all live in the Develop panel's "Repair" group.
+
+- Strokes are stored normalised to the frame, so they are independent of crop, straighten and
+  pan/zoom: repair-then-crop and crop-then-repair give the same still. The export chain repairs the
+  **whole frame before cropping**, and a check pins it (a 400×300 crop and an uncropped export must
+  both come out without the spot).
+- Repair runs **before** grading: clarity, sharpening and noise reduction all treat the
+  neighbourhood as structure, so anything left unrepaired gets amplified step by step.
+- Make the brush a little larger than the blemish. With the radius equal to the blemish the feather
+  ring sits exactly on its dark edge, the weight goes to zero and a dark rim is left behind -- it
+  looks like "the repair did nothing" when the brush was simply too small.
+- You cannot paint while cropping, straightening, pan-zoomed in, or with no photo open (the canvas
+  is not showing the whole frame then, so the stroke would land somewhere else). It says which.
+- Baking a `.cube` skips this stage entirely: a LUT can only hold per-pixel operations, and
+  resampling plus a Laplace solve are not per-pixel.
+
+### Perspective correction: auto upright, plus hand-dragged corners
+
+Two things in the "Geometry" group. **Auto upright** solves a four-point perspective from the
+dominant vertical lines; when it cannot, it says so by name (indoor wide-angle shots often have no
+decent long vertical). When it succeeds it warns that the ring outside the quad gets cropped --
+that is the price of the correction.
+
+When auto fails you can **drag the four corners**: press "Corners", four dots appear on the canvas,
+drag each onto a corner of a rectangular object. Each corner drags on its own, double-clicking one
+puts it back, "Done" folds the mode away.
+
+- While dragging, the preview shows the **uncorrected** frame -- the quad has to be drawn on the
+  original trapezoid to be dragged accurately. Parameters and export are untouched.
+- Rotated, cropping and pan-zoomed states disable "Corners" (the canvas is not showing the whole
+  frame).
+
+### Section "eye": see the picture without a group
+
+Each of the nine section headers carries an eye on its left; one click temporarily writes that
+group's parameters back to their defaults so the preview shows the picture "without this group",
+another click brings it back. Project, presets and export do not change by a single field -- the
+preview alone is affected. Dragging a slider in a bypassed group, dragging a curve point, or
+dropping a look lifts the bypass automatically, so it never turns into "the slider moves but the
+picture does not".
+
+### Interface
+
+- Section headings are genuinely bold now (a real 700-weight subset font, 556 KB shipped, rather
+  than a bigger size pretending to be bold).
+- Fix: long text in the right panel used to push the whole panel out of the window -- in English,
+  the Merge module showed tabs as `fo  Keyframes …`, group titles as `rge`, and the canvas lay over
+  the panel's first 86 px. Frame-span rows now pick their line count from measured widths and the
+  panel stays inside the window; a check re-reads every text in the panel across both languages,
+  all seven modules and all four font steps.
+- Fix: moving the panel to the left (a layout preset the app persists) stole 372 px from the canvas
+  and left a blank band on the right.
+- Fix: the HDR "Merge / Merging…" button on the Merge page was still Chinese in the English UI.
+
+### Distribution and updates
+
+- Built-in updater: semantic version comparison (`1.10.0` is newer than `1.9.0`), per-platform
+  asset selection, sha256 verification, a two-level download fallback, and replacing the running
+  exe (wait for exit → rename the old one to `.old` → retry the move → roll back on failure).
+- `scripts/install/aevum.iss` installer script; `scripts/sign.ps1` signing hook (with no
+  certificate it prints one line and exits cleanly -- signing must never be why packaging fails).
+- `AEVUM_READ_ONLY=1`: headless tools stop writing metering caches into the media folder (caches
+  only; the project file is still written only when you save).
+
+### Compatibility
+
+- Project file `.aevum/project.json`: `retouch` (stroke list) and `upright` (four points) are
+  **added** at the end of the parameter block. Older projects open as before; a new project opened
+  in an older build simply ignores those two fields and keeps every other parameter.
+- MCP tool set only grows: `aevum_retouch` (`add` / `list` / `undo` / `clear`) and `aevum_upright`
+  (`get` / `set` / `auto` / `clear`) are new, 41 → 43 tools. One invalid stroke rejects the whole
+  batch and names its index; an out-of-range quad is refused rather than silently clamped.
+- Command line only grows: `--module` now also accepts 合成 / merge / 6 (it used to stop at 0–5, so
+  the Merge page could not be captured).
+
+---
+
 ## v1.8.0 — 2026-11-04
 
 Interface release: the adjust panel now follows Camera Raw's section order, presets and snapshots

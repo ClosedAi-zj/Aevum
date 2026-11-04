@@ -51,7 +51,7 @@
 ; ISCC preprocessor cannot read files, and adding a third-party script would give "build the
 ; installer" one more prerequisite.
 #ifndef MyAppVersion
-  #define MyAppVersion "1.8.0"
+  #define MyAppVersion "1.9.0"
 #endif
 
 [Setup]
