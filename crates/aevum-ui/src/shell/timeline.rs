@@ -449,9 +449,20 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                             );
                         }
                         let rating = state.rating_at(i);
+                        // 星级右对齐、序号左对齐：两者同在底缘带里，早先都从左起画，
+                        // 星级（bottom-14..-7）压着序号字顶（MICRO 10px，顶到
+                        // bottom-11）——每格都叠。水平分道后互不相交。
+                        //
+                        // Stars hug the right edge, the number the left: both live in the
+                        // bottom band, and painting both from the left made the star row
+                        // (bottom-14..-7) overlap the number's cap height (MICRO, up to
+                        // bottom-11) in every cell. Splitting horizontally fixes it.
                         for s in 0..5u8 {
                             let sr = Rect::from_min_size(
-                                Pos2::new(cell.left() + 3.0 + s as f32 * 8.0, cell.bottom() - 14.0),
+                                Pos2::new(
+                                    cell.right() - 3.0 - (5 - s) as f32 * 8.0,
+                                    cell.bottom() - 14.0,
+                                ),
                                 Vec2::splat(7.0),
                             );
                             icons::paint(
@@ -642,31 +653,38 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     }
 
     let n = state.frame_count();
+    // 左段按实测文本宽依次排：早先是 `+94` / `+190` 两枚魔法数字——中文下刚好，
+    // 英文 "Deflicker +0.00 EV" 一出就压到帧号。宽度用 galley 量，两种语言都成立。
+    //
+    // The left run is laid out by measured text width: fixed offsets of +94/+190 fit
+    // Chinese but let English "Deflicker +0.00 EV" collide with the frame counter.
+    // Measuring galleys works for both languages.
     let text_x = rect.left() + 16.0 + idx as f32 * 26.0;
-    p.text(
-        Pos2::new(text_x + 4.0, cy),
-        Align2::LEFT_CENTER,
-        if n > 0 {
-            crate::i18n::tr_fmt(
-                "{} / {}",
-                &[&format!("{:04}", state.selected + 1), &format!("{:04}", n)],
-            )
-        } else {
-            "— / —".to_owned()
-        },
+    let frame_text = if n > 0 {
+        crate::i18n::tr_fmt(
+            "{} / {}",
+            &[&format!("{:04}", state.selected + 1), &format!("{:04}", n)],
+        )
+    } else {
+        "— / —".to_owned()
+    };
+    let frame_g = p.layout_no_wrap(
+        frame_text,
         mono(SIZE_SMALL),
         if n > 0 { muted() } else { dim() },
     );
-    let off = state.offset_at(state.selected);
-    p.text(
-        Pos2::new(text_x + 94.0, cy),
-        Align2::LEFT_CENTER,
-        crate::i18n::tr_fmt("去闪 {} EV", &[&format!("{off:+.2}")]),
-        mono(SIZE_SMALL),
-        if off.abs() > 0.02 { accent() } else { dim() },
-    );
+    let frame_pos = Pos2::new(text_x + 4.0, cy - frame_g.size().y * 0.5);
+    p.galley(frame_pos, frame_g.clone(), muted());
 
-    let mut x = text_x + 190.0;
+    let off = state.offset_at(state.selected);
+    let defl_text = crate::i18n::tr_fmt("去闪 {} EV", &[&format!("{off:+.2}")]);
+    let defl_color = if off.abs() > 0.02 { accent() } else { dim() };
+    let defl_g = p.layout_no_wrap(defl_text, mono(SIZE_SMALL), defl_color);
+    let defl_x = frame_pos.x + frame_g.size().x + 14.0;
+    let defl_pos = Pos2::new(defl_x, cy - defl_g.size().y * 0.5);
+    p.galley(defl_pos, defl_g.clone(), defl_color);
+
+    let mut x = defl_x + defl_g.size().x + 14.0;
     let rating = state.selected_rating();
     for s in 1..=5u8 {
         let r = Rect::from_center_size(Pos2::new(x, cy), Vec2::splat(15.0));
@@ -743,18 +761,31 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         x += 18.0;
     }
 
-    p.text(
-        Pos2::new(rect.right() - 8.0, cy),
-        Align2::RIGHT_CENTER,
-        format!("{:.0} fps", state.output_fps),
-        mono(SIZE_SMALL),
-        muted(),
-    );
-    p.text(
-        Pos2::new(rect.right() - 62.0, cy),
-        Align2::RIGHT_CENTER,
-        crate::i18n::tr_fmt("已评级 {}", &[&state.rated_count()]),
-        font(SIZE_SMALL),
-        dim(),
-    );
+    // 右端两格从右往左排，空间不足逐格让位：窄窗下「已评级 N」「30 fps」原是
+    // `right-62` / `right-8` 两枚固定偏移，会压到色标圆点。先保 fps（数值常看），
+    // 再保已评级；再不够就都让位——它们是读数，不是入口。
+    //
+    // The two right-side readouts chain from the right edge and yield one by one when
+    // space runs out: the old fixed offsets (right-62 / right-8) collided with the
+    // colour-label dots in narrow windows. fps yields last (it is watched live);
+    // both are readouts, never entrances, so dropping them is safe.
+    let fps_text = format!("{:.0} fps", state.output_fps);
+    let fps_g = p.layout_no_wrap(fps_text, mono(SIZE_SMALL), muted());
+    let rated_text = crate::i18n::tr_fmt("已评级 {}", &[&state.rated_count()]);
+    let rated_g = p.layout_no_wrap(rated_text, font(SIZE_SMALL), dim());
+    let mut rx = rect.right() - 8.0;
+    let fps_left = rx - fps_g.size().x;
+    if fps_left > x + 8.0 {
+        let fps_pos = Pos2::new(fps_left, cy - fps_g.size().y * 0.5);
+        p.galley(fps_pos, fps_g, muted());
+        rx = fps_left - 12.0;
+        let rated_left = rx - rated_g.size().x;
+        if rated_left > x + 8.0 {
+            p.galley(
+                Pos2::new(rated_left, cy - rated_g.size().y * 0.5),
+                rated_g,
+                dim(),
+            );
+        }
+    }
 }
