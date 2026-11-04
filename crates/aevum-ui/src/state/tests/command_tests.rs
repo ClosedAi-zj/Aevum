@@ -149,6 +149,11 @@ fn grade_auto_command_writes_absolute_values_and_repeats_identically() {
     img.save(dir.join("dark.png")).expect("写暗帧");
     let ctx = Context::default();
     let mut state = AppState::new();
+    // 无显示环境不启动读盘线程：测光代理退回前台同步解码，判据才可当场断言。
+    //
+    // A display-less environment starts no disk threads: the metering proxy falls back to
+    // the synchronous foreground decode so the assertions can check results on the spot.
+    state.headless = true;
     state
         .run_ui_command(
             &ctx,
@@ -3546,6 +3551,11 @@ fn focus_merge_takes_each_band_from_the_frame_that_holds_the_texture() {
 fn cull_extract_reports_on_dry_run_and_copies_on_confirm() {
     let ctx = Context::default();
     let mut state = AppState::new();
+    // 无显示环境不启动读盘线程：复制退回前台同步路径，判据才可当场断言。
+    //
+    // A display-less environment starts no disk threads: the copy falls back to the
+    // synchronous foreground path so the assertions can check results on the spot.
+    state.headless = true;
     let dir = stack_frame_dir("extract");
     state
         .run_ui_command(

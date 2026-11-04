@@ -374,7 +374,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     state.apply_preset(name);
                 }
                 if bar_button(ui, "自动").clicked() {
-                    state.auto_exposure();
+                    state.auto_exposure(ui.ctx());
                 }
                 if bar_button(ui, "复位").clicked() {
                     state.reset_params();

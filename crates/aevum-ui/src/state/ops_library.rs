@@ -508,24 +508,35 @@ impl AppState {
     /// 集合视图的行：成员路径先在已编目的根目录里找（评级与帧号跟着来），
     /// 找不到的给一行只带路径的占位——目录还没展开过时也能看集合有哪些照片。
     ///
+    /// 查找先建一次 `HashMap`（路径 → 编目条目）再逐行取：集合视图每帧重画，
+    /// 成员 × 编目规模的线性 `find` 一帧跑一遍就是 O(成员×编目) 的白功。
+    ///
     /// The rows of the collection view: member paths are looked up in the catalogued roots
     /// first (so ratings and frame indices come along), and misses get a path-only placeholder
     /// row -- the collection's contents are visible even before a folder has ever been
     /// expanded.
+    ///
+    /// The lookup builds one `HashMap` (path → catalogued entry) up front and reads rows
+    /// from it: the view repaints every frame, and a linear `find` per member over the
+    /// catalogue is O(members x catalogue) of wasted work per frame.
     pub fn lib_collection_rows(&self, col: usize) -> Vec<aevum_core::library::LibFile> {
         let Some(collection) = self.lib_cols.get(col) else {
             return Vec::new();
         };
+        let index: std::collections::HashMap<&Path, &aevum_core::library::LibFile> = self
+            .lib_entries
+            .iter()
+            .flatten()
+            .map(|f| (f.path.as_path(), f))
+            .collect();
         collection
             .files
             .iter()
             .map(|path| {
                 let path = PathBuf::from(path);
-                self.lib_entries
-                    .iter()
-                    .flatten()
-                    .find(|f| f.path == path)
-                    .cloned()
+                index
+                    .get(path.as_path())
+                    .map(|f| (*f).clone())
                     .unwrap_or_else(|| aevum_core::library::LibFile {
                         name: path
                             .file_name()

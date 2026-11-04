@@ -9,8 +9,16 @@ use super::*;
 pub(super) fn adjust_audio(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "audio", "配乐", true) {
         let w = ui.available_width();
+        // 探针在飞（后台 ffmpeg 还在读编码与时长）时控件可看不可点：此刻换文件
+        // 会让迟到回包与用户意图打架。
+        //
+        // While a probe is in flight (a background ffmpeg is still reading codec and
+        // duration) the controls are visible but inert: swapping the file now would pit the
+        // late reply against the user's intent.
+        let probe_busy = state.audio_probe_busy;
         if ui
-            .add(
+            .add_enabled(
+                !probe_busy,
                 egui::Button::new(RichText::new(crate::i18n::t!("选择音频…")).size(SIZE_SMALL))
                     .min_size(Vec2::new(w, 24.0)),
             )
@@ -43,7 +51,10 @@ pub(super) fn adjust_audio(state: &mut AppState, ui: &mut Ui) {
                             .wrap(),
                     );
                 }
-                if bar_button(ui, "移除音频").clicked() {
+                if ui
+                    .add_enabled_ui(!probe_busy, |ui| bar_button(ui, "移除音频").clicked())
+                    .inner
+                {
                     state.set_render_audio(None);
                 }
             }

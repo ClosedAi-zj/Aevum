@@ -73,7 +73,7 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
         });
     });
     if auto {
-        state.auto_exposure();
+        state.auto_exposure(ui.ctx());
     }
     if reset {
         state.reset_params();

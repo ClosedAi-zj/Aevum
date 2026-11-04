@@ -88,7 +88,7 @@ impl AppState {
             "ui.dock" => self.cmd_ui_dock(args),
             "grade.get" => Ok(self.grade_json()),
             "grade.auto" => {
-                self.auto_exposure();
+                self.auto_exposure(ctx);
                 let mut out = self.grade_json();
                 if let Some(note) = &self.auto_note
                     && let Some(obj) = out.as_object_mut()
@@ -107,7 +107,7 @@ impl AppState {
             "hdr.merge" => self.cmd_hdr_merge(ctx, args),
             "pano.merge" => self.cmd_pano_merge(ctx, args),
             "cull.evaluate" => self.cmd_cull_evaluate(args),
-            "cull.extract" => self.cmd_cull_extract(args),
+            "cull.extract" => self.cmd_cull_extract(ctx, args),
             "stack.merge" => self.cmd_stack_merge(ctx, args),
             "timeblend.merge" => self.cmd_timeblend_merge(ctx, args),
             "focus.merge" => self.cmd_focus_merge(ctx, args),

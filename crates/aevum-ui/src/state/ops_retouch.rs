@@ -11,6 +11,16 @@
 
 use super::*;
 
+/// 单位方吸附容差：四角全距单位方小于它就整体归位（2e-3，与 core `quad_from_pair`
+/// 的容差守卫同档）。残差小于这个量在预览上无从分辨，留在参数里却让每次渲染
+/// 都走全幅重采样而不是单位快路。
+///
+/// Unit-square snap tolerance: when every corner is closer than this (2e-3, the same class
+/// as core's `quad_from_pair` tolerance guard) the quad snaps to the unit square. A smaller
+/// residual is invisible in the preview, yet left in the parameters it would push every
+/// render down the full-frame resample path instead of the unit fast path.
+const UPRIGHT_SNAP_EPS: f64 = 2e-3;
+
 impl AppState {
     // ------------------------------------------------------------ 修复与几何
 
@@ -308,13 +318,54 @@ impl AppState {
 
     /// 松手：四边形真有动作才记一条历史（单位方不记，否则空拖一下也会留痕）。
     ///
+    /// 提交时做两道几何收口（与 MCP 侧 `upright.set` 的拒绝口径一致）：
+    ///
+    /// 1. **吸附**：四角都距单位方不到 [`UPRIGHT_SNAP_EPS`]（2e-3，与
+    ///    `quad_from_pair` 的容差守卫同档）就整体归位单位方——残差留在参数里
+    ///    会让每次渲染都付一遍全幅重采样，而视觉上与「没动」无从区分。
+    /// 2. **退化校验**：三点共线 / 面积为零（蝴蝶形四边形）求不出单应，渲染阶段
+    ///    会静默不动作；当场拒绝、写一句具名提示，而不是把坏参数持久化。
+    ///
     /// On release: record one history entry only if the quad actually does something. The unit
     /// square records nothing, so an idle drag leaves no trace.
+    ///
+    /// The commit runs two geometric guards (matching the MCP side's `upright.set` rejection):
+    ///
+    /// 1. **Snap**: when every corner sits within [`UPRIGHT_SNAP_EPS`] (2e-3, the same class
+    ///    as `quad_from_pair`'s tolerance guard) of the unit square, the quad snaps back to
+    ///    the unit square -- a residual left in the parameters would pay a full-frame
+    ///    resample on every render while looking indistinguishable from "untouched".
+    /// 2. **Degeneracy check**: a collinear / zero-area quad (a butterfly shape) admits no
+    ///    homography and the render stage would silently do nothing; the commit refuses it
+    ///    with a named message instead of persisting a dead parameter.
     pub fn upright_commit(&mut self) -> bool {
-        let Some(q) = self.params.upright else {
+        let Some(mut q) = self.params.upright else {
             return false;
         };
+        // 吸附在退化校验之前：被吸回单位方就直接走「没动作」这条路。
+        //
+        // Snap before the degeneracy check: a snapped unit square takes the "no-op" path.
+        let unit = perspective::Quad::default();
+        if q.p
+            .iter()
+            .zip(unit.p)
+            .all(|((x, y), (ux, uy))| (x - ux).hypot(y - uy) < UPRIGHT_SNAP_EPS)
+        {
+            q = unit;
+            self.params.upright = Some(q);
+            return false;
+        }
         if q.is_identity() {
+            return false;
+        }
+        // 退化四边形拒绝写入：撤掉这次拖动留下的四边形，给一句具名提示。
+        //
+        // A degenerate quad is refused: drop the quad this drag left behind and say so.
+        if perspective::homography(&q).is_none() {
+            self.params.upright = None;
+            self.auto_note =
+                Some(crate::i18n::t!("四角交叉，校正未生效——请把角点拖回画面内四角").to_owned());
+            self.preview_dirty = true;
             return false;
         }
         self.retouch_changed("透视四角");

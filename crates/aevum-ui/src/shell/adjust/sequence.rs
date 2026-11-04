@@ -187,11 +187,26 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
             let estimate = bar_button(ui, "预估")
                 .on_hover_text(crate::i18n::t!("只报会复制几帧、共多少字节，不写任何东西"))
                 .clicked();
-            let export = bar_primary(ui, "导出子序列")
-                .on_hover_text(crate::i18n::t!(
-                    "把没被拒收的帧复制成一条新序列：保留 mtime、测光缓存一并带走；开发参数属于源工程、不跟过去"
-                ))
-                .clicked();
+            // 复制在飞时按钮禁用：GB 级整批复制再点一遍等于两路线程写同一个目录。
+            //
+            // The button is disabled while a copy is in flight: clicking again mid-copy means
+            // two threads writing the same folder.
+            let export = ui
+                .add_enabled_ui(!state.cull_export_busy, |ui| {
+                    bar_primary(
+                        ui,
+                        if state.cull_export_busy {
+                            "导出中…"
+                        } else {
+                            "导出子序列"
+                        },
+                    )
+                    .on_hover_text(crate::i18n::t!(
+                        "把没被拒收的帧复制成一条新序列：保留 mtime、测光缓存一并带走；开发参数属于源工程、不跟过去"
+                    ))
+                    .clicked()
+                })
+                .inner;
             if (estimate || export)
                 && let Err(e) = state.run_ui_command(
                     &cull_ctx,

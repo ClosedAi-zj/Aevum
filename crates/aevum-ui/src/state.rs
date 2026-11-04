@@ -1028,6 +1028,37 @@ enum Msg {
         failed: usize,
         cancelled: bool,
     },
+    /// 剔除成子序列的后台任务回包：成功带状态栏 / 历史用的那句话，失败带原因。
+    /// `token` 是发任务时的 `reload_token`，换了序列的迟到回包只清忙碌标记、不落账。
+    ///
+    /// The cull-extract background reply: the sentence for the status bar / history on
+    /// success, the reason on failure. `token` is the `reload_token` at launch; a late reply
+    /// from a switched-away sequence only clears the busy flag and records nothing.
+    CullExtracted {
+        token: u64,
+        result: Result<String, String>,
+    },
+    /// 一键自动的后台测光回包：256 长边代理解码完成（或失败）。
+    /// 结果进 `auto_probe` 缓存；只有仍是当前帧的回包才立刻重算曝光。
+    ///
+    /// The one-click-auto background metering reply: the 256-px proxy decoded (or failed).
+    /// The result lands in the `auto_probe` cache; only a reply for the frame still on screen
+    /// recomputes the exposure right away.
+    AutoProbed {
+        token: u64,
+        path: PathBuf,
+        result: Result<(Vec<f32>, usize, usize), String>,
+    },
+    /// 配乐探针的回包：后台 ffmpeg 读到的编码与时长（或失败原因）。
+    /// 只有仍在用这份配乐的回包才落账，换文件的迟到回包直接丢。
+    ///
+    /// The soundtrack probe reply: the codec and duration a background ffmpeg read (or the
+    /// reason it failed). Only a reply for the soundtrack still in use lands; a late reply
+    /// for a switched file is dropped.
+    AudioProbed {
+        path: PathBuf,
+        result: Result<AudioProbe, String>,
+    },
 }
 
 /// 状态栏剩余时间的滑动窗口。
@@ -1177,6 +1208,13 @@ pub struct AppState {
     pub auto_note: Option<String>,
     /// 自动校正的 256 长边代理：同一帧重复点自动不重复解码。
     auto_probe: Option<(PathBuf, Vec<f32>, usize, usize)>,
+    /// 正在后台解码测光代理的帧路径：同一帧的在飞请求不重复发（防抖），
+    /// 回包落地时清空。
+    ///
+    /// The frame whose 256-px auto probe is decoding in the background: while one request is
+    /// in flight, repeats for the same frame are suppressed (debounce); cleared when the
+    /// reply lands.
+    auto_probe_inflight: Option<PathBuf>,
 
     pub def_window: f64,
     pub def_strength: f64,
@@ -1918,6 +1956,12 @@ pub struct AppState {
     /// every frame.
     pub audio_info: Option<AudioProbe>,
     pub audio_probe_err: Option<String>,
+    /// 配乐探针在飞：后台 ffmpeg 还在读这份配乐的编码与时长。探针期间配乐页的
+    /// 控件保持可看不可动，回包落地后自动恢复。
+    ///
+    /// A soundtrack probe is in flight: a background ffmpeg is still reading this file's codec
+    /// and duration. Audio-page controls stay visible but inert until the reply lands.
+    pub audio_probe_busy: bool,
     pub render_out_dir: PathBuf,
     pub render_video_out: PathBuf,
     pub render_keep_frames: bool,
@@ -1988,6 +2032,16 @@ pub struct AppState {
     qa_done: Arc<AtomicUsize>,
     qa_total: Arc<AtomicUsize>,
     cancel_qa: Arc<AtomicBool>,
+
+    /// 剔除成子序列（`cull.extract`）的后台复制任务。GB 级整批复制放在界面线程上
+    /// 就是几秒到几分钟的死窗口，与合并同构：后台跑，回包经 [`Msg::CullExtracted`]
+    /// 落账；复制期间面板上的「导出子序列」按钮禁用。
+    ///
+    /// The background copy job for `cull.extract`. A GB-scale bulk copy on the UI thread is a
+    /// dead window lasting seconds to minutes, so it runs in the background like a merge; the
+    /// reply lands via [`Msg::CullExtracted`], and the "extract subsequence" button is
+    /// disabled while the copy is in flight.
+    pub cull_export_busy: bool,
 
     /// 批量渲染队列；存盘位置在漫游配置目录，与工程分开。
     ///

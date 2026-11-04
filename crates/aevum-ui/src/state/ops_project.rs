@@ -284,10 +284,26 @@ impl AppState {
     /// 打开序列时检测同目录 `.xmp` 边车：只记下路径给状态栏提示，
     /// **不做静默自动套用**——LR 用户对「打开即所见」有预期，但静默改参数
     /// 也会让「我从哪张图开始调的」说不清，应用与否交给一键按钮。
+    ///
+    /// 只查**前 3 帧**：Lightroom / Camera Raw 的边车按帧名与图同名，而这类序列
+    /// 几乎总是从首帧开始成套带边车（批量改图也是从第一张起按序写盘）；跳帧
+    /// 存在但极罕见。三千帧逐帧 `is_file()` 就是三千次 `stat`，换来的只是那一例
+    /// 罕见情形——不值得让每次开序列都付这笔 I/O。
+    ///
+    /// Detects a sibling `.xmp` sidecar when a sequence opens: only the path is remembered
+    /// for the status-bar hint, **never applied silently** -- Lightroom users expect "open
+    /// and see", but silently changing parameters also muddies "which image did I start
+    /// from"; applying it is a one-click decision.
+    ///
+    /// Only the **first 3 frames** are checked: Lightroom / Camera Raw sidecars are named
+    /// after their frames, and such sequences almost always carry sidecars as a set from
+    /// the first frame (batch edits are written in order starting at frame one); a gap does
+    /// occur but is rare. `is_file()` over three thousand frames is three thousand `stat`s
+    /// bought for that one rare case -- not worth paying on every sequence open.
     pub(super) fn detect_sidecar_hint(&mut self) {
         self.sidecar_hint = None;
         let Some(seq) = &self.seq else { return };
-        for frame in seq.paths() {
+        for frame in seq.paths().into_iter().take(3) {
             let sidecar = xmp::sidecar_for(frame.as_path());
             if sidecar.is_file() {
                 self.sidecar_hint = Some(sidecar);

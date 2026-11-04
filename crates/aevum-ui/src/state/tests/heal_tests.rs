@@ -434,3 +434,98 @@ fn choosing_the_heal_brush_leaves_corner_mode() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 套用预设不得清空修复笔触与透视四角，且要摘掉分区旁路：预设整套替换的是
+/// 调色 / 显影参数，画布上逐点放的内容（笔触、四角）不属于它，旁路则是
+/// 「整套替换后所有组都该回亮」的推论。
+///
+/// Applying a preset must keep the retouch strokes and the perspective quad and lift the
+/// group bypasses: a preset wholesale-replaces the colour / develop parameters only --
+/// per-pixel canvas content (strokes, the quad) is not its business, and bypasses are
+/// cleared because a full replacement means every group lights back up.
+#[test]
+fn applying_a_preset_keeps_retouch_and_upright_and_clears_bypass() {
+    let mut st = AppState::new();
+    st.resolution = Some((4000, 3000));
+    assert!(st.heal_add((0.25, 0.75)), "先落一笔修复");
+    let stroke = st.params.retouch.clone();
+    st.params.upright = Some(perspective::Quad {
+        p: [(0.02, 0.0), (0.98, 0.02), (1.0, 0.98), (0.0, 1.0)],
+    });
+    st.bypassed.insert("basic");
+    st.bypassed.insert("look");
+    st.apply_preset("鲜艳风光");
+    assert_eq!(st.params.retouch, stroke, "预设不得清空修复笔触");
+    assert!(st.params.upright.is_some(), "预设不得清空透视四角");
+    assert!(st.bypassed.is_empty(), "预设整套替换，旁路应当全部摘掉");
+}
+
+/// 蝴蝶形（自交）四边形在提交时被拒：不求出单应就不写参数，撤销这次拖动
+/// 并给一句具名提示——静默不动作的参数比报错更伤人。
+///
+/// A butterfly (self-intersecting) quad is refused on commit: no homography means the
+/// parameter is not written, the drag is undone and a named message appears -- a parameter
+/// that silently does nothing hurts more than an error.
+#[test]
+fn a_butterfly_quad_is_refused_on_commit_with_a_named_note() {
+    let mut st = AppState::new();
+    st.params.upright = Some(perspective::Quad {
+        // 左上→右上→右下→左下：右下与左下互换即成蝴蝶结。
+        //
+        // top-left → top-right → bottom-right → bottom-left: swapping the bottom two makes
+        // a bowtie.
+        p: [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)],
+    });
+    assert!(!st.upright_commit(), "退化四边形的提交要返回未生效");
+    assert!(st.params.upright.is_none(), "退化四边形不许留在参数里");
+    assert!(
+        st.auto_note
+            .as_deref()
+            .is_some_and(|n| n.contains("四角交叉")),
+        "要给一句具名提示，收到 {auto_note:?}",
+        auto_note = st.auto_note
+    );
+}
+
+/// 带微小残差（1e-4，肉眼不可分辨）的四边形在提交时吸附回单位方：残差留在
+/// 参数里会让每次渲染都走全幅重采样，而双击复位式的「以为没动」就该命中快路。
+///
+/// A quad carrying a tiny residual (1e-4, invisible to the eye) snaps back to the unit
+/// square on commit: a residual left in the parameters would push every render down the
+/// full-frame resample path, while a "thought it was untouched" commit must hit the fast
+/// path.
+#[test]
+fn a_near_unit_quad_snaps_onto_the_unit_fast_path_on_commit() {
+    let mut st = AppState::new();
+    let eps = 1e-4;
+    st.params.upright = Some(perspective::Quad {
+        p: [(eps, 0.0), (1.0 - eps, eps), (1.0, 1.0 - eps), (eps, 1.0)],
+    });
+    assert!(!st.upright_commit(), "吸附后的单位方按「没动作」处理");
+    assert_eq!(
+        st.params.upright,
+        Some(perspective::Quad::default()),
+        "残差必须被吸附干净，快路才判得出来"
+    );
+}
+
+/// 换序列 / 关图（`reset_session` 收口）必须清掉仿制源与上一落点：撤销栈不含有
+/// 它们，漏清就会把 A 图的源坐标带到 B 图上落成错位的一笔。
+///
+/// Switching sessions (the `reset_session` funnel) must clear the clone source and the last
+/// stroke point: the undo stack does not carry them, and a leak would land photo A's source
+/// coordinates as a misplaced stroke on photo B.
+#[test]
+fn switching_sessions_clears_the_clone_source() {
+    let mut st = AppState::new();
+    st.resolution = Some((4000, 3000));
+    st.heal_clone = true;
+    // 第一下只取源、不落笔（返回 false）。
+    //
+    // The first tap only picks the source and lays no stroke (returns false).
+    assert!(!st.heal_add((0.6, 0.5)), "第一下只取源");
+    assert!(st.heal_src.is_some());
+    st.reset_session();
+    assert!(st.heal_src.is_none(), "仿制源跨会话残留");
+    assert!(st.heal_last.is_none(), "上一落点跨会话残留");
+}

@@ -590,7 +590,7 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     ui.separator();
     if menu_item(ui, "自动曝光", "") {
-        state.auto_exposure();
+        state.auto_exposure(ctx);
         ui.close();
     }
     if menu_item(ui, "复位全部参数", "") {
@@ -647,7 +647,7 @@ fn develop_menu(state: &mut AppState, ui: &mut Ui) {
     );
     ui.separator();
     if menu_item(ui, "自动曝光", "") {
-        state.auto_exposure();
+        state.auto_exposure(ui.ctx());
         ui.close();
     }
     if menu_item(ui, "复位", "") {

@@ -14,14 +14,27 @@ use super::*;
 impl AppState {
     // ------------------------------------------------------------ 配乐
 
-    /// 换配乐并立刻读一次编码与时长；没有 ffmpeg 只记原因，不影响导出前的报错。
+    /// 换配乐并读一次编码与时长；没有 ffmpeg 只记原因，不影响导出前的报错。
     ///
-    /// Swap the soundtrack and immediately probe its codec and duration once; without ffmpeg
-    /// only the reason is recorded, which does not change the pre-export error.
+    /// 探针是起子进程读媒体信息（core 侧自带 10 秒超时），坏文件 / 网络盘上也可能
+    /// 要等——放后台线程跑，探针期间 `audio_probe_busy` 置位、配乐页控件禁点；
+    /// 回包经 [`Msg::AudioProbed`] 落账，只认仍在用的那份配乐，换过文件的迟到
+    /// 回包直接丢。无显示环境（selftest）不启动任何读盘线程，探针整段跳过。
+    ///
+    /// Swap the soundtrack and probe its codec and duration once; without ffmpeg only the
+    /// reason is recorded, which does not change the pre-export error.
+    ///
+    /// The probe spawns a child process to read media metadata (with a 10-second timeout in
+    /// core), and even that can wait on a bad file / a network drive -- so it runs on a
+    /// background thread with `audio_probe_busy` raised and the audio-page controls inert;
+    /// the reply lands via [`Msg::AudioProbed`] and only for the soundtrack still in use,
+    /// a late reply for a switched file is dropped. A display-less environment (selftest)
+    /// starts no disk threads and skips the probe entirely.
     pub fn set_render_audio(&mut self, path: Option<PathBuf>) {
         self.render_audio = path;
         self.audio_info = None;
         self.audio_probe_err = None;
+        self.audio_probe_busy = false;
         let Some(path) = &self.render_audio else {
             return;
         };
@@ -29,13 +42,20 @@ impl AppState {
             return;
         }
         let Some(ffmpeg) = export::find_ffmpeg() else {
-            self.audio_probe_err = Some("找不到 ffmpeg，无法读取配乐时长".to_owned());
+            self.audio_probe_err =
+                Some(crate::i18n::t!("找不到 ffmpeg，无法读取配乐时长").to_owned());
             return;
         };
-        match export::probe_audio(&ffmpeg, path) {
-            Ok(info) => self.audio_info = Some(info),
-            Err(e) => self.audio_probe_err = Some(crate::i18n::err_text(&e)),
-        }
+        self.audio_probe_busy = true;
+        let path = path.clone();
+        let tx = self.tx.clone();
+        thread::spawn(move || {
+            let result = match export::probe_audio(&ffmpeg, &path) {
+                Ok(info) => Ok(info),
+                Err(e) => Err(crate::i18n::err_text(&e)),
+            };
+            let _ = tx.send(Msg::AudioProbed { path, result });
+        });
     }
 
     /// 画面 / 配乐 / 成片三段时长；没有探针结果时返回 `None`。

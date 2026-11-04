@@ -442,6 +442,7 @@ impl AppState {
             preset: "原始".to_owned(),
             auto_note: None,
             auto_probe: None,
+            auto_probe_inflight: None,
             def_window: 15.0,
             def_strength: 100.0,
             def_multi: false,
@@ -591,6 +592,7 @@ impl AppState {
             cull_sharp: 0.0,
             cull_note: None,
             cull_target: String::new(),
+            cull_export_busy: false,
             stamp_on: false,
             resolution: None,
             source_note: None,
@@ -667,6 +669,7 @@ impl AppState {
             render_audio_opts: AudioOptions::default(),
             audio_info: None,
             audio_probe_err: None,
+            audio_probe_busy: false,
             render_out_dir: PathBuf::new(),
             render_video_out: PathBuf::new(),
             render_keep_frames: false,
@@ -1100,6 +1103,14 @@ impl AppState {
         self.clip_mask = None;
         self.clip_mask_stamp = u64::MAX;
         self.mask_paint = None;
+        // 仿制源与上一落点也是「这一张图」的会话态：撤销栈不含它们，换序列
+        // 不清场就会把 A 图的仿制源坐标带到 B 图上，落下去就是错位的一笔。
+        //
+        // The clone source and the last stroke point are per-image session state too: the
+        // undo stack does not carry them, so without this sweep photo A's clone source
+        // coordinates would leak into photo B and land as a misplaced stroke.
+        self.heal_src = None;
+        self.heal_last = None;
         self.preview_size = [0, 0];
         self.preview_dirty = false;
         self.preview_inflight = false;
@@ -1720,13 +1731,92 @@ impl AppState {
                     }
                     self.save_queue();
                 }
+                Msg::CullExtracted { token, result } => {
+                    // 回包无论新旧都先把忙碌标记放下来：换过序列的迟到回包不许挡住
+                    // 新序列再发一单复制。
+                    //
+                    // Every reply, stale or not, lowers the busy flag first: a late reply
+                    // from a switched-away sequence must not block a fresh copy on the new one.
+                    self.cull_export_busy = false;
+                    if token != self.reload_token {
+                        continue;
+                    }
+                    match result {
+                        Ok(note) => {
+                            history::note("cull.extract", note.clone());
+                            self.status = note;
+                            self.cull_note = None;
+                        }
+                        Err(e) => {
+                            self.cull_note = Some(e);
+                        }
+                    }
+                }
+                Msg::AutoProbed {
+                    token,
+                    path,
+                    result,
+                } => {
+                    // 迟到回包的解码结果照样进缓存（按路径对号，无害），忙碌标记
+                    // 也照清；只有仍是当前帧的回包才当场重算一次曝光并刷新画面，
+                    // 失败的回包把原因写进提示，别让「测光中…」挂到天荒地老。
+                    //
+                    // A late reply's decode still lands in the cache (keyed by path,
+                    // harmless) and the busy flag still clears; only a reply for the frame
+                    // still on screen recomputes the exposure and repaints, and a failed
+                    // reply writes the reason into the note instead of leaving "metering…"
+                    // hanging forever.
+                    self.auto_probe_inflight = None;
+                    if let Ok((px, w, h)) = &result {
+                        self.auto_probe = Some((path.clone(), px.clone(), *w, *h));
+                    }
+                    if token != self.reload_token {
+                        continue;
+                    }
+                    let current = self
+                        .seq
+                        .as_ref()
+                        .and_then(|s| s.frames.get(self.selected))
+                        .map(|f| f.path.clone());
+                    if current.as_deref() == Some(path.as_path()) {
+                        match result {
+                            Err(e) => self.auto_note = Some(e),
+                            Ok(_) => {
+                                self.auto_exposure(ctx);
+                                ctx.request_repaint();
+                            }
+                        }
+                    }
+                }
+                Msg::AudioProbed { path, result } => {
+                    self.audio_probe_busy = false;
+                    // 只有仍在用这份配乐的回包才落账：换过配乐的迟到回包不覆盖
+                    // 新文件的探针结果。
+                    //
+                    // Only a reply for the soundtrack still in use lands: a late reply for a
+                    // switched file must not overwrite the new file's probe.
+                    if self.render_audio.as_deref() != Some(path.as_path()) {
+                        continue;
+                    }
+                    match result {
+                        Ok(info) => self.audio_info = Some(info),
+                        Err(e) => self.audio_probe_err = Some(e),
+                    }
+                }
             }
         }
 
         // 插件任务：收进度、收结果。空闲时是空操作。
         self.plugin_poll(ctx);
 
-        if self.align_busy || self.export_busy || self.queue_busy || self.merge_busy || self.qa_busy
+        if self.align_busy
+            || self.export_busy
+            || self.queue_busy
+            || self.merge_busy
+            || self.qa_busy
+            || self.cull_export_busy
+            || self.audio_probe_busy
+            || self.auto_probe_inflight.is_some()
         {
             ctx.request_repaint_after(Duration::from_millis(100));
         }

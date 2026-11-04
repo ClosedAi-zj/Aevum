@@ -617,8 +617,23 @@ impl AppState {
 
     /// `cull.extract`：把没被拒收的帧复制成一条新序列（剔除成子序列）。
     ///
+    /// 校验（路径安全、体积预估）都在前台当场完成；真正的整批复制是 GB 级的
+    /// 长任务，放后台线程跑（与导出/合并同构），完成或失败经
+    /// [`Msg::CullExtracted`] 落账。无显示环境（selftest）不启动任何读盘线程，
+    /// 退回前台同步复制，命令语义不变。
+    ///
     /// `cull.extract`: copy every frame that was not rejected into a new sequence.
-    pub(super) fn cmd_cull_extract(&mut self, args: &Value) -> Result<Value, String> {
+    ///
+    /// Validation (path safety, the size estimate) completes on the spot; the bulk copy
+    /// itself is a GB-scale long job and runs on a background thread (shaped like the
+    /// export / merge jobs), with the outcome recorded via [`Msg::CullExtracted`]. A
+    /// display-less environment (selftest) starts no disk threads and falls back to a
+    /// synchronous copy with identical command semantics.
+    pub(super) fn cmd_cull_extract(
+        &mut self,
+        ctx: &Context,
+        args: &Value,
+    ) -> Result<Value, String> {
         let seq = self.require_sequence()?;
         if seq.is_empty() {
             return Err("序列里没有帧".to_owned());
@@ -664,26 +679,69 @@ impl AppState {
                 "target": target.display().to_string(),
             }));
         }
-        let bytes = aevum_core::cull::extract(&root, &kept, &target).map_err(|e| match e {
-            aevum_core::cull::ExtractError::Target(t) => crate::i18n::tr(t.cn()).to_owned(),
-            aevum_core::cull::ExtractError::Io(e) => crate::i18n::tr_fmt("复制失败：{}", &[&e]),
-        })?;
+        if self.cull_export_busy {
+            return Err(
+                crate::i18n::t!("已有一份子序列正在导出；等这一趟复制完再发下一单").to_owned(),
+            );
+        }
         let note = crate::i18n::tr_fmt(
-            "已导出 {} 帧到 {}",
+            "正在导出 {} 帧到 {}…",
             &[&kept.len(), &target.display().to_string()],
         );
-        history::note("cull.extract", note.clone());
+        if self.headless {
+            // selftest / 一次性模式：不启动读盘线程，就地同步复制，回包口径不变。
+            //
+            // Selftest / one-shot modes start no disk threads: copy inline and keep the
+            // reply shape unchanged.
+            let bytes = aevum_core::cull::extract(&root, &kept, &target).map_err(|e| match e {
+                aevum_core::cull::ExtractError::Target(t) => crate::i18n::tr(t.cn()).to_owned(),
+                aevum_core::cull::ExtractError::Io(e) => crate::i18n::tr_fmt("复制失败：{}", &[&e]),
+            })?;
+            history::note("cull.extract", note.clone());
+            self.status = note.clone();
+            return Ok(json!({
+                "copied": kept.len(),
+                "excluded": paths.len() - kept.len(),
+                "bytes": bytes,
+                "target": target.display().to_string(),
+                "note": note,
+            }));
+        }
+        self.cull_export_busy = true;
         self.status = note.clone();
+        let token = self.reload_token;
+        let excluded = paths.len() - kept.len();
+        let frames = kept.len();
+        let target_text = target.display().to_string();
+        let tx = self.tx.clone();
+        let ctx2 = ctx.clone();
+        thread::spawn(move || {
+            let result = match aevum_core::cull::extract(&root, &kept, &target) {
+                Ok(_bytes) => Ok(crate::i18n::tr_fmt(
+                    "已导出 {} 帧到 {}",
+                    &[&kept.len(), &target.display().to_string()],
+                )),
+                Err(e) => Err(match e {
+                    aevum_core::cull::ExtractError::Target(t) => crate::i18n::tr(t.cn()).to_owned(),
+                    aevum_core::cull::ExtractError::Io(e) => {
+                        crate::i18n::tr_fmt("复制失败：{}", &[&e])
+                    }
+                }),
+            };
+            let _ = tx.send(Msg::CullExtracted { token, result });
+            ctx2.request_repaint();
+        });
         // 开发参数不跟过去（它们属于源序列的工程）；测光缓存已按 mtime 带走，
-        // 新序列打开时直接命中，不用重测。
+        // 新序列打开时直接命中，不用重测。真正的落账在回包分支里完成。
         //
         // Develop settings do not follow (they belong to the source project); the metering
-        // cache was carried with mtimes, so the new sequence opens without a re-measure.
+        // cache was carried with mtimes, so the new sequence opens without a re-measure. The
+        // bookkeeping happens in the reply branch.
         Ok(json!({
-            "copied": kept.len(),
-            "excluded": paths.len() - kept.len(),
-            "bytes": bytes,
-            "target": target.display().to_string(),
+            "started": true,
+            "frames": frames,
+            "excluded": excluded,
+            "target": target_text,
             "note": note,
         }))
     }

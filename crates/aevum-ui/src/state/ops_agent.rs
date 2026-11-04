@@ -135,8 +135,21 @@ impl AppState {
         self.exif.iter().filter(|e| e.ev().is_some()).count()
     }
 
+    /// 套用预设：预设只管调色 / 显影类参数，**修复笔触与透视四角原样保留**——
+    /// 它们是画布上逐点放的内容，与调色取向无关，换一个 LUT 不该抹掉用户钉在
+    /// 画面上的东西；分区旁路整套摘掉（预设是整套替换，所有组都该回亮）。
+    ///
+    /// Applying a preset: presets own the colour / develop parameters, and **retouch strokes
+    /// and the perspective quad survive** -- they are per-pixel content placed on the canvas,
+    /// unrelated to the grading intent, and swapping a look must not wipe what the user
+    /// pinned onto the frame. Group bypasses are cleared wholesale (a preset replaces the
+    /// whole set, so every group lights back up).
     pub fn apply_preset(&mut self, name: &str) {
-        self.params = grade::preset(name);
+        let mut fresh = grade::preset(name);
+        fresh.retouch = self.params.retouch.clone();
+        fresh.upright = self.params.upright;
+        self.params = fresh;
+        self.bypassed.clear();
         self.preset = name.to_owned();
         self.auto_note = None;
         self.reset_mask_state();

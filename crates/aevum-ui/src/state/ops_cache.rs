@@ -125,6 +125,12 @@ impl AppState {
     /// 写的是绝对值，不是在当前值上再加一档——所以连点几次结果不变；已经曝好的
     /// 图可能只校白平衡，那不是没生效，是这张图本来就不用动。
     ///
+    /// 测光代理（256 长边解码）没缓存时在后台解码（整幅 RAW 也要 0.3–1.5 秒，
+    /// 放界面线程上就是一下可见的冻结），期间状态栏挂一句「测光中…」；回包经
+    /// [`Msg::AutoProbed`] 落账，若是当前帧就自动再算一次曝光并刷新画面。同一帧
+    /// 的在飞请求不重复发（防抖）。无显示环境（selftest）不启动读盘线程，退回
+    /// 前台同步解码，判据测试才能当场断言。
+    ///
     /// One-click auto: first propose a version of white balance and tone from the 1 / 50 / 99
     /// percentiles, then accept it through the real chain.
     ///
@@ -132,7 +138,15 @@ impl AppState {
     /// clicking it several times gives the same result; an already well-exposed image may only
     /// get its white balance corrected, which is not a no-op, it is an image that needed
     /// nothing else.
-    pub fn auto_exposure(&mut self) {
+    ///
+    /// When the 256-px metering proxy is not cached it is decoded in the background (even a
+    /// proxy of a whole RAW costs 0.3-1.5 s, which on the UI thread is a visible freeze); the
+    /// status bar shows "metering…" meanwhile, the reply lands via [`Msg::AutoProbed`], and a
+    /// reply for the frame on screen recomputes the exposure and repaints. A repeat request
+    /// for the same frame is suppressed while one is in flight (debounce). A display-less
+    /// environment (selftest) starts no disk threads and falls back to a synchronous decode so
+    /// the tests can assert results on the spot.
+    pub fn auto_exposure(&mut self, ctx: &Context) {
         let Some(path) = self
             .seq
             .as_ref()
@@ -149,18 +163,55 @@ impl AppState {
             .map(|(_, px, w, h)| (px.clone(), *w, *h));
         let (probe, w, h) = match cached {
             Some(v) => v,
-            None => match metrics::decode_rgb(&path, 256) {
-                Ok(img) => {
-                    let (w, h) = (img.width() as usize, img.height() as usize);
-                    let px: Vec<f32> = img.as_raw().iter().map(|v| *v as f32 / 255.0).collect();
-                    self.auto_probe = Some((path.clone(), px.clone(), w, h));
-                    (px, w, h)
-                }
-                Err(e) => {
-                    self.auto_note = Some(crate::i18n::tr_fmt("自动校正失败：{}", &[&e]));
+            None => {
+                if self.headless {
+                    match metrics::decode_rgb(&path, 256) {
+                        Ok(img) => {
+                            let (w, h) = (img.width() as usize, img.height() as usize);
+                            let px: Vec<f32> =
+                                img.as_raw().iter().map(|v| *v as f32 / 255.0).collect();
+                            self.auto_probe = Some((path.clone(), px.clone(), w, h));
+                            (px, w, h)
+                        }
+                        Err(e) => {
+                            self.auto_note = Some(crate::i18n::tr_fmt("自动校正失败：{}", &[&e]));
+                            return;
+                        }
+                    }
+                } else {
+                    // 在飞的同一帧不重复发；别的帧允许换探针（回包按路径对号落缓存）。
+                    //
+                    // A repeat for the frame in flight is suppressed; a different frame may
+                    // replace the probe (replies land in the cache keyed by path).
+                    if self.auto_probe_inflight.as_deref() == Some(path.as_path()) {
+                        self.auto_note = Some(crate::i18n::t!("测光中…").to_owned());
+                        return;
+                    }
+                    self.auto_probe_inflight = Some(path.clone());
+                    self.auto_note = Some(crate::i18n::t!("测光中…").to_owned());
+                    let token = self.reload_token;
+                    let tx = self.tx.clone();
+                    let ctx2 = ctx.clone();
+                    thread::spawn(move || {
+                        let result = match metrics::decode_rgb(&path, 256) {
+                            Ok(img) => {
+                                let (w, h) = (img.width() as usize, img.height() as usize);
+                                let px: Vec<f32> =
+                                    img.as_raw().iter().map(|v| *v as f32 / 255.0).collect();
+                                Ok((px, w, h))
+                            }
+                            Err(e) => Err(crate::i18n::tr_fmt("自动校正失败：{}", &[&e])),
+                        };
+                        let _ = tx.send(Msg::AutoProbed {
+                            token,
+                            path,
+                            result,
+                        });
+                        ctx2.request_repaint();
+                    });
                     return;
                 }
-            },
+            }
         };
         let q = aevum_core::auto::auto_params(&probe, w, h);
         self.params.exposure = q.exposure;
