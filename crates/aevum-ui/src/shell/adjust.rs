@@ -55,62 +55,24 @@ fn flat_speed(retime: &Retime) -> Option<f64> {
 }
 
 pub(crate) fn reset_group(state: &mut AppState, key: &str) {
-    let d = GradeParams::default();
-    // 推子参数组：按规格表复位——表里登记了哪些，这里就复位哪些，
-    // 与面板推子、分组圆点共用同一份事实（见 controls 模块头注释）。
-    for s in controls::specs_of_group(key) {
-        *controls::param_slot(&mut state.params, s.field) = s.default;
-    }
-    // 表外的组内字段与非推子组照旧手工复位。
+    // 推子参数组与表外字段：口径在 controls::neutralise_group——复位按钮和
+    // 「眼睛」旁路必须是同一个动作，两边各写一份迟早对不上。
+    //
+    // Slider groups and out-of-table fields: the convention lives in
+    // controls::neutralise_group -- the reset button and the "eye" bypass must be the
+    // same action, and two handwritten copies eventually disagree.
+    controls::neutralise_group(&mut state.params, key);
+    // 参数之外的状态按组手工复位。
+    //
+    // Non-parameter state resets by group, by hand.
     match key {
-        "look" => {
-            state.params.look_cube = String::new();
-        }
-        // 曲线区（ACR 的 Curve 面板）三种模式同一个复位口径：参数曲线的三条分界、
-        // 色阶的五档、点曲线的四通道一起回默认——用户按的是分区头的复位，
-        // 期望的是"这一区回到出厂"，不是"只复位当前模式片"。
+        // 曲线区的拖拽态跟着清：参数回默认了，手上还抓着一条旧曲线就怪了。
         //
-        // One reset for all three Curve modes: parametric splits, the five levels
-        // handles and the four point curves go back together -- resetting a section
-        // header means "this whole section", not "the active chip".
+        // Curve drag state clears with the parameters: with everything back at defaults,
+        // still holding an old curve would be bizarre.
         "curve" => {
-            let p = &mut state.params;
-            p.par_split1 = d.par_split1;
-            p.par_split2 = d.par_split2;
-            p.par_split3 = d.par_split3;
-            p.lv_black = d.lv_black;
-            p.lv_white = d.lv_white;
-            p.lv_gamma = d.lv_gamma;
-            p.lv_out_black = d.lv_out_black;
-            p.lv_out_white = d.lv_out_white;
-            p.curve_rgb = d.curve_rgb;
-            p.curve_r = d.curve_r;
-            p.curve_g = d.curve_g;
-            p.curve_b = d.curve_b;
             state.curve_grab = None;
             state.levels_grab = None;
-        }
-        // 颜色混合器：HSL 八段与黑白八段一起回默认（黑白强度那条在表里已复位）。
-        //
-        // Color Mixer: both the HSL and the B&W band arrays go back together (the B&W
-        // strength slider is in the spec table and already reset above).
-        "mixer" => {
-            state.params.hsl_h = d.hsl_h;
-            state.params.hsl_s = d.hsl_s;
-            state.params.hsl_l = d.hsl_l;
-            state.params.mono_h = d.mono_h;
-        }
-        "grade" => {
-            let p = &mut state.params;
-            p.grade_sh_h = d.grade_sh_h;
-            p.grade_sh_s = d.grade_sh_s;
-            p.grade_sh_l = d.grade_sh_l;
-            p.grade_mid_h = d.grade_mid_h;
-            p.grade_mid_s = d.grade_mid_s;
-            p.grade_mid_l = d.grade_mid_l;
-            p.grade_hi_h = d.grade_hi_h;
-            p.grade_hi_s = d.grade_hi_s;
-            p.grade_hi_l = d.grade_hi_l;
         }
         "deflicker" => {
             state.def_window = 15.0;
@@ -1970,13 +1932,26 @@ fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
             changed |= spec_field(ui, state, f);
         }
     }
-    changed |= adjust_curve(state, ui);
-    changed |= adjust_mixer(state, ui);
-    changed |= adjust_grade(state, ui);
-    changed |= adjust_detail(state, ui);
-    changed |= adjust_optics(state, ui);
-    changed |= adjust_effects(state, ui);
-    changed |= adjust_look(state, ui);
+    // 子区返回「参数动了」就顺手摘掉该组的旁路：推子路径已在 spec_slider 里
+    // 自清，这里接的是曲线/色阶拖点、外观卸下这类非推子路径。
+    //
+    // A sub-section reporting "parameters moved" also lifts that group's bypass: slider
+    // paths self-clear in spec_slider, this catches the non-slider ones -- curve and
+    // levels point-dragging, dropping a LUT.
+    for (group, hit) in [
+        ("curve", adjust_curve(state, ui)),
+        ("mixer", adjust_mixer(state, ui)),
+        ("grade", adjust_grade(state, ui)),
+        ("detail", adjust_detail(state, ui)),
+        ("optics", adjust_optics(state, ui)),
+        ("effects", adjust_effects(state, ui)),
+        ("look", adjust_look(state, ui)),
+    ] {
+        changed |= hit;
+        if hit {
+            state.bypassed.remove(group);
+        }
+    }
     adjust_masks(state, ui);
     // 文件级工具沉到底部：第一屏先给基本/色彩，和 LR 的阅读顺序一致。
     // 2026-11-04 起 HDR/全景/堆栈/时间合成/焦点合成五组搬去「合成」模块

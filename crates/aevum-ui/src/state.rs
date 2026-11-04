@@ -10,7 +10,7 @@
 //! a token: after switching sequence or frame, late results from the old one are
 //! dropped outright.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -1223,6 +1223,13 @@ pub struct AppState {
     preview_owes_full: bool,
     /// 手上有没有分屏用的「之前」图。分屏关着时不渲染也不上传它，重新打开要补一张。
     preview_has_orig: bool,
+    /// 「眼睛」旁路：这些分组的参数暂不参与预览渲染。只活在内存里——不进工程、
+    /// 不进 settings、不进历史（它是对比工具，不是调色状态），重启即清空。
+    ///
+    /// The "eye" bypass: parameters of these groups temporarily stay out of the preview
+    /// render. Memory-only -- not in the project, not in settings, not in history (it is
+    /// a comparison aid, not grading state) -- and cleared on restart.
+    pub bypassed: BTreeSet<&'static str>,
 
     pub thumbs: HashMap<usize, Thumb>,
     thumb_pending: HashSet<usize>,
@@ -2485,6 +2492,7 @@ impl AppState {
             preview_dragging: false,
             preview_owes_full: false,
             preview_has_orig: false,
+            bypassed: BTreeSet::new(),
             thumbs: HashMap::new(),
             thumb_pending: HashSet::new(),
             scroll_to_selected: false,
@@ -8366,6 +8374,11 @@ impl AppState {
         });
         if apply {
             self.params.look_cube = key.clone();
+            // 挂外观就是想看到它：顺手摘掉外观组的旁路（UI 与 MCP 同走这里）。
+            //
+            // Applying a LUT means wanting to see it: lift the Look group's bypass
+            // (both the UI dialog and MCP land here).
+            self.bypassed.remove("look");
             self.preview_dirty = true;
             self.preset = "自定义".to_owned();
             self.status = crate::i18n::tr_fmt("已挂外观 {}", &[&key]);
@@ -9021,6 +9034,22 @@ impl AppState {
         );
     }
 
+    /// 预览用的参数：旁路里的分组写回默认。**导出不走这一份**——眼睛是对比
+    /// 工具不是调色状态，按着眼睛看到的样子不该溜进成片；成片永远用
+    /// `self.params` 原样渲染。
+    ///
+    /// Parameters for the preview: bypassed groups are written back to their defaults.
+    /// **Export never goes through this** -- the eye is a comparison aid, not grading
+    /// state, and what you saw while holding it must not leak into the deliverable;
+    /// exports always render `self.params` as-is.
+    pub fn preview_params(&self) -> GradeParams {
+        let mut p = self.params.clone();
+        for g in &self.bypassed {
+            crate::controls::neutralise_group(&mut p, g);
+        }
+        p
+    }
+
     pub fn ensure_preview(&mut self, ctx: &Context) {
         // 按住鼠标就是在拖某个推子/曲线/蒙版把手：这时候先要的是跟手，不是那几项
         // 最贵的空间细节，所以出草图。松手才补全量——起手那一帧什么都不做，
@@ -9051,7 +9080,7 @@ impl AppState {
         self.preview_inflight = true;
         self.preview_stamp += 1;
         let stamp = self.preview_stamp;
-        let params = self.params.clone();
+        let params = self.preview_params();
         let gain = self.ev_at(self.selected);
         let (crop, offset) = if self.align_preview {
             self.alignment_at(self.selected)
@@ -13985,6 +14014,9 @@ fn run_qa_job(
 #[cfg(test)]
 #[path = "state/tests/auto_tests.rs"]
 mod auto_tests;
+#[cfg(test)]
+#[path = "state/tests/bypass_tests.rs"]
+mod bypass_tests;
 #[cfg(test)]
 #[path = "state/tests/command_tests.rs"]
 mod command_tests;

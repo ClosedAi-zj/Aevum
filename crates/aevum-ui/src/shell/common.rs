@@ -351,17 +351,74 @@ pub(super) fn group_header(
         );
         iresp.on_hover_text(help);
     }
+    // 眼睛旁路（ACR 的面板开关）：点一下，这一组的调整退出预览渲染，再点恢复。
+    // 只在显影八组出现——序列、成片那些组的参数不在调色管线里，旁路无定义。
+    // 关态画一道强调色斜杠；提示语把「只影响预览」说在明处，免得有人以为
+    // 导出也会跟着变。
+    //
+    // Eye bypass (ACR's panel switch): one click takes this group's adjustments out of
+    // the preview render, another brings them back. Present on the eight Develop
+    // sections only -- sequence and render groups keep their parameters outside the
+    // grading pipeline, where bypass is undefined. The off state adds an accent slash;
+    // the tooltip says "preview only" up front so nobody expects exports to follow.
+    let bypassable = controls::is_bypassable(key);
+    if bypassable {
+        let off = state.bypassed.contains(key);
+        let er = Rect::from_center_size(
+            Pos2::new(rect.right() - 29.0, rect.center().y),
+            Vec2::splat(16.0),
+        );
+        let eresp = ui.interact(
+            er,
+            ui.make_persistent_id(("group-bypass", key)),
+            Sense::click(),
+        );
+        if eresp.hovered() {
+            p.rect_filled(er, radius_control(), elev_hover());
+        }
+        icons::paint(
+            p,
+            er.shrink(4.0),
+            Glyph::Eye,
+            if eresp.hovered() && !off {
+                text()
+            } else {
+                dim()
+            },
+        );
+        if off {
+            let ir = er.shrink(4.5);
+            p.line_segment(
+                [ir.left_top(), ir.right_bottom()],
+                Stroke::new(1.2, accent()),
+            );
+        }
+        let bypass_clicked = eresp.clicked();
+        if bypass_clicked && off {
+            state.bypassed.remove(key);
+            state.preview_dirty = true;
+        } else if bypass_clicked {
+            state.bypassed.insert(key);
+            state.preview_dirty = true;
+        }
+        eresp.on_hover_text(if off {
+            crate::i18n::t!("这一组的调整已旁路，点按恢复参与渲染")
+        } else {
+            crate::i18n::t!(
+                "旁路这一组：预览按没有这组调整的样子渲染，再点恢复（只影响预览，不进工程与导出）"
+            )
+        });
+    }
     // 组内改动指示（界面稿 .grp-hd .dot）：组里有参数偏离默认，复位按钮左侧
     // 亮一枚 5px accent 圆点；复位之后自然熄灭。
     if state.group_changed(key) {
-        p.circle_filled(
-            Pos2::new(
-                rect.right() - if resettable { 26.0 } else { 12.0 },
-                rect.center().y,
-            ),
-            2.5,
-            accent(),
-        );
+        let dx = match (bypassable, resettable) {
+            (true, true) => 44.0,
+            (true, false) => 29.0,
+            (false, true) => 26.0,
+            (false, false) => 12.0,
+        };
+        p.circle_filled(Pos2::new(rect.right() - dx, rect.center().y), 2.5, accent());
     }
     if resettable {
         let rr = Rect::from_center_size(
@@ -491,22 +548,34 @@ pub(super) fn slider<K: std::hash::Hash + std::fmt::Debug>(
 /// 按规格表渲染一条推子。标签/范围/默认/精度/单位/渐变全部来自
 /// `controls::SPECS`——加参数只登记表，不再在面板里摊九个实参。
 pub(super) fn spec_slider(ui: &mut Ui, state: &mut AppState, s: &controls::ControlSpec) -> bool {
-    let slot = controls::param_slot(&mut state.params, s.field);
-    slider_row(
-        ui,
-        s.key,
-        s.label,
-        slot,
-        s.min,
-        s.max,
-        s.default,
-        s.decimals,
-        s.signed,
-        s.unit,
-        controls::grad_stops(s),
-        s.track,
-        s.tip,
-    )
+    let changed = {
+        let slot = controls::param_slot(&mut state.params, s.field);
+        slider_row(
+            ui,
+            s.key,
+            s.label,
+            slot,
+            s.min,
+            s.max,
+            s.default,
+            s.decimals,
+            s.signed,
+            s.unit,
+            controls::grad_stops(s),
+            s.track,
+            s.tip,
+        )
+    };
+    // 在旁路中的组里拖推子＝想改它：当场恢复参与渲染。不恢复的话推子在动、
+    // 画面不动，看起来就像坏了；ACR 的同位开关也是一改参数就自动点亮。
+    //
+    // Dragging a slider inside a bypassed group means "I want to change it": bring it
+    // back into the render immediately. Otherwise the slider moves while the image does
+    // not, which reads as broken; ACR's counterpart switch also re-enables on edit.
+    if changed && state.bypassed.remove(s.group) {
+        state.preview_dirty = true;
+    }
+    changed
 }
 
 #[allow(clippy::too_many_arguments)]

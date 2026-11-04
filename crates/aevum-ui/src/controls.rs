@@ -963,6 +963,94 @@ pub fn spec_by_field(field: Field) -> Option<&'static ControlSpec> {
     SPECS.iter().find(|s| s.field == field)
 }
 
+/// 把一个分组的参数就地写回默认，返回这一组是否真有参数可复位——
+/// 也就是「眼睛」旁路对这一组是否有意义。
+///
+/// 复位按钮（`shell::reset_group`）与预览旁路**必须**共用这一份口径：
+/// 否则「眼睛关掉看到的样子」和「按复位之后的样子」会对不上，对比就在撒谎。
+/// 返回 `true` 的分组恰好是显影八组（基本/曲线/混合器/分级/细节/光学/效果/外观）；
+/// 序列、成片、音频那些组的参数不在 `GradeParams` 里，旁路对它们没有定义。
+///
+/// Write one group's parameters back to their defaults in place, returning whether the
+/// group has parameters to reset at all -- that is, whether the "eye" bypass means
+/// anything for it.
+///
+/// The reset button (`shell::reset_group`) and the preview bypass **must** share this
+/// one implementation: otherwise what the eye shows and what a reset produces disagree,
+/// and the comparison lies. The groups returning `true` are exactly the eight Develop
+/// sections; sequence, render and audio groups keep their parameters outside
+/// `GradeParams`, so bypass is undefined for them.
+pub fn neutralise_group(p: &mut GradeParams, key: &str) -> bool {
+    let d = GradeParams::default();
+    let mut touched = false;
+    // 推子参数组：按规格表写回——表里登记了哪些，这里就写回哪些，
+    // 与面板推子、分组圆点、复位按钮共用同一份事实。
+    for s in specs_of_group(key) {
+        *param_slot(p, s.field) = s.default;
+        touched = true;
+    }
+    // 表外的组内字段照旧手工写回。
+    match key {
+        "look" => {
+            p.look_cube = String::new();
+            touched = true;
+        }
+        // 曲线区三种模式同一个口径：参数曲线的三条分界、色阶的五档、
+        // 点曲线的四通道一起回默认（与复位按钮一致）。
+        //
+        // One convention for all three Curve modes: parametric splits, the five levels
+        // handles and the four point curves go back together (same as the reset button).
+        "curve" => {
+            p.par_split1 = d.par_split1;
+            p.par_split2 = d.par_split2;
+            p.par_split3 = d.par_split3;
+            p.lv_black = d.lv_black;
+            p.lv_white = d.lv_white;
+            p.lv_gamma = d.lv_gamma;
+            p.lv_out_black = d.lv_out_black;
+            p.lv_out_white = d.lv_out_white;
+            p.curve_rgb = d.curve_rgb;
+            p.curve_r = d.curve_r;
+            p.curve_g = d.curve_g;
+            p.curve_b = d.curve_b;
+            touched = true;
+        }
+        // 颜色混合器：HSL 八段与黑白八段一起回默认（黑白强度那条在表里已写回）。
+        //
+        // Color Mixer: the HSL and B&W band arrays go back together (the B&W strength
+        // slider is in the spec table and already reset above).
+        "mixer" => {
+            p.hsl_h = d.hsl_h;
+            p.hsl_s = d.hsl_s;
+            p.hsl_l = d.hsl_l;
+            p.mono_h = d.mono_h;
+            touched = true;
+        }
+        "grade" => {
+            p.grade_sh_h = d.grade_sh_h;
+            p.grade_sh_s = d.grade_sh_s;
+            p.grade_sh_l = d.grade_sh_l;
+            p.grade_mid_h = d.grade_mid_h;
+            p.grade_mid_s = d.grade_mid_s;
+            p.grade_mid_l = d.grade_mid_l;
+            p.grade_hi_h = d.grade_hi_h;
+            p.grade_hi_s = d.grade_hi_s;
+            p.grade_hi_l = d.grade_hi_l;
+            touched = true;
+        }
+        _ => {}
+    }
+    touched
+}
+
+/// 「眼睛」旁路对这一组是否有意义：恰为显影八组。
+///
+/// Whether the "eye" bypass means anything for this group: exactly the eight Develop
+/// sections.
+pub fn is_bypassable(group: &str) -> bool {
+    neutralise_group(&mut GradeParams::default(), group)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
