@@ -190,6 +190,26 @@ pub fn render(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, op
         spatial::lens(rgb, w, h, p);
     }
 
+    // 几何与像素修补：两者都必须在调色之前。调色链是逐点的，局部对比、锐化、去噪都拿
+    // 「邻域」当依据——梯形没拉正、灰尘还在，后面每一级都会把它们当结构强化一遍，
+    // 那时候再修就得跟已经强化过的痕迹打架。.cube 外观排在它们之后，因为外观是创作层，
+    // 用户想看到的是「已经修好的画面」被风格化，而不是「被风格化过的缺陷」。
+    //
+    // Geometry and pixel repair, both before grading. The grade chain is per-pixel but its
+    // neighbourhood terms (clarity, sharpening, denoise) treat whatever is there as structure:
+    // an unstraightened keystone or a dust speck gets reinforced by every stage below, and
+    // fixing it afterwards means fighting the reinforced trace. The .cube look comes after them
+    // because it is a creative layer — users want a repaired image stylized, not a stylized
+    // defect.
+    if !opts.for_lut {
+        if let Some(q) = &p.upright {
+            crate::perspective::rectify_in_place(rgb, w, h, q);
+        }
+        if !p.retouch.is_empty() {
+            crate::retouch::apply(rgb, w, h, &p.retouch);
+        }
+    }
+
     // 外部 .cube 外观：进主链之前先套一层三维查表（放在这里与"外观"改的是
     // 输入而非输出的用法一致）。Python oracle 没有这一步，金标 case 的
     // look_cube 恒为空，所以不影响逐像素比对。

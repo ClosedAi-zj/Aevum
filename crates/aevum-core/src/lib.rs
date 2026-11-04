@@ -62,6 +62,7 @@ pub mod qa;
 pub mod queue;
 pub mod raw;
 pub mod retime;
+pub mod retouch;
 pub mod sequence;
 pub mod stack;
 pub mod temp_track;

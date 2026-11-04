@@ -544,3 +544,54 @@ fn rename_failure_is_visible_in_the_notice_queue() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 新增的几何 / 修补两个字段必须向后兼容：旧工程 JSON 里没有这两个键，读出来是
+/// 「不动作」；有值时往返不丢数——归一化坐标一旦掉精度，笔触就会在重新打开时挪位。
+///
+/// The two new geometry / repair fields must stay backward compatible: old project JSON
+/// lacks both keys and must read back as "do nothing"; when present, values survive the
+/// round trip without loss — a normalized coordinate that drifts moves the stroke on reopen.
+#[test]
+fn retouch_and_upright_are_optional_and_round_trip() {
+    use aevum_core::perspective::Quad;
+    use aevum_core::retouch::SpotSpec;
+
+    // 旧文件：把两个键删掉，模拟这一版之前的工程。
+    //
+    // Old file: drop both keys to mimic a project written before this version.
+    let mut p = GradeParams::default();
+    p.exposure = 0.5;
+    let mut obj = serde_json::to_value(&p).expect("序列化失败");
+    let map = obj.as_object_mut().expect("参数应当是一个对象");
+    assert!(map.remove("retouch").is_some(), "新字段没写进 JSON");
+    assert!(map.remove("upright").is_some(), "新字段没写进 JSON");
+    let old: GradeParams = serde_json::from_value(obj).expect("旧文件读不进来");
+    assert!(old.retouch.is_empty(), "旧文件的修复笔触应当是空表");
+    assert!(old.upright.is_none(), "旧文件的透视校正应当是 None");
+
+    // 新文件：有值往返，逐字段相等。
+    //
+    // New file: values round trip field by field.
+    let mut q = GradeParams::default();
+    q.retouch = vec![
+        SpotSpec {
+            x: 0.25,
+            y: 0.75,
+            r: 0.03,
+            feather: 0.5,
+            source: Some((0.1, -0.05)),
+        },
+        SpotSpec {
+            x: 0.5,
+            y: 0.5,
+            ..SpotSpec::default()
+        },
+    ];
+    q.upright = Some(Quad {
+        p: [(0.01, 0.02), (0.99, 0.0), (1.0, 0.98), (0.0, 1.0)],
+    });
+    let text = serde_json::to_string(&q).expect("序列化失败");
+    let back: GradeParams = serde_json::from_str(&text).expect("自己写的读不回来");
+    assert_eq!(back.retouch, q.retouch, "修复笔触往返后变了");
+    assert_eq!(back.upright, q.upright, "透视四边形往返后变了");
+}

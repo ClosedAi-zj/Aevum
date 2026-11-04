@@ -248,6 +248,29 @@ pub struct GradeParams {
     /// Old project JSON lacks this field, and the container-level `#[serde(default)]` covers it,
     /// so deserialization yields an empty map.
     pub xmp_extra: BTreeMap<String, String>,
+
+    /// 修复画笔与仿制图章的笔触表，按落盘顺序依次作用（后一笔看得到前一笔的结果）。
+    /// 坐标与半径归一化，见 [`crate::retouch::SpotSpec`]——预览与导出尺寸不同，
+    /// 存像素坐标会让笔触在导出时飞掉。
+    ///
+    /// 空表 = 不动作，旧工程 JSON 缺这个字段时容器级 `#[serde(default)]` 兜底。
+    ///
+    /// Healing-brush and clone-stamp strokes, applied in order (a later stroke sees the earlier
+    /// results). Coordinates and radius are normalized, see [`crate::retouch::SpotSpec`] — the
+    /// preview and the export differ in size, and pixel coordinates would send strokes flying
+    /// in the export.
+    ///
+    /// An empty list is a no-op; old project JSON lacking the field is covered by the
+    /// container-level `#[serde(default)]`.
+    pub retouch: Vec<crate::retouch::SpotSpec>,
+
+    /// 透视校正的四边形（归一化，左上→右上→右下→左下）；`None` = 不校正。
+    /// 单位方与 `None` 等价，两者都表示「画面不动」。
+    ///
+    /// Perspective-correction quadrilateral (normalized, top-left → top-right → bottom-right →
+    /// bottom-left); `None` means no correction. The unit square is equivalent to `None` — both
+    /// mean "the frame does not move".
+    pub upright: Option<crate::perspective::Quad>,
 }
 
 impl Default for GradeParams {
@@ -339,6 +362,8 @@ impl Default for GradeParams {
             lens_profile: None,
             lcp_profile: None,
             xmp_extra: BTreeMap::new(),
+            retouch: Vec::new(),
+            upright: None,
         }
     }
 }

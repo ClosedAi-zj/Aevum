@@ -39,6 +39,7 @@
 //! < 0.3°), a vanishing point inside the frame, a vanishing point farther than 12 frame spans
 //! away, or an estimated quad that is almost the whole frame.
 
+use serde::{Deserialize, Serialize};
 use std::f64::consts::SQRT_2;
 
 /// 分析代理的最长边：大图先箱式缩到这个尺度再找线，结果坐标仍然是归一化的。
@@ -116,12 +117,56 @@ const UNIT: [(f64, f64); 4] = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
 /// Normalized rather than pixel-based: the preview is scaled down while export is full size, and
 /// the same parameters must line up on both sides. Corners may fall outside `[0, 1]` (quads
 /// extrapolated by `auto_upright` do), and sampling clamps at the border.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Quad {
     /// 四个角，顺序 左上→右上→右下→左下。
     ///
     /// The four corners, ordered top-left → top-right → bottom-right → bottom-left.
     pub p: [(f64, f64); 4],
+}
+
+impl Default for Quad {
+    /// 默认即单位方：没有校正。工程文件里缺这个字段（旧工程）时读出来就是「不动作」，
+    /// 而不是「把画面撕成黑块」。
+    ///
+    /// The default is the unit square: no correction. A missing field in an old project file
+    /// therefore reads back as "do nothing" rather than "tear the frame into black".
+    fn default() -> Self {
+        Self { p: UNIT }
+    }
+}
+
+impl Quad {
+    /// 是否为单位方（画面不会被改动）。[`rectify_in_place`] 与 UI 都拿它判断「有没有动作」。
+    ///
+    /// Whether this is the unit square (the frame stays untouched). Both
+    /// [`rectify_in_place`] and the UI use it to decide "is anything happening".
+    pub fn is_identity(&self) -> bool {
+        self.p == UNIT
+    }
+
+    /// 把一个四边形钳进画幅：`x, y` 各夹到 `[0, 1]`。非有限的角直接判废。
+    ///
+    /// Clamp a quad into the frame: `x` and `y` each pin to `[0, 1]`. Non-finite corners are
+    /// rejected outright.
+    ///
+    /// 为什么需要：`auto_upright` 外推的四边形会跑到画幅之外，采样时按边界夹取，结果
+    /// 是边缘被拉成条纹。钳进来之后多出来的那一圈被裁掉——和「校正后略微损失画幅」的
+    /// 预期一致。
+    ///
+    /// Why: quads extrapolated by `auto_upright` overshoot the frame, sampling clamps at the
+    /// border, and the result is smeared edge stripes. Clamping crops that ring instead, which
+    /// matches the expected "correction costs a little framing".
+    pub fn clamped(self) -> Option<Quad> {
+        let mut p = [(0.0f64, 0.0f64); 4];
+        for (i, (x, y)) in self.p.iter().enumerate() {
+            if !x.is_finite() || !y.is_finite() {
+                return None;
+            }
+            p[i] = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
+        }
+        Some(Quad { p })
+    }
 }
 
 /// 把四边形映到边长为 1 的正方形（单位方）。行主序 3×3，`h[8] == 1.0`。
@@ -252,6 +297,34 @@ pub fn rectify(rgb: &[f32], w: usize, h: usize, q: &Quad, out_w: usize, out_h: u
         }
     }
     out
+}
+
+/// 就地校正：把四边形内的内容拉正，铺满**与输入同尺寸**的画幅。
+///
+/// In-place correction: rectifies the quadrilateral's content to fill a frame of the **input's
+/// own size**.
+///
+/// 尺寸不变是有意的：显影链是「一份缓冲区进去、原地改」的形态，几何一改尺寸就得连带
+/// 重算取景框、裁切坐标与局部蒙版，每一处都是一个会漏的地方。代价是校正后画幅的
+/// 边角被丢弃（四边形之外的内容不再出现在结果里）——这正是用户对梯形校正的预期，
+/// ACR 的 Upright 也是这个行为。
+///
+/// 不做动作（单位方）、四边形退化、输入尺寸非法时逐位不动。
+///
+/// Keeping the size is deliberate: the develop chain is "one buffer in, modified in place", and
+/// changing dimensions would force a recompute of the framing rect, crop coordinates and local
+/// masks — each one a place to miss. The cost is losing the corners outside the quad, which is
+/// exactly what users expect from keystone correction (ACR's Upright behaves the same).
+///
+/// A no-op quad, a degenerate quad or an illegal size leaves the buffer bit-identical.
+pub fn rectify_in_place(rgb: &mut [f32], w: usize, h: usize, q: &Quad) {
+    if q.is_identity() || w == 0 || h == 0 || rgb.len() < w * h * 3 {
+        return;
+    }
+    let out = rectify(rgb, w, h, q, w, h);
+    if out.len() == w * h * 3 {
+        rgb[..w * h * 3].copy_from_slice(&out);
+    }
 }
 
 /// 检测画面里「接近垂直」的主直线（给自动直立用）：返回 `(x0, y0, x1, y1)` 归一化坐标。
