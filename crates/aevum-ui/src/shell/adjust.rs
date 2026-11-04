@@ -31,6 +31,7 @@ use aevum_core::align::Estimator;
 use aevum_core::audio::AudioCodec;
 use aevum_core::colorspace::ColorSpace;
 use aevum_core::crop;
+use aevum_core::delivery::DeliveryTable;
 use aevum_core::export::{OutputDynamic, OutputMode, OutputSharpen, SharpenStrength, StillFormat};
 use aevum_core::grade::GradeParams;
 use aevum_core::qa::{self, Finding};
@@ -2408,7 +2409,112 @@ fn adjust_frame(state: &mut AppState, ui: &mut Ui) {
     }
 }
 
+/// 交付预设表只读一次：面板每帧都画，不能每帧读一遍 TOML。改表后重启生效——预设是
+/// 低频配置，为它挂一个文件监听不值。
+///
+/// 预设 → 界面字段的映射在 `AppState::apply_delivery`（那边有判据），这里只管画。
+///
+/// The delivery table is read once: the panel redraws every frame and must not re-read a TOML
+/// file each time. Editing the table takes effect after a restart; presets are low-frequency
+/// configuration and a watcher is not worth the complexity. The preset-to-field mapping lives
+/// in `AppState::apply_delivery` (which is asserted); this only draws.
+fn delivery_table() -> &'static DeliveryTable {
+    static TABLE: std::sync::OnceLock<DeliveryTable> = std::sync::OnceLock::new();
+    TABLE.get_or_init(DeliveryTable::load)
+}
+
+/// 在系统文件管理器里定位一个文件。只用于「预设表」这个入口：用户改的是 TOML，
+/// 不给个能点开的入口，等于把「改表不改代码」写成一句空话。
+///
+/// Reveals a file in the system file manager. Only used by the preset-table entry: the user
+/// edits a TOML file, and without a clickable way to reach it "edit the table, not the code"
+/// stays an empty promise.
+fn reveal_in_file_manager(path: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        // `/select,<path>` 会在资源管理器里选中该文件；explorer 对成功/失败都返回同一个
+        // 退出码，所以不看返回值，也不在这里报错。
+        //
+        // `/select,<path>` highlights the file in Explorer. Explorer returns the same exit
+        // code either way, so the result is not inspected and no error is reported here.
+        let _ = std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .args(["-R", &path.display().to_string()])
+            .spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // 没有「选中文件」的通行做法，退到打开它所在的目录。
+        //
+        // There is no portable "reveal", so open the containing directory instead.
+        let dir = path.parent().unwrap_or(path);
+        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+    }
+}
+
 fn adjust_render(state: &mut AppState, ui: &mut Ui) {
+    // 平台交付：一行一个平台的完整口径，点一下把画幅/帧率/编码/质量档一次填好，之后
+    // 仍能在下面逐项微调。放在「输出」之前——先定投哪儿，再调细节。
+    //
+    // One chip per platform fills frame, rate, encoder and quality in one click; everything
+    // stays editable below. It sits before "Output": decide where it goes first, then tune.
+    if group_header(ui, state, "render-delivery", "平台交付", true) {
+        let table = delivery_table();
+        let zh = crate::i18n::current() == crate::i18n::Lang::ZH;
+        ui.horizontal_wrapped(|ui| {
+            for preset in &table.presets {
+                let response = bar_chip(ui, preset.name(zh), state.matches_delivery(preset));
+                if response.clicked() {
+                    state.apply_delivery(preset);
+                }
+                let hint = preset.hint(zh);
+                if !hint.is_empty() {
+                    response.on_hover_text(hint);
+                }
+            }
+        });
+        let active: Vec<&str> = table
+            .presets
+            .iter()
+            .filter(|p| state.matches_delivery(p))
+            .map(|p| p.name(zh))
+            .collect();
+        let line = if active.is_empty() {
+            crate::i18n::t!("当前不是任何平台的口径（按自己的数字导出）").to_owned()
+        } else {
+            active.join(" · ")
+        };
+        ui.add_space(2.0);
+        ui.add(egui::Label::new(RichText::new(line).size(SIZE_SMALL).color(muted())).wrap());
+        ui.horizontal_wrapped(|ui| {
+            if ui.small_button(crate::i18n::t!("预设表…")).clicked() {
+                let path = DeliveryTable::path();
+                // 不存在就先写一份内置模板再打开：让人「照着一个空文件猜格式」是最坏的
+                // 交付方式。
+                //
+                // Write the built-in template first when the file is missing: asking someone
+                // to guess the format from an empty file is the worst kind of delivery.
+                if !path.exists() {
+                    let _ = table.write_to(&path);
+                }
+                reveal_in_file_manager(&path);
+            }
+            ui.label(
+                RichText::new(theme::ellipsis(
+                    &DeliveryTable::path().display().to_string(),
+                    34,
+                ))
+                .size(SIZE_SMALL)
+                .color(dim()),
+            )
+            .on_hover_text(crate::i18n::t!("改完重启生效：预设在启动时读一次"));
+        });
+    }
     if group_header(ui, state, "render-out", "输出", true) {
         ui.horizontal_wrapped(|ui| {
             for (mode, label) in [

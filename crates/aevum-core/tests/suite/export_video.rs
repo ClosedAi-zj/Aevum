@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use aevum_core::align::CropRect;
 use aevum_core::audio::{AudioOptions, AudioProbe};
 use aevum_core::colorspace::ColorSpace;
+use aevum_core::delivery::DeliveryTable;
 use aevum_core::export::{
     Codec, ExportError, JobProgress, OutputDynamic, OutputMode, OutputSharpen, RenderOptions,
     SharpenStrength, Stage, StillFormat, cover_size, encode_video, export_stills, export_video,
@@ -480,6 +481,81 @@ fn video_command_carries_metadata() {
 
 fn args_of(options: &RenderOptions) -> Vec<String> {
     video_command(Path::new("ffmpeg"), options, 12, None)
+}
+
+/// 平台预设的每个数字都要走到命令和像素里，一个都不许在中途被默认值盖掉。
+///
+/// 面板上选「抖音竖屏」以后，用户拿到的东西必须是 1080×1920 / 30fps / H.264 / CRF 20，
+/// 而不是「面板写了、命令里没有」。所以判据分两层：
+/// ① **命令层**：`video_command` 的 argv 里有 `-framerate 30`、`-c:v libx264`、`-crf 20`、
+///    `-preset medium`——帧率与质量档的所有权就在这几个参数上；
+/// ② **像素层**：画幅不进 argv（由渲染阶段决定），所以导出 4 帧再用成片首帧核对
+///    1080×1920，证明编码没有把尺寸改回去。
+///
+/// 这两层缺一不可：只查命令会漏掉「渲染根本不按 target_size 出帧」，只查像素会漏掉
+/// 「帧率被 ffmpeg 默认成 25」。
+///
+/// Every number of a platform preset must reach the command and the pixels, none overridden
+/// by a default on the way. The assertion has two layers for exactly that reason: the argv
+/// check owns the rate and the quality target, the pixel check owns the frame size (which the
+/// render stage decides and which never appears in the argv).
+#[test]
+fn every_number_of_the_vertical_delivery_preset_reaches_the_render() {
+    let Some(ffmpeg) = ffmpeg() else {
+        return;
+    };
+    let td = TempDir::new("delivery");
+    let src = td.path.join("src");
+    let paths = make_sequence(&src, 4);
+    let frames = td.path.join("frames");
+
+    let mut options = default_options(&frames);
+    options.mode = OutputMode::Video;
+    options.video_out = td.path.join("out.mp4");
+
+    let table = DeliveryTable::builtin();
+    let preset = table.get("douyin-vertical").expect("内置表必须有抖音竖屏");
+    preset.apply_to(&mut options).expect("内置预设必须能应用");
+
+    let argv = video_command(&ffmpeg, &options, 4, None).join(" ");
+    for needle in ["-framerate 30", "-c:v libx264", "-crf 20", "-preset medium"] {
+        assert!(argv.contains(needle), "命令里没有 {needle}：{argv}");
+    }
+
+    let outs = export(&paths, &options);
+    assert_eq!(outs.len(), 4);
+    for path in &outs {
+        let img = image::open(path).unwrap();
+        assert_eq!(
+            (img.width(), img.height()),
+            (1080, 1920),
+            "中间帧画幅不等于预设：{}",
+            path.display()
+        );
+    }
+
+    let cancel = AtomicBool::new(false);
+    encode_video(&ffmpeg, &options, &cancel, &|_| {}).unwrap();
+    let first = td.path.join("first.png");
+    let mut cmd = Command::new(&ffmpeg);
+    cmd.arg("-y")
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-i")
+        .arg(&options.video_out)
+        .arg("-frames:v")
+        .arg("1")
+        .arg(&first);
+    #[cfg(windows)]
+    cmd.creation_flags(NO_WINDOW);
+    assert!(cmd.status().unwrap().success());
+    let img = image::open(&first).unwrap();
+    assert_eq!(
+        (img.width(), img.height()),
+        (1080, 1920),
+        "成片首帧画幅不等于预设"
+    );
 }
 
 #[test]

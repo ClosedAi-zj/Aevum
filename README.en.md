@@ -63,6 +63,8 @@ whole point.
   masks (linear / radial / brush) with local adjustments
 - **Output**: stills & video export, render queue, exact output size, watermark,
   retime with motion blur (frames are piped straight into ffmpeg's stdin — no temporary frame files);
+  platform delivery presets (Douyin / WeChat Channels / Xiaohongshu / Bilibili / master:
+  frame, rate, encoder and quality in one click, from an editable table — no rebuild to retune);
   HDR stills go out as AVIF 10bit + PQ (203-nit reference white, BT.2020, full range)
 - **AI Agent control plane**: a built-in MCP stdio server (39 `aevum_*` tools), plus a
   loopback HTTP proxy that forwards headless MCP calls to a running GUI (attach mode,

@@ -23,6 +23,7 @@ pub mod cube;
 pub mod cull;
 pub mod dcp;
 pub mod deflicker;
+pub mod delivery;
 pub mod denoise_chroma_weights;
 pub mod denoise_weights;
 pub mod develop;

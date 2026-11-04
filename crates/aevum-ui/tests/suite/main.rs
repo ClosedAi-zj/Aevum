@@ -22,6 +22,7 @@
 //! sides take it from there -- see the notes in `common.rs`.
 
 mod common;
+mod delivery_panel;
 mod i18n_coverage;
 mod i18n_errors;
 mod i18n_literals;

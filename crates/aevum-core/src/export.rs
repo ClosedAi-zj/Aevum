@@ -339,6 +339,42 @@ pub enum Codec {
     H265,
 }
 
+impl Codec {
+    pub const ALL: [Self; 2] = [Self::H264, Self::H265];
+
+    /// 稳定拼写，用在预设表、命令行与 MCP 参数里（`h264` / `h265`）。
+    ///
+    /// Stable spelling used by the preset table, the command line and MCP arguments.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::H264 => "h264",
+            Self::H265 => "h265",
+        }
+    }
+
+    pub fn cn(self) -> &'static str {
+        match self {
+            Self::H264 => "H.264",
+            Self::H265 => "H.265（HEVC）",
+        }
+    }
+
+    /// 手写配置的宽容解析：`h264` / `h.264` / `avc` / `x264` 都认，`h265` / `h.265` /
+    /// `hevc` / `x265` 同理。写错返回 `None`，由调用方给一条能看懂的报错。
+    ///
+    /// Forgiving parse of hand-written config: `h264` / `h.264` / `avc` / `x264` all mean
+    /// H.264, and `h265` / `h.265` / `hevc` / `x265` mean H.265. A typo returns `None` so
+    /// the caller can report something readable.
+    pub fn parse(raw: &str) -> Option<Self> {
+        let low = raw.trim().to_lowercase();
+        match low.as_str() {
+            "h264" | "h.264" | "avc" | "x264" => Some(Self::H264),
+            "h265" | "h.265" | "hevc" | "x265" => Some(Self::H265),
+            _ => None,
+        }
+    }
+}
+
 /// 输出的动态范围：SDR 还是 HDR（PQ）。
 ///
 /// 与 [`ColorSpace`] 正交：色域管原色与白点，动态范围管传递函数与位深。两者的组合

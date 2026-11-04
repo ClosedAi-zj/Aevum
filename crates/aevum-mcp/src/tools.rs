@@ -241,6 +241,31 @@ fn sequence_info(session: &mut Session) -> Result<Value, String> {
         })
     });
     let keyframe_frames: Vec<usize> = session.keyframes.keys().copied().collect();
+    // 交付预设清单：agent 要在 `aevum_export_video` 里传 `delivery`，就得先知道有哪些
+    // key。放在这里而不是新开一个工具——工具目录一动，附着模式的路由表、GUI 命令、
+    // 日志的写操作分类全都要跟着改，而这份清单本来就是「会话状态」的一部分。
+    //
+    // The delivery preset list lives here rather than in a new tool: adding a tool means
+    // touching the attach-mode routing table, the GUI command catalog and the journal's
+    // write-op classification, while this list is genuinely part of the session state.
+    let delivery: Vec<Value> = aevum_core::delivery::DeliveryTable::load()
+        .presets
+        .iter()
+        .map(|p| {
+            json!({
+                "key": p.key,
+                "name_cn": p.name_cn,
+                "name_en": p.name_en,
+                "width": p.width,
+                "height": p.height,
+                "fps": p.fps,
+                "codec": p.codec.key(),
+                "crf": p.crf,
+                "hint_cn": p.hint_cn,
+                "hint_en": p.hint_en,
+            })
+        })
+        .collect();
     Ok(json!({
         "root": root,
         "name": name,
@@ -266,7 +291,8 @@ fn sequence_info(session: &mut Session) -> Result<Value, String> {
         "outputs": {
             "last_export": session.last_export.as_ref().map(|p| p.display().to_string()),
             "last_preview": session.last_preview.as_ref().map(|p| p.display().to_string()),
-        }
+        },
+        "delivery": delivery
     }))
 }
 
@@ -2064,6 +2090,29 @@ fn export_video(session: &mut Session, args: &Value) -> Result<Value, String> {
     let audio_opts = audio_options(args)?;
     let keep_frames = opt_bool(args, "keep_frames")?.unwrap_or(false);
     let resume = opt_bool(args, "resume")?.unwrap_or(false);
+    // 交付预设的 key 先解析掉，且**在找 ffmpeg 之前**：参数写错就该立刻说，别让人等
+    // 「找不到 ffmpeg」回来才发现 key 拼错了。真正写进选项在后面（选项还没构造）。
+    //
+    // Resolve the delivery key here, **before locating ffmpeg**: a typo should be reported
+    // immediately instead of after an unrelated "ffmpeg not found". Writing it into the
+    // options happens later, once they exist.
+    let delivery_preset = match opt_str(args, "delivery")? {
+        Some(key) => {
+            let table = aevum_core::delivery::DeliveryTable::load();
+            match table.get(key) {
+                Some(found) => Some(found.clone()),
+                None => {
+                    return Err(format!(
+                        "未知交付预设 {}；可用：{}（表在 {}，改表不用改代码）",
+                        echo_text(key),
+                        table.keys().join("、"),
+                        aevum_core::delivery::DeliveryTable::path().display()
+                    ));
+                }
+            }
+        }
+        None => None,
+    };
     require_batch_confirm(args, "aevum_export_video")?;
     aevum_core::paths::ensure_out_dir_safe(&root, &out_dir)?;
     if session.is_source(&video_out) {
@@ -2086,7 +2135,7 @@ fn export_video(session: &mut Session, args: &Value) -> Result<Value, String> {
     let gains = session.gains(n);
     let (crop, offsets) = session.alignment(n);
     let dynamic = opt_dynamic(args)?;
-    let options = RenderOptions {
+    let mut options = RenderOptions {
         mode: OutputMode::Video,
         format,
         quality: 90,
@@ -2116,6 +2165,37 @@ fn export_video(session: &mut Session, args: &Value) -> Result<Value, String> {
         motion: motion_arg(session, args)?,
         metadata: session.metadata(),
     };
+    // 平台交付预设：一次填好一组口径，但**显式参数优先**——预设是省掉逐项填，不是
+    // 「不许改其中一项」。key 的解析与报错在找 ffmpeg 之前就做完了，这里只负责写值。
+    //
+    // Delivery preset: fills in a whole convention at once, but **explicit arguments win**;
+    // a preset saves typing, it does not forbid changing one number. The key was resolved
+    // (and reported on a typo) before ffmpeg was located; this only writes the values.
+    if let Some(found) = &delivery_preset {
+        found.apply_to(&mut options)?;
+        if let Some(fps) = opt_f64(args, "fps")? {
+            options.fps = fps;
+        }
+        if let Some(crf) = opt_u32(args, "crf")? {
+            options.crf = crf as u8;
+        }
+        if let Some(codec) = opt_str(args, "codec")? {
+            options.codec = parse_codec(codec)?;
+        }
+        if let Some(preset) = opt_str(args, "preset")? {
+            options.preset = preset.to_owned();
+        }
+        if let Some(size) = target_size_arg(args)? {
+            options.target_size = Some(size);
+            options.long_side = None;
+        } else if let Some(side) = opt_u32(args, "long_side")? {
+            options.long_side = Some(side);
+            options.target_size = None;
+        }
+    }
+    // 变速的输出帧数按**最终**帧率算：预设可能把它从 24 改到 30，用旧值算会让
+    // 变速计划与成片帧率对不上。
+    let output_fps = options.fps;
     let plan = ExportPlan {
         kind: ExportKind::Video,
         paths,
@@ -2126,7 +2206,7 @@ fn export_video(session: &mut Session, args: &Value) -> Result<Value, String> {
         ffmpeg: Some(ffmpeg),
         deflicker: session.analysis.is_some(),
         keyframes: session.keyframes.len(),
-        retime: retime_plan(args, n, fps)?,
+        retime: retime_plan(args, n, output_fps)?,
     };
     let background = opt_bool(args, "background")?.unwrap_or(false);
     if background {
@@ -3824,6 +3904,7 @@ fn build_commands() -> Vec<Command> {
                     "resume": {"type": "boolean", "default": false, "description": "断点续跑：输出目录里已经写完的帧原样留着，这一趟只补没写出来的那些（改了参数想重导就别开）"},
                     "copy": {"type": "string", "description": "改用某套命名调色副本的调色导出；省略用会话当前调色"},
                     "format": {"type": "string", "enum": ["png8", "tiff16"], "default": "png8"},
+                    "delivery": {"type": "string", "description": "平台交付预设 key（如 douyin-vertical / bilibili-1080p）：一次填好画幅、帧率、编码器与质量档。显式给的 fps/crf/codec/preset/width/height/long_side 仍会覆盖它。可用 key 见 aevum_sequence_info 的 delivery 列表；预设表在配置目录的 delivery-presets.toml，改表不用改代码"},
                     "retime": retime_schema(),
                     "motion": motion_schema(),
                     "dynamic": {"type": "string", "enum": ["sdr", "hdr-pq"], "default": "sdr", "description": "输出动态范围；成片目前只出 SDR，传 hdr-pq 会直接报错（HDR 视频编码还没做），静帧的 HDR 走 export_stills + avif"},

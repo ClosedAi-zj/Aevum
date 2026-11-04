@@ -26,6 +26,7 @@ use aevum_core::colorspace::ColorSpace;
 use aevum_core::crop::{self, Ease, Handle, Motion, Viewfinder};
 use aevum_core::cube;
 use aevum_core::deflicker::{self, Analysis, FrameMeans};
+use aevum_core::delivery::DeliveryPreset;
 use aevum_core::develop::Ev;
 use aevum_core::exif::Exif;
 use aevum_core::export::{
@@ -287,7 +288,8 @@ pub const GROUP_SPECS: &[GroupSpec] = &[
     in_module("frame-guides", Module::Frame, true),
     // ── 成片 ────────────────────────────────────────────────────────────
     // 输出/时间/编码/导出/队列是导一次片必经的五步；水印、变速、运镜是单条片子
-    // 才用的创作项，折起来。
+    // 才用的创作项，折起来。平台交付摆在最前：先定投哪儿，再调后面的细节。
+    in_module("render-delivery", Module::Render, true),
     in_module("render-out", Module::Render, true),
     in_module("render-time", Module::Render, true),
     in_module("render-codec", Module::Render, true),
@@ -1887,6 +1889,19 @@ pub struct AppState {
     pub ai_log: Vec<AiLogEntry>,
     control_tx: Sender<ControlEvent>,
     control_rx: Receiver<ControlEvent>,
+}
+
+/// 界面里编码器的两个字符串口径：`"H.264"` 与 `"HEVC"`——面板 chips、工程文件与
+/// `contains("264")` 的判断都认这两个，别处不许再冒出第三种写法。
+///
+/// The two codec spellings the UI uses: `"H.264"` and `"HEVC"`. The panel chips, the project
+/// file and every `contains("264")` test agree on exactly these; a third spelling would
+/// silently disagree with all of them.
+fn codec_label_for(codec: Codec) -> &'static str {
+    match codec {
+        Codec::H264 => "H.264",
+        Codec::H265 => "HEVC",
+    }
 }
 
 impl Default for AppState {
@@ -11484,6 +11499,56 @@ impl AppState {
     /// The three switches constrain each other; better to keep the selection consistent than
     /// to let the user hit core's guard after pressing export. The adjustment is **visible**
     /// (the colour space and container selections move), not a silent rewrite.
+    /// 套用一条平台交付预设：画幅、帧率（预设给了才改）、编码器、质量档、速度档一次写进去。
+    ///
+    /// 只动这五项，裁切/拉直/运镜/水印/色域/配乐一概不碰——预设是**交付口径**，不是
+    /// 「重置导出设置」。字段口径与 `aevum_core::delivery::DeliveryPreset::apply_to`
+    /// 一一对应，那边有判据（core 端到端会把每个数字验到命令与像素上）。
+    ///
+    /// Applies one platform delivery preset: frame size, frame rate (only when the preset
+    /// states one), encoder, quality target and encoder speed. Nothing else is touched --
+    /// crop, straighten, camera move, watermark, colour space and audio stay as they are. A
+    /// preset is a delivery convention, not a reset button. The mapping mirrors
+    /// `DeliveryPreset::apply_to` in core, where the end-to-end assertion checks every number
+    /// against the command line and the pixels.
+    pub fn apply_delivery(&mut self, preset: &DeliveryPreset) {
+        self.output_w = preset.width;
+        self.output_h = preset.height;
+        if let Some(fps) = preset.fps {
+            self.output_fps = fps as f32;
+        }
+        self.codec = codec_label_for(preset.codec).to_owned();
+        self.render_crf = preset.crf;
+        self.render_preset = preset.encoder_preset.clone();
+        // H.264 是 8bit，装不下 PQ：可见地把动态范围退回 SDR，而不是留一个按下导出才
+        // 报错的组合。
+        //
+        // H.264 is 8bit and cannot carry PQ: drop the dynamic range to SDR visibly instead of
+        // leaving a combination that only fails when export is pressed.
+        if preset.codec == Codec::H264 {
+            self.render_dynamic = OutputDynamic::Sdr;
+        }
+    }
+
+    /// 当前设置是否**正好等于**这条平台口径。高亮由数值反推：改掉任何一项就自动熄灭，
+    /// 不会出现「按钮亮着、设置其实已经不是它」的假象。
+    ///
+    /// 编码速度档不参与比较——那是性能偏好，不是平台口径。
+    ///
+    /// Whether the current settings **exactly match** this convention. The highlight is
+    /// inferred from the numbers, so changing any one turns it off rather than leaving a lit
+    /// chip that no longer matches. Encoder speed is excluded: a performance preference, not
+    /// part of the convention.
+    pub fn matches_delivery(&self, preset: &DeliveryPreset) -> bool {
+        self.output_w == preset.width
+            && self.output_h == preset.height
+            && self.codec == codec_label_for(preset.codec)
+            && self.render_crf == preset.crf
+            && preset
+                .fps
+                .is_none_or(|f| (self.output_fps - f as f32).abs() < 0.5)
+    }
+
     pub fn apply_dynamic(&mut self) {
         if self.render_dynamic != OutputDynamic::HdrPq {
             return;

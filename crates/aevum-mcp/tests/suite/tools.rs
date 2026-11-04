@@ -496,6 +496,67 @@ fn export_video_audio_options_are_validated() {
     }
 }
 
+/// 交付预设：清单可发现、数值逐项对得上内置表、拼错 key 立刻报错并给出可用清单。
+///
+/// 分工说明：「预设真的进了渲染」由 core 的
+/// `export_video::every_number_of_the_vertical_delivery_preset_reaches_the_render` 咬住
+/// （命令层 + 像素层）；这里只验工具面的**可发现性**与**报错顺序**。两条都不需要
+/// ffmpeg，所以在任何机器上都有结果，不会因为缺 ffmpeg 变成空壳。
+///
+/// Delivery presets: the list is discoverable, its numbers match the built-in table, and a
+/// typo is rejected with the available keys. "The preset really reaches the render" is
+/// covered in core (command layer + pixel layer); this checks discoverability and error
+/// ordering only. Neither needs ffmpeg, so this test is never an empty shell.
+#[test]
+fn a_delivery_preset_is_discoverable_and_a_typo_is_reported_before_ffmpeg() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    reset_session();
+
+    let temp = TempDir::new("delivery");
+    let seq_dir = temp.path().join("frames");
+    make_sequence(&seq_dir);
+    ok(
+        "aevum_open_sequence",
+        json!({"root": seq_dir.display().to_string()}),
+    );
+
+    let info = ok("aevum_sequence_info", json!({}));
+    let list = info["delivery"]
+        .as_array()
+        .expect("aevum_sequence_info 必须带 delivery 清单：agent 要传 delivery，就得先知道 key");
+    let douyin = list
+        .iter()
+        .find(|p| p["key"] == "douyin-vertical")
+        .expect("清单里必须有抖音竖屏");
+    assert_eq!(douyin["width"], 1080);
+    assert_eq!(douyin["height"], 1920);
+    assert_eq!(douyin["fps"], 30.0);
+    assert_eq!(douyin["codec"], "h264");
+    assert_eq!(douyin["crf"], 20);
+
+    let out_dir = temp.path().join("out");
+    let video_out = temp.path().join("clip.mp4");
+    let err = call(
+        "aevum_export_video",
+        json!({
+            "out_dir": out_dir.display().to_string(),
+            "video_out": video_out.display().to_string(),
+            "delivery": "douyin-verticle",
+            "confirm": true,
+        }),
+    )
+    .expect_err("拼错的 key 必须被拒绝");
+    assert!(err.contains("未知交付预设"), "{err}");
+    assert!(
+        err.contains("douyin-vertical"),
+        "报错必须把可用 key 带回去，agent 不该靠猜第二遍：{err}"
+    );
+    assert!(
+        !err.contains("ffmpeg"),
+        "拼错 key 不该先撞上「找不到 ffmpeg」——校验要在干活之前：{err}"
+    );
+}
+
 #[test]
 fn keyframe_and_measure_parameter_errors() {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
