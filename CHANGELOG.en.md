@@ -15,6 +15,41 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.5.2 — 2026-11-04
+
+Patch release: fixes a portrait photos "lying flat" orientation bug in preview and fusion.
+
+### Portrait RAW: preview and fusion stand upright according to the capture orientation
+
+Portrait photos carrying a rotation tag (EXIF orientation 5-8) used to lie flat on the
+**canvas** -- preview, logical size, focus fusion and export all worked from the unrotated
+sensor dimensions; only the filmstrip thumbnail was right. The cause was the RAW decode
+backend (rawler 0.8.0) reporting "orientation 1" for every file, which upstream took to mean
+every photo is upright. Orientation is now resolved from two sources: a non-1 backend value
+wins (CR3 keeps its Exif inside the BMFF container, readable only by the backend), and a 1
+(untrustworthy) falls back to the orientation tag read straight from the file header.
+
+Affected: preview, sketch, focus fusion and export of portrait RAW files (RW2 / CR3 / NEF and
+other bodies that write an orientation tag); landscape photos and embedded thumbnails are
+unchanged. JPEG/TIFF were always correct and are unaffected.
+
+Assertions: a new "every sample is upright on every decode route" test uses the orientation
+code read independently from the file header as its baseline and reconciles it with the
+backend's code; the negative mutation (removing the fallback) goes true red.
+
+### Docs: README sample shots replaced with a new mountain-sunset sample
+
+The five sample shots were re-taken with the fixed build, and one portrait sample now
+demonstrates the upright result.
+
+### Compatibility
+
+- Project files, presets and parameters, command-line arguments, MCP tool set: identical to
+  1.5.1; nothing added or removed.
+- Upgrading from 1.5.1: replace the executable; no migration step. The fix only affects the
+  display and fusion geometry of photos carrying an orientation tag; saved projects and
+  parameters are unaffected.
+
 ## v1.5.1 — 2026-11-03
 
 Patch release: fixes a bug in v1.5.0 that made headless focus fusion fail outright.

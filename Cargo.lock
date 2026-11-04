@@ -34,7 +34,7 @@ checksum = "aae1277d39aeec15cb388266ecc24b11c80469deae6067e17a1a7aa9e5c1f234"
 
 [[package]]
 name = "aevum-core"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "image",
  "rawler",
@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "aevum-mcp"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "aevum-core",
  "image",
@@ -56,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "aevum-studio"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "aevum-core",
  "aevum-mcp",
@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "aevum-ui"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "aevum-core",
  "eframe",
