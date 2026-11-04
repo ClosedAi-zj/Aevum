@@ -339,7 +339,14 @@ mod tests {
 
     #[test]
     fn every_tool_appears_once_and_points_at_a_real_command() {
-        assert_eq!(TOOL_ROUTES.len(), 41, "服务模式共 41 个工具");
+        // 数量是个绊线：删掉一行路由、或复制粘贴时漏改工具名，这里会先响。
+        // 逐字节的权威口径在 `aevum-mcp` 的 `tools/list` 快照判据里，这条只是
+        // 让人在改表时停一下。
+        //
+        // The count is a tripwire: dropping a route line or copy-pasting one without
+        // renaming it rings here first. The authoritative byte-level check lives in
+        // `aevum-mcp`'s `tools/list` snapshot; this one just makes a table edit pause.
+        assert_eq!(TOOL_ROUTES.len(), 43, "服务模式共 43 个工具");
         let mut seen = HashSet::new();
         for route in TOOL_ROUTES {
             assert!(route.tool.starts_with(TOOL_PREFIX), "{}", route.tool);

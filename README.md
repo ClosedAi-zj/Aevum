@@ -52,7 +52,7 @@ Lightroom 调色、After Effects / Premiere 合成，中间反复导出导入。
 - **成片**：静帧与视频导出、渲染队列、精确输出尺寸、水印、变速与运动模糊（ffmpeg 管线直推，不留临时帧）；
   平台交付预设（抖音 / 视频号 / 小红书 / B 站 / 母版的口径，一次填好画幅、帧率、编码与质量档，
   表可编辑、改表不用改代码）；HDR 静帧走 AVIF 10bit + PQ（参考白 203 nits，BT.2020，full range）
-- **AI Agent 控制面**：内置 MCP stdio server（直连 41 个 `aevum_*` 工具），也可通过本地回环 HTTP
+- **AI Agent 控制面**：内置 MCP stdio server（直连 43 个 `aevum_*` 工具），也可通过本地回环 HTTP
   把 MCP 调用代理给已打开的 GUI（附着模式，暴露 GUI 的全部 77 条命令，界面实时更新）
 - **数值金标**：Python 参考实现（`acceptance/reference/grade.py`）与 Rust 逐式同构，
   47 个显影金标 case + cube/grade 等多套金标钉住像素级一致
@@ -75,7 +75,7 @@ Lightroom 的经典口径实现的（曝光 / 曲线 / HSL / 分离色调 / 锐�
 | HDR / 堆栈 | PS 脚本手动堆栈 | 多帧合并直接进显影链 |
 | 出视频 | LRT → LR → AE/PR，三段三跳 | 直接导出 mp4（H.264 / H.265 10bit HDR），支持队列批量 |
 | 调色参数 | XMP 预设 | 同一套 XMP（`crs:` 键）+ 工程内关键帧 |
-| 自动化 | — | 内置 MCP 控制面，41 个工具可被 AI Agent 直接驱动 |
+| 自动化 | — | 内置 MCP 控制面，43 个工具可被 AI Agent 直接驱动 |
 | 许可 | 订阅制 | MIT 开源，免费 |
 
 一句话：**单张精修仍是 Lightroom / Photoshop 的主场；从序列照片到成片这件事，
