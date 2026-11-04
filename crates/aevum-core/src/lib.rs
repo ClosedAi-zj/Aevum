@@ -67,6 +67,7 @@ pub mod sequence;
 pub mod stack;
 pub mod temp_track;
 pub mod timeblend;
+pub mod update;
 pub mod warp;
 pub mod watermark;
 pub mod xmp;

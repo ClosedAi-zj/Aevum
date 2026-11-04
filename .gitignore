@@ -95,6 +95,12 @@ docs/*
 # 不入库的话「为什么不生效」只能靠读源码。`*` 顺带匹配 `.en`。
 !docs/去闪预对齐*.md
 
+# 分发与更新：三条路（绿色包 / 安装器 / 内置更新器）各自适用什么、信任链怎么走、
+# 签名要花多少钱。这是「我该怎么发布」的唯一答案，必须随 tag 可审计。
+# Distribution and updates: which of the three paths fits what, how the trust chain works,
+# and what signing costs. The single answer to "how do I ship this", auditable with the tag.
+!docs/分发与更新*.md
+
 # 相机样张：来源部分不明、体积大（164 MB / 10 个文件），不入库（换机需手动拷）。
 # 清单与校验值见 samples/cameras/README.md。注意白名单必须先忽略目录内容、再放行
 # README——顺序反了 `!` 就不生效。`.aevum/` 是缩略图缓存，一并挡掉。

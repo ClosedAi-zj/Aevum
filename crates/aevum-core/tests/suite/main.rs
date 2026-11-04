@@ -57,5 +57,6 @@ mod raw_reads;
 mod raw_real_sample;
 mod retime_export;
 mod retouch_pipeline;
+mod update;
 mod xmp_map_roundtrip;
 mod xmp_roundtrip;
