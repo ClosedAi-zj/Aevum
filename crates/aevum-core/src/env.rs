@@ -66,6 +66,32 @@ pub fn var_str(name: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// 开关型环境变量：`1` / `true` / `yes` / `on`（不区分大小写）= 开，其余（含未设置）= 关。
+///
+/// 为什么单独一类：路径型变量要看值，开关型只看「意思是不是开」。混用会让
+/// `AEVUM_READ_ONLY=0` 变成「设置过了所以开」——那是最难查的一类 bug。
+///
+/// Boolean environment variable: `1` / `true` / `yes` / `on` (case-insensitive) mean on;
+/// anything else, including unset, means off. Kept separate from the path variables so that
+/// `AEVUM_READ_ONLY=0` cannot be read as "set, therefore on".
+pub fn flag(name: &str) -> bool {
+    flag_with(name, |k| std::env::var_os(k))
+}
+
+/// [`flag`] 的测试缝：getter 抽成参数，单测不必碰进程环境。
+///
+/// Test seam for [`flag`]: the getter is a parameter, so unit tests never touch the process
+/// environment.
+pub fn flag_with(name: &str, get: impl Fn(&str) -> Option<OsString>) -> bool {
+    match var_os_with(name, get) {
+        Some(v) => matches!(
+            v.to_string_lossy().trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        None => false,
+    }
+}
+
 /// 测试缝：把 getter 抽成参数，单测可以喂一张假表，
 /// 不必 `unsafe { env::set_var }`（edition 2024 下它是 unsafe，而且进程级变量
 /// 在并行测试里会互相踩）。

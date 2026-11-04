@@ -122,6 +122,35 @@ fn load(root: &Path, long_side: u32) -> BTreeMap<String, Entry> {
     }
 }
 
+/// 落盘是否允许：`AEVUM_READ_ONLY=1`（或旧名 `LUMEN_READ_ONLY`）时关掉整条缓存写入。
+///
+/// 存在的理由：无头工具会把 `<序列根>/.aevum/measures.json` 写进用户的素材目录
+/// （台账 C9）。只读素材盘、交给别人用的机器、只读取证的场景需要一条「一行不写」
+/// 的开关。缓存只是加速层：关掉它只意味着每次全量重测，量出来的数与写不写盘无关。
+///
+/// 口径只有一处：本文件里的 `save` 是唯一写入点，它开头就问这一句。
+///
+/// Whether writing is allowed: `AEVUM_READ_ONLY=1` (or the legacy `LUMEN_READ_ONLY`) turns
+/// the whole cache write path off. The headless tools write
+/// `<root>/.aevum/measures.json` into the user's footage directory (ledger C9); read-only
+/// media, a machine handed to someone else, and read-only evidence workflows need a
+/// "write nothing" switch. The cache is an accelerator: turning it off only costs a full
+/// re-measure, and the numbers do not depend on whether they were persisted.
+///
+/// There is exactly one place this is decided: `save` below is the only writer, and it asks
+/// this question first.
+pub fn writes_allowed() -> bool {
+    writes_allowed_with(|k| std::env::var_os(k))
+}
+
+/// [`writes_allowed`] 的测试缝：getter 抽成参数，单测不碰进程环境。
+///
+/// Test seam for [`writes_allowed`]: the getter is a parameter, so unit tests never touch
+/// the process environment.
+pub fn writes_allowed_with(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
+    !crate::env::flag_with("READ_ONLY", get)
+}
+
 /// 落盘：先写临时文件，再**原子替换**。
 ///
 /// `std::fs::rename` 在 Windows 上走 `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)`，
@@ -151,6 +180,9 @@ fn load(root: &Path, long_side: u32) -> BTreeMap<String, Entry> {
 /// is abandoned: the cache is an acceleration layer, and losing it only costs one full
 /// re-measure.
 fn save(root: &Path, long_side: u32, frames: BTreeMap<String, Entry>) {
+    if !writes_allowed() {
+        return;
+    }
     let path = cache_path(root);
     let Some(dir) = path.parent() else { return };
     if std::fs::create_dir_all(dir).is_err() {
@@ -541,5 +573,41 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&target);
+    }
+
+    /// 只读开关的真值表：只有「开」的意思才算开，`0` 与空串都不算。
+    ///
+    /// `0` 这一条是刻意的：把开关写成「设置了就是开」，`AEVUM_READ_ONLY=0` 会变成只读，
+    /// 那是最难查的一类 bug。旧名 `LUMEN_READ_ONLY` 同样生效（迁移期不能只认新名）。
+    ///
+    /// Truth table of the read-only switch: only values that mean "on" count, and neither
+    /// `0` nor an empty string does. The `0` row is deliberate: a switch read as "set, so on"
+    /// turns `AEVUM_READ_ONLY=0` into read-only, which is the hardest kind of bug to find.
+    /// The legacy name `LUMEN_READ_ONLY` works too -- a rename must not silently drop it.
+    #[test]
+    fn read_only_switch_is_read_as_a_boolean() {
+        use std::ffi::OsString;
+        let env = |k: &'static str, v: &'static str| {
+            move |name: &str| {
+                if name == k {
+                    Some(OsString::from(v))
+                } else {
+                    None
+                }
+            }
+        };
+        assert!(!writes_allowed_with(env("AEVUM_READ_ONLY", "1")));
+        assert!(!writes_allowed_with(env("AEVUM_READ_ONLY", "TRUE")));
+        assert!(!writes_allowed_with(env("AEVUM_READ_ONLY", " on ")));
+        assert!(!writes_allowed_with(env("LUMEN_READ_ONLY", "1")));
+        assert!(writes_allowed_with(env("AEVUM_READ_ONLY", "0")));
+        assert!(writes_allowed_with(env("AEVUM_READ_ONLY", "")));
+        assert!(writes_allowed_with(|_: &str| None));
+        // 新名优先：两个都设着时看新名（旧名 =1、新名 =0 时仍写盘）。
+        assert!(writes_allowed_with(|name: &str| match name {
+            "AEVUM_READ_ONLY" => Some(OsString::from("0")),
+            "LUMEN_READ_ONLY" => Some(OsString::from("1")),
+            _ => None,
+        }));
     }
 }
