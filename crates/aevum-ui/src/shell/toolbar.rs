@@ -496,6 +496,20 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     }
                 }
             }
+            Module::Merge => {
+                // 合成模块的上下文条只讲「哪张成片」：五组的进度都走状态栏长任务格，
+                // 这里再放一份就成了第二处真相。
+                //
+                // The Merge context strip only names the current output: the five tools
+                // report progress through the status bar's long-task slot, and a second
+                // copy here would be a second source of truth.
+                let n = state.frame_count();
+                ui.label(
+                    RichText::new(crate::i18n::tr_fmt("{} 帧待合成", &[&n]))
+                        .size(SIZE_CHROME_LABEL)
+                        .color(dim()),
+                );
+            }
         }
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

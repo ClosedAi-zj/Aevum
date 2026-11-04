@@ -88,16 +88,28 @@ pub enum Module {
     Frame,
     Render,
     Audio,
+    /// 合成：HDR / 全景 / 星空堆栈 / 时间合成 / 焦点合成——「多帧进来、一张图出去」
+    /// 的文件级工具，2026-11-04 从显影面板分出来（见 docs/界面布局-ACR化-2026-11-04.md
+    /// §4）。**追加在末尾而不是插在显影后**：`ui.module` 命令与 Alt+数字快捷键共用
+    /// 0-5 序号契约，中途插入会把「3=构图」这类既有含义挪位。
+    ///
+    /// Merge: HDR / panorama / star-stack / time-blend / focus-stack -- file-level
+    /// "frames in, one image out" tools split out of the Develop panel on 2026-11-04
+    /// (docs/界面布局-ACR化-2026-11-04.md §4). Appended last rather than inserted
+    /// after Develop: the `ui.module` command and the Alt+digit shortcuts share the
+    /// 0-5 index contract, and inserting mid-row would silently move "3=Frame".
+    Merge,
 }
 
 impl Module {
-    pub const ALL: [Module; 6] = [
+    pub const ALL: [Module; 7] = [
         Module::Sequence,
         Module::Deflicker,
         Module::Develop,
         Module::Frame,
         Module::Render,
         Module::Audio,
+        Module::Merge,
     ];
 
     pub fn cn(self) -> &'static str {
@@ -108,6 +120,7 @@ impl Module {
             Module::Frame => "构图",
             Module::Render => "成片",
             Module::Audio => "声音",
+            Module::Merge => "合成",
         }
     }
 
@@ -119,6 +132,7 @@ impl Module {
             Module::Frame => "FRAME",
             Module::Render => "RENDER",
             Module::Audio => "AUDIO",
+            Module::Merge => "MERGE",
         }
     }
 
@@ -130,12 +144,13 @@ impl Module {
             Module::Frame => Glyph::Frame,
             Module::Render => Glyph::Render,
             Module::Audio => Glyph::Audio,
+            Module::Merge => Glyph::Merge,
         }
     }
 
-    /// 模块序号（0-5），控制通道与 AI 面板共用。
+    /// 模块序号（0-6），控制通道与 AI 面板共用。
     ///
-    /// Module index (0-5), shared by the control channel and the AI panel.
+    /// Module index (0-6), shared by the control channel and the AI panel.
     pub fn index(self) -> usize {
         Module::ALL
             .iter()
@@ -143,9 +158,9 @@ impl Module {
             .unwrap_or_default()
     }
 
-    /// 认中文名、英文名和 0-5 序号；入口参数与控制命令共用同一套写法。
+    /// 认中文名、英文名和 0-6 序号；入口参数与控制命令共用同一套写法。
     ///
-    /// Accepts the Chinese name, the English name, or the 0-5 index; the CLI argument and
+    /// Accepts the Chinese name, the English name, or the 0-6 index; the CLI argument and
     /// the control commands use the same set of spellings.
     pub fn from_name(name: &str) -> Option<Module> {
         match name.trim() {
@@ -155,6 +170,7 @@ impl Module {
             "构图" | "frame" | "3" => Some(Module::Frame),
             "成片" | "render" | "4" => Some(Module::Render),
             "声音" | "audio" | "5" => Some(Module::Audio),
+            "合成" | "merge" | "6" => Some(Module::Merge),
             _ => None,
         }
     }
@@ -274,14 +290,20 @@ pub const GROUP_SPECS: &[GroupSpec] = &[
     in_module("grain", Module::Develop, false),
     in_module("profiles", Module::Develop, false),
     in_module("lens", Module::Develop, false),
-    in_module("copies", Module::Develop, false),
-    in_module("hdr", Module::Develop, false),
-    in_module("pano", Module::Develop, false),
+    // 2026-11-04 起五组文件级工具归属「合成」模块（docs/界面布局-ACR化-2026-11-04.md §4）：
+    // 键名不变（用户的折叠偏好照常读回），只是所属模块换了——「只看这一组」的
+    // 作用域随之切到合成页。
+    //
+    // Since 2026-11-04 the five file-level tools belong to the Merge module (plan §4):
+    // keys are unchanged (persisted collapse preferences still load), only the owning
+    // module moved -- "solo this group" scope follows into the Merge page.
+    in_module("hdr", Module::Merge, true),
+    in_module("pano", Module::Merge, false),
     // 星空堆栈与时间合成也都是「一次合一张图」的文件级工具，和 HDR / 全景同一档。
-    in_module("stack", Module::Develop, false),
-    in_module("timeblend", Module::Develop, false),
+    in_module("stack", Module::Merge, false),
+    in_module("timeblend", Module::Merge, true),
     // 焦点合成与它们同一档：一组帧进来、一张成片出去。
-    in_module("focus", Module::Develop, false),
+    in_module("focus", Module::Merge, false),
     // ── 构图 ────────────────────────────────────────────────────────────
     // 这一屏只有两组，且辅助线只是三个勾选框：没有折叠的必要。
     in_module("frame", Module::Frame, true),
@@ -5814,7 +5836,7 @@ impl AppState {
         let name = arg_str(args, "name")?;
         let module = Module::from_name(name).ok_or_else(|| {
             crate::i18n::tr_fmt(
-                "未知模块 {}；可用 序列/去闪/显影/构图/成片/声音 或 0-5",
+                "未知模块 {}；可用 序列/去闪/显影/构图/成片/声音/合成 或 0-6",
                 &[&name],
             )
         })?;

@@ -41,6 +41,10 @@ pub enum Glyph {
     Export,
     Help,
     Gear,
+    /// 合成模块（Module::Merge）：多层进、一张出。
+    ///
+    /// The Merge module: layers in, one image out.
+    Merge,
 }
 
 fn pt(r: Rect, x: f32, y: f32) -> Pos2 {
@@ -292,6 +296,28 @@ pub fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32) {
             pts.push(pts[0]);
             painter.add(Shape::line(pts, st));
             painter.circle_filled(pt(r, 0.5, 0.5), s * 0.1, color);
+        }
+        Glyph::Merge => {
+            // 三张错位叠放的层片 + 汇流箭头：合成模块（HDR/全景/堆栈/时间合成/
+            // 焦点合成）的语义就是「多层进、一张出」。
+            //
+            // Three offset stacked sheets funneling into one: the Merge module's
+            // semantics (HDR/panorama/stack/time-blend/focus) are "layers in, one out".
+            for (i, top) in [0.16f32, 0.34].iter().enumerate() {
+                let inset = 0.10 + i as f32 * 0.10;
+                painter.rect_stroke(
+                    scaled(r, 0.18 + inset * 0.6, *top, 0.82 - inset * 0.2, *top + 0.22),
+                    1,
+                    Stroke::new(
+                        sw * 0.8,
+                        color.gamma_multiply(if i == 0 { 0.55 } else { 0.8 }),
+                    ),
+                    StrokeKind::Inside,
+                );
+            }
+            painter.rect_stroke(scaled(r, 0.18, 0.54, 0.82, 0.78), 1, st, StrokeKind::Inside);
+            let tri = vec![pt(r, 0.44, 0.82), pt(r, 0.56, 0.82), pt(r, 0.5, 0.94)];
+            painter.add(Shape::convex_polygon(tri, color, Stroke::NONE));
         }
         Glyph::Histogram => {
             let bars = [0.34f32, 0.62, 0.9, 0.55, 0.28];

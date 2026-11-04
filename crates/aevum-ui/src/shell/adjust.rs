@@ -174,6 +174,7 @@ pub(super) fn adjust_tab(state: &mut AppState, ui: &mut Ui) {
         Module::Sequence => adjust_sequence(state, ui),
         Module::Deflicker => adjust_deflicker(state, ui),
         Module::Develop => adjust_develop(state, ui),
+        Module::Merge => adjust_merge(state, ui),
         Module::Frame => adjust_frame(state, ui),
         Module::Render => adjust_render(state, ui),
         Module::Audio => adjust_audio(state, ui),
@@ -988,7 +989,12 @@ fn pano_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             .add_enabled(
                 !busy,
                 egui::Button::new(
-                    RichText::new(if busy { "拼接中…" } else { "拼接" }).size(SIZE_CHROME),
+                    RichText::new(if busy {
+                        crate::i18n::t!("拼接中…")
+                    } else {
+                        crate::i18n::t!("拼接")
+                    })
+                    .size(SIZE_CHROME),
                 )
                 .min_size(Vec2::new(0.0, BAR_H))
                 .corner_radius(radius_control()),
@@ -1497,7 +1503,7 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 egui::Button::new(RichText::new(if busy {
                     crate::i18n::t!("合成中…")
                 } else {
-                    crate::i18n::t!("合成")
+                    crate::i18n::t!("开始合成")
                 }))
                 .min_size(Vec2::new(0.0, BAR_H))
                 .corner_radius(radius_control()),
@@ -1706,7 +1712,7 @@ fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             egui::Button::new(RichText::new(if busy {
                 crate::i18n::t!("合成中…")
             } else {
-                crate::i18n::t!("合成")
+                crate::i18n::t!("开始合成")
             }))
             .min_size(Vec2::new(0.0, BAR_H))
             .corner_radius(radius_control()),
@@ -1805,6 +1811,36 @@ fn merge_progress_row(state: &mut AppState, ui: &mut Ui, kind: MergeKind) {
     }
 }
 
+/// 合成模块：HDR / 全景 / 星空堆栈 / 时间合成 / 焦点合成。
+///
+/// 2026-11-04 从显影面板整体迁出（docs/界面布局-ACR化-2026-11-04.md §4）：
+/// 「多帧进来、一张图出去」的文件级工具不该排在调色推子的尾巴上。函数体只是
+/// 五个既有组的重新集合，逻辑零改动。
+///
+/// The Merge module: HDR / panorama / star-stack / time-blend / focus-stack. Moved
+/// wholesale out of Develop on 2026-11-04 (plan §4): file-level "frames in, one image
+/// out" tools do not belong at the tail of the grading sliders. This body merely
+/// re-collects the five existing groups; zero logic changes.
+fn adjust_merge(state: &mut AppState, ui: &mut Ui) {
+    ui.add_space(4.0);
+    let ctx = ui.ctx().clone();
+    if group_header(ui, state, "hdr", "HDR 合并", false) {
+        hdr_group(state, ui, &ctx);
+    }
+    if group_header(ui, state, "pano", "全景合并", false) {
+        pano_group(state, ui, &ctx);
+    }
+    if group_header(ui, state, "stack", "星空堆栈", false) {
+        stack_group(state, ui, &ctx);
+    }
+    if group_header(ui, state, "timeblend", "时间合成", false) {
+        timeblend_group(state, ui, &ctx);
+    }
+    if group_header(ui, state, "focus", "焦点合成", false) {
+        focus_group(state, ui, &ctx);
+    }
+}
+
 fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     ui.add_space(4.0);
     let mut auto = false;
@@ -1881,24 +1917,14 @@ fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     changed |= adjust_lens(state, ui);
     adjust_masks(state, ui);
     // 文件级工具沉到底部：第一屏先给基本/色彩，和 LR 的阅读顺序一致。
-    if group_header(ui, state, "copies", "调色副本", false) {
-        copies_group(state, ui);
-    }
-    if group_header(ui, state, "hdr", "HDR 合并", false) {
-        hdr_group(state, ui, &ctx);
-    }
-    if group_header(ui, state, "pano", "全景合并", false) {
-        pano_group(state, ui, &ctx);
-    }
-    if group_header(ui, state, "stack", "星空堆栈", false) {
-        stack_group(state, ui, &ctx);
-    }
-    if group_header(ui, state, "timeblend", "时间合成", false) {
-        timeblend_group(state, ui, &ctx);
-    }
-    if group_header(ui, state, "focus", "焦点合成", false) {
-        focus_group(state, ui, &ctx);
-    }
+    // 2026-11-04 起 HDR/全景/堆栈/时间合成/焦点合成五组搬去「合成」模块
+    // （docs/界面布局-ACR化-2026-11-04.md §4），调色副本搬去「预设与快照」
+    // 浮窗——显影面板只剩调色本身。
+    //
+    // File-level tools used to sit at the tail so Basic/Colour came first, matching
+    // LR's reading order. Since 2026-11-04 the five merge tools live in the Merge
+    // module and grade copies in the Presets & Snapshots window (plan §4) -- Develop
+    // holds grading and nothing else.
     if changed {
         state.preview_dirty = true;
         if state.preset != "自定义" {
