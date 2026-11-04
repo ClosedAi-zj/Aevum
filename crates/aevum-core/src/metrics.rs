@@ -977,11 +977,36 @@ fn thumb_cache_path(path: &Path, max_side: u32) -> Option<PathBuf> {
         })
         .collect();
     let dir = crate::project::guard_dir(path.parent()?).join("thumbs");
-    Some(dir.join(format!(
-        "{stem}-{tag:08x}-{mtime}-{}-{max_side}.png",
-        meta.len()
-    )))
+    let suffix = format!("-{tag:08x}-{mtime}-{}-{max_side}.png", meta.len());
+    // 整条路径有平台上限（Windows 默认 260 含结尾 NUL）。stem 是文件全名清洗出来的，
+    // 相机连拍号 + 长中文名轻易把它顶过上限：写入静默失败、读取也永远打不开，这张帧就
+    // **每次都重算**——不报错，只是白干。所以按「目录 + 后缀还剩下多少字符」截断 stem。
+    // 唯一性不受影响：`tag` 已经是完整文件名（含后缀）的 FNV-32，截断只砍展示用的前缀。
+    // 目录自己就超预算时返回 `None`：缓存放不下，退回每帧重算（与修复前一致，不假装成功）。
+    //
+    // The whole path has a platform limit (260 including the trailing NUL on Windows by
+    // default). The stem comes from the frame's full name, and a burst number plus a long
+    // Chinese name pushes it over easily: the write fails silently and the read never opens,
+    // so this frame is **recomputed every time** -- no error, just wasted work. Truncate the
+    // stem to whatever is left after the directory and the suffix. Uniqueness is unaffected:
+    // `tag` is already the FNV-32 of the complete file name (extension included), so the cut
+    // only removes a display prefix. A directory that already blows the budget yields `None`:
+    // no cache is possible, so every frame is recomputed (as before, without pretending).
+    let budget = THUMB_PATH_BUDGET
+        .checked_sub(dir.to_string_lossy().chars().count() + 1 + suffix.chars().count())?;
+    let stem: String = if stem.chars().count() > budget {
+        stem.chars().take(budget).collect()
+    } else {
+        stem
+    };
+    Some(dir.join(format!("{stem}{suffix}")))
 }
+
+/// 缩略图缓存整条路径的字符预算，比 Windows 的 260 少留 20 个字符的余量。
+///
+/// Character budget for a whole thumbnail-cache path: 20 below the Windows limit of 260,
+/// leaving headroom for platform differences and short-name fallbacks.
+const THUMB_PATH_BUDGET: usize = 240;
 
 /// FNV-1a 32：只用来把两个「清洗后同名」的帧分开，不做安全用途。
 ///
@@ -1000,13 +1025,25 @@ fn read_thumb_cache(path: &Path, max_side: u32) -> Option<RgbaImage> {
     let file = thumb_cache_path(path, max_side)?;
     // 缓存文件是我们自己写的，但它在用户的盘上待过：可能被截断、被别的程序写过。
     // 读坏了就当缓存不存在（返回 `None`，走慢路径重算），绝不让它崩掉整张缩略图。
-    // 上限按「缓存本该多小」给：一张 128 边的缓存解出 4 GB 只可能是被替换过。
     //
-    // The cache file is ours, but it has lived on the user's disk: it may be truncated or
-    // overwritten by another program. A broken read counts as a cache miss (`None`, taking
-    // the slow path) and never crashes the thumbnail. The size cap follows "how small this
-    // cache should be": a 128px cache expanding to 4 GB can only have been replaced.
-    let cap = max_side.saturating_mul(4).max(1);
+    // 上界就是 `max_side` 本身，不是「比目标大几倍也认」：写入路径只经过
+    // `resize_to_rgba`，它保证长边 ≤ `max_side`（原图比目标小就原样返回）。所以一张长边
+    // 超过目标的缓存**不可能**是我们写下的，只能是被人替换过或从别的尺寸挪过来的——
+    // 那就必须 miss，交给慢路径重算。以前这里给的是 4×，于是长边介于 `max_side` 与
+    // 4×`max_side` 之间的替换品仍算命中，把一张不是这张帧的图喂给了胶片条。
+    // 顺带这一条仍是解压炸弹的闸门：`Limits` 在解出像素之前就按宽高拒绝。
+    //
+    // 残留口径（不吹牛）：同尺寸范围内的替换挡不住——那只能靠路径里的 mtime + 字节数
+    // 这两项元数据证据。尺寸契约只负责「比目标大的冒牌货」这一整类。
+    //
+    // The cap is `max_side` itself, not a multiple of it: the write path only goes through
+    // `resize_to_rgba`, which guarantees a long side of at most `max_side` (a smaller source
+    // is returned as-is). A cache bigger than the target therefore cannot be one we wrote --
+    // it was replaced or moved in from another size -- and must miss so the slow path
+    // recomputes. The old 4x cap let replacements between `max_side` and 4x hit, feeding the
+    // filmstrip a picture of some other frame. It still doubles as the decompression-bomb
+    // gate: `Limits` rejects on the declared width/height before any pixels are allocated.
+    let cap = max_side.max(1);
     let img = crate::raw::guard::catch_decoder_panic("image", move || -> Option<DynamicImage> {
         let mut reader = image::ImageReader::open(file).ok()?;
         let mut limits = image::Limits::default();
@@ -1247,9 +1284,11 @@ mod tests {
     // ---- Teeth for the thumbnail disk-cache guard ----
     //
     // The cache has lived on the user's disk: it may be truncated, overwritten by another
-    // program, or swapped for a 4 GB image. The three tests below pin "oversize rejected",
-    // "normal hit", and "broken file"; the oversize one must go red when `cap` is widened to
-    // `u32::MAX` (i.e. the cap is removed), otherwise it only tests "the file was broken".
+    // program, or swapped for a 4 GB image. The tests below pin "normal hit", "broken file",
+    // "oversize rejected" (`oversized_thumb_cache_is_a_miss` must go red when the cap is
+    // widened to `u32::MAX`), "a replacement between the target and the old 4x cap is
+    // rejected" (red when the cap goes back to 4x), and "a very long name still caches and
+    // hits" (red when the path-budget truncation is removed).
 
     /// 每个用例一个独立目录：文件名带测试名与进程号，并行跑也不打架。
     ///
@@ -1422,7 +1461,11 @@ mod tests {
     fn oversized_thumb_cache_is_a_miss() {
         let (root, src) = thumb_case("oversize");
         let max_side = 128u32;
-        let cap = max_side * 4;
+        // 上界就是目标长边本身：写入路径经 `resize_to_rgba`，长边恒 ≤ `max_side`。
+        //
+        // The cap is the target long side itself: the write path runs through
+        // `resize_to_rgba`, whose long side never exceeds `max_side`.
+        let cap = max_side;
         let cache = super::thumb_cache_path(&src, max_side).expect("缓存路径");
         std::fs::create_dir_all(cache.parent().expect("缓存目录")).expect("建缓存目录");
 
@@ -1444,6 +1487,144 @@ mod tests {
         assert!(
             super::read_thumb_cache(&src, max_side).is_none(),
             "长边超过 {cap} 的缓存必须当作没命中，交给慢路径重算"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 长边落在「目标」与「旧的 4× 上限」之间的缓存：那是别处的图挪过来的，必须 miss。
+    ///
+    /// 修复前 `cap` 是 `max_side * 4`，所以 2×`max_side` 的替换品会被当成命中，胶片条
+    /// 显示的是别人的图。判据构造的是**完全可解**的同键文件，所以「把 cap 改回 4×」必红，
+    /// 而「夹具坏了」不会伪装成绿。修复后写入路径只经 `resize_to_rgba`，长边恒 ≤
+    /// `max_side`，「比目标大」等价于「不是我们写的」。
+    ///
+    /// A cache whose long side falls between the target and the old 4x cap is somebody
+    /// else's picture and must miss. Before the fix `cap` was `max_side * 4`, so a 2x
+    /// replacement hit and the filmstrip showed another frame. The fixture is fully
+    /// decodable, so widening the cap back to 4x goes red while a broken fixture cannot
+    /// masquerade as green.
+    #[test]
+    fn a_cache_between_the_target_and_the_old_fourfold_cap_is_a_miss() {
+        let (root, src) = thumb_case("mid-size");
+        let max_side = 128u32;
+        let cache = super::thumb_cache_path(&src, max_side).expect("缓存路径");
+        std::fs::create_dir_all(cache.parent().expect("缓存目录")).expect("建缓存目录");
+
+        let swapped =
+            image::RgbImage::from_pixel(max_side * 2, max_side, image::Rgb([12, 200, 60]));
+        swapped
+            .save_with_format(&cache, image::ImageFormat::Png)
+            .expect("写替换品");
+        assert_eq!(
+            image::ImageReader::open(&cache)
+                .expect("打开替换品")
+                .decode()
+                .expect("替换品本身必须可解")
+                .width(),
+            max_side * 2,
+            "夹具必须是 2×目标、可解的 PNG，否则判据抓不到真变异"
+        );
+
+        assert!(
+            super::read_thumb_cache(&src, max_side).is_none(),
+            "长边 2×目标的缓存是替换品，必须当没命中"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 超长文件名也要真的写出缓存并命中：路径长到接近平台上限时，缓存不许静默失效。
+    ///
+    /// 修复前缓存名是「240 字符 stem + 后缀」，前面再挂 `目录/.aevum/thumbs`，Windows 上
+    /// 直接越过 260：写入静默不落盘、读取永远 miss，这一帧**每次都重算**。
+    ///
+    /// **主断言是平台路径上限**（Windows `MAX_PATH` = 260，判据里独立写死），不是
+    /// 「OS 拒绝写入」也不是被测的预算常量：这台开发机开着长路径支持，297 字符的路径
+    /// 照样写成功——第一版判据在这里变异全绿；第二版拿预算常量当基准，改大常量后又
+    /// 自洽地绿。两版都没牙，第三版才咬住。「真实落盘 + 第二次读出同样像素」留着，
+    /// 是为了在有长路径限制的机器上抓真实后果。
+    ///
+    /// The **primary assertion is the platform limit** (Windows `MAX_PATH` = 260, written
+    /// independently in the test), not "the OS refuses the write" and not the budget constant
+    /// under test: this dev box has long paths enabled and happily wrote a 297-character path
+    /// (first version green under mutation), and using the budget constant as the baseline
+    /// made the second version green as well once the mutation enlarged it. Only the third
+    /// version bites. "Really on disk, second read returns the same pixels" stays so a machine
+    /// with the classic 260 limit catches the real consequence too.
+    #[test]
+    fn a_very_long_frame_name_still_gets_a_cache_file_that_hits() {
+        let root = std::env::temp_dir().join(format!("aevum-thumb-long-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("建临时目录");
+
+        // 名字长度按实际目录长度反推，让**源帧**路径落在 245 字符附近（还能建），而
+        // 不截断的缓存路径「目录/.aevum/thumbs + 同长 stem + 后缀」必然越过预算。
+        //
+        // Derive the name length from the real directory length so the **source** path lands
+        // near 245 characters (still creatable) while an untruncated cache path, with
+        // `.aevum/thumbs` and the suffix, goes over the budget.
+        let root_len = root.to_string_lossy().chars().count() + 1 + ".jpg".len();
+        let name_len = 245usize.saturating_sub(root_len).max(60);
+        let src = root.join(format!("{}.jpg", "n".repeat(name_len)));
+        std::fs::write(&src, b"src-frame-placeholder").expect("写源帧占位");
+
+        let max_side = 128u32;
+        let img = RgbaImage::from_pixel(64, 48, image::Rgba([9, 99, 199, 255]));
+        super::write_thumb_cache(&src, max_side, &img);
+
+        let cache = super::thumb_cache_path(&src, max_side).expect("缓存路径");
+        let cache_chars = cache.to_string_lossy().chars().count();
+        // 基准取**平台事实**（Windows `MAX_PATH` = 260），不取 `THUMB_PATH_BUDGET`：
+        // 拿被测常量当基准的话，变异把它改大，断言就跟着变松、判据自洽地绿——这条判据
+        // 的第一版正是这么写的，变异实测真绿。基准必须来自被测物之外。
+        //
+        // The baseline is the **platform fact** (Windows `MAX_PATH` = 260), not
+        // `THUMB_PATH_BUDGET`: taking the constant under test as its own baseline makes the
+        // assertion loosen with the mutation and pass by construction -- exactly what the
+        // first version of this test did, and the mutation proved it green. Baselines must
+        // come from outside the thing under test.
+        const PLATFORM_PATH_LIMIT: usize = 260;
+        assert!(
+            cache_chars < PLATFORM_PATH_LIMIT,
+            "缓存路径 {cache_chars} 字符，撞上平台上限 {PLATFORM_PATH_LIMIT}：长名帧每次都会重算（{}）",
+            cache.display()
+        );
+        assert!(
+            cache.exists(),
+            "超长名的缓存必须真的落盘：{}",
+            cache.display()
+        );
+        let hit = super::read_thumb_cache(&src, max_side).expect("第二次必须命中");
+        assert_eq!((hit.width(), hit.height()), (64, 48), "尺寸不许被守卫改掉");
+        assert_eq!(hit.as_raw(), img.as_raw(), "像素必须逐字节一致");
+
+        // 截断只砍展示前缀：两个前段相同、只有尾部不同的长名不许共用缓存文件
+        // （唯一性靠完整文件名的 FNV-32，截断不会把两帧并成一个）。名字总长与上面
+        // 的源帧一致，保证两条路径都还在可创建的范围内。
+        //
+        // Truncation only drops a display prefix: two long names sharing their leading
+        // characters but differing at the tail must not share a cache file -- uniqueness
+        // comes from the FNV-32 of the whole name, not from the truncated prefix. Both names
+        // are the same total length as the source above, so both stay creatable.
+        let prefix = "n".repeat(name_len.saturating_sub(8));
+        let a = root.join(format!("{prefix}aaaa.jpg"));
+        let b = root.join(format!("{prefix}bbbb.jpg"));
+        std::fs::write(&a, b"same-bytes").expect("写 a");
+        std::fs::write(&b, b"same-bytes").expect("写 b");
+        let when = std::time::SystemTime::now();
+        for p in [&a, &b] {
+            std::fs::File::options()
+                .write(true)
+                .open(p)
+                .expect("打开源帧")
+                .set_modified(when)
+                .expect("拨 mtime");
+        }
+        assert_ne!(
+            super::thumb_cache_path(&a, max_side).expect("a 的缓存路径"),
+            super::thumb_cache_path(&b, max_side).expect("b 的缓存路径"),
+            "截断后同前缀的两个长名共用了缓存文件，会串图"
         );
 
         std::fs::remove_dir_all(&root).ok();
