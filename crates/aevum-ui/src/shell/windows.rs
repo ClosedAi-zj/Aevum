@@ -1016,21 +1016,22 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
                 .spacing([20.0, 3.0])
                 .show(ui, |ui| {
                     for (key, desc) in [
-                        ("Ctrl+O", "打开序列"),
-                        ("Ctrl+Shift+O", "选照片（可多张）"),
-                        ("Ctrl+E", "导出当前帧"),
-                        ("Ctrl+Z", "撤销"),
-                        ("Ctrl+Shift+Z / Ctrl+Y", "重做"),
-                        ("Ctrl+0 / Ctrl+1", "适应窗口 / 实际像素"),
-                        ("Ctrl+Alt+1…6", "切换模块"),
-                        ("H / Z / C", "抓手 / 缩放 / 裁剪"),
-                        ("G / \\", "网格 / 前后对比"),
-                        ("空格", "播放 / 暂停"),
-                        ("← →", "逐帧（Shift 一次十帧）"),
-                        ("1–5 / 0", "星级 / 清除星级"),
-                        ("6–9", "红黄绿蓝色标"),
-                        ("P / X", "选用 / 排除"),
-                        ("F", "适应窗口"),
+                        ("Ctrl+O", crate::i18n::t!("打开序列")),
+                        ("Ctrl+Shift+O", crate::i18n::t!("选照片（可多张）")),
+                        ("Ctrl+E", crate::i18n::t!("导出当前帧")),
+                        ("Ctrl+Z", crate::i18n::t!("撤销")),
+                        ("Ctrl+Shift+Z / Ctrl+Y", crate::i18n::t!("重做")),
+                        ("Ctrl+0 / Ctrl+1", crate::i18n::t!("适应窗口 / 实际像素")),
+                        ("Ctrl+Alt+1…7", crate::i18n::t!("切换模块")),
+                        ("Ctrl+K", crate::i18n::t!("预设与快照")),
+                        ("H / Z / C", crate::i18n::t!("抓手 / 缩放 / 裁剪")),
+                        ("G / \\", crate::i18n::t!("网格 / 前后对比")),
+                        ("空格", crate::i18n::t!("播放 / 暂停")),
+                        ("← →", crate::i18n::t!("逐帧（Shift 一次十帧）")),
+                        ("1–5 / 0", crate::i18n::t!("星级 / 清除星级")),
+                        ("6–9", crate::i18n::t!("红黄绿蓝色标")),
+                        ("P / X", crate::i18n::t!("选用 / 排除")),
+                        ("F", crate::i18n::t!("适应窗口")),
                     ] {
                         ui.label(
                             RichText::new(key)

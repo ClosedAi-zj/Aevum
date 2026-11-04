@@ -15,6 +15,65 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.8.0 — 2026-11-04
+
+Interface release: the adjust panel now follows Camera Raw's section order, presets and snapshots
+moved out of the left column into a floating window, and the compositing tools became a seventh
+module of their own. Also fixes three text collisions and a canvas jitter when switching modules.
+
+### The adjust panel follows Camera Raw's section order
+
+Develop went from 21 groups to 9, in Adobe's order: Basic → Curve → Color Mixer → Color Grading →
+Detail → Optics → Effects → Look → Masks.
+
+- Curve now carries three mode chips (parametric / point / levels) and Color Mixer two (HSL /
+  black-and-white); these five used to be five separate groups stacked in the panel.
+- Basic uses sub-headings for three stretches: white balance / tone / preference.
+- "Solo mode": opening one group folds the others in the same module — Camera Raw's default
+  behaviour. A right click on the group header turns it off and lets groups stay open together.
+- Group headers gained a double rule and half a point of size; the explanatory text that used to
+  sit under each group now lives behind the ⓘ in the header.
+- Existing fold preferences are migrated from the old group names, so renaming groups neither
+  expands nor folds everything.
+
+### Left column retired: "Presets & Snapshots" window
+
+Presets, snapshots and colour copies moved from a 240 px always-on column into a floating window;
+the three sections drag to reorder and the position persists. Three entrances: the first tool-rail
+icon, the Develop menu, and `Ctrl+K`. The old "History" section on the left is gone — the History
+tab on the right panel was always the complete one.
+
+### New "Compositing" module
+
+HDR merge, panorama, star stack, time blend and focus merge moved out of the develop panel and
+became module 7 (`Ctrl+Alt+7`). The colour panel now only does colour.
+
+### Fixes
+
+- Characters colliding on the transport bar and filmstrip: stars and frame numbers now sit in
+  separate lanes.
+- Long paths and long values in the right panel pressing onto key names and buttons: values are
+  truncated to the space left, with an ellipsis at the end.
+- For about 0.6 s after switching modules the canvas pressed onto the right panel: the canvas
+  right edge is now clamped to the layout constants, so switching is immediate.
+- In the About window's shortcut table, "Ctrl+Alt+1…6" became "1…7", `Ctrl+K` was added, and the
+  whole table follows the interface language (it used to stay Chinese in the English UI).
+
+### Performance findings (defaults unchanged)
+
+- Long focus stacks: the peak for 16 frames went from 2291 to 1558 MiB, and the peak no longer
+  grows with sequence length (32 and 100 frames behave the same).
+- Export parallelism: 2/4/6/8 workers measured within 2.7 %, the bottleneck being the encoder;
+  the default stays at 4, and the new `AEVUM_EXPORT_WORKERS` environment variable overrides it
+  (still bounded by available memory).
+
+### Compatibility
+
+The four public contracts keep their add-only promise. `settings.json` gains `panel_solo` (solo
+mode on by default); old group names in the fold state (`color` / `parametric` / `levels` / `hsl` /
+`mono` / `grain` / `lens` / `profiles`) are mapped on read and written back under the new names.
+The new module is appended at the end (compositing = 7), so `Ctrl+Alt+1–6` mean what they did.
+
 ## v1.7.0 — 2026-11-04
 
 Feature release: cross-sequence batch orchestration on the AI-agent side, plus a fix for a RAW
