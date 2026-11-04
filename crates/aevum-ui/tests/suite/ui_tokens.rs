@@ -204,6 +204,36 @@ fn read_clean(rel: &str) -> String {
     without_line_comments(&raw)
 }
 
+/// 读一份源码；若它已经被拆成一个模块目录（`shell/adjust`），把目录里的 `*.rs`
+/// 按文件名序拼起来再读。判据盯的是「这个模块里出现过哪些东西」，不是它分成几个
+/// 文件——按路径写死会让拆文件变成红，那是把版式当契约。
+///
+/// Reads one source file; if it has been split into a module directory (`shell/adjust`),
+/// concatenates that directory's `*.rs` in filename order. The criterion is about what the
+/// module mentions, not how many files it lives in -- pinning the path would turn a file
+/// split into a red, which mistakes layout for contract.
+fn read_clean_any(rel: &str) -> String {
+    let p = src_dir().join(rel);
+    if p.is_file() {
+        return read_clean(rel);
+    }
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&p)
+        .unwrap_or_else(|e| panic!("读不到 {p:?}：{e}"))
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|q| q.extension().is_some_and(|x| x == "rs"))
+        .collect();
+    files.sort();
+    assert!(!files.is_empty(), "{p:?} 里一个 .rs 都没有");
+    let mut out = String::new();
+    for q in files {
+        let raw = std::fs::read_to_string(&q).unwrap_or_else(|e| panic!("读不到 {q:?}：{e}"));
+        out.push_str(&raw);
+        out.push('\n');
+    }
+    without_line_comments(&out)
+}
+
 #[test]
 fn no_floating_window_is_anchored() {
     // egui 0.37 的 `Window::anchor` 会把窗口钉死：源码注释原话
@@ -774,7 +804,7 @@ fn walk_shape(shape: &egui::Shape, clip: egui::Rect, out: &mut Vec<(f32, f32, f3
 #[test]
 fn explicit_develop_field_lists_cover_the_spec_table() {
     let controls = read_clean("controls.rs");
-    let adjust = read_clean("shell/adjust.rs");
+    let adjust = read_clean_any("shell/adjust");
     let listed: std::collections::HashSet<String> = adjust
         .match_indices("Field::")
         .map(|(i, _)| {
