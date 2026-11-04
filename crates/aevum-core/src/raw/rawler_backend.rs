@@ -162,24 +162,35 @@ pub fn decode_half(path: &Path) -> Result<(Rgb16Image, (u32, u32), u8), RawError
     Ok((image, full, orientation))
 }
 
-/// rawler 的 `RawImage` → 我们的 `Rgb16Image`：裁有效区、扣电平、去拜尔、白平衡。
+/// 一张 RAW 的几何与电平：解码与「只看元数据」共用的唯一来源。
 ///
-/// `half` 为真时只算 2×2 单元估计（半尺寸），见 [`decode_half`]；否则走全分辨率。
-/// 第二个返回值是全分辨率的（未转正）边长，`half` 为假时就是图像自己的边长。
+/// Geometry and levels of one RAW: the single source shared by decoding and "metadata only".
+struct Geometry {
+    ox: usize,
+    oy: usize,
+    w: usize,
+    h: usize,
+    black: f32,
+    white: f32,
+}
+
+/// 算几何与电平，并在这里做「这张图解不解得动」的判定（尺寸越界、白场不高于黑场）。
 ///
-/// rawler's `RawImage` -> our `Rgb16Image`: crop to the active area, subtract levels,
-/// demosaic, white balance. With `half` the demosaic stops at the 2x2 estimates (see
-/// [`decode_half`]). The second return value is the full-resolution (unrotated) side
-/// lengths; without `half` that is simply the image's own size.
-fn to_rgb16(img: RawImage, half: bool) -> Result<(Rgb16Image, (u32, u32)), RawError> {
-    let (w, h) = (img.width, img.height);
-    if w == 0
-        || h == 0
-        || u64::from(w as u32).saturating_mul(u64::from(h as u32)) > super::MAX_PIXELS
+/// 判定放在几何里是刻意的：`probe` 说「能解」而 `decode` 说「电平坏了」，就是两条路
+/// 又分叉了；判定只有一份，结论就不会打架。
+///
+/// Geometry, levels, and the "is this decodable at all" verdict (size overflow, white level
+/// not above black). Keeping the verdict here is deliberate: if `probe` says "decodable" while
+/// `decode` rejects bad levels, the two paths have forked again.
+fn geometry(img: &RawImage) -> Result<Geometry, RawError> {
+    let (fw, fh) = (img.width, img.height);
+    if fw == 0
+        || fh == 0
+        || u64::from(fw as u32).saturating_mul(u64::from(fh as u32)) > super::MAX_PIXELS
     {
         return Err(RawError::TooLarge {
-            width: w as u32,
-            height: h as u32,
+            width: fw as u32,
+            height: fh as u32,
         });
     }
 
@@ -216,7 +227,87 @@ fn to_rgb16(img: RawImage, half: bool) -> Result<(Rgb16Image, (u32, u32)), RawEr
         }
         _ => (0, 0, img.width, img.height),
     };
+    Ok(Geometry {
+        ox,
+        oy,
+        w,
+        h,
+        black,
+        white,
+    })
+}
 
+/// 不解像素地问 rawler「这份文件它认不认，认的话是什么」。
+///
+/// `dummy = true` 让 rawler 跳过像素解码（只解析容器与标签），成本是整解的零头；而
+/// 尺寸与「能不能解」的判定走同一个 [`geometry`]，所以它给出的答案与整解**不可能**
+/// 不一致。这就是 `raw::info` 与 `raw::read` 从此同源的地方。
+///
+/// 与整解一样套 `decode_guard`：rawler 读的是不可信字节，`bits.rs` 那种按下标直取
+/// 的写法在 0.7.2 上越界 panic 过一次。只看元数据也要经过同一道边界。
+///
+/// Ask rawler without decoding pixels: does it recognize this file, and as what?
+///
+/// `dummy = true` skips pixel decoding (container and tags only) at a fraction of the cost,
+/// and the size plus the "decodable" verdict go through the same [`geometry`], so this answer
+/// **cannot** disagree with the full decode. That is where `raw::info` and `raw::read` stop
+/// diverging. The guard applies here too: rawler reads untrusted bytes and panicked out of
+/// bounds in its `bits.rs` index-based reads back in 0.7.2.
+pub fn probe(path: &Path) -> Result<super::RawProbe, RawError> {
+    let img = super::guard::decode_guard(NAME, || {
+        let src =
+            rawler::rawsource::RawSource::new(path).map_err(|e| RawError::Rawler(e.to_string()))?;
+        let decoder = rawler::get_decoder(&src).map_err(|e| RawError::Rawler(e.to_string()))?;
+        decoder
+            .raw_image(&src, &rawler::decoders::RawDecodeParams::default(), true)
+            .map_err(|e| RawError::Rawler(e.to_string()))
+    })?;
+    let g = geometry(&img)?;
+    // 与整解同一口径：单通道（CFA）与三通道（LinearRaw）解得动，别的一律「样本数不支持」。
+    if img.cpp != 1 && img.cpp != 3 {
+        return Err(RawError::UnsupportedSamples(img.cpp as u16));
+    }
+    Ok(super::RawProbe {
+        width: g.w as u32,
+        height: g.h as u32,
+        // 位深如实报（12/14/16 都是真的）；`RawInfo.bits` 的读者只用来判断「是不是高位深」。
+        bits: img.bps.clamp(1, 16) as u16,
+        make: non_empty(&img.make),
+        model: non_empty(&img.model),
+    })
+}
+
+/// 空串当「没有」：rawler 常给 `""` 而不是 `None`，直接塞进面板会显示一个空机型。
+fn non_empty(s: &str) -> Option<String> {
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_owned())
+    }
+}
+
+/// rawler 的 `RawImage` → 我们的 `Rgb16Image`：裁有效区、扣电平、去拜尔、白平衡。
+///
+/// `half` 为真时只算 2×2 单元估计（半尺寸），见 [`decode_half`]；否则走全分辨率。
+/// 第二个返回值是全分辨率的（未转正）边长，`half` 为假时就是图像自己的边长。
+///
+/// rawler's `RawImage` -> our `Rgb16Image`: crop to the active area, subtract levels,
+/// demosaic, white balance. With `half` the demosaic stops at the 2x2 estimates (see
+/// [`decode_half`]). The second return value is the full-resolution (unrotated) side
+/// lengths; without `half` that is simply the image's own size.
+fn to_rgb16(img: RawImage, half: bool) -> Result<(Rgb16Image, (u32, u32)), RawError> {
+    // 几何与电平由 [`geometry`] 一处算。这不是为了少几行：`probe` 不解像素也要给出
+    // 同一个答案（尺寸、能不能解），两处各写一遍就会慢慢漂开——实测漂开过：信息面板
+    // 报 6960×4640 而解码出 6982×4654，用户看到的尺寸与拿到的像素不是一个东西。
+    //
+    // Geometry and levels come from [`geometry`] alone. Not to save lines: `probe` must give
+    // the same answer without decoding pixels, and two copies drift apart -- which happened:
+    // the info panel said 6960x4640 while the decode produced 6982x4654.
+    let g = geometry(&img)?;
+    let (ox, oy, w, h) = (g.ox, g.oy, g.w, g.h);
+    let black = g.black;
+    let white = g.white;
     let mut out_w = w;
     let mut out_h = h;
     let mut rgb = match img.cpp {

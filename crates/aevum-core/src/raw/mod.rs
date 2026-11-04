@@ -272,6 +272,21 @@ pub struct RawInfo {
     pub container: &'static str,
 }
 
+/// 只看元数据的能力结论：有效区尺寸、位深、机型。**不说**走哪条路——能给出这三个
+/// 数就说明传感器数据解得动，路径必然是 `Sensor`。
+///
+/// What metadata alone can conclude: active-area size, bit depth, camera. It does **not**
+/// report a route: producing these three numbers already means sensor data is decodable, so
+/// the route is necessarily `Sensor`.
+#[derive(Clone, Debug)]
+pub struct RawProbe {
+    pub width: u32,
+    pub height: u32,
+    pub bits: u16,
+    pub make: Option<String>,
+    pub model: Option<String>,
+}
+
 impl RawInfo {
     /// 机型一行。Make 常是 Model 的前缀，重复就只留一次。
     ///
@@ -708,8 +723,70 @@ pub fn info(path: impl AsRef<Path>) -> Result<RawInfo, RawError> {
     if let Some(err) = unsupported_extension(path) {
         return Err(err);
     }
+    // **顺序必须与 [`backend::full`] 一致：第三方后端在前。**
+    //
+    // 这不是性能优化，是正确性：`info` 说「走预览」而 `read` 交回传感器数据，用户
+    // 在信息面板上看到的保真度就不是他手里的数据。实测过——Canon CR3 与四张 RW2
+    // 被报成「机身内嵌 JPEG 预览（真实 8 位）」，而解码给的其实是 16 位传感器数据；
+    // 顺带把相机配置也误拒了（`dcp` 看到 `Preview` 就说「套不了相机配置」）。
+    // 根因是这里只问内置解析器，而 `full` 先问 rawler，两条路各有一份判断。
+    //
+    // The order **must match [`backend::full`]: third-party backend first.** This is
+    // correctness, not speed: if `info` says "preview" while `read` hands back sensor data,
+    // the fidelity shown in the info panel is not the data the user holds. Measured: a Canon
+    // CR3 and four RW2 files were reported as "camera embedded JPEG preview (truly 8-bit)"
+    // while the decode produced 16-bit sensor data -- and it also made `dcp` refuse camera
+    // profiles for them.
+    if let Some(p) = backend::probe(path) {
+        return Ok(RawInfo {
+            width: p.width,
+            height: p.height,
+            bits: p.bits,
+            make: p.make,
+            model: p.model,
+            path: RawPath::Sensor,
+            container: container_name(path),
+        });
+    }
     let data = load(path, MAX_FILE_BYTES)?;
     info_bytes(&data)
+}
+
+/// 只要宽高，口径是**内置解析器**说多少就是多少：不解像素、不问第三方后端。
+///
+/// 给「决定并行路数」这类只关心数量级的地方用（导出前每帧问一次，1000 帧的序列
+/// 不能为此多花一分钟去跑 rawler 的容器解析）。**不要拿它展示保真度**——它的
+/// `RawPath` 口径可能与真正解码不同，展示请用 [`info`]。
+///
+/// Width and height only, as the **built-in parser** sees them: no pixel decode, no
+/// third-party backend. For callers that only need the magnitude (picking a worker count
+/// before an export, once per frame -- a 1000-frame sequence cannot afford a rawler container
+/// parse for each). **Do not show fidelity from this** -- its `RawPath` may disagree with the
+/// real decode; use [`info`] for display.
+pub fn info_dimensions(path: impl AsRef<Path>) -> Result<(u32, u32), RawError> {
+    let path = path.as_ref();
+    if let Some(err) = unsupported_extension(path) {
+        return Err(err);
+    }
+    let data = load(path, MAX_FILE_BYTES)?;
+    let info = info_bytes(&data)?;
+    Ok((info.width, info.height))
+}
+
+/// 容器种类，只用于把「为什么走这条路」说清楚。只读头部，不解像素。
+///
+/// Container kind, used only to explain why a route ran. Header bytes only.
+fn container_name(path: &Path) -> &'static str {
+    let Ok(head) = load(path, SNIFF_BYTES) else {
+        return "RAW";
+    };
+    if is_bmff(&head) {
+        return "ISO/BMFF";
+    }
+    match Tiff::parse(&head) {
+        Ok(t) => header_name(&t),
+        Err(_) => "RAW",
+    }
 }
 
 pub fn info_bytes(data: &[u8]) -> Result<RawInfo, RawError> {

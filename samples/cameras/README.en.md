@@ -65,12 +65,36 @@ row it is `Failed to decode image, possibly corrupt image: `, for the model row 
   **skips** -- samples are not committed, so that is a normal state, not a failure.
 - `heic_is_rejected_by_name_not_guessed`: HEIC must be `UnsupportedFormat` with `heic` in the
   message.
+- `info_and_read_agree_on_every_camera_sample`: `raw::info` (used by the info panel and camera
+  profiles) and `raw::read` (the real pixel decode) must reach the **same conclusion** --
+  same route, identical unrotated size, and "decodable" may not differ. This grew out of a
+  real defect: before 2026-11-04 `info` only asked the built-in parser while `read` asked
+  rawler first, so a CR3 and four RW2 files were reported as "camera embedded JPEG preview
+  (truly 8-bit)" while the decode produced 16-bit sensor data (the CR3 even differed in size:
+  6960x4640 vs 6982x4654). A user who reads "no headroom" never edits the frame, and `dcp`
+  refused camera profiles because of it.
+- `every_camera_sample_matches_the_registered_verdict`: every sample's expected verdict is
+  registered in `TABLE` (route + size + why), and an **unregistered new sample is always
+  red**. The assertion above only pins "the two agree" and cannot catch "both degrade to
+  preview at once" -- the degradation that matters most: the 16-bit headroom is gone while
+  both assertions stay green.
+
+## Printing the matrix
+
+```
+cargo run -p aevum-core --example camera_matrix
+```
+
+One table listing what **both routes** (`info` and `read`) conclude for each file: route,
+size, camera, cost; a disagreeing row is marked `<< 不一致`. A new sample gets its `TABLE`
+row by copying a line from here -- more reliable than memory.
 
 ## Committing rules (the opposite of `samples/cc0/`)
 
 - **Files are never committed**, only this README and its `.md` twin.
 - After adding a sample: update the table above (size/bytes/SHA256/result, all measured on
-  the spot) and run the assertions.
+  the spot) and run the assertions. They will fail on "no registered verdict", so run
+  `camera_matrix` and paste the row into `TABLE`.
 - To turn "not supported" into "supported", put the file here first and let the assertion go
   red once, *then* change the code. Doing it the other way round (change the code, then look
   for a sample) is exactly how this round's incident happened.

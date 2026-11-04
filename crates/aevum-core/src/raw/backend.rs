@@ -169,6 +169,30 @@ pub fn full(path: &Path) -> Result<RawDecode, RawError> {
     BuiltinBackend.full(path)
 }
 
+/// 「这份文件第三方后端认不认」——不解像素，失败时把判词让给内置解析器。
+///
+/// `raw::info` 用它把结论对齐到 [`full`] 的路由顺序：能给出尺寸就说明传感器数据
+/// 解得动；失败返回 `None`，让内置解析器给出更具体的 TIFF 结构错误（诊断价值更高）。
+/// 从此 `info` 与 `read` 对同一份文件不可能说两套话——这是 2026-11-04 修掉的那个
+/// 「CR3/RW2 被报成 8 位预览」的直接来源。
+///
+/// Would the third-party backend take this file? No pixel decode; on failure the verdict is
+/// left to the built-in parser. `raw::info` uses it to align with [`full`]'s routing order, so
+/// the two can no longer disagree about the same file -- which is exactly where the
+/// "CR3/RW2 reported as an 8-bit preview" bug came from.
+#[cfg(feature = "raw-rawler")]
+pub fn probe(path: &Path) -> Option<super::RawProbe> {
+    super::rawler_backend::probe(path).ok()
+}
+
+/// 没编译第三方后端时，一切判词都由内置解析器给（`info` 的 fallback 恒走内置）。
+///
+/// Without a third-party backend the built-in parser owns every verdict.
+#[cfg(not(feature = "raw-rawler"))]
+pub fn probe(_path: &Path) -> Option<super::RawProbe> {
+    None
+}
+
 /// 画布快路径：优先内嵌 JPEG 预览，没有预览才整图解码。
 ///
 /// 机身预览往往就是全尺寸，解它比任何传感器直解都便宜；24MP RAW 完整解码要

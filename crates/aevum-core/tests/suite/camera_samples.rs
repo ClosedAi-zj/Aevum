@@ -365,3 +365,344 @@ fn every_raw_sample_is_upright_in_every_route() {
         );
     }
 }
+
+// ---------------------------------------------------------------- 两条路必须同源
+
+/// `raw::info` 与 `raw::read` 对同一份样张必须给出**同一个结论**：走哪条路、多大、
+/// 哪个机型。
+///
+/// # 这条判据是从一个真实缺陷里长出来的
+///
+/// 2026-11-04 第一次把两张路径并排打印出来：Canon CR3 与四张 Panasonic RW2，
+/// `info` 说「机身内嵌 JPEG 预览（真实 8 位）」，`read` 交回的却是 16 位传感器数据
+/// （CR3 连尺寸都不一样：6960×4640 对 6982×4654）。两处各有各的分支判断——`info`
+/// 只问内置解析器，`read` 先问 rawler——于是必然漂移。
+///
+/// 用户看到的是「这张 RAW 没有余量」，于是不会去修，而实际数据是好的；`dcp` 还据此
+/// 误拒了相机配置（「这一帧走的是机身内嵌 JPEG 预览，套不了相机配置」）。所以这条
+/// 判据不问「结果对不对」，只问「两处说的是不是同一件事」——后者是前者的前提。
+///
+/// # 断的是不变量，不是某台相机
+///
+/// * `info` 成功 ⇒ `read` 成功，路径相同，宽高逐项相等；
+/// * `info` 失败 ⇒ `read` 也必须失败（拒绝口径可能不同，但「解得开/解不开」不许分歧）。
+///
+/// 宽高按**未转正**的口径比（`raw::read` 交的像素就是传感器排布），竖拍不会被方向码
+/// 拌住。
+///
+/// `raw::info` and `raw::read` must reach the **same conclusion** about a sample: which
+/// route, what size, which camera.
+///
+/// # Where this assertion comes from
+///
+/// On 2026-11-04 two routes were printed side by side for the first time: a Canon CR3 and
+/// four Panasonic RW2 files where `info` said "camera embedded JPEG preview (truly 8-bit)"
+/// while `read` handed back 16-bit sensor data (the CR3 even disagreed on size:
+/// 6960x4640 vs 6982x4654). Each had its own branch logic -- `info` only asked the built-in
+/// parser, `read` asked rawler first -- so they were bound to drift.
+///
+/// The user sees "this RAW has no headroom" and never edits it, while the data is fine; `dcp`
+/// also refused camera profiles because of it. So this assertion does not ask "is the answer
+/// right" but "do the two say the same thing" -- which is the precondition for the former.
+///
+/// # What it pins is an invariant, not one camera
+///
+/// * `info` succeeds => `read` succeeds, same route, identical width and height;
+/// * `info` fails => `read` must fail too (the wording may differ, "decodable or not" may not).
+///
+/// Sizes are compared **unrotated** (`raw::read` hands back the sensor layout), so portrait
+/// frames are not tripped up by the orientation code.
+#[test]
+fn info_and_read_agree_on_every_camera_sample() {
+    use aevum_core::raw;
+
+    let files: Vec<PathBuf> = samples()
+        .into_iter()
+        .filter(|p| raw::is_raw_name(p))
+        .collect();
+    if files.is_empty() {
+        eprintln!(
+            "跳过：{} 里没有 RAW 样张（样张不入库，清单见该目录 README）",
+            sample_dir().display()
+        );
+        return;
+    }
+
+    let mut report = String::new();
+    for path in &files {
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        // 两条路各自包住：两边读的都是不可信字节，谁 panic 都该红在本条而不是掀翻进程。
+        // Each route is wrapped: both read untrusted bytes, and a panic must fail here
+        // instead of taking the process down.
+        let info = std::panic::catch_unwind(AssertUnwindSafe(|| raw::info(path)));
+        let read = std::panic::catch_unwind(AssertUnwindSafe(|| raw::read(path)));
+
+        match (info, read) {
+            (Err(_), _) => panic!("{name}: raw::info panic 了"),
+            (Ok(_), Err(_)) => panic!("{name}: raw::read panic 了"),
+            (Ok(Err(_)), Ok(Err(_))) => {
+                report.push_str(&format!("{name}: 两条路都拒绝\n"));
+            }
+            (Ok(Err(e)), Ok(Ok((img, route)))) => panic!(
+                "{name}: info 说「解不开」（{e}），read 却交回 {route:?} {}×{}——两条路的\
+                 判断已经分叉，用户看到的保真度不是他手里的数据",
+                img.width(),
+                img.height()
+            ),
+            (Ok(Ok(i)), Ok(Err(e))) => panic!(
+                "{name}: info 说能解（{:?} {}×{}），read 却失败（{e}）——两条路分叉",
+                i.path, i.width, i.height
+            ),
+            (Ok(Ok(i)), Ok(Ok((img, route)))) => {
+                assert_eq!(
+                    i.path,
+                    route,
+                    "{name}: info 报 {:?}（{}×{}），read 交回 {route:?}（{}×{}）——同一条文件\
+                     两条路各说一套；这正是 2026-11-04 那个「CR3/RW2 被报成 8 位预览」的缺陷",
+                    i.path,
+                    i.width,
+                    i.height,
+                    img.width(),
+                    img.height()
+                );
+                // 未转正口径：`raw::read` 交的是传感器排布，与 `info` 的宽高同一个坐标系。
+                assert_eq!(
+                    (i.width, i.height),
+                    (img.width(), img.height()),
+                    "{name}: 尺寸对不上——info 报 {}×{}，read 解出 {}×{}，用户看到的尺寸与\
+                     拿到的像素不是一个东西",
+                    i.width,
+                    i.height,
+                    img.width(),
+                    img.height()
+                );
+                report.push_str(&format!("{name}: {:?} {}×{}\n", i.path, i.width, i.height));
+            }
+        }
+    }
+    eprintln!("两条路一致性（{} 张）：\n{report}", files.len());
+}
+
+/// 每张样张的期望口径必须**登记在表里**，未登记的新样张一律红。
+///
+/// # 为什么需要一张表
+///
+/// 上面两条判据只保证「具名」和「两处一致」。它们抓不到最要紧的一种退化：某台原本
+/// 拿得到传感器数据的机身，**两处一起**退成了内嵌预览。那时两条判据都还是绿的
+/// （具名：`Preview` 也行；一致：两处都说 `Preview`），而用户手里的 16 位余量已经没了。
+///
+/// 所以这里登记「这台机身应该拿到什么」。上游 rawler 换版本、我们改路由、加了新
+/// 样张——只要结果与表不符就红，逼着人来判断「是修好了还是坏了」，而不是让退化静静
+/// 发生。C8 的纪律「新增格式/机型：先让矩阵判据红一次」在这里变成了机制：新样张不
+/// 填表本身就是红。
+///
+/// 表里登记的尺寸是**未转正**的有效区尺寸（与 `raw::info`/`raw::read` 同一坐标系）。
+/// 拒绝类不给尺寸。
+///
+/// Every sample's expected verdict must be **registered**, and an unregistered new sample is
+/// always red.
+///
+/// # Why a table is needed
+///
+/// The two assertions above only guarantee "named" and "the two agree". They cannot catch the
+/// degradation that matters most: a body that used to give sensor data **degrades on both
+/// routes at once** to the embedded preview. Both assertions would still be green (named:
+/// `Preview` counts; consistent: both say `Preview`) while the user's 16-bit headroom is gone.
+///
+/// So this table registers "what this body should give". A rawler upgrade, a routing change or
+/// a new sample that does not match goes red and forces a human decision -- "fixed or broken?"
+/// -- instead of letting degradation happen quietly. C8's rule ("a new format or body: make the
+/// matrix go red first") becomes mechanical here: an unfilled row *is* the red.
+///
+/// Sizes are **unrotated** active-area sizes (same coordinate system as `raw::info`/
+/// `raw::read`). Rejections carry no size.
+#[test]
+fn every_camera_sample_matches_the_registered_verdict() {
+    use aevum_core::raw;
+
+    /// 期望口径。`Sensor`/`Preview` 必须给尺寸；`Reject` 必须不给。
+    ///
+    /// The expected verdict. `Sensor`/`Preview` must carry a size; `Reject` must not.
+    struct Expect {
+        file: &'static str,
+        route: Option<raw::RawPath>,
+        size: Option<(u32, u32)>,
+        /// 为什么是这条路——半年后回来看这一行的人要先知道原因。
+        ///
+        /// Why this route -- whoever reads this row in six months needs the reason first.
+        why: &'static str,
+    }
+
+    const TABLE: &[Expect] = &[
+        Expect {
+            file: "Canon - EOS R6 Mark III - RAW (3_2).CR3",
+            route: Some(raw::RawPath::Sensor),
+            size: Some((6982, 4654)),
+            why: "CR3 的 CRX 压缩只有 rawler 解得动；退预览就等于丢掉整个传感器的余量",
+        },
+        Expect {
+            file: "IMG_1159.HEIC",
+            route: None,
+            size: None,
+            why: "HEIC 这一版不做，按后缀具名拒绝（UNSUPPORTED_EXTENSIONS）",
+        },
+        Expect {
+            file: "IMG_1381.DNG",
+            route: Some(raw::RawPath::Preview),
+            size: Some((4032, 3024)),
+            why: "iPhone 的 LinearRaw 让 rawler 内部越界（已自兜），内置解析器只认单通道 CFA，只能退内嵌预览",
+        },
+        Expect {
+            file: "IMG_9590.ARW",
+            route: None,
+            size: None,
+            why: "不是 TIFF 家族容器（NotTiff），rawler 也认不出机型——缩略图仍能从容器里的整段 JPEG 出",
+        },
+        Expect {
+            file: "Nikon - Z6_3 - 8bit compressed (3_2).NEF",
+            route: Some(raw::RawPath::Preview),
+            size: Some((3984, 2656)),
+            why: "Nikon HighEfficiencyStar 压缩 rawler 0.8.0 还不支持，退内嵌预览",
+        },
+        Expect {
+            file: "PANA0001.RW2",
+            route: Some(raw::RawPath::Sensor),
+            size: Some((6000, 4000)),
+            why: "主流 RW2，rawler 传感器直解",
+        },
+        Expect {
+            file: "PANA0198.JPG",
+            route: None,
+            size: None,
+            why: "普通 JPEG，不走 RAW 支路（归 JPEG 判据管）",
+        },
+        Expect {
+            file: "PANA0450.RW2",
+            route: Some(raw::RawPath::Sensor),
+            size: Some((6000, 4000)),
+            why: "主流 RW2，rawler 传感器直解",
+        },
+        Expect {
+            file: "PANA1631.RW2",
+            route: Some(raw::RawPath::Sensor),
+            size: Some((6000, 4000)),
+            why: "主流 RW2，rawler 传感器直解（竖拍，尺寸仍未转正）",
+        },
+        Expect {
+            file: "PANA180.RW2",
+            route: Some(raw::RawPath::Sensor),
+            size: Some((6000, 4000)),
+            why: "主流 RW2，rawler 传感器直解",
+        },
+        Expect {
+            file: "Sony - ILCE-7M5 - 14bit (3_2).ARW",
+            route: Some(raw::RawPath::Preview),
+            size: Some((4608, 3072)),
+            why: "arw6 机型配置还没有（rawler 报 Unknown camera, mode arw6），退内嵌预览",
+        },
+    ];
+
+    let files = samples();
+    if files.is_empty() {
+        eprintln!(
+            "跳过：{} 里没有样张（样张不入库，清单见该目录 README）",
+            sample_dir().display()
+        );
+        return;
+    }
+
+    // 反查：先看有没有「目录里有、表里没有」——那是新样张，必须先把表填上。
+    // Reverse check first: "present but unregistered" is a new sample and the table must come
+    // first.
+    for path in &files {
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            TABLE.iter().any(|e| e.file == name),
+            "{name}: 这张样张没登记期望口径。先跑 `cargo run -p aevum-core --example \
+             camera_matrix` 抄一行进 TABLE，再判断它是「该能解」还是「这一版不做」。\n\
+             不登记就没人能发现它退化了——两台相机都说「预览」，判据全是绿的。"
+        );
+    }
+
+    for exp in TABLE {
+        let Some(path) = files.iter().find(|p| {
+            p.file_name()
+                .is_some_and(|n| n == std::ffi::OsStr::new(exp.file))
+        }) else {
+            // 样张不入库，换台机器就少几张——这是正常状态，不是失败。
+            // Samples are not committed; a fresh machine has fewer of them. Normal, not a
+            // failure.
+            eprintln!("跳过 {}：本机没有这张样张", exp.file);
+            continue;
+        };
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let info = raw::info(path);
+            let read = raw::read(path);
+            (info, read)
+        }));
+        let (info, read) = match outcome {
+            Ok(v) => v,
+            Err(_) => panic!("{}: 解码 panic 了", exp.file),
+        };
+
+        match (exp.route, exp.size) {
+            (None, None) => {
+                assert!(
+                    info.is_err(),
+                    "{}: 表里登记「拒绝」（{}），实际能解且报 {:?}——要么这一版真的补上了\
+                     （该更新表和文档），要么路由把本来拒绝的东西放进来了",
+                    exp.file,
+                    exp.why,
+                    info.map(|i| i.path)
+                );
+                assert!(
+                    read.is_err(),
+                    "{}: 表里登记「拒绝」，read 却成功了",
+                    exp.file
+                );
+            }
+            (Some(want), Some((w, h))) => {
+                let info = info.unwrap_or_else(|e| {
+                    panic!(
+                        "{}: 表里登记 {want:?} {}×{}（{}），info 却拒绝：{e}",
+                        exp.file, w, h, exp.why
+                    )
+                });
+                assert_eq!(
+                    (info.path, info.width, info.height),
+                    (want, w, h),
+                    "{}: 与登记口径不符（登记 {:?} {}×{}，理由：{}）——上游换版本或路由变了？\
+                     先判断是修好了还是退化了，再改这张表",
+                    exp.file,
+                    want,
+                    w,
+                    h,
+                    exp.why
+                );
+                let (img, route) = read.unwrap_or_else(|e| {
+                    panic!("{}: 表里登记 {want:?}，read 却失败：{e}", exp.file)
+                });
+                assert_eq!(
+                    (route, img.width(), img.height()),
+                    (want, w, h),
+                    "{}: read 与登记口径不符",
+                    exp.file
+                );
+            }
+            // 表本身写错了：一条登记要么全有要么全无。
+            // The row itself is malformed: a verdict either has all fields or none.
+            _ => panic!(
+                "{}: TABLE 行写错了——route 与 size 必须同时给或同时不给",
+                exp.file
+            ),
+        }
+    }
+}

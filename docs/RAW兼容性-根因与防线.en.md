@@ -179,6 +179,19 @@ Four items, ordered by "what happens if the defence breaks":
    or `DecoderPanic`, sensor data or the embedded preview): the next upgrade has to walk that
    table again instead of assuming the guard covers every shape.
 
+5. **One file, one verdict** (added 2026-11-04). Two copies of the routing logic drift by
+   construction: `info` used to ask only the built-in parser while `read` asked rawler first,
+   so the same Canon CR3 was reported in the info panel as "camera embedded JPEG preview
+   (truly 8-bit)" while the decode handed back 16-bit sensor data (even the size differed:
+   6960x4640 vs 6982x4654); four RW2 files fell into the same trap, and `dcp` refused camera
+   profiles because of it. Now `info` follows the **same order** as `backend::full`
+   (third-party backend first), and size, levels and the "decodable" verdict all come from one
+   place, `rawler_backend::geometry`; `probe` just runs the same verdict without decoding
+   pixels. Two assertions pin it: `info_and_read_agree_on_every_camera_sample` for "the two
+   say the same thing", and `every_camera_sample_matches_the_registered_verdict` for "what
+   each body should give" -- the latter is what catches the degradation that matters,
+   "both routes quietly fall back to preview together".
+
 ## 5. Known unsupported list (as of this round)
 
 | Item | State | Evidence |

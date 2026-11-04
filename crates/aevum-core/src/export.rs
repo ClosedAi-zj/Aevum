@@ -3095,15 +3095,21 @@ fn find_box(data: &[u8], start: usize, end: usize, want: &[u8; 4]) -> Option<usi
 /// 尺寸得问后端——拿不到尺寸只会退成单线程，但那是性能损失，不该由「内置解不了」
 /// 这样的能力边界来触发。
 fn frame_pixels(path: &Path) -> u64 {
+    // 只要个数量级决定并行路数：走 `info_dimensions`（内置口径，不解像素、不问
+    // 第三方后端）。`info` 现在为了与真正解码同口径要多跑一趟 rawler 的容器解析，
+    // 1000 帧的序列在这里付不起。
+    //
+    // Only the magnitude is needed to pick a worker count: `info_dimensions` (built-in
+    // verdict, no pixel decode, no third-party backend). `info` now runs a rawler container
+    // parse to stay consistent with the real decode, which a 1000-frame sequence cannot afford
+    // here.
     let info = if crate::raw::is_raw_name(path) {
-        crate::raw::info(path)
-            .map(|i| Some((i.width, i.height)))
-            .unwrap_or(None)
+        crate::raw::info_dimensions(path).map(Some).unwrap_or(None)
     } else if crate::dng::is_named_dng(path) {
         match crate::dng::info(path) {
             Ok(i) => Some((i.width, i.height)),
             // 软错说明该问后端；硬错问也是白问，尺寸当未知。
-            Err(e) if e.soft_fallback() => crate::raw::info(path).ok().map(|i| (i.width, i.height)),
+            Err(e) if e.soft_fallback() => crate::raw::info_dimensions(path).ok(),
             Err(_) => None,
         }
     } else {
