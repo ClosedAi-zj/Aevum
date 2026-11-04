@@ -3144,8 +3144,47 @@ fn frame_working_set(px: u64) -> u64 {
 }
 
 /// 并行路数：每帧的解码是单线程的，路数就是倍数；上限由物理内存的四分之一和核数
-/// （留一半给界面与编码器）共同决定。24MP 一路约 0.6GB，四路之后再快也只能省下
-/// 0.1s 上下（实测），却要多占一倍内存，所以大图封顶四路。
+/// 共同决定。24MP 一路工作集约 0.86GB。
+///
+/// 「大图封顶四路」的 2026-11-04 复测（i5-12600KF / 16 线程，24 MP JPEG → 6000×4000
+/// H.264 CRF20，300 帧，2/4/6/8 路各两遍取优）：渲染+编码段 48.40 / 48.91 / 48.01 /
+/// 47.57 s——四档全钉在 ~48 s，极差 2.7%（噪声内），CPU 绝对量 ~232 s 与 CPU/墙钟比
+/// ~4.8 都与路数无关，9 轮（1 轮冷启动预热 + 8 轮热测）成片 md5 一致。瓶颈在 ffmpeg
+/// x264 编码管道：渲染线程被编码器反压，**从 2 路起就已饱和**。保留 4 不是速度需要，
+/// 是给解码重的 RAW 源（解码占 28%）与更快的编码预设留余量——那些场景下平衡点可能
+/// 移向渲染侧；小内存机器本来就被 `by_ram` 压到 2 路，cap 只在大内存机器生效。
+///
+/// Worker parallelism: each frame's decode is single-threaded, so workers are the
+/// multiplier; the cap is jointly decided by a quarter of physical RAM and the core
+/// count. At 24 MP a worker costs ~0.86 GB of working set.
+///
+/// Re-measured 2026-11-04 (i5-12600KF / 16 threads, 24 MP JPEG → 6000×4000 H.264
+/// CRF20, 300 frames, best of two runs per count of 2/4/6/8): the render+encode
+/// segment is 48.40 / 48.91 / 48.01 / 47.57 s -- pinned at ~48 s for every count, a
+/// 2.7% spread inside the noise, with ~232 s of CPU and a CPU/wall ratio of ~4.8
+/// independent of the worker count, and nine runs (one cold warm-up plus eight warm)
+/// produced byte-identical videos. The bottleneck is the ffmpeg x264 encode pipe: the
+/// render threads are back-pressured by the encoder and **saturate it from 2 workers
+/// up**. Keeping 4 is not a speed requirement but headroom for decode-heavy RAW
+/// sources (decoding is 28% there) and faster encoder presets, where the balance may
+/// shift toward the render side; small-RAM machines are already pressed down to 2 by
+/// `by_ram`, so the cap only bites on large-memory machines.
+///
+/// **`AEVUM_EXPORT_WORKERS` 逃生舱**（显式压测钩子，不是推荐配置，用户文档不提它）：
+/// 设为 >0 的整数时直接用作路数，跳过大图 4 路的经验封顶——这正是钩子的意义，让量具
+/// 测到默认策略不给的路数；但仍受 `by_ram`（可用物理内存折算的路数）兜底 clamp，压进
+/// 换页的数字比默认还难看还可能 OOM，量了白量。核数故意不 clamp，留给压测去撞墙。
+/// 未设置、0 或非法值走原逻辑，默认行为一个字节都不变。
+///
+/// **The `AEVUM_EXPORT_WORKERS` escape hatch** (an explicit benchmarking hook, not a
+/// recommended configuration; user docs do not mention it): a positive integer is used
+/// directly as the worker count, bypassing the legacy large-frame cap -- that is the
+/// hook's whole point, letting the bench reach counts the default policy refuses. It
+/// is still capped by `by_ram` (the RAM-derived limit) as an upper bound, so the
+/// override can never push the machine into swapping: paging produces numbers worse
+/// than the default and can OOM, which measures nothing. The core count is
+/// deliberately NOT clamped, so stress runs may hit the wall. Unset, 0, or garbage
+/// falls back to the stock logic and default behaviour is untouched.
 fn worker_count(paths: &[PathBuf]) -> usize {
     let px = frame_pixels(&paths[0]);
     if px == 0 {
@@ -3157,12 +3196,36 @@ fn worker_count(paths: &[PathBuf]) -> usize {
         bytes => bytes / 4,
     };
     let by_ram = (budget / frame_working_set(px)).max(1);
-    let cap = if px > 12_000_000 {
-        4
-    } else {
-        (cores / 2).clamp(1, 8) as u64
+    let cap = match env_workers() {
+        Some(n) => n as u64,
+        None if px > 12_000_000 => 4,
+        None => (cores / 2).clamp(1, 8) as u64,
     };
     by_ram.min(cap) as usize
+}
+
+/// `AEVUM_EXPORT_WORKERS` 的解析：未设、空、0、非数字都算「没设」（None），
+/// >0 的整数算「显式伸手」（Some）。
+///
+/// 返回的是**未经内存约束的显式值**：受 `by_ram` clamp 是 `worker_count` 的语义，
+/// 这里只回答「用户有没有伸手」，单测因此不必关心机器有多少内存。
+///
+/// Parses `AEVUM_EXPORT_WORKERS`: unset, empty, 0, or non-numeric all count as "not
+/// set" (None); a positive integer means "the user reached for the hatch" (Some).
+///
+/// The returned value is the **explicit value before any memory constraint**:
+/// clamping by `by_ram` is `worker_count`'s semantics, so this function only answers
+/// "did the user reach for the hatch", keeping unit tests free of machine-specific
+/// RAM assumptions.
+fn env_workers() -> Option<usize> {
+    // trim + 解析失败都当「没设」：钩子不该让手滑的值炸掉一次正式导出。
+    //
+    // A trim/parses failure counts as "unset": the hook must not let a fat-fingered
+    // value blow up a real export.
+    std::env::var("AEVUM_EXPORT_WORKERS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
 }
 
 /// 物理内存总量；拿不到时给 0，调用方按 8GB 保守估计。
@@ -3267,9 +3330,121 @@ fn fps_text(fps: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{area_weights, avif_crf, to_rgb24, to_rgb48_pq};
+    use super::{area_weights, avif_crf, env_workers, to_rgb24, to_rgb48_pq};
     use crate::colorspace::ColorSpace;
     use crate::hdr_output::encoded_to_pq;
+
+    /// `AEVUM_EXPORT_WORKERS` 是进程级变量：本文件所有 env 用例共用一把锁串行，
+    /// 并行测试不会互踩（写法与 `aevum-mcp` 测试里队列路径那把 LOCK 同款）。
+    ///
+    /// `AEVUM_EXPORT_WORKERS` is a process-level variable: every env test in this file
+    /// shares one lock so parallel tests cannot stomp on each other (same pattern as
+    /// the queue-path LOCK in the aevum-mcp tests).
+    static WORKERS_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// 取锁的兜底：测试 panic 毒化锁后，后续用例照常拿到锁继续跑。
+    ///
+    /// Lock helper: after a panicking test poisons the mutex, later tests still get it.
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        WORKERS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 环境变量守卫：构造时设值或清空，`Drop` 时无条件 `remove_var`——用例断言 panic
+    /// 也不会把变量泄漏给下一个用例（先前的写法靠语句末尾手动还原，panic 就漏了）。
+    /// 用法前提：调用方持有 `WORKERS_ENV_LOCK`，进程内无并发读写。
+    ///
+    /// Environment guard: sets or clears the variable on construction and
+    /// unconditionally `remove_var`s on `Drop`, so a panicking assertion cannot leak
+    /// the variable into the next test (the previous version restored manually at the
+    /// end of each test, which panics would skip). Precondition: the caller holds
+    /// `WORKERS_ENV_LOCK`, so nothing else in the process touches the variable.
+    struct WorkersEnv {
+        name: &'static str,
+    }
+
+    impl WorkersEnv {
+        /// 设成某个值；`Drop` 负责清掉。
+        ///
+        /// Set the variable to a value; `Drop` cleans it up.
+        fn set(value: &str) -> Self {
+            let guard = Self {
+                name: "AEVUM_EXPORT_WORKERS",
+            };
+            guard.write(value);
+            guard
+        }
+
+        /// 先清空再用（未设口径）；`Drop` 再清一次是无害的幂等操作。
+        ///
+        /// Start from "unset"; the extra `remove_var` in `Drop` is harmless.
+        fn clear() -> Self {
+            let guard = Self {
+                name: "AEVUM_EXPORT_WORKERS",
+            };
+            guard.remove();
+            guard
+        }
+
+        /// 改值（同一把锁内安全）：第二条断言不用再手写 `unsafe`。
+        ///
+        /// Change the value (safe under the same lock) so follow-up assertions do not
+        /// need their own `unsafe` block.
+        fn write(&self, value: &str) {
+            // SAFETY: 调用方持有 WORKERS_ENV_LOCK，本进程内无并发读写该变量。
+            // SAFETY: the caller holds WORKERS_ENV_LOCK; nothing else in this process
+            // reads or writes the variable concurrently.
+            unsafe { std::env::set_var(self.name, value) };
+        }
+
+        /// 清空（未设口径）。
+        ///
+        /// Clear it (the "unset" convention).
+        fn remove(&self) {
+            // SAFETY: 同上，WORKERS_ENV_LOCK 串行。
+            // SAFETY: same as above, serialized by WORKERS_ENV_LOCK.
+            unsafe { std::env::remove_var(self.name) };
+        }
+    }
+
+    impl Drop for WorkersEnv {
+        fn drop(&mut self) {
+            // SAFETY: 用例尚未释放 WORKERS_ENV_LOCK 时守卫先析构（守卫晚于锁守卫声明），
+            // 仍在串行区内。
+            //
+            // SAFETY: the guard is declared after the lock guard, so it drops first
+            // while WORKERS_ENV_LOCK is still held -- still inside the serialized region.
+            unsafe { std::env::remove_var(self.name) };
+        }
+    }
+
+    /// 未设（或上一条用例已还原）→ None：钩子默认完全不参与。
+    #[test]
+    fn env_workers_unset_is_none() {
+        let _lock = env_guard();
+        let _env = WorkersEnv::clear();
+        assert_eq!(env_workers(), None, "未设时应走默认策略");
+    }
+
+    /// >0 整数 → Some，且容忍首尾空白；守卫析构时自动还原，别污染别的用例。
+    #[test]
+    fn env_workers_positive_integer_is_used_verbatim() {
+        let _lock = env_guard();
+        let env = WorkersEnv::set("6");
+        assert_eq!(env_workers(), Some(6));
+        env.write(" 3 ");
+        assert_eq!(env_workers(), Some(3), "首尾空白要 trim 掉");
+    }
+
+    /// 0 与非法值都当「没设」：钩子不许让手滑的值炸掉正式导出。
+    #[test]
+    fn env_workers_zero_and_garbage_fall_back_to_none() {
+        let _lock = env_guard();
+        let env = WorkersEnv::clear();
+        for bad in ["0", "abc", "", "-2", "6.5"] {
+            env.write(bad);
+            assert_eq!(env_workers(), None, "非法值 {bad:?} 必须被当没设");
+        }
+    }
 
     /// 管道字节数必须和 `pipe_command` 写的 `-pix_fmt` 对得上：SDR 3 字节/像素，
     /// HDR 6 字节/像素。

@@ -19,13 +19,23 @@
 //! 可选：`--width 1080 --height 1920`（默认保持源尺寸）、`--fps 30`、`--crf 20`、
 //! `--out <dir>`、`--clean`（跑完删掉临时序列与中间帧；默认保留，见输出里的路径）。
 //!
-//! CPU 利用率要外部采（本程序不引 windows-sys 只为读一个计数器）：
+//! 路数覆盖：`AEVUM_EXPORT_WORKERS=<n>`（>0）让导出用 n 路渲染，绕过默认的大图
+//! 4 路封顶——这是压测钩子，不是推荐配置。2026-11-04 的 A/B（24 MP JPEG、300 帧、
+//! 2/4/6/8 路各两遍取优）：渲染+编码段全部 ~48 s、极差 2.7%，瓶颈在 ffmpeg x264
+//! 编码管道（渲染被反压），路数超过 2 无收益；数字表见
+//! [`docs/性能基线-长序列.md`](../../../docs/性能基线-长序列.md)「导出并行路数」。
 //!
-//! ```text
-//! powershell -c "1..600 | %% { $p = Get-Process aevum_export_bench -EA 0; if ($p) { $p.CPU } else { break }; Start-Sleep 1 }"
-//! ```
+//! CPU 时间不再依赖外部采样：进程 CPU（kernel+user）在程序内用 GetProcessTimes
+//! 直接读（内联 FFI，与 export.rs 的 GlobalMemoryStatusEx 同一写法，不引 windows-sys），
+//! 输出里给出渲染+编码段的 CPU 秒数、与墙钟的比值和除以逻辑核的平均利用率。
+//! 路数来源（默认策略还是 `AEVUM_EXPORT_WORKERS` 覆盖）与本机逻辑核数一并打印。
 //!
-//! 首末两个 CPU 秒数之差 ÷ 墙钟 ÷ 逻辑核数 = 平均利用率。
+//! Process CPU time (kernel + user) is no longer sampled externally: it is read
+//! in-process via GetProcessTimes (inline FFI, same style as export.rs's
+//! GlobalMemoryStatusEx -- still no windows-sys). The output reports the render+encode
+//! segment's CPU seconds, its ratio to wall clock and the average utilisation over
+//! logical cores. The worker-count source (default policy or an
+//! `AEVUM_EXPORT_WORKERS` override) and the logical core count are printed too.
 //!
 //! # 它不做什么
 //!
@@ -40,9 +50,9 @@
 //!    and every "should we go streaming / swap the encoder" decision depends on knowing it;
 //! 2. **Is the bottleneck decode or encode** (O1) -- decode+measure is timed separately, and
 //!    subtracting it from the full export leaves render plus encode;
-//! 3. **Does the export use the cores** (O3) -- wall clock and CPU time are sampled outside
-//!    (see below); this program only has to report the wall clock and stage boundaries
-//!    accurately.
+//! 3. **Does the export use the cores** (O3) -- wall clock and CPU time are both read in
+//!    this program (see above); it only has to report the wall clock, CPU time and stage
+//!    boundaries accurately.
 //!
 //! # Usage
 //!
@@ -52,6 +62,14 @@
 //!
 //! Optional: `--width/--height` (default: source size), `--fps`, `--crf`, `--out`,
 //! `--clean` (delete the temp sequence and intermediate frames afterwards; kept by default).
+//!
+//! Worker override: `AEVUM_EXPORT_WORKERS=<n>` (>0) renders with n workers, bypassing
+//! the default large-frame cap of 4 -- a benchmarking hook, not a recommended setting.
+//! The 2026-11-04 A/B (24 MP JPEG, 300 frames, best of two runs per count of 2/4/6/8):
+//! the render+encode segment sits at ~48 s for every count with a 2.7% spread; the
+//! bottleneck is the ffmpeg x264 encode pipe (render back-pressured), so counts beyond
+//! 2 buy nothing. Numbers in
+//! [`docs/性能基线-长序列.en.md`](../../../docs/性能基线-长序列.en.md), worker-count section.
 //!
 //! # What it does not do
 //!
@@ -70,6 +88,33 @@ use aevum_core::grade::GradeParams;
 
 fn main() {
     let args = Args::parse();
+    // 进程 CPU 从头记起：解码段与渲染段各自算增量，避免把参数解析的零头算进渲染段。
+    //
+    // Process CPU is recorded from the very start: the decode and render segments each
+    // take their own delta, so argument parsing does not leak into the render segment.
+    let cpu_start = process_cpu_secs();
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let workers_env = std::env::var("AEVUM_EXPORT_WORKERS").ok();
+    // 与 `export::worker_count` 的解析同口径（未设/空/0/非法都当没设）：提示行只说
+    // **实际生效的来源**，不把无效值回显成「显式覆盖」——量具的文案必须跟代码行为
+    // 一致，否则读数字的人会以为路数被覆盖过。
+    //
+    // Same parsing convention as `export::worker_count` (unset/empty/0/garbage all
+    // count as "not set"): the banner names the **source actually in effect** and never
+    // echoes an invalid value as an "explicit override" -- the gauge's wording must
+    // match the code's behaviour, or whoever reads the numbers will believe the worker
+    // count was overridden.
+    let forced = workers_env
+        .as_deref()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0);
+    let worker_source = match (forced, workers_env.as_deref()) {
+        (Some(n), _) => format!("AEVUM_EXPORT_WORKERS={n}（显式覆盖）"),
+        (None, Some(v)) => {
+            format!("默认策略（AEVUM_EXPORT_WORKERS={v:?} 无效，按未设处理）")
+        }
+        (None, None) => "默认策略（AEVUM_EXPORT_WORKERS 未设）".to_owned(),
+    };
     let source = args.source.clone().unwrap_or_else(default_source);
     assert!(
         source.is_file(),
@@ -95,10 +140,12 @@ fn main() {
     // from short-circuiting the work.
     let paths = prepare_sequence(&source, &seq_dir, args.frames);
     println!(
-        "\n源：{}（{} 帧）\n工作目录：{}\n",
+        "\n源：{}（{} 帧）\n工作目录：{}\n机器：{} 逻辑核；路数来源：{}\n",
         source.display(),
         paths.len(),
-        out_root.display()
+        out_root.display(),
+        cores,
+        worker_source
     );
 
     // 第一段：解码 + 测光，走**生产同一实现**（`measures::measure_sequence`：并行、
@@ -163,6 +210,11 @@ fn main() {
     ];
     let offsets: Vec<[f64; 2]> = vec![[0.0, 0.0]; paths.len()];
 
+    // 渲染段的 CPU 增量从这里起算：解码+测光已计时完毕，之后再吃到的 CPU 全算导出。
+    //
+    // The render segment's CPU delta starts here: decode+measure is already timed, so
+    // every CPU second spent after this point belongs to the export.
+    let cpu_before_export = process_cpu_secs();
     let result = export_video(
         &ffmpeg,
         &paths,
@@ -227,6 +279,34 @@ fn main() {
     // the encoder sees its first frame. There is no independent "encode time" to report, only
     // "flush the pipe" -- inventing a separate number would be worse than omitting it.
     println!("（编码走直连管道、与渲染重叠；上面那行是冲完管道的收尾，不是编码总耗时）");
+    // CPU/墙钟比：渲染+编码段的进程 CPU 增量 ÷ 该段墙钟；再除以逻辑核即平均利用率
+    // （16 线程的机器满打满算是 16.0）。解码+测光段自身的 CPU 没单列——并行度的问题
+    // 出在渲染段，且两段相减可从「整机」数字里推出。
+    //
+    // CPU/wall ratio: the render+encode segment's process-CPU delta over its wall clock;
+    // dividing further by logical cores gives average utilisation (a 16-thread machine
+    // tops out at 16.0). The decode+measure segment's own CPU is not broken out -- the
+    // parallelism question lives in the render segment, and it can be inferred by
+    // subtraction from the whole-process figure.
+    let cpu_export = process_cpu_secs() - cpu_before_export;
+    let cpu_total = process_cpu_secs() - cpu_start;
+    let cpu_ratio = if secs(render) > 0.0 {
+        cpu_export / secs(render)
+    } else {
+        0.0
+    };
+    println!(
+        "  CPU（渲染+编码段）{:>6.1} s   CPU/墙钟 = {:.2}   平均利用率 = {:.1}%（{} 逻辑核）",
+        cpu_export,
+        cpu_ratio,
+        cpu_ratio / cores as f64 * 100.0,
+        cores
+    );
+    // 全程 CPU（含解码+测光）：与渲染段相减即解码+测光段的 CPU，供两段并行度对比。
+    //
+    // Whole-run CPU (decode+measure included): subtracting the render segment's figure
+    // yields the decode+measure CPU, for comparing parallelism across the two segments.
+    println!("  CPU（全程）       {:>6.1} s", cpu_total);
     println!(
         "\n成片：{}（{:.1} MB）",
         video.display(),
@@ -249,6 +329,56 @@ fn main() {
 
 fn secs(d: Duration) -> f64 {
     d.as_secs_f64()
+}
+
+/// 本进程累计 CPU 时间（kernel + user），单位秒；拿不到给 0.0（增量自然也是 0，
+/// 只损失一行输出，不会让基准崩掉）。
+///
+/// Total CPU time of this process (kernel + user), in seconds; 0.0 when unavailable
+/// (the delta is then 0 too -- one lost output line, never a crashed bench).
+#[cfg(windows)]
+fn process_cpu_secs() -> f64 {
+    #[repr(C)]
+    struct FileTime(u64);
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut core::ffi::c_void;
+        fn GetProcessTimes(
+            process: *mut core::ffi::c_void,
+            creation: *mut FileTime,
+            exit: *mut FileTime,
+            kernel: *mut FileTime,
+            user: *mut FileTime,
+        ) -> i32;
+    }
+    let (mut creation, mut exit, mut kernel, mut user) =
+        (FileTime(0), FileTime(0), FileTime(0), FileTime(0));
+    // SAFETY: 四个 FILETIME 都是在本栈帧里声明的可写缓冲，句柄来自
+    // GetCurrentProcess（伪句柄 -1，不需要关闭）。
+    //
+    // SAFETY: all four FILETIMEs are writable buffers declared in this stack frame;
+    // the handle comes from GetCurrentProcess (pseudo-handle -1, never closed).
+    let ok = unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    // FILETIME 是 100ns 计数。
+    //
+    // A FILETIME counts 100 ns units.
+    if ok == 0 {
+        0.0
+    } else {
+        (kernel.0 + user.0) as f64 / 1e7
+    }
+}
+
+#[cfg(not(windows))]
+fn process_cpu_secs() -> f64 {
+    0.0
 }
 
 fn per_frame(d: Duration, n: usize) -> f64 {
