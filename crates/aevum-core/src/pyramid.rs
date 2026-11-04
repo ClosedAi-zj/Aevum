@@ -82,6 +82,60 @@
 //! 代价说明：Pass B 期间测度缓存驻留最高约 7×96 MB，是峰值内存的主要新增项；若
 //! 再压内存，只能减缓存面或换编码（f16 不满足逐位要求），无免费午餐。
 //!
+//! # 内存量具与「地板」（2026-11-04 复测）
+//!
+//! `examples/pyramid_bench.rs` 用进程内**计数分配器**量 Rust 堆的峰值——不是进程工作集，
+//! 两个数字不通用，引用时必须说清是哪一个。24 MP × 8 帧、`levels = auto`、`radius = 2`：
+//! **1558 MiB 融合增量 / 2.78 s**（上表 1.54 GB 得到独立复核），输出指纹
+//! `3786626078b86e84` 跨轮稳定，可当「逐位不变」的轻量替身（仓库里没有 `T10_DUMP`
+//! 那 288 MB 的夹具）。
+//!
+//! 比总量更值得记的是**按帧数扫出来的规律**：2–3 帧 **1102 MiB（地板）**，之后每帧
+//! **+92 MiB**（5 帧 1284、8 帧 1558、16 帧 2291）。三点结论：
+//!
+//! 1. **峰值随帧数线性增长**——8 帧的 1.54 GB 不是顶，32 帧会到 ~3.7 GB。真正的缺陷是
+//!    「内存随序列长度涨」，不是某个固定数字偏高。
+//! 2. **地板由 Pass A 的四个全分辨率面 + f64 积分图构成**（96×4 + 192 MiB）。所以
+//!    「删掉测度缓存、Pass B 重算」降不到 1.0 GiB 以下——早前立的「融合增量 ≤1.0 GB」
+//!    在结构上不可达，量具正是来证伪它的。
+//! 3. **积分图不在峰上**：`radius = 0` 与 `radius = 2` 的峰值逐 MiB 相同（都 1558）。
+//!    想把 f64 积分图改成行流式（省 192 MiB）在现有结构里没有收益，只有当「重算」
+//!    方案把整条测度链搬进 Pass B 时才有意义。
+//!
+//! 剩下的唯一杠杆是**给缓存加上界**（超出的帧在 Pass B 重算）：16 帧可从 2291 压到
+//! ~2000 MiB，代价是那 8 帧多跑一遍测度链（同机约 +0.8 s，+16 %）。这是个
+//! 内存 / 时间的取舍，没有免费的一侧——要动先在同一台机器上用本量具 A/B 出数字。
+//!
+//! # Memory gauge and the floor (re-measured 2026-11-04)
+//!
+//! `examples/pyramid_bench.rs` measures the peak of the **Rust heap** with an in-process
+//! **counting allocator** -- not the process working set; the two numbers are not
+//! interchangeable and any citation must say which. At 24 MP x 8 frames, `levels = auto`,
+//! `radius = 2`: **1558 MiB fusion delta / 2.78 s** (independently confirming the 1.54 GB
+//! in the table above), with a stable fingerprint `3786626078b86e84` across runs that
+//! stands in for the 288 MB `T10_DUMP` fixture the repository does not have.
+//!
+//! More useful than the total is the **scaling law measured across frame counts**: 2-3
+//! frames sit at the **1102 MiB floor**, and every extra frame adds **92 MiB** (5 frames
+//! 1284, 8 frames 1558, 16 frames 2291). Three conclusions:
+//!
+//! 1. **Peak memory grows linearly with frame count** -- 1.54 GB at 8 frames is not the
+//!    ceiling; 32 frames would reach ~3.7 GB. The real defect is "memory scales with
+//!    sequence length", not "one number is too high".
+//! 2. **The floor is Pass A's four full-resolution planes plus the f64 summed-area table**
+//!    (96x4 + 192 MiB). So "drop the measure cache and recompute in Pass B" cannot reach
+//!    1.0 GiB either -- the earlier "fusion delta <= 1.0 GB" goal is structurally
+//!    unreachable, and the gauge exists precisely to falsify it.
+//! 3. **The summed-area table is not on the peak**: `radius = 0` and `radius = 2` peak at
+//!    exactly the same 1558 MiB. Streaming the f64 table row by row (saving 192 MiB) buys
+//!    nothing in the current shape; it only becomes relevant if the whole measure chain
+//!    moves into Pass B.
+//!
+//! The only remaining lever is **capping the cache** (frames beyond the cap recompute in
+//! Pass B): 16 frames could go from 2291 to ~2000 MiB at the price of one extra measure
+//! chain for those 8 frames (~+0.8 s, +16 % on this machine). That is a memory/time
+//! trade with no free side -- A/B it with this gauge before adopting.
+//!
 //! 第五轮（同日）：先打点拿分段构成（同轮 3 次取中位，中位 5.01 s，本机当轮比上表慢：
 //! 同轮 Weighted 1.58 s）：Pass A 0.84 s（其中 build_sat 0.27 s）、第 0 层 2.41 s、
 //! 深层 0.86 s、塌缩 0.77 s、归一 0.06 s。两个候选杠杆都实测掉了：
@@ -1195,16 +1249,29 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
     }
     drop(gray);
     drop(ml);
-    let best: Vec<f32> = if radius == 0 {
+    // 盒平均的输出**写回峰值面本身**：`box_from_sat` 只读积分图、不读源面，原地覆盖
+    // 逐位等价，省掉一次 96 MB 的全尺寸分配与置零。`gate` 同样原地写回——分位线一算完，
+    // `best` 的原始测度值就没人要了。
+    // **注意它不改峰值**：峰值出现在 Pass B（测度缓存 + 输出塔 + scratch 同时驻留），
+    // 这两处只是少两次分配。真要降峰值，得动 `sat`（f64 全分辨率积分图，24 MP 就 192 MB）
+    // 或测度缓存，别在这两行上找收益。
+    //
+    // The box average writes **back into the peak plane**: `box_from_sat` reads only the
+    // summed-area table and never its source, so overwriting in place is bitwise equivalent
+    // and saves one full-size 96 MB allocation plus its zero-fill. `gate` is written in place
+    // for the same reason: once the percentile cut is taken, nothing needs `best`'s raw
+    // measure values.
+    // **This does not move the peak**: the peak happens in Pass B, where the measure cache,
+    // the output tower and the scratch coexist. Lowering the peak means attacking `sat` (a
+    // full-resolution f64 summed-area table, 192 MB at 24 MP) or the measure cache.
+    let mut best: Vec<f32> = if radius == 0 {
         drop(sat);
         peak
     } else {
-        let mut b = vec![0.0f32; n];
         build_sat(&peak, w, h, &mut sat);
-        box_from_sat(&sat, w, h, radius, &mut b);
-        drop(peak);
+        box_from_sat(&sat, w, h, radius, &mut peak);
         drop(sat);
-        b
+        peak
     };
     let cut = percentile_cut(&best, t).unwrap_or(0.0);
     // 旧版这里 gate 一遍、weak 又一遍（两次全图遍历、两张常驻面）。现在只建 gate：
@@ -1213,12 +1280,10 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
     // The old code built `gate` in one full pass and `weak` in another (two whole-image
     // traversals, two resident planes). Now only `gate` is built: the wholesale fallback
     // after collapse reads `masks[0]` directly (it *is* gate, bitwise the same values).
-    let gate: Vec<f32> = best
-        .iter()
-        .map(|&b| if b > cut { 1.0 } else { 0.0 })
-        .collect();
-    drop(best);
-    let masks = mask_pyramid(gate, w, h, levels);
+    for v in &mut best {
+        *v = if *v > cut { 1.0 } else { 0.0 };
+    }
+    let masks = mask_pyramid(best, w, h, levels);
     let dims = level_dims(w, h, levels);
     let mut out_tower: Vec<Plane> = dims
         .iter()
