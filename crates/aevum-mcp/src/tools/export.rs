@@ -52,6 +52,12 @@ pub(super) fn render_preview(session: &mut Session, args: &Value) -> Result<Valu
         )
     };
     let frame = opt_u32(args, "frame")?.unwrap_or(0) as usize;
+    if n == 0 {
+        // 空序列时 `n - 1` 会下溢，先在这里挡掉。
+        //
+        // An empty sequence would make `n - 1` underflow; block it here first.
+        return Err("序列没有帧".to_owned());
+    }
     if frame >= n {
         return Err(format!("frame {frame} 超出范围 0..{}", n - 1));
     }

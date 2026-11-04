@@ -400,16 +400,33 @@ fn par_active(p: &GradeParams) -> bool {
         || p.par_highlights.abs() > 1e-6
 }
 
+/// 非有限守卫：NaN/inf 一律按字段默认值走。
+///
+/// clamp 链里 NaN 会顺着 `lo`/`s1` 传成下一个 `clamp` 的 min 参数，
+/// `f64::clamp` 遇到 `min > max`（NaN 比较恒假判定不等）会 assert panic；
+/// 先把非有限值归到字段语义默认（与 `GradeParams::default` 一致），
+/// clamp 链就始终拿到合法边界。口径参照 `xmp_map` 的 `.filter(|v| v.is_finite())`。
+///
+/// Non-finite guard: NaN/inf always falls back to the field's semantic default.
+///
+/// In the clamp chain NaN propagates through `lo`/`s1` into the next clamp's min argument,
+/// and `f64::clamp` asserts when `min > max` (NaN comparisons are always false). Mapping
+/// non-finite values to the field default (matching `GradeParams::default`) first keeps
+/// every clamp boundary valid. Same convention as xmp_map's `.filter(|v| v.is_finite())`.
+fn fin_or(v: f64, default: f64) -> f64 {
+    if v.is_finite() { v } else { default }
+}
+
 /// Python `_levels_lut`：色阶五项 -> n 级 [0,1] 表。
 ///
 /// 量纲与 Python 一致：黑白场在 0~255 上给定，下界 `+2/255` 是**归一化**后的
 /// 最小跨度（`lo + 2.0/255.0`），照抄不误。
 fn levels_lut(p: &GradeParams, n: usize) -> Vec<f32> {
-    let lo = (p.lv_black.clamp(0.0, 253.0) as f32) / 255.0;
-    let hi = (p.lv_white as f32).clamp(lo + 2.0 / 255.0, 255.0) / 255.0;
-    let g = (p.lv_gamma.clamp(0.1, 5.0)) as f32;
-    let ob = (p.lv_out_black as f32).clamp(0.0, 255.0) / 255.0;
-    let ow = (p.lv_out_white as f32).clamp(ob + 2.0 / 255.0, 255.0) / 255.0;
+    let lo = (fin_or(p.lv_black, 0.0).clamp(0.0, 253.0) as f32) / 255.0;
+    let hi = (fin_or(p.lv_white, 255.0) as f32).clamp(lo + 2.0 / 255.0, 255.0) / 255.0;
+    let g = (fin_or(p.lv_gamma, 1.0).clamp(0.1, 5.0)) as f32;
+    let ob = (fin_or(p.lv_out_black, 0.0) as f32).clamp(0.0, 255.0) / 255.0;
+    let ow = (fin_or(p.lv_out_white, 255.0) as f32).clamp(ob + 2.0 / 255.0, 255.0) / 255.0;
     let mut out = vec![0.0f32; n];
     for (k, o) in out.iter_mut().enumerate() {
         let v = (k as f64 / (n - 1) as f64) as f32;
@@ -424,13 +441,13 @@ fn levels_lut(p: &GradeParams, n: usize) -> Vec<f32> {
 
 /// Python `_par_lut`：参数曲线四段 + 三分界 -> 亮度映射表（严格不减）。
 fn par_lut(p: &GradeParams, n: usize) -> Vec<f32> {
-    let s1 = (p.par_split1.clamp(2.0, 86.0) as f32) / 100.0;
-    let s2 = (p.par_split2.clamp(s1 as f64 * 100.0 + 2.0, 92.0) as f32) / 100.0;
-    let s3 = (p.par_split3.clamp(s2 as f64 * 100.0 + 2.0, 98.0) as f32) / 100.0;
-    let a = (p.par_shadows.clamp(-100.0, 100.0)) as f32;
-    let b = (p.par_darks.clamp(-100.0, 100.0)) as f32;
-    let c = (p.par_lights.clamp(-100.0, 100.0)) as f32;
-    let d = (p.par_highlights.clamp(-100.0, 100.0)) as f32;
+    let s1 = (fin_or(p.par_split1, 25.0).clamp(2.0, 86.0) as f32) / 100.0;
+    let s2 = (fin_or(p.par_split2, 50.0).clamp(s1 as f64 * 100.0 + 2.0, 92.0) as f32) / 100.0;
+    let s3 = (fin_or(p.par_split3, 75.0).clamp(s2 as f64 * 100.0 + 2.0, 98.0) as f32) / 100.0;
+    let a = (fin_or(p.par_shadows, 0.0).clamp(-100.0, 100.0)) as f32;
+    let b = (fin_or(p.par_darks, 0.0).clamp(-100.0, 100.0)) as f32;
+    let c = (fin_or(p.par_lights, 0.0).clamp(-100.0, 100.0)) as f32;
+    let d = (fin_or(p.par_highlights, 0.0).clamp(-100.0, 100.0)) as f32;
     let mut out = vec![0.0f32; n];
     let mut run_max = 0.0f32;
     for (k, o) in out.iter_mut().enumerate() {
@@ -634,6 +651,33 @@ mod tests {
 
     fn approx(a: f32, b: f32, eps: f32) -> bool {
         (a - b).abs() <= eps
+    }
+
+    #[test]
+    fn non_finite_fields_do_not_panic_the_luts() {
+        // NaN/inf 走进 clamp 链会被当成 min 参数触发 assert panic：
+        // 守卫必须把它们归到字段默认，levels/par 两条 LUT 都不能炸。
+        //
+        // NaN/inf entering the clamp chain would be used as the min argument and trip the
+        // assert: the guard must fold them into the field defaults so neither levels nor
+        // par LUTs can panic.
+        let mut p = GradeParams::default();
+        p.lv_black = f64::NAN;
+        p.lv_white = f64::INFINITY;
+        p.lv_gamma = f64::NAN;
+        p.lv_out_black = f64::NEG_INFINITY;
+        p.lv_out_white = f64::NAN;
+        p.par_split1 = f64::NAN;
+        p.par_split2 = f64::INFINITY;
+        p.par_split3 = f64::NAN;
+        p.par_shadows = f64::NAN;
+        p.par_darks = f64::INFINITY;
+        p.par_lights = f64::NEG_INFINITY;
+        p.par_highlights = f64::NAN;
+        let levels = levels_lut(&p, 256);
+        assert!(levels.iter().all(|v| v.is_finite()), "levels 出了非有限值");
+        let par = par_lut(&p, 256);
+        assert!(par.iter().all(|v| v.is_finite()), "par 出了非有限值");
     }
 
     #[test]

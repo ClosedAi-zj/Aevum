@@ -597,9 +597,14 @@ pub fn fetch_with(url: &str, find: &Locator) -> Result<Vec<u8>, String> {
                 .map(|d| d.as_nanos())
                 .unwrap_or(0)
         ));
+        // -TimeoutSec 300 与 curl 路的 --max-time 300 对齐：没有超时的话，一个挂死的
+        // 服务器会让 Command::output() 无限等待，更新流程整个卡死。
+        //
+        // -TimeoutSec 300 mirrors the curl path's --max-time 300: without a timeout a
+        // hung server would leave Command::output() waiting forever and stall the update.
         let script = format!(
             "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -UseBasicParsing \
-             -Uri '{}' -OutFile '{}'",
+             -TimeoutSec 300 -Uri '{}' -OutFile '{}'",
             url.replace('\'', "''"),
             tmp.display()
         );
@@ -615,7 +620,14 @@ pub fn fetch_with(url: &str, find: &Locator) -> Result<Vec<u8>, String> {
                 first_line(&out.stderr)
             ));
         }
-        let bytes = std::fs::read(&tmp).map_err(|e| format!("下载完成但读不回临时文件：{e}"))?;
+        // 读回失败也必须删掉临时文件，否则每次失败都在系统临时目录留一份残留。
+        //
+        // A failed read-back must still delete the temp file, otherwise every failure
+        // leaves a stray blob behind in the system temp directory.
+        let bytes = std::fs::read(&tmp).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("下载完成但读不回临时文件：{e}")
+        })?;
         let _ = std::fs::remove_file(&tmp);
         if bytes.is_empty() {
             return Err(format!("PowerShell 返回了 0 字节：{url}"));

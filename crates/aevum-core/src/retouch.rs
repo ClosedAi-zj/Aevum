@@ -40,10 +40,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SpotSpec {
-    /// 中心横坐标，相对画幅宽，`[0, 1]`（允许略微越界，采样按边界夹取）。
+    /// 中心横坐标，相对画幅宽；越界值会被 `sanitise` 硬夹进 `[0, 1]`，不是"允许
+    /// 越界、采样时按边界夹取"——存进项目的值一定已经在画面内。
     ///
-    /// Center x relative to the frame width, `[0, 1]`; slight overshoot is allowed and
-    /// sampling clamps at the border.
+    /// Center x relative to the frame width; out-of-range values are hard-clamped into
+    /// `[0, 1]` by `sanitise` — it is not "overshoot allowed, sampled with border clamping",
+    /// and the value stored into a project is always inside the frame.
     pub x: f32,
     /// 中心纵坐标，相对画幅高，`[0, 1]`。
     ///

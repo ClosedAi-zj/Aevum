@@ -413,8 +413,16 @@ fn heal_hole(buf: &mut [f32], w: usize, h: usize, e: &Ellipse) {
     }
 
     // Gauss-Seidel：内部像素取上下左右四邻平均，斑外像素保持原值（Dirichlet 边界），
-    // 贴着画面边、四邻不全时只对存在的邻居求平均（自然边界）。迭代次数按半径给上界。
-    let sweeps = ((e.rx.max(e.ry) * 4.0).ceil() as usize).clamp(16, 256);
+    // 贴着画面边、四邻不全时只对存在的邻居求平均（自然边界）。迭代次数按半径给上界；
+    // 上限放宽到 2048：大半径笔触按半径线性给次数才收敛得动，256 会欠收敛导致
+    // 预览/成片不一致。heal 全程在后台线程跑，慢一点可接受。
+    //
+    // Gauss-Seidel: interior pixels average their four neighbours, spots keep their original
+    // value (Dirichlet boundary), and edge pixels average only existing neighbours (natural
+    // boundary). The sweep count scales with the radius; the cap is 2048 — large-radius
+    // strokes under-converge at 256, which desyncs preview and final render. Healing runs on
+    // background threads, so the extra time is acceptable.
+    let sweeps = ((e.rx.max(e.ry) * 4.0).ceil() as usize).clamp(16, 2048);
     for _ in 0..sweeps {
         for yi in 0..bh {
             for xi in 0..bw {

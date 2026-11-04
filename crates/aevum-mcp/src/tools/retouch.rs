@@ -98,11 +98,20 @@ pub(super) fn retouch_edit(session: &mut Session, args: &Value) -> Result<Value,
     }))
 }
 
-/// 解析一个笔触。越界一律报错而不是悄悄钳 —— 钳完之后 agent 以为设成了 A，
-/// 用户看到的是 B。
+/// 解析一个笔触。越界口径分两级：
 ///
-/// Parse one stroke. Out-of-range values are errors rather than silent clamps: a clamp leaves
-/// the agent believing it set A while the user sees B.
+/// - 几何/索引类（坐标 x/y、quad 角点、帧下标）：越界一律报错而不是悄悄钳 ——
+///   钳完之后 agent 以为设成了 A，用户看到的是 B。
+/// - 旋钮类（radius/feather/ratio 等连续量）：允许钳位，不存在「以为设成了 A」
+///   的歧义风险。
+///
+/// Parse one stroke. The out-of-range policy has two tiers:
+///
+/// - Geometry/index values (x/y coordinates, quad corners, frame indices): out-of-range
+///   is always an error rather than a silent clamp — a clamp leaves the agent believing
+///   it set A while the user sees B.
+/// - Knob-like continuous quantities (radius/feather/ratio etc.): clamping is allowed,
+///   since there is no "thought it set A" ambiguity.
 fn parse_spot(item: &Value) -> Result<SpotSpec, String> {
     let num = |key: &str| -> Result<f32, String> {
         let v = item
@@ -213,6 +222,12 @@ pub(super) fn upright_set(session: &mut Session, args: &Value) -> Result<Value, 
             let frame = opt_u32(args, "frame")?.unwrap_or(0) as usize;
             let path = {
                 let seq = session.require_seq()?;
+                if seq.is_empty() {
+                    // 空序列时 `seq.len() - 1` 会下溢，先在这里挡掉。
+                    //
+                    // An empty sequence would make `seq.len() - 1` underflow; block it here first.
+                    return Err("序列没有帧".to_owned());
+                }
                 if frame >= seq.len() {
                     return Err(format!("frame {frame} 超出范围 0..{}", seq.len() - 1));
                 }

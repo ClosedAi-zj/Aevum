@@ -67,28 +67,77 @@ pub fn run_stdio() -> std::process::ExitCode {
 /// The writer lives behind `Arc<Mutex<_>>`: during a long job the progress thread
 /// writes straight to stdout, and it must share that one lock with the responses,
 /// otherwise two messages interleave.
+/// 单行 JSON 消息的字节上限，防止一行几 GB 的输入把内存吃爆。
+///
+/// Byte limit for a single JSON message line, so a multi-gigabyte line cannot
+/// blow up memory.
+const MAX_LINE_BYTES: usize = 64 * 1024 * 1024;
+
+/// 一行输入的分类结果：空行、已解析的请求、或要回写的一条协议错误。
+///
+/// 抽成纯函数（输入只是字节切片）是为了让非法 UTF-8 和超长行都能脱离进程做单测。
+///
+/// Classification of one input line: empty, a parsed request, or a protocol
+/// error response to write back. Extracted as a pure function over bytes so
+/// invalid UTF-8 and oversized lines can be unit-tested without a process.
+enum LineOutcome {
+    Empty,
+    Parse(Value),
+    Error(Value),
+}
+
+fn classify_line(buf: &[u8]) -> LineOutcome {
+    // 超长行直接丢弃并回 parse error：read_until 已经把它整个读进来了，
+    // 所以这里丢弃即等于跳过该行，服务循环继续。
+    //
+    // Oversized lines are dropped with a parse error: `read_until` has already
+    // pulled the whole line in, so dropping here is the same as skipping it and
+    // the serve loop continues.
+    if buf.len() > MAX_LINE_BYTES {
+        return LineOutcome::Error(error_response(
+            Value::Null,
+            -32700,
+            &format!("单行消息超过 {} 字节上限", MAX_LINE_BYTES),
+        ));
+    }
+    // stdin 出现非法 UTF-8 时 `read_line` 会返回 Err(InvalidData) 并杀死整个
+    // 服务器；改用有损解码把坏字节交给 JSON 解析器自然报 -32700，服务循环
+    // 永不因编码中断。
+    //
+    // Invalid UTF-8 on stdin used to surface as Err(InvalidData) from
+    // `read_line` and kill the whole server; lossy decoding hands the bad
+    // bytes to the JSON parser which naturally answers -32700, so the serve
+    // loop is never interrupted by encoding.
+    let text = String::from_utf8_lossy(buf);
+    let text = text.trim();
+    if text.is_empty() {
+        return LineOutcome::Empty;
+    }
+    match serde_json::from_str::<Value>(text) {
+        Ok(value) => LineOutcome::Parse(value),
+        Err(e) => LineOutcome::Error(error_response(
+            Value::Null,
+            -32700,
+            &format!("JSON 解析失败：{e}"),
+        )),
+    }
+}
+
 pub fn serve<R: BufRead, W: Write + Send + 'static>(
     mut input: R,
     output: W,
 ) -> std::io::Result<()> {
     let out = Arc::new(Mutex::new(output));
-    let mut line = String::new();
+    let mut buf = Vec::new();
     loop {
-        line.clear();
-        if input.read_line(&mut line)? == 0 {
+        buf.clear();
+        if input.read_until(b'\n', &mut buf)? == 0 {
             break;
         }
-        let text = line.trim();
-        if text.is_empty() {
-            continue;
-        }
-        let response = match serde_json::from_str::<Value>(text) {
-            Ok(value) => handle_value(value, &out),
-            Err(e) => Some(error_response(
-                Value::Null,
-                -32700,
-                &format!("JSON 解析失败：{e}"),
-            )),
+        let response = match classify_line(&buf) {
+            LineOutcome::Empty => None,
+            LineOutcome::Error(response) => Some(response),
+            LineOutcome::Parse(value) => handle_value(value, &out),
         };
         if let Some(response) = response {
             write_line(&out, &response)?;
@@ -386,5 +435,73 @@ mod tests {
     fn known_version_is_echoed() {
         let result = initialize(&json!({"protocolVersion": "2025-06-18"}));
         assert_eq!(result["protocolVersion"], "2025-06-18");
+    }
+
+    /// 测试用落点：把响应收进共享缓冲，满足 serve 对 `W: 'static` 的要求。
+    ///
+    /// Test sink: collects responses into a shared buffer to satisfy serve's `W: 'static`
+    /// bound.
+    #[derive(Clone)]
+    struct SharedSink(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedSink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn drain(sink: &SharedSink) -> String {
+        String::from_utf8(sink.0.lock().unwrap_or_else(|e| e.into_inner()).clone())
+            .expect("输出应为 UTF-8")
+    }
+
+    /// 喂非法 UTF-8 字节序列：服务器必须回 -32700 并继续服务下一条合法请求。
+    ///
+    /// Feed an invalid UTF-8 byte sequence: the server must answer -32700 and
+    /// keep serving the next valid request.
+    #[test]
+    fn invalid_utf8_line_answers_parse_error_and_keeps_serving() {
+        let mut input: Vec<u8> = vec![b'{', 0xff, 0xfe, b'\n'];
+        input.extend_from_slice(b"{\"method\":\"ping\",\"id\":1}\n");
+        let sink = SharedSink(Arc::new(Mutex::new(Vec::new())));
+        serve(&mut input.as_slice(), sink.clone()).expect("serve 不应因编码错误退出");
+        let text = drain(&sink);
+        let mut lines = text.lines();
+        let first: Value = serde_json::from_str(lines.next().expect("应有第一条响应"))
+            .expect("第一条响应应为合法 JSON");
+        assert_eq!(first["error"]["code"], -32700);
+        let second: Value = serde_json::from_str(lines.next().expect("应有第二条响应"))
+            .expect("第二条响应应为合法 JSON");
+        assert_eq!(second["id"], 1);
+        assert_eq!(second["result"], json!({}));
+    }
+
+    /// 喂一条超长行：必须回 -32700 而不是 OOM/中断，且后续请求照常处理。
+    ///
+    /// Feed an oversized line: the server must answer -32700 instead of OOM or
+    /// aborting, and keep handling later requests.
+    #[test]
+    fn oversized_line_answers_parse_error_and_keeps_serving() {
+        let oversized = vec![b'a'; MAX_LINE_BYTES + 1];
+        let mut input: Vec<u8> = oversized;
+        input.push(b'\n');
+        input.extend_from_slice(b"{\"method\":\"ping\",\"id\":7}\n");
+        let sink = SharedSink(Arc::new(Mutex::new(Vec::new())));
+        serve(&mut input.as_slice(), sink.clone()).expect("serve 不应因超长行退出");
+        let text = drain(&sink);
+        let mut lines = text.lines();
+        let first: Value = serde_json::from_str(lines.next().expect("应有第一条响应"))
+            .expect("第一条响应应为合法 JSON");
+        assert_eq!(first["error"]["code"], -32700);
+        let second: Value = serde_json::from_str(lines.next().expect("应有第二条响应"))
+            .expect("第二条响应应为合法 JSON");
+        assert_eq!(second["id"], 7);
     }
 }

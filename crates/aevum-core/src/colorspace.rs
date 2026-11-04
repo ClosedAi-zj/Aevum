@@ -387,8 +387,13 @@ impl ColorSpace {
             if profile.get(e..e + 4)? != *sig {
                 return None;
             }
-            let start = u32::from_be_bytes(profile[e + 4..e + 8].try_into().ok()?) as usize;
-            let len = u32::from_be_bytes(profile[e + 8..e + 12].try_into().ok()?) as usize;
+            // 全部走 get：截断的 ICC 尾部可能恰好停在一个匹配的签名上，
+            // 直接下标会在 e+4..e+12 区间越界 panic。
+            //
+            // Everything goes through get: a truncated ICC tail can end right after a
+            // matching signature, and direct indexing would panic past e+4..e+12.
+            let start = u32::from_be_bytes(profile.get(e + 4..e + 8)?.try_into().ok()?) as usize;
+            let len = u32::from_be_bytes(profile.get(e + 8..e + 12)?.try_into().ok()?) as usize;
             profile.get(start..start + len)
         })
     }
@@ -974,6 +979,27 @@ mod tests {
         assert!(ColorSpace::tag_bytes(&p, b"nope").is_none());
         assert!(ColorSpace::tag_bytes(&p[..100], b"desc").is_none());
         assert!(ColorSpace::tag_bytes(&[], b"desc").is_none());
+    }
+
+    #[test]
+    fn tag_bytes_returns_none_for_a_truncated_tag_entry() {
+        // 长度恰好停在「签名匹配之后、start/len 字段还没落全」的截断 ICC：
+        // 旧实现直接下标 profile[e+4..e+12] 会 panic，现在必须返回 None。
+        //
+        // A truncated ICC that stops right after a matching signature, before the
+        // start/len fields are complete: the old direct indexing of profile[e+4..e+12]
+        // would panic; it must return None now.
+        for extra in 4..12usize {
+            let mut p = vec![0u8; 132 + extra];
+            p[128..132].copy_from_slice(&1u32.to_be_bytes());
+            p[132..136].copy_from_slice(b"desc");
+            // start/len 字段写到哪算哪，全填成必然越界的 0xff。
+            p[136..132 + extra].fill(0xff);
+            assert!(
+                ColorSpace::tag_bytes(&p, b"desc").is_none(),
+                "extra={extra} 时应当返回 None 而不是 panic"
+            );
+        }
     }
 
     #[test]

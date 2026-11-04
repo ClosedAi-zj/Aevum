@@ -570,9 +570,19 @@ fn stroke_field(stroke: &Stroke, w: usize, h: usize) -> Vec<f32> {
         }
     };
 
-    let mut prev = stroke.points[0];
+    // Stroke.points 是 pub，空笔画的字面量可能从外面直接构造进来；
+    // parse_stroke 的保证只覆盖协议入口，这里自己兜底返回全零场。
+    //
+    // Stroke.points is pub, so an empty stroke literal can be constructed from outside;
+    // parse_stroke's guarantee only covers the protocol entry, so fall back to an
+    // all-zero field here.
+    let Some((&p0, rest)) = stroke.points.split_first() else {
+        return vec![0.0; w * h];
+    };
+
+    let mut prev = p0;
     stamp(&mut out, prev[0] * wf, prev[1] * hf);
-    for p in &stroke.points[1..] {
+    for p in rest {
         let (ax, ay) = (prev[0] * wf, prev[1] * hf);
         let (bx, by) = (p[0] * wf, p[1] * hf);
         let len = (bx - ax).hypot(by - ay);

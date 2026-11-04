@@ -101,7 +101,24 @@ fn main() -> ExitCode {
             "--demo" => demo = true,
             "--demo-edit" => demo_edit = true,
             "--shot-queue" => shot_queue = true,
-            "--shot-plugin" => shot_plugin = args.next().and_then(|v| v.into_string().ok()),
+            // 与 --shot-dock/--shot-group 一致：缺值或非 UTF-8 都要报错退出，
+            // 不能静默吞掉让插件模式悄悄变成"没开"。
+            //
+            // Consistent with --shot-dock/--shot-group: a missing or non-UTF-8 value must
+            // error out, not be silently swallowed into "plugin mode off".
+            "--shot-plugin" => match args.next() {
+                Some(v) => match v.into_string() {
+                    Ok(name) => shot_plugin = Some(name),
+                    Err(_) => {
+                        warn!("--shot-plugin 的值不是合法 UTF-8");
+                        return ExitCode::from(2);
+                    }
+                },
+                None => {
+                    warn!("--shot-plugin 需要一个插件名");
+                    return ExitCode::from(2);
+                }
+            },
             "--shot-market" => shot_market = true,
             "--shot-end" => shot_end = true,
             "--shot-channels" => shot_channels = true,

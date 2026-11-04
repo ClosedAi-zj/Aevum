@@ -901,6 +901,13 @@ pub enum ExportError {
     NoFfmpeg,
     Ffmpeg(String),
     Invalid(String),
+    /// 配乐探针超时：10 秒内 ffmpeg 没退出（坏文件 / 网络盘），进程已终止。
+    ///
+    /// Soundtrack probe timed out: ffmpeg did not exit within 10 s (a bad file / a network
+    /// drive); the process has been killed.
+    ProbeTimeout {
+        path: String,
+    },
     Io(std::io::Error),
     Xmp(crate::xmp::XmpError),
 }
@@ -932,6 +939,10 @@ impl crate::errmsg::Msg for ExportError {
             Self::Invalid(v) => (
                 "参数不合法：{}",
                 vec![crate::errmsg::Arg::Text(v.to_string())],
+            ),
+            Self::ProbeTimeout { path } => (
+                "读取配乐信息超时：{}（10 秒无响应，进程已终止）",
+                vec![crate::errmsg::Arg::Text(path.to_string())],
             ),
             Self::Io(v) => ("IO 失败：{}", vec![crate::errmsg::Arg::Text(v.to_string())]),
             Self::Xmp(v) => ("写 XMP 旁车失败：{}", vec![crate::errmsg::Arg::Nested(v)]),
@@ -2203,8 +2214,37 @@ pub fn probe_audio(ffmpeg: &Path, path: &Path) -> Result<AudioProbe, ExportError
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let out = cmd.output()?;
-    let probe = crate::audio::parse_probe(&String::from_utf8_lossy(&out.stderr));
+    // `output()` 没有超时：坏文件 / 网络盘上 ffmpeg 可能挂住，把调用线程（现在是
+    // 界面的后台探针线程）永远吊着。改 spawn + `try_wait` 轮询，10 秒不退出就
+    // kill 并返回具名错误。
+    //
+    // `output()` has no timeout: on a bad file / a network drive ffmpeg can hang forever,
+    // leaving the calling thread (now the UI's background probe thread) dangling. Spawn
+    // plus a `try_wait` poll instead: after 10 s without exiting, kill it and return a
+    // named error.
+    let mut child = cmd.spawn()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let _status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(ExportError::ProbeTimeout {
+                        path: path.display().to_string(),
+                    });
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
+    };
+    let mut stderr = Vec::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        use std::io::Read;
+        let _ = pipe.read_to_end(&mut stderr);
+    }
+    let probe = crate::audio::parse_probe(&String::from_utf8_lossy(&stderr));
     if !probe.has_stream() {
         return Err(ExportError::Invalid(format!(
             "这个文件里没有音频流：{}",

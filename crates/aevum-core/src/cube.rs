@@ -92,8 +92,16 @@ pub fn lattice(size: usize) -> Vec<f32> {
 
 /// 按参数算出 LUT 数据，顺序与 [`lattice`] 一致。
 ///
+/// 生产入口先校验格点数：外部传进来的 size 不能把 panic 带给调用方；
+/// `expect` 只留给 [`lattice`] 里的内部不变量。
+///
 /// Computes the LUT data for the given parameters, in the same order as [`lattice`].
-pub fn build(p: &GradeParams, size: usize) -> Vec<[f32; 3]> {
+///
+/// The production entry point validates the node count first: an externally supplied size must
+/// not carry a panic to the caller; `expect` is reserved for the internal invariant in
+/// [`lattice`].
+pub fn build(p: &GradeParams, size: usize) -> Result<Vec<[f32; 3]>, CubeError> {
+    check_size(size)?;
     let mut rgb = lattice(size);
     let n = size * size * size;
     // for_lut 分支不做任何空间运算，宽高只用来校验缓冲长度。
@@ -108,7 +116,7 @@ pub fn build(p: &GradeParams, size: usize) -> Vec<[f32; 3]> {
             ..Opts::FULL
         },
     );
-    rgb.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect()
+    Ok(rgb.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect())
 }
 
 /// 一张 3D LUT：`data[(b * size + g) * size + r]`，取值 `[0,1]`。
@@ -130,15 +138,23 @@ pub struct CubeLut {
 impl CubeLut {
     /// 由调色参数生成（导出用）。
     ///
+    /// 生产入口先校验格点数：GUI/MCP 都走这里，外部传进来的 size 不能把
+    /// panic 带给调用方，越界一律返回 Err。
+    ///
     /// Built from grading parameters, for export.
-    pub fn from_params(p: &GradeParams, size: usize) -> Self {
-        Self {
+    ///
+    /// The production entry point validates the node count first: the GUI and MCP both come
+    /// through here, an externally supplied size must not carry a panic to the caller, and an
+    /// out-of-range value is returned as Err.
+    pub fn from_params(p: &GradeParams, size: usize) -> Result<Self, CubeError> {
+        check_size(size)?;
+        Ok(Self {
             title: "grade".to_string(),
             size,
             domain_min: [0.0; 3],
             domain_max: [1.0; 3],
-            data: build(p, size),
-        }
+            data: build(p, size)?,
+        })
     }
 
     /// 就地套这张 LUT。线性插值，格点上的值与 [`build`] 完全一致。
@@ -249,7 +265,7 @@ pub fn text(title: &str, size: usize, data: &[[f32; 3]]) -> String {
 /// and MCP both come through here).
 pub fn export_text(p: &GradeParams, size: usize) -> Result<String, CubeError> {
     check_size(size)?;
-    Ok(CubeLut::from_params(p, size).to_text())
+    Ok(CubeLut::from_params(p, size)?.to_text())
 }
 
 /// 由参数导出到文件。
@@ -257,7 +273,7 @@ pub fn export_text(p: &GradeParams, size: usize) -> Result<String, CubeError> {
 /// Exports to a file from parameters.
 pub fn export(path: &Path, p: &GradeParams, size: usize) -> Result<(), CubeError> {
     check_size(size)?;
-    CubeLut::from_params(p, size).write(path)
+    CubeLut::from_params(p, size)?.write(path)
 }
 
 fn check_size(size: usize) -> Result<(), CubeError> {
@@ -541,8 +557,26 @@ mod tests {
     }
 
     #[test]
+    fn from_params_rejects_an_out_of_range_size() {
+        // 生产入口必须把越界 size 报成 Err，而不是在 lattice 的 expect 里 panic。
+        //
+        // The production entry points must report an out-of-range size as Err instead of
+        // panicking inside lattice's expect.
+        for size in [0usize, 1, MAX_SIZE + 1, 512] {
+            assert!(
+                matches!(
+                    CubeLut::from_params(&GradeParams::default(), size),
+                    Err(CubeError::Parse(msg)) if msg.contains(&size.to_string())
+                ),
+                "size={size} 应当返回 Err"
+            );
+            assert!(build(&GradeParams::default(), size).is_err(), "size={size}");
+        }
+    }
+
+    #[test]
     fn identity_params_produce_a_neutral_lut() {
-        let lut = CubeLut::from_params(&GradeParams::default(), 17);
+        let lut = CubeLut::from_params(&GradeParams::default(), 17).expect("from_params 失败");
         let l = lattice(17);
         for (i, v) in lut.data.iter().enumerate() {
             let c = i % 3;
@@ -558,7 +592,7 @@ mod tests {
 
     #[test]
     fn text_has_five_header_lines_and_one_line_per_node() {
-        let lut = CubeLut::from_params(&GradeParams::default(), 17);
+        let lut = CubeLut::from_params(&GradeParams::default(), 17).expect("from_params 失败");
         let t = lut.to_text();
         let lines: Vec<&str> = t.split('\n').collect();
         assert_eq!(lines[0], "# ColorTool 3D LUT");
@@ -576,7 +610,7 @@ mod tests {
         let mut p = GradeParams::default();
         p.exposure = 0.4;
         p.contrast = 20.0;
-        let lut = CubeLut::from_params(&p, 17);
+        let lut = CubeLut::from_params(&p, 17).expect("from_params 失败");
         let back = parse(&lut.to_text()).expect("解析失败");
         assert_eq!(back.size, 17);
         assert_eq!(back.title, "grade");
@@ -598,7 +632,7 @@ mod tests {
         let mut p = GradeParams::default();
         p.exposure = 0.5;
         p.contrast = 30.0;
-        let lut = CubeLut::from_params(&p, 17);
+        let lut = CubeLut::from_params(&p, 17).expect("from_params 失败");
 
         // 格点上应当取到表里的值（红最快：只有 r 动）。
         for (k, want) in lut.data.iter().take(17).enumerate() {
@@ -627,7 +661,7 @@ mod tests {
 
     #[test]
     fn neutral_lut_leaves_pixels_untouched() {
-        let lut = CubeLut::from_params(&GradeParams::default(), 33);
+        let lut = CubeLut::from_params(&GradeParams::default(), 33).expect("from_params 失败");
         let mut buf: Vec<f32> = (0..=255).map(|i| i as f32 / 255.0).collect();
         buf.extend_from_slice(&buf.clone());
         let src = buf.clone();
@@ -639,7 +673,9 @@ mod tests {
 
     #[test]
     fn parse_rejects_broken_files() {
-        let ok = CubeLut::from_params(&GradeParams::default(), 2).to_text();
+        let ok = CubeLut::from_params(&GradeParams::default(), 2)
+            .expect("from_params 失败")
+            .to_text();
         // 少一行数据
         let short: String = ok
             .lines()
@@ -714,7 +750,10 @@ mod tests {
         p.temperature = 15.0;
         let dir = tmp_dir("look");
         let file = dir.join("look.cube");
-        CubeLut::from_params(&p, 33).write(&file).expect("写外观");
+        CubeLut::from_params(&p, 33)
+            .expect("from_params 失败")
+            .write(&file)
+            .expect("写外观");
 
         let mut q = GradeParams::default();
         q.look_cube = file.display().to_string();
@@ -743,6 +782,7 @@ mod tests {
         let dir = tmp_dir("neutral");
         let file = dir.join("n.cube");
         CubeLut::from_params(&GradeParams::default(), 17)
+            .expect("from_params 失败")
             .write(&file)
             .expect("写外观");
         let mut p = GradeParams::default();
@@ -757,7 +797,7 @@ mod tests {
         let mut c = GradeParams::default();
         c.temperature = 40.0;
         c.shadows = 30.0;
-        let colored = CubeLut::from_params(&c, 17);
+        let colored = CubeLut::from_params(&c, 17).expect("from_params 失败");
         assert!(!describe(&colored).neutral, "偏色外观被判成了恒等");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -816,7 +856,7 @@ mod tests {
 
         let mut prev = f32::MAX;
         for size in [17usize, 33, 65] {
-            let lut = CubeLut::from_params(&p, size);
+            let lut = CubeLut::from_params(&p, size).expect("from_params 失败");
             let mut via_lut = rgb.clone();
             lut.apply(&mut via_lut);
             let max = direct

@@ -159,7 +159,7 @@ fn cube_cases_match_python() {
         let size = case["size"].as_u64().unwrap() as usize;
         let p: GradeParams = serde_json::from_value(case["params"].clone())
             .unwrap_or_else(|e| panic!("{name} 的参数反序列化失败: {e}"));
-        let mine = cube::build(&p, size);
+        let mine = cube::build(&p, size).expect("build 失败");
         let want = decode_hex(case["out_hex"].as_str().unwrap());
         assert_eq!(mine.len() * 3, want.len(), "{name} 格点数不同");
 
@@ -205,7 +205,7 @@ fn exported_file_reads_back_as_the_same_lut() {
     let path = dir.join("grade.cube");
     cube::export(&path, &p, 17).expect("写 .cube 失败");
     let back = cube::read(&path).expect("读 .cube 失败");
-    let want = CubeLut::from_params(&p, 17);
+    let want = CubeLut::from_params(&p, 17).expect("from_params 失败");
     assert_eq!(back.size, 17);
     assert_eq!(back.data.len(), want.data.len());
     for (a, b) in back.data.iter().zip(&want.data) {
