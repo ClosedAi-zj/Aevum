@@ -737,3 +737,135 @@ fn existing_frames_counts_only_what_resume_will_skip() {
     fs::remove_file(frame_path(&out.path, StillFormat::Png8, 2)).unwrap();
     assert_eq!(existing_frames(&options, 4), 3, "少一张就该只报三张");
 }
+
+/// 裁剪是在修复**之后**做的：这是导出链的顺序契约。
+///
+/// The crop is taken after repair: that is the export chain's order contract.
+///
+/// 导出链的顺序是「先整幅 `render`（镜头 → 透视 → 修复 → 调色），再 crop + warp」。笔触记的
+/// 是**整幅归一坐标**，所以改裁剪不会让已经修好的地方漂走。这条判据盯的就是这个先后：
+/// 同一颗被修掉的斑点，加一块裁剪区之后仍然是修掉的。
+///
+/// 反过来，如果有人把 crop 提到 render 之前，笔触会被当成「相对裁剪后画面」的坐标：
+/// 帧坐标 (0.25, 0.30) 落到 400×300 的 (100, 90)，而斑点还在 (200, 180)，于是这条红。
+///
+/// The chain renders the whole frame first (lens -> perspective -> repair -> grading) and only
+/// then crops and warps. Strokes are stored in whole-frame normalized coordinates, so changing
+/// the crop cannot move what was already repaired. This pins the order down: the same speck
+/// stays repaired once a crop box is added.
+///
+/// Swap the two and the stroke is read as relative to the cropped picture instead -- frame
+/// coordinate (0.25, 0.30) lands at (100, 90) of a 400x300 crop while the speck sits at
+/// (200, 180), and this test goes red.
+#[test]
+fn the_crop_is_applied_after_repair() {
+    use aevum_core::align::CropRect;
+    use aevum_core::retouch::SpotSpec;
+
+    const W: u32 = 800;
+    const H: u32 = 600;
+    const CX: u32 = 200;
+    const CY: u32 = 180;
+    const R: i32 = 16;
+
+    let td = TempDir::new("crop-after-heal");
+    let src = td.path.join("src.png");
+    let mut img = RgbImage::from_pixel(W, H, Rgb([230, 230, 230]));
+    for y in (CY as i32 - R)..=(CY as i32 + R) {
+        for x in (CX as i32 - R)..=(CX as i32 + R) {
+            if (x - CX as i32).pow(2) + (y - CY as i32).pow(2) <= R * R {
+                img.put_pixel(x as u32, y as u32, Rgb([20, 20, 20]));
+            }
+        }
+    }
+    img.save(&src).expect("写源图");
+
+    // 半径取长边 800 的 4% = 32px，是瑕疵（半径 16px）的两倍；修复模式（`source: None`）。
+    //
+    // 这里踩过一次：半径取成和瑕疵一样大（2%=16px）时，羽化圈正好压在瑕疵的暗边上，
+    // 权重在那里本来就趋近 0，于是边缘留了一圈暗——看起来像「修复没生效」，其实是笔刷
+    // 没盖住。真实用也一样：笔刷要略大于瑕疵本身，这也正是默认羽化 35% 的用意。
+    //
+    // Radius is 4% of the 800px long edge = 32px, twice the blemish's 16px radius; repair
+    // mode (`source: None`).
+    //
+    // This cost one debugging round: with the radius equal to the blemish (2% = 16px) the
+    // feather ring sits exactly on its dark edge, where the weight already approaches zero, so
+    // a dark ring survives -- it looks like "repair did nothing" when the brush simply was not
+    // wide enough. Same in real use: the brush has to be slightly larger than the blemish,
+    // which is what the default 35% feather is for.
+    let params = GradeParams {
+        retouch: vec![SpotSpec {
+            x: CX as f32 / W as f32,
+            y: CY as f32 / H as f32,
+            r: 0.04,
+            feather: 0.35,
+            source: None,
+        }],
+        ..GradeParams::default()
+    };
+
+    let export_one = |tag: &str, crop: Option<CropRect>| -> RgbImage {
+        let dir = td.path.join(tag);
+        fs::create_dir_all(&dir).expect("建输出目录");
+        let options = RenderOptions {
+            crop,
+            ..default_options(&dir)
+        };
+        let cancel = AtomicBool::new(false);
+        let out = export_stills(
+            std::slice::from_ref(&src),
+            std::slice::from_ref(&params),
+            &[Ev::NONE],
+            &[[0.0f64; 2]],
+            &options,
+            &cancel,
+            &|_| {},
+        )
+        .expect("导出应当成功");
+        image::open(&out[0]).expect("读回导出图").to_rgb8()
+    };
+
+    // 不裁剪：斑点被修掉，整幅最暗处也不该有那颗斑。
+    //
+    // No crop: the speck is repaired, so nothing that dark is left anywhere.
+    let full = export_one("full", None);
+    assert_eq!(full.dimensions(), (W, H));
+    assert!(
+        darkest(&full) > 150,
+        "不裁剪时斑点也该被修掉，最暗处 {}",
+        darkest(&full)
+    );
+
+    // 裁剪原点在 (0,0)、取左上 400×300：斑点落在本地 (200,180)，与帧坐标偶然同值；
+    // 而「相对裁剪后画面」的归一坐标是 (0.5, 0.6)，两种顺序因此分得开。
+    //
+    // The crop starts at (0,0) and takes the top-left 400x300, so the speck lands at local
+    // (200,180) -- coincidentally the same numbers -- while its cropped-frame normalized
+    // position is (0.5, 0.6). That is what separates the two orders.
+    let cropped = export_one(
+        "crop",
+        Some(CropRect {
+            x: 0,
+            y: 0,
+            w: 400,
+            h: 300,
+        }),
+    );
+    assert_eq!(cropped.dimensions(), (400, 300), "裁剪区没生效");
+    assert!(
+        darkest(&cropped) > 150,
+        "裁剪之后斑点又回来了：笔触跟着裁剪漂走了，最暗处 {}",
+        darkest(&cropped)
+    );
+}
+
+/// 一张图里最暗的像素值（只看亮度，取 RGB 最小值）。
+///
+/// The darkest pixel value in an image (luma approximated by the minimum RGB channel).
+fn darkest(img: &RgbImage) -> u8 {
+    img.pixels()
+        .map(|p| p.0.iter().copied().min().unwrap_or(0))
+        .min()
+        .unwrap_or(0)
+}

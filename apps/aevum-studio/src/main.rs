@@ -148,7 +148,7 @@ fn main() -> ExitCode {
             "--module" => match args.next().map(|v| parse_module(&v.to_string_lossy())) {
                 Some(Some(m)) => module = Some(m),
                 Some(None) => {
-                    warn!("--module 只认 序列/去闪/显影/构图/成片/声音 或 0-5");
+                    warn!("--module 只认 序列/去闪/显影/构图/成片/声音/合成 或 0-6");
                     return ExitCode::from(2);
                 }
                 None => {
@@ -370,7 +370,7 @@ fn print_help() {
     say!(
         "  --shot-dock <名>  截图前切到右侧面板：调整/信息/关键帧/AI/历史（拍「历史」会先造几步）"
     );
-    say!("  --module <模块>   截图时停在指定模块：序列/去闪/显影/构图/成片/声音");
+    say!("  --module <模块>   截图时停在指定模块：序列/去闪/显影/构图/成片/声音/合成");
     say!("  --selftest        无显示器跑一遍布局自检");
     say!("  --bench-ui        无显示器跑帧时基准（面板切换 / 滑块拖动，打印中位与 p95）");
     say!(
@@ -404,14 +404,22 @@ fn window_icon() -> egui::IconData {
     }
 }
 
+/// 命令行里的模块名 → 模块。**只有这一处表**：名字与序号的唯一事实源是
+/// [`Module::from_name`]，这里再抄一份的话，加一个模块就会漏掉一处。
+///
+/// 曾经抄过：v1.8 把「合成」加成第 7 个模块时 `Module::from_name` 跟着改了，这份没改，
+/// 于是 `--module 合成` 与 `--module 6` 都报「只认 0-5」。截图回归要截合成页时才发现——
+/// 而那一页正好是「焦点合成组左截断」这条旧账的复核现场，截不到就等于假绿。
+///
+/// A command-line module name maps to a module here and **the table lives in exactly one
+/// place**: [`Module::from_name`] is the single source for names and indices. A second copy
+/// is how a newly added module goes missing.
+///
+/// There used to be a second copy. v1.8 added "merge" as the seventh module and updated
+/// `Module::from_name` but not this table, so `--module 合成` and `--module 6` both failed
+/// with "only 0-5". It surfaced only when the screenshot regression needed that page -- which
+/// happens to be where the "focus-merge group truncated on the left" item gets reviewed, so
+/// being unable to reach it meant a false pass.
 fn parse_module(name: &str) -> Option<Module> {
-    match name.trim() {
-        "序列" | "sequence" | "seq" | "0" => Some(Module::Sequence),
-        "去闪" | "deflicker" | "def" | "1" => Some(Module::Deflicker),
-        "显影" | "develop" | "dev" | "2" => Some(Module::Develop),
-        "构图" | "frame" | "3" => Some(Module::Frame),
-        "成片" | "render" | "4" => Some(Module::Render),
-        "声音" | "audio" | "5" => Some(Module::Audio),
-        _ => None,
-    }
+    Module::from_name(name)
 }
