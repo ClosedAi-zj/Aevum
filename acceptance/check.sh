@@ -22,6 +22,21 @@ CARGO=(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
 # 用 `:-` 会把空值也当成未设置，CI 上就变成没缓存还强制 offline。
 CARGO_FLAGS="${CARGO_FLAGS---offline}"
 
+# 收尾：清本盘回收站（用户 2026-11-05 明确要求「每次构建后清理回收站」）。
+# 这台机器上的删除被拦进 $Recycle.Bin，不清等于没删 —— 2026-11-05 实测 bin 涨到
+# 402,058 项 / 114.34 GB、E 盘只剩 5 GB，链接器随即 LNK1180/LNK1201，门槛跑到一半
+# 就会卡死。挂在 EXIT 上，关卡红也照清：拦下来的正是「跑不下去」的那一次。
+# 清 bin 失败不影响退出码（收尾不是判据，见 tools/purge-bin.sh）。
+#
+# Housekeeping: purge this drive's Recycle Bin (asked for on 2026-11-05). Deletion is
+# intercepted into $Recycle.Bin on this machine, so without a purge nothing is
+# reclaimed -- measured on 2026-11-05: 402,058 items / 114.34 GB with 5 GB free,
+# followed by linker errors LNK1180/LNK1201 and a gate that hangs halfway. It hangs on
+# EXIT so a red gate is cleaned too -- a red gate is exactly the run that stopped short.
+# A failed purge does not change the exit code (see tools/purge-bin.sh).
+BIN_DRIVE="${AEVUM_BIN_DRIVE:-$(cygpath -m "$ROOT" | cut -d/ -f1)}"
+trap 'bash "$ROOT/tools/purge-bin.sh" "$BIN_DRIVE" || true' EXIT
+
 # 第 0 关：版本号一致性（1.0.0 验收清单 B5，beta.2 当天就漂移过一次 README）
 # + 文档双语一致性（中英分册之后：缺孪生、缺切换链接、死链都是静默失效）
 # + 代码注释双语（模块级 //! 与 pub 项的 /// 必须有英文块）

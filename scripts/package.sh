@@ -45,6 +45,22 @@ purge_dir() {
     fi
 }
 
+# 构建之后清本盘回收站：这台机器上的删除被拦进 $Recycle.Bin（连 Directory.Delete
+# 都只搬不移），不清等于没删 —— 2026-11-05 实测 bin 涨到 402,058 项 / 114.34 GB、
+# E 盘只剩 5 GB，链接器随即 LNK1180。trap 挂在 EXIT 上，成功失败都清。
+#
+# Purge this drive's Recycle Bin after the build: deletion is intercepted into
+# $Recycle.Bin on this machine (even Directory.Delete only moves), so without a purge
+# nothing is reclaimed -- measured on 2026-11-05: 402,058 items / 114.34 GB with 5 GB
+# free, followed by linker error LNK1180. The trap hangs on EXIT, so it runs either way.
+BIN_DRIVE="${AEVUM_BIN_DRIVE:-$(cygpath -m "$ROOT" | cut -d/ -f1)}"
+purge_bin() {
+    if [ "${AEVUM_SKIP_BIN_PURGE:-0}" = "1" ]; then
+        return 0
+    fi
+    bash "$ROOT/tools/purge-bin.sh" "$BIN_DRIVE" || true
+}
+
 # 先定位 ffmpeg，再过门槛：门槛里的导出用例（12 个）现在没有 ffmpeg 就红，而它们
 # 应该用**将来要装进包里的那个二进制**去测 —— 用别的版本测出来的绿，不代表用户手上
 # 那份能跑。
@@ -214,7 +230,7 @@ echo "==> 解压回验（zip 里跑 --selftest，形状数必须与构建树一�
 # （$work 与 $zipcheck），里面的每一样东西都是本次运行创建的，
 # 不含任何用户数据；trap 保证脚本无论成败退出前都清干净。
 zipcheck="$(TMPDIR=/tmp mktemp -d)"
-trap 'purge_dir "$work"; purge_dir "$zipcheck"' EXIT
+trap 'purge_dir "$work"; purge_dir "$zipcheck"; purge_bin' EXIT
 unzip -q "$zip_out" -d "$zipcheck"
 selftest_zip="$("$zipcheck/Aevum-Studio-v$ver/aevum.exe" --selftest)"
 if [ "$selftest_zip" != "$selftest_build" ]; then

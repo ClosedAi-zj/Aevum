@@ -101,6 +101,39 @@ python tools/doc_lint.py
 叫 `lapse`（产品改名前的旧名），目录搬进本仓库的验收目录后一并改掉了；
 `.lapse_*.json`、`lapse-studio` 这类**用户数据**上的旧名字是兼容层，不在此列，也不许动。
 
+## 构建后清回收站（本机硬约束）
+
+**这台机器上的「删除」不真删。** 连 `[System.IO.Directory]::Delete`（RemoveDirectoryW，
+文档上写着永不使用回收站）都会把文件搬进 `<盘>:\$Recycle.Bin`。所以「删掉 `target`」只是
+换了个地方：`df` 一动不动，bin 一路涨。2026-11-01 实测删 46.7 GB 的 `target` 后空间零回升、
+bin 涨到 85.58 GB；2026-11-05 又攒到 **402,058 项 / 114.34 GB**，E 盘只剩 5 GB，
+链接器随即报 `LNK1180` / `LNK1201`（虚拟内存不足，本质是磁盘满）。
+
+所以「清回收站」不是洁癖，是让下一次构建还能跑。用户 2026-11-05 明确要求：
+**每次构建后都清，不要再问。**
+
+两条构建链都在 `EXIT` 上挂了这个收尾，关卡红了照样清——红的那次恰恰是「跑不下去」的那次：
+
+```bash
+BIN_DRIVE="${AEVUM_BIN_DRIVE:-$(cygpath -m "$ROOT" | cut -d/ -f1)}"
+trap '…; bash "$ROOT/tools/purge-bin.sh" "$BIN_DRIVE" || true' EXIT
+```
+
+| 情形 | 做法 |
+| --- | --- |
+| 跑门槛 | `bash acceptance/check.sh` —— 结束自动清 |
+| 打发布包 | `bash scripts/package.sh` —— 结束自动清 |
+| 单独清 | `bash tools/purge-bin.sh E:`（参数是盘符） |
+| 临时跳过 | `AEVUM_SKIP_BIN_PURGE=1 …`（CI 上通常没有这个拦截） |
+| 换盘 | `AEVUM_BIN_DRIVE=D:`（默认取仓库所在盘） |
+
+`tools/purge-bin.sh` **退出码恒为 0**：清 bin 失败不该让构建判红，它只是收尾、不是判据。
+底下是 `tools/empty-bin.ps1`（直删各 SID 下的 `$R`/`$I`，跳过 `S-1-5-18` SYSTEM 的 bin）。
+40 万项大约 7 分钟，`empty-bin.ps1` 自己会打印「删了多少项 / 回收多少 GB」。
+
+判据只有一个：**`df` 见到回升**。只看脚本说「已删除 XX 项」不算数——这个坑踩过一次
+（当时日志写着回收 85 GB，`df` 一点没动，因为删的是另一层）。
+
 ## 文档（第 0 关的后半段）
 
 `python acceptance/check_docs.py` 查三件事：入库的每份 `*.md` 有没有 `.en.md` 孪生（双向）、

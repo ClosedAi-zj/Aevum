@@ -114,6 +114,44 @@ moved into this repository's acceptance tree. Old names living in **user data** 
 `lapse-studio` and the like — are the compatibility layer, are not covered by that rename, and
 must not be touched.
 
+## Purging the Recycle Bin after a build (a hard local constraint)
+
+**Deletion on this machine does not delete.** Even `[System.IO.Directory]::Delete`
+(RemoveDirectoryW, documented never to use the Recycle Bin) moves the files into
+`<drive>:\$Recycle.Bin`. So "deleting `target`" only relocates it: `df` does not move and the bin
+keeps growing. Measured on 2026-11-01: deleting a 46.7 GB `target` freed zero bytes and the bin
+grew to 85.58 GB. By 2026-11-05 it had reached **402,058 items / 114.34 GB** with only 5 GB free
+on E:, after which the linker reported `LNK1180` / `LNK1201` (out of virtual memory, which here
+means out of disk).
+
+So "purge the bin" is not tidiness — it is what keeps the next build possible. Asked for
+explicitly on 2026-11-05: **purge after every build, do not ask again.**
+
+Both build chains hang this clean-up on `EXIT`, and it runs even when a gate fails — a failing run
+is exactly the one that ran out of room:
+
+```bash
+BIN_DRIVE="${AEVUM_BIN_DRIVE:-$(cygpath -m "$ROOT" | cut -d/ -f1)}"
+trap '…; bash "$ROOT/tools/purge-bin.sh" "$BIN_DRIVE" || true' EXIT
+```
+
+| Situation | What to do |
+| --- | --- |
+| Run the gate | `bash acceptance/check.sh` — purges when it exits |
+| Build a release | `bash scripts/package.sh` — purges when it exits |
+| Purge on its own | `bash tools/purge-bin.sh E:` (the argument is a drive) |
+| Skip once | `AEVUM_SKIP_BIN_PURGE=1 …` (CI usually has no such interception) |
+| Another drive | `AEVUM_BIN_DRIVE=D:` (defaults to the drive holding the repository) |
+
+`tools/purge-bin.sh` **always exits 0**: a failed purge must not turn a build red — it is
+housekeeping, not a criterion. Under it sits `tools/empty-bin.ps1`, which deletes `$R`/`$I` under
+each SID directly and skips the `S-1-5-18` SYSTEM bin. 400k items take about seven minutes, and
+the script prints how many items it removed and how many GB it reclaimed.
+
+There is one criterion: **`df` has to show the space coming back.** A log line saying "removed N
+items" is not enough — that trap has been hit once already (the log claimed 85 GB reclaimed while
+`df` did not budge, because a different layer had been deleted).
+
 ## Documents (gate 0, second half)
 
 `python acceptance/check_docs.py` checks three things: every tracked `*.md` has an `.en.md` twin
