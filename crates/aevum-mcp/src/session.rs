@@ -331,6 +331,11 @@ pub struct Session {
     /// Per-channel (RGB) deflicker; same convention as the GUI toggle of the same
     /// name.
     pub def_channels: bool,
+    /// 按 EXIF 曝光三要素预对齐（圣杯过渡）；与 GUI 的同名开关同一口径。
+    ///
+    /// Pre-align on the EXIF exposure triplet (the holy-grail transition); same convention as
+    /// the GUI toggle of the same name.
+    pub def_align_exif: bool,
     pub analysis: Option<Analysis>,
     pub metrics: Option<Vec<Option<FrameMetrics>>>,
     /// 线性光测光，分通道去闪的输入；随测光那趟解码一起算，不重复读图。
@@ -387,6 +392,7 @@ impl Default for Session {
             def_strength: 100.0,
             def_multi: false,
             def_channels: false,
+            def_align_exif: false,
             analysis: None,
             metrics: None,
             def_means: Vec::new(),
@@ -720,6 +726,7 @@ impl Session {
         project.def_strength = self.def_strength;
         project.def_multi = self.def_multi;
         project.def_channels = self.def_channels;
+        project.def_align_exif = self.def_align_exif;
         if let Some(seq) = &self.seq
             && self.analysis.is_some()
         {

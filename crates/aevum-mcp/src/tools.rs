@@ -183,6 +183,7 @@ fn open_sequence(session: &mut Session, args: &Value) -> Result<Value, String> {
                 session.def_strength = p.def_strength;
                 session.def_multi = p.def_multi;
                 session.def_channels = p.def_channels;
+                session.def_align_exif = p.def_align_exif;
                 // 关键帧和上次对齐随工程恢复：导出默认会应用同一组位移与裁切。
                 session.keyframes = p.keyframes.clone();
                 session.last_align = p.align.clone();
@@ -214,6 +215,7 @@ fn open_sequence(session: &mut Session, args: &Value) -> Result<Value, String> {
             "strength": session.def_strength,
             "multi": session.def_multi,
             "channels": session.def_channels,
+            "align_exif": session.def_align_exif,
         }
     }))
 }
@@ -280,6 +282,7 @@ fn sequence_info(session: &mut Session) -> Result<Value, String> {
             "strength": session.def_strength,
             "multi": session.def_multi,
             "channels": session.def_channels,
+            "align_exif": session.def_align_exif,
             "analyzed": session.analysis.is_some(),
             "stats": stats,
         },
@@ -451,22 +454,47 @@ fn deflicker_analyze(session: &mut Session, args: &Value) -> Result<Value, Strin
     let strength = opt_f64(args, "strength")?.unwrap_or(session.def_strength);
     let multi = opt_bool(args, "multi")?.unwrap_or(session.def_multi);
     let channels = opt_bool(args, "channels")?.unwrap_or(session.def_channels);
+    let align_exif = opt_bool(args, "align_exif")?.unwrap_or(session.def_align_exif);
     if !window.is_finite() || !strength.is_finite() {
         return Err("window / strength 必须是有限数值".to_owned());
     }
+    // EV 表只在开关打开时才去读，且**只读一次**：一条千帧序列多读一遍盘不是白给的，
+    // 关着就该零成本。长度钉在输入行数上——分析是逐行对齐的，表短了校正会比帧数少。
+    let evs_for = |n: usize| -> Option<Vec<Option<f64>>> {
+        if !align_exif {
+            return None;
+        }
+        let paths = session
+            .seq
+            .as_ref()
+            .map(Sequence::paths)
+            .unwrap_or_default();
+        let exifs = exif::read_many(&paths);
+        Some((0..n).map(|i| exifs.get(i).and_then(|e| e.ev())).collect())
+    };
     // 口径同 GUI：有线性光测光就在线性域算，拿不到（比如只测过灰度）才退回 gamma 均值。
     let measured = session.def_means.iter().any(|m| m.is_some());
-    let analysis = if channels && measured {
+    let (analysis, evs) = if channels && measured {
         let rgb: Vec<Option<[f64; 3]>> =
             session.def_means.iter().map(|m| m.map(|m| m.rgb)).collect();
-        deflicker::analyze_rgb(&rgb, window, strength, multi)
+        let evs = evs_for(rgb.len());
+        let a = match evs.as_deref() {
+            Some(e) => deflicker::analyze_rgb_exif(&rgb, e, window, strength, multi),
+            None => deflicker::analyze_rgb(&rgb, window, strength, multi),
+        };
+        (a, evs)
     } else if measured {
         let luma: Vec<Option<f64>> = session
             .def_means
             .iter()
             .map(|m| m.map(|m| m.luma))
             .collect();
-        deflicker::analyze_luma(&luma, window, strength, multi)
+        let evs = evs_for(luma.len());
+        let a = match evs.as_deref() {
+            Some(e) => deflicker::analyze_luma_exif(&luma, e, window, strength, multi),
+            None => deflicker::analyze_luma(&luma, window, strength, multi),
+        };
+        (a, evs)
     } else {
         let means: Vec<Option<f64>> = session
             .metrics
@@ -475,8 +503,14 @@ fn deflicker_analyze(session: &mut Session, args: &Value) -> Result<Value, Strin
             .iter()
             .map(|m| m.map(|m| m.mean * 255.0))
             .collect();
-        deflicker::analyze_luma(&means, window, strength, multi)
+        let evs = evs_for(means.len());
+        let a = match evs.as_deref() {
+            Some(e) => deflicker::analyze_luma_exif(&means, e, window, strength, multi),
+            None => deflicker::analyze_luma(&means, window, strength, multi),
+        };
+        (a, evs)
     };
+    let ev_frames = evs.iter().flatten().count();
     let ev = analysis.exposure_per_frame();
     let chan = analysis.chan_residual_per_frame();
     let frames = analysis.rows();
@@ -510,13 +544,25 @@ fn deflicker_analyze(session: &mut Session, args: &Value) -> Result<Value, Strin
     session.def_strength = strength;
     session.def_multi = multi;
     session.def_channels = channels;
+    session.def_align_exif = align_exif;
     session.analysis = Some(analysis);
 
+    // 开关开着却一个 EV 都没读到，必须说出来：那是「看起来生效、实际空转」的假开关。
+    let align_note = if align_exif && ev_frames == 0 {
+        json!(
+            "这些帧没有可用的曝光三要素（ISO/快门/光圈），预对齐没有生效；channels/window 等其余参数照常起作用。"
+        )
+    } else {
+        Value::Null
+    };
     Ok(json!({
         "window": window,
         "strength": strength,
         "multi": multi,
         "channels": channels,
+        "align_exif": align_exif,
+        "ev_frames": ev_frames,
+        "align_note": align_note,
         "frames": frames,
         "valid": session.analysis.as_ref().map(|a| a.stats.valid).unwrap_or(0),
         "stats": stats,
@@ -529,7 +575,7 @@ fn deflicker_analyze(session: &mut Session, args: &Value) -> Result<Value, Strin
         },
         "series": series,
         "stride": stride,
-        "note": "ev 为正表示该帧提亮，导出与预览会自动叠加；开分通道时每项另带 rgb=[R,G,B] 三通道 EV。"
+        "note": "ev 为正表示该帧提亮，导出与预览会自动叠加；开分通道时每项另带 rgb=[R,G,B] 三通道 EV。align_exif 为 true 时 ev 已含预对齐增益，圣杯序列上可能远超单帧 ±3 档的限幅——那是这次导出里真实的重新曝光。"
     }))
 }
 
@@ -3748,13 +3794,14 @@ fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_deflicker_analyze",
-            description: "分析曝光闪烁并保存逐帧 EV 补偿；之后预览与导出会自动叠加。channels 为 true 时按 R/G/B 三通道分别校正，压的是彩色闪烁。",
+            description: "分析曝光闪烁并保存逐帧 EV 补偿；之后预览与导出会自动叠加。channels 为 true 时按 R/G/B 三通道分别校正，压的是彩色闪烁。align_exif 为 true 时先用 EXIF 的 ISO/快门/光圈把相机补偿剥掉（日转夜/圣杯延时），只压真正的测光误差。",
             input_schema: object(
                 json!({
                     "window": {"type": "number", "minimum": 3, "maximum": 199, "description": "平滑窗口（奇数，默认 15）"},
                     "strength": {"type": "number", "minimum": 0, "maximum": 100, "description": "校正强度百分比（默认 100）"},
                     "multi": {"type": "boolean", "description": "长序列多遍窗口（默认 false）"},
-                    "channels": {"type": "boolean", "description": "分通道（RGB）去闪烁，治色闪；默认 false 只补亮度"}
+                    "channels": {"type": "boolean", "description": "分通道（RGB）去闪烁，治色闪；默认 false 只补亮度"},
+                    "align_exif": {"type": "boolean", "description": "按 EXIF 曝光三要素预对齐：日转夜延时里相机在不停补偿，不对齐的话去闪会把日夜过渡当闪烁压掉。缺三要素的帧不对齐也不猜；一个都没有时这一项等于没开"}
                 }),
                 &[],
             ),

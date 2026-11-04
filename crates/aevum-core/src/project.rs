@@ -308,6 +308,15 @@ pub struct ProjectFile {
     /// Whether deflicker measures R/G/B separately, to suppress color flicker in colorful
     /// scenes.
     pub def_channels: bool,
+    /// 去闪是否先按 EXIF 曝光三要素预对齐（圣杯过渡）——决定 `def_offsets` 是「对着
+    /// 相机拍到的画面校正」还是「对着场景光校正」。旧工程没这一项就是不做对齐，
+    /// 与存下来的 `def_offsets` 同一口径。
+    ///
+    /// Whether deflicker pre-aligns on the EXIF exposure triplet (the holy-grail
+    /// transition), which decides whether `def_offsets` correct against what the camera saw
+    /// or against the scene light. An old project without the field means no alignment,
+    /// consistent with the `def_offsets` it stored.
+    pub def_align_exif: bool,
     /// 画幅比例标签（`原生 / 16:9 / 4:3 / 1:1 / 9:16`）。裁剪框是按这个比例定形的，
     /// 两者必须一起存，否则重新打开工程时框和比例会对不上。
     ///
@@ -366,6 +375,7 @@ impl Default for ProjectFile {
             def_offsets: Vec::new(),
             def_chan: Vec::new(),
             def_channels: false,
+            def_align_exif: false,
             aspect: String::new(),
             user_crop: None,
             rotate: 0.0,

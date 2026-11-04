@@ -267,6 +267,189 @@ pub fn analyze_rgb(
     analyze(&matrix, window, strength, multi)
 }
 
+/// 全部有效 EV 的中位数——预对齐的锚点。比取第一帧稳：坏帧、缺帧都不挪锚。
+///
+/// The median of all valid EVs, the anchor of EXIF pre-alignment. Steadier than the first
+/// frame: bad and missing frames never move the anchor.
+fn exif_anchor(evs: &[Option<f64>]) -> Option<f64> {
+    let mut valid: Vec<f64> = evs
+        .iter()
+        .filter_map(|e| e.filter(|v| v.is_finite()))
+        .collect();
+    if valid.is_empty() {
+        return None;
+    }
+    valid.sort_by(f64::total_cmp);
+    let mid = valid.len() / 2;
+    Some(if valid.len() % 2 == 1 {
+        valid[mid]
+    } else {
+        (valid[mid - 1] + valid[mid]) / 2.0
+    })
+}
+
+/// EXIF 预对齐（圣杯过渡）：把每帧亮度折算到「同一组拍摄参数下会看到的亮度」，在
+/// 场景域跑一遍去闪，再把预对齐增益**并回 offsets**。
+///
+/// 日转夜延时里相机在不停补偿（拉长曝光 / 开大光圈 / 提 ISO），测光器看到的是
+/// 「场景光 × 相机补偿」，去闪器分不清哪部分是真实的光线变化、哪部分是相机在动——
+/// 结果要么把台阶当闪烁压掉（吃掉日落），要么把真实变暗当闪烁压掉（吃掉日夜过渡）。
+/// 对齐用 EXIF 三要素的相对 EV 把相机补偿剥掉：`aligned = luma × 2^(EV − EV_ref)`，
+/// `EV_ref` 取全部有效 EV 的中位数（比取第一帧稳：坏帧、缺帧都不挪锚）。剥完之后
+/// 趋势就是场景光本身——台阶没了，日落还在。
+///
+/// **为什么增益必须并回 offsets（而不是只在对齐域跑完就算）**：渲染管线只会
+/// 「原始帧 × 2^corr」。观众要看到的是场景域的画面 = 对齐帧 × 2^offset，于是
+/// `corr = offset + (EV − EV_ref)`——这个和最大可到整个圣杯跨度（8 EV 级），是这次
+/// 导出里**真实发生的重曝光**。只在对齐域算完不并回，渲染根本拿不到这层校正，
+/// 输出还是被测光拉平的画面（判据
+/// `the_aligned_output_restores_the_day_night_transition_the_meter_ate` 咬的就是这个）。
+/// 增益在 [`analyze`] **之后**并回，不经过单帧 ±[`MAX_EV`] 的限幅——限幅管的是
+/// 「压闪烁别过头」，管不着「本来就计划好的重曝光」。
+///
+/// 由此 `Stats` 的口径变化：`jitter_before/after` 仍在**场景域**报告（对齐后显著变小，
+/// 正是收益所在）；`max_ev` / `mean_abs_ev` 是**总校正**（含计划内的重曝光），圣杯
+/// 序列上超过 [`MAX_EV`] 是预期，不是坏帧。
+///
+/// 缺 EV 的帧**不对齐也不猜**（与 `exif::ev` 缺三要素返回 `None` 同一哲学）：带着未剥离
+/// 的台阶进分析会造成假跳变，所以按洞处理，交给去闪插值；那张帧自己保持原样（校正
+/// 为 0）。一个 EV 都没有时整体退回普通去闪——开关等于没开，而不是造出一个假对齐。
+///
+/// 锚点取**中位数**还有一层用处：并回后的总校正中位数为 0，整条片子不会被预对齐顺手
+/// 整体提亮或压暗——对齐只重分配每帧的曝光，不改总曝光。
+///
+/// EXIF pre-alignment (the holy-grail transition): rescale every frame's brightness to what
+/// the same exposure settings would have seen, run deflicker in that scene domain, then fold
+/// the alignment gain **back into the offsets**.
+///
+/// In a day-to-night timelapse the camera compensates constantly (longer shutter, wider
+/// aperture, higher ISO), and the meter sees "scene light × camera compensation" -- deflicker
+/// cannot tell real light change from camera motion, so it either eats the steps (killing the
+/// sunset) or eats the real darkening (killing the day-night transition). Alignment strips
+/// the compensation with the relative EV from the EXIF triplet:
+/// `aligned = luma × 2^(EV − EV_ref)`, anchored at the median of all valid EVs (steadier
+/// than the first frame: bad and missing frames never move the anchor). The trend then IS
+/// the scene light -- the steps are gone and the sunset stays.
+///
+/// **Why the gain must be folded back into the offsets** (rather than done in the aligned
+/// domain and forgotten): the render pipeline can only multiply the **original** frame by
+/// 2^corr. What the viewer should see is the scene-domain picture = aligned frame × 2^offset,
+/// so `corr = offset + (EV − EV_ref)` -- a sum that reaches the whole holy-grail span
+/// (8 EV class) and is the **real re-exposure** this export performs. Skipping the fold
+/// means the render never sees that layer and the output stays the meter-flattened picture
+/// (assertion `the_aligned_output_restores_the_day_night_transition_the_meter_ate` bites
+/// exactly this). The gain is folded after [`analyze`], outside the per-frame ±[`MAX_EV`]
+/// clamp -- the clamp governs "don't over-suppress flicker", not a planned re-exposure.
+///
+/// Consequence for `Stats`: `jitter_before/after` stay in the **scene domain** (notably
+/// smaller after alignment -- that is the whole win); `max_ev` / `mean_abs_ev` are the
+/// **total** correction including the planned re-exposure, so exceeding [`MAX_EV`] on a
+/// holy-grail sequence is expected, not a bad frame.
+///
+/// A frame without an EV is **not aligned and not guessed** (the same philosophy as
+/// `exif::ev` returning `None` when a leg is missing): an unstripped step would enter the
+/// analysis as a false jump, so it becomes a hole for the interpolator, and that frame stays
+/// untouched (correction 0). With no EV at all this falls back to plain deflicker -- the
+/// switch becomes a no-op rather than a fake alignment.
+///
+/// The median anchor has a second job: the folded total correction has a median of zero, so
+/// pre-alignment never brightens or darkens the whole clip -- it redistributes per-frame
+/// exposure without touching total exposure.
+pub fn analyze_luma_exif(
+    means: &[Option<f64>],
+    evs: &[Option<f64>],
+    window: f64,
+    strength: f64,
+    multi: bool,
+) -> Analysis {
+    let Some(anchor) = exif_anchor(evs) else {
+        return analyze_luma(means, window, strength, multi);
+    };
+    let aligned = align_luma_to_exif(means, evs, anchor);
+    let mut a = analyze_luma(&aligned, window, strength, multi);
+    fold_gain_into_offsets(&mut a.offsets, means, evs, anchor);
+    a
+}
+
+/// 分通道版的 EXIF 预对齐：三个通道乘**同一个**增益——相机补偿不挑颜色，把它剥掉
+/// 是整帧的事；色闪照旧由分通道去闪处理。口径与 [`analyze_luma_exif`] 相同。
+///
+/// The per-channel variant: all three channels scale by **the same** gain -- camera
+/// compensation is color-blind, so stripping it is a whole-frame operation; color flicker
+/// remains the per-channel deflicker's job. Same conventions as [`analyze_luma_exif`].
+pub fn analyze_rgb_exif(
+    means: &[Option<[f64; 3]>],
+    evs: &[Option<f64>],
+    window: f64,
+    strength: f64,
+    multi: bool,
+) -> Analysis {
+    let Some(anchor) = exif_anchor(evs) else {
+        return analyze_rgb(means, window, strength, multi);
+    };
+    let aligned = align_rgb_to_exif(means, evs, anchor);
+    let mut a = analyze_rgb(&aligned, window, strength, multi);
+    fold_gain_into_offsets(&mut a.offsets, means, evs, anchor);
+    a
+}
+
+/// 把预对齐增益（`EV − anchor`，log2 域）并进每行的总校正；有 EV 的帧才并——洞帧的
+/// 校正保持 0（那张帧不动）。多通道时一行三列并同一个增益：补偿不挑颜色。
+///
+/// Folds the alignment gain (`EV − anchor`, log2 domain) into each row's total correction;
+/// only frames that have an EV get the fold -- a hole's correction stays 0 (that frame is
+/// left alone). With multiple columns one row folds the same gain into all of them:
+/// compensation is color-blind.
+fn fold_gain_into_offsets<T>(
+    offsets: &mut [f64],
+    means: &[Option<T>],
+    evs: &[Option<f64>],
+    anchor: f64,
+) {
+    for (i, off) in offsets.iter_mut().enumerate() {
+        if let (Some(Some(_)), Some(ev)) = (
+            means.get(i),
+            evs.get(i).and_then(|e| e.filter(|v| v.is_finite())),
+        ) {
+            *off += ev - anchor;
+        }
+    }
+}
+
+/// EXIF 预对齐的第一步：`aligned = luma × 2^(EV − anchor)`。缺 EV 的帧变洞。
+///
+/// Step one of EXIF pre-alignment. A frame without an EV becomes a hole.
+fn align_luma_to_exif(means: &[Option<f64>], evs: &[Option<f64>], anchor: f64) -> Vec<Option<f64>> {
+    means
+        .iter()
+        .zip(evs.iter())
+        .map(|(m, e)| match (m, e) {
+            (Some(v), Some(ev)) if ev.is_finite() => Some(v * (ev - anchor).exp2()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 分通道版：三个通道乘**同一个**因子。
+///
+/// The per-channel variant: all three channels scale by the same factor.
+fn align_rgb_to_exif(
+    means: &[Option<[f64; 3]>],
+    evs: &[Option<f64>],
+    anchor: f64,
+) -> Vec<Option<[f64; 3]>> {
+    means
+        .iter()
+        .zip(evs.iter())
+        .map(|(m, e)| match (m, e) {
+            (Some(v), Some(ev)) if ev.is_finite() => {
+                Some([v[0], v[1], v[2]].map(|c| c * (ev - anchor).exp2()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 struct Matrix {
     rows: usize,
     cols: usize,
@@ -707,5 +890,208 @@ mod tests {
                 .iter()
                 .all(|c| *c == [0.0; 3])
         );
+    }
+
+    /// 合成日转夜（手动圣杯）：场景光 8 EV 匀速变暗，相机在 M 档每 20 帧拧一档补偿，
+    /// 外加 ±0.03 EV 的测光误差。相机把画面拉住 → 原始帧只有约 1 EV 的锯齿波动，
+    /// **日夜过渡被测光吃掉了**；EXIF 里留着 8 EV 的参数台阶。
+    ///
+    /// 返回（原始帧线性亮度，每帧相对 EV）。确定性：噪声用 sin 伪随机，不引随机依赖。
+    ///
+    /// A synthetic day-to-night (manual holy grail): the scene drops 8 EV at a steady rate
+    /// while the camera, locked in M, gains one stop every 20 frames, plus ±0.03 EV of
+    /// metering error. The meter holds the picture, so the raw frames carry only a ~1 EV
+    /// sawtooth -- **the day-night transition has been eaten by the meter** -- while the EXIF
+    /// keeps an 8 EV staircase of parameter changes.
+    ///
+    /// Returns (raw linear luma, per-frame relative EV). Deterministic: the noise is a sine
+    /// pseudo-random, no RNG dependency.
+    fn holy_grail(n: usize) -> (Vec<Option<f64>>, Vec<Option<f64>>) {
+        let mut means = Vec::with_capacity(n);
+        let mut evs = Vec::with_capacity(n);
+        for i in 0..n {
+            let scene = -8.0 * i as f64 / (n - 1).max(1) as f64; // 场景光，log2 域
+            let comp = (i / 20) as f64; // 手动补偿，每 20 帧 +1 档
+            let noise = 0.03 * (i as f64 * 1.7).sin(); // 测光误差
+            // 原始亮度 ∝ 场景光 × 相机增益；comp ≈ −scene 把画面拉住。
+            let raw = 0.5 * 2f64.powf(scene + comp + noise);
+            // 相机参数的 EV 与补偿增益反号（EV 高 = 进光少）；常数被中位数锚吸收。
+            let ev = -comp;
+            means.push(Some(raw));
+            evs.push(Some(ev));
+        }
+        (means, evs)
+    }
+
+    fn max_neighbour_jump(values: &[f64]) -> f64 {
+        values
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f64::max)
+    }
+
+    /// 把一组线性亮度摊成 log2 序列（洞按插值填），用于量「相邻帧差几档光」。
+    ///
+    /// Turns a row of linear luminances into a log2 series (holes interpolated), the unit in
+    /// which "how many stops the picture jumps between neighbouring frames" is measured.
+    fn log2_series(means: &[Option<f64>]) -> Vec<f64> {
+        let m = Matrix::from_luma(means).filled();
+        (0..means.len())
+            .map(|i| m.get(i, 0).max(1e-7).log2())
+            .collect()
+    }
+
+    /// 圣杯的「去闪前残差」必须在对齐后降一个量级：原始域里 1 EV 的是**参数台阶**，
+    /// 对齐后 0.1 EV 的是**测光误差**——去闪器该压的是后者，前者是日夜过渡本身。
+    ///
+    /// 把对齐的增益改成 1（等于没对齐）必红。
+    ///
+    /// The pre-deflicker residual of a holy-grail sequence must drop by an order of magnitude
+    /// once aligned: the ~1 EV jumps in the raw domain are the **parameter staircase**, the
+    /// ~0.1 EV wobble after alignment is the **metering error** -- the latter is flicker to
+    /// suppress, the former is the day-night transition itself. Red when the alignment gain
+    /// is forced to 1.
+    #[test]
+    fn exif_alignment_drops_the_pre_deflicker_residual_by_an_order_of_magnitude() {
+        let (means, evs) = holy_grail(160);
+        let raw = analyze_luma(&means, 15.0, 100.0, false);
+        let anchor = exif_anchor(&evs).expect("夹具里每帧都有 EV");
+        let aligned_means = align_luma_to_exif(&means, &evs, anchor);
+        let aligned = analyze_luma(&aligned_means, 15.0, 100.0, false);
+
+        let raw_jump = max_neighbour_jump(&log2_series(&means));
+        let aligned_jump = max_neighbour_jump(&log2_series(&aligned_means));
+
+        assert!(
+            raw_jump > 0.5,
+            "夹具失效：原始域得有台阶级的相邻差（实得 {raw_jump} EV）"
+        );
+        assert!(
+            aligned_jump * 5.0 < raw_jump,
+            "对齐后去闪前残差没降一个量级：raw {raw_jump:.3} EV → aligned {aligned_jump:.3} EV"
+        );
+        // 判据口径用的是**最大**相邻差而不是产品的 P95：台阶只占帧数的 5%（每 20 帧拧
+        // 一档），P95 恰好落在台阶分布的边缘上，抓不住它；最大差直接咬台阶本身。
+        let _ = (raw.stats.jitter_before, aligned.stats.jitter_before);
+    }
+
+    /// 圣杯的本质判据：**输出必须把被测光吃掉的日夜过渡还回来**。
+    ///
+    /// 关闭对齐时，去闪的输入就是相机拍到的画面（被拉平，落差 ~1 EV），输出也一样——
+    /// 视频里看不到日落。开启对齐后，输入是场景光（8 EV 的真实变暗），去闪只压测光
+    /// 误差，输出的落差必须保留 8 EV 的四分之三以上。这条咬的是「去闪不再吃掉日转夜」，
+    /// 也是 EXIF 对齐存在的理由。
+    ///
+    /// The essential holy-grail assertion: **the output must hand back the transition the
+    /// meter ate**. Without alignment the input is what the camera saw (flattened, ~1 EV of
+    /// range) and the output matches -- no visible sunset. With alignment the input is the
+    /// scene light (a real 8 EV drop), deflicker only trims the metering error, and the output
+    /// must keep at least three quarters of that range.
+    #[test]
+    fn the_aligned_output_restores_the_day_night_transition_the_meter_ate() {
+        let (means, evs) = holy_grail(160);
+        let range = |a: &Analysis| -> f64 {
+            let ev = a.exposure_per_frame();
+            let mut out: Vec<f64> = means
+                .iter()
+                .zip(ev.iter())
+                .map(|(m, o)| m.map_or(f64::NAN, |m| m.log2() + o))
+                .collect();
+            out.retain(|v| v.is_finite());
+            let max = out.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let min = out.iter().cloned().fold(f64::INFINITY, f64::min);
+            max - min
+        };
+
+        let without = range(&analyze_luma(&means, 15.0, 100.0, false));
+        let with = range(&analyze_luma_exif(&means, &evs, 15.0, 100.0, false));
+        let raw_jump = max_neighbour_jump(&log2_series(&means));
+
+        assert!(
+            without < 2.0,
+            "夹具失效：关闭对齐时输出不该有大的过渡（实得 {without:.2} EV）"
+        );
+        assert!(
+            with > 6.0,
+            "开启对齐后输出只保留了 {with:.2} EV 的过渡——日转夜被去闪吃掉了"
+        );
+        // 压闪烁该动的量也要小一个量级：对齐域的去闪只压测光误差，不再跟参数台阶搏斗
+        // （jitter_after 相对 jitter_before 的降幅不受预对齐增益影响——增益是常数项）。
+        let a = analyze_luma_exif(&means, &evs, 15.0, 100.0, false);
+        assert!(
+            a.stats.jitter_after * 5.0 < raw_jump,
+            "对齐后去闪没能把场景域残差压小：after {:.3} vs 原始台阶 {:.3}",
+            a.stats.jitter_after,
+            raw_jump
+        );
+    }
+
+    /// 缺 EV 的帧按洞处理、不对齐也不猜；一个 EV 都没有时整体退回普通去闪。
+    ///
+    /// Frames without an EV become holes -- never guessed; with no EV at all the whole call
+    /// falls back to plain deflicker.
+    #[test]
+    fn missing_evs_become_holes_and_no_evs_at_all_is_a_noop() {
+        let (means, mut evs) = holy_grail(160);
+        // 中间挖掉 5 帧的 EV：它们必须变洞，而不是按 gain=1 混进去。
+        let holes: Vec<usize> = (70..75).collect();
+        for i in &holes {
+            evs[*i] = None;
+        }
+        let anchor = exif_anchor(&evs).expect("夹具里还有大量有效 EV");
+        let aligned = align_luma_to_exif(&means, &evs, anchor);
+        for i in &holes {
+            assert!(aligned[*i].is_none(), "第 {i} 帧缺 EV 却没有被当洞处理");
+        }
+        let good = (0..160usize).filter(|i| !holes.contains(i)).count();
+        assert_eq!(
+            aligned.iter().filter(|m| m.is_some()).count(),
+            good,
+            "有 EV 的帧必须全部保留"
+        );
+        // 洞帧的校正必须保持 0：那张帧不许被猜出来的增益动过。
+        let a = analyze_luma_exif(&means, &evs, 15.0, 100.0, false);
+        for i in &holes {
+            assert_eq!(
+                a.offset(*i, 0),
+                0.0,
+                "第 {i} 帧缺 EV，校正却不是 0——应用侧会把这帧重曝光"
+            );
+        }
+
+        // 锚点取 EV 中位数不是随手挑的：并回以后全场校正的中位数必须贴着 0，
+        // 否则预对齐会顺手把整条片子整体提亮/压暗（锚点改成 0 必红：中位数会跳到
+        // 一整段 EV）。这条咬的是「对齐只重分配，不改总曝光」。
+        let mut folded: Vec<f64> = (0..means.len()).map(|i| a.offset(i, 0)).collect();
+        folded.sort_by(f64::total_cmp);
+        let median = folded[folded.len() / 2];
+        assert!(
+            median.abs() < 1.0,
+            "预对齐把整条片子整体挪了 {median:.2} EV——锚点不该是 EV 中位数之外的数"
+        );
+
+        // 全部没有 EV：退回普通去闪（offsets 逐位一致），开关等于没开。
+        let none_evs: Vec<Option<f64>> = vec![None; 160];
+        let fallback = analyze_luma_exif(&means, &none_evs, 15.0, 100.0, false);
+        let plain = analyze_luma(&means, 15.0, 100.0, false);
+        assert_eq!(
+            fallback.offsets, plain.offsets,
+            "无 EV 时必须与普通去闪逐位一致"
+        );
+        assert_eq!(fallback.stats, plain.stats);
+
+        // RGB 路同理：同因子乘三通道，缺 EV 的帧整帧是洞。
+        let rgb: Vec<Option<[f64; 3]>> = means.iter().map(|m| m.map(|v| [v; 3])).collect();
+        let aligned_rgb = align_rgb_to_exif(&rgb, &evs, anchor);
+        assert!(aligned_rgb[70].is_none());
+        let v = aligned_rgb[0].unwrap();
+        let r = rgb[0].unwrap();
+        let gain = 2f64.powf(evs[0].unwrap() - anchor);
+        for k in 0..3 {
+            assert!(
+                (v[k] - r[k] * gain).abs() < 1e-12,
+                "RGB 通道 {k} 的对齐因子不对"
+            );
+        }
     }
 }

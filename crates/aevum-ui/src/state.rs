@@ -1109,6 +1109,11 @@ pub struct AppState {
     /// Per-channel (RGB) deflicker: suppresses the colour flicker of colourful scenes at the
     /// cost of possible slight hue drift.
     pub def_channels: bool,
+    /// 按 EXIF 曝光三要素预对齐（圣杯过渡）：把相机补偿剥掉，只压真正的测光误差。
+    ///
+    /// Pre-align on the EXIF exposure triplet (the holy-grail transition): strip the camera
+    /// compensation so deflicker only trims real metering error.
+    pub def_align_exif: bool,
 
     pub aspect: Aspect,
     pub grid: bool,
@@ -2383,6 +2388,7 @@ impl AppState {
             def_strength: 100.0,
             def_multi: false,
             def_channels: false,
+            def_align_exif: false,
             aspect: Aspect::Native,
             grid: false,
             cross: false,
@@ -3791,6 +3797,7 @@ impl AppState {
             def_strength: self.def_strength,
             def_multi: self.def_multi,
             def_channels: self.def_channels,
+            def_align_exif: self.def_align_exif,
             aspect: self.aspect,
             crop: self.user_crop,
             rotate: self.rotate,
@@ -3836,7 +3843,8 @@ impl AppState {
         let def_changed = self.def_window != snap.def_window
             || self.def_strength != snap.def_strength
             || self.def_multi != snap.def_multi
-            || self.def_channels != snap.def_channels;
+            || self.def_channels != snap.def_channels
+            || self.def_align_exif != snap.def_align_exif;
         let audio_changed = self.render_audio != snap.render_audio;
         self.params = snap.params;
         self.preset = snap.preset;
@@ -3844,6 +3852,7 @@ impl AppState {
         self.def_strength = snap.def_strength;
         self.def_multi = snap.def_multi;
         self.def_channels = snap.def_channels;
+        self.def_align_exif = snap.def_align_exif;
         self.aspect = snap.aspect;
         // 裁剪框是跟着比例一起定的设置：直接落到快照里的值，不能再走 set_aspect 重铺。
         self.user_crop = snap.crop;
@@ -4520,6 +4529,8 @@ impl AppState {
             "strength": self.def_strength,
             "multi": self.def_multi,
             "channels": self.def_channels,
+            "align_exif": self.def_align_exif,
+            "ev_frames": self.exif_ev_frames(),
             "measured": self.def_means.iter().filter(|m| m.is_some()).count(),
             "applied": self.corr.iter().filter(|v| v.abs() > 0.001).count(),
             "analysis": analysis,
@@ -4547,6 +4558,9 @@ impl AppState {
         }
         if let Some(v) = args.get("channels") {
             self.def_channels = v.as_bool().ok_or("channels 必须是布尔")?;
+        }
+        if let Some(v) = args.get("align_exif") {
+            self.def_align_exif = v.as_bool().ok_or("align_exif 必须是布尔")?;
         }
         self.recompute_deflicker();
         Ok(self.deflicker_json())
@@ -8415,20 +8429,37 @@ impl AppState {
         }
         // 线性光测光是 Python 金标的口径；拿不到（演示序列、自检）才退回 gamma 均值。
         let measured = self.def_means.iter().any(|m| m.is_some());
+        let (window, strength, multi) = (self.def_window, self.def_strength, self.def_multi);
+        let align = self.def_align_exif;
         let a = if self.def_channels && measured {
             let rgb: Vec<Option<[f64; 3]>> =
                 self.def_means.iter().map(|m| m.map(|m| m.rgb)).collect();
-            deflicker::analyze_rgb(&rgb, self.def_window, self.def_strength, self.def_multi)
+            let evs = self.exif_evs(rgb.len());
+            if align {
+                deflicker::analyze_rgb_exif(&rgb, &evs, window, strength, multi)
+            } else {
+                deflicker::analyze_rgb(&rgb, window, strength, multi)
+            }
         } else if measured {
             let luma: Vec<Option<f64>> = self.def_means.iter().map(|m| m.map(|m| m.luma)).collect();
-            deflicker::analyze_luma(&luma, self.def_window, self.def_strength, self.def_multi)
+            let evs = self.exif_evs(luma.len());
+            if align {
+                deflicker::analyze_luma_exif(&luma, &evs, window, strength, multi)
+            } else {
+                deflicker::analyze_luma(&luma, window, strength, multi)
+            }
         } else {
             let luma: Vec<Option<f64>> = self
                 .metrics
                 .iter()
                 .map(|m| m.map(|m| m.mean * 255.0))
                 .collect();
-            deflicker::analyze_luma(&luma, self.def_window, self.def_strength, self.def_multi)
+            let evs = self.exif_evs(luma.len());
+            if align {
+                deflicker::analyze_luma_exif(&luma, &evs, window, strength, multi)
+            } else {
+                deflicker::analyze_luma(&luma, window, strength, multi)
+            }
         };
         self.corr = a
             .exposure_per_frame()
@@ -8442,6 +8473,28 @@ impl AppState {
             .collect();
         self.analysis = Some(a);
         self.preview_dirty = true;
+    }
+
+    /// 每帧的相对 EV（缺三要素的是 `None`），长度**钉死为 `n`**：去闪分析是逐行对齐的，
+    /// 表短了会让校正比帧数少，表长了会在尾部多出没人认领的行。
+    ///
+    /// Per-frame relative EV (`None` where the triplet is missing), length **pinned to `n`**:
+    /// the deflicker analysis is row-aligned, so a short table would yield fewer corrections
+    /// than frames and a long one would leave unclaimed rows at the tail.
+    fn exif_evs(&self, n: usize) -> Vec<Option<f64>> {
+        (0..n)
+            .map(|i| self.exif.get(i).and_then(|e| e.ev()))
+            .collect()
+    }
+
+    /// 有曝光三要素的帧数。面板拿它说明预对齐到底生效了几帧——一个 EV 都没有时开关
+    /// 是空转的，不说清楚就是假开关。
+    ///
+    /// How many frames carry the exposure triplet. The panel uses it to say how many frames
+    /// the pre-alignment actually covers: with no EV at all the switch is a no-op, and
+    /// staying silent about that would be a fake switch.
+    pub fn exif_ev_frames(&self) -> usize {
+        self.exif.iter().filter(|e| e.ev().is_some()).count()
     }
 
     pub fn apply_preset(&mut self, name: &str) {
@@ -11168,6 +11221,7 @@ impl AppState {
             def_strength: self.def_strength,
             def_multi: self.def_multi,
             def_channels: self.def_channels,
+            def_align_exif: self.def_align_exif,
             def_offsets: self.corr.clone(),
             def_chan: self.corr_rgb.clone(),
             crop: self.effective_crop(),
@@ -11233,6 +11287,7 @@ impl AppState {
         self.def_strength = p.def_strength;
         self.def_multi = p.def_multi;
         self.def_channels = p.def_channels;
+        self.def_align_exif = p.def_align_exif;
         self.font_level = p.font_level.min(3);
         self.align_ref = p.reference;
 

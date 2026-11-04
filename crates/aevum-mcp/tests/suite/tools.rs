@@ -13,7 +13,16 @@ use serde_json::{Value, json};
 
 use aevum_mcp::{dispatch, reset_session};
 
-static LOCK: Mutex<()> = Mutex::new(());
+/// 会话是进程级单例：**所有**碰它的用例共用这一把锁，跨模块也一样（`deflicker_align`
+/// 就从这里取）。各拿一把锁等于没锁——两个线程同时改同一个 Session，先跑完的那个收
+/// 拾掉临时目录，后一个就去读一个已经不存在的序列。
+///
+/// The session is a process-level singleton, so **every** test that touches it shares this
+/// one lock, across modules too (`deflicker_align` takes it from here). One lock per module
+/// is no lock at all: two threads mutate the same Session, and whichever finishes first
+/// cleans up its temp directory while the other is still reading a sequence that no longer
+/// exists.
+pub(super) static LOCK: Mutex<()> = Mutex::new(());
 
 struct TempDir(PathBuf);
 

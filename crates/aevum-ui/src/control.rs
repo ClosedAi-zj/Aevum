@@ -358,8 +358,8 @@ pub fn command_catalog() -> Vec<CommandSpec> {
         CommandSpec {
             id: "deflicker.set",
             summary: "读取或修改去闪烁设置（窗口、强度、多遍、分通道）；任何改动立刻重算并回摘要。",
-            params: "window?/strength?/multi?/channels?",
-            schema: r#"{"type":"object","additionalProperties":false,"properties":{"window":{"type":"number","minimum":3,"maximum":199,"description":"平滑窗口，自动取奇数"},"strength":{"type":"number","minimum":0,"maximum":150,"description":"校正强度百分比，100 为完全校正"},"multi":{"type":"boolean","description":"长序列多遍窗口"},"channels":{"type":"boolean","description":"分通道（RGB）去闪烁，治彩色闪烁"}}}"#,
+            params: "window?/strength?/multi?/channels?/align_exif?",
+            schema: r#"{"type":"object","additionalProperties":false,"properties":{"window":{"type":"number","minimum":3,"maximum":199,"description":"平滑窗口，自动取奇数"},"strength":{"type":"number","minimum":0,"maximum":150,"description":"校正强度百分比，100 为完全校正"},"multi":{"type":"boolean","description":"长序列多遍窗口"},"channels":{"type":"boolean","description":"分通道（RGB）去闪烁，治彩色闪烁"},"align_exif":{"type":"boolean","description":"按 EXIF 曝光三要素预对齐（日转夜/圣杯）：剥掉相机补偿，只压真正的测光误差"}}}"#,
         },
         CommandSpec {
             id: "crop.set",

@@ -15,5 +15,6 @@
 //! as `cargo test tools::` still work. Same reasoning as
 //! `aevum-core/tests/suite/main.rs`; see ledger item C1.
 
+mod deflicker_align;
 mod mcp_stdio;
 mod tools;

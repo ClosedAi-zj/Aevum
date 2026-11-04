@@ -55,7 +55,8 @@ whole point.
 
 ## Features
 
-- **Sequence pipeline**: frame alignment (sub-pixel), deflicker (luminance-curve based),
+- **Sequence pipeline**: frame alignment (sub-pixel), deflicker (luminance-curve based,
+  with optional EXIF pre-alignment so a day-to-night transition is not eaten),
   HDR merge, panorama stitching, multi-frame fusing (star stacking / time blending / focus
   stacking)
 - **Develop / grading**: a tone pipeline aligned with classic Lightroom behavior
@@ -87,7 +88,7 @@ presets are read directly. The difference is the *sequence*:
 | | Lightroom / Photoshop | Aevum Studio |
 |---|---|---|
 | basic unit | a single photo | the sequence (sequences are first-class citizens) |
-| timelapse deflicker | none built in; needs LRTimelapse | built in: per-frame metering curves + luminance correction |
+| timelapse deflicker | none built in; needs LRTimelapse | built in: per-frame metering curves + luminance correction; EXIF pre-alignment keeps a holy-grail transition |
 | frame alignment | none | sub-pixel translation alignment + an alignment check-up |
 | HDR / stacking | manual, script-driven stacking in PS | multi-frame merge feeds straight into the develop chain |
 | video output | LRT → LR → AE/PR, three hops | direct mp4 export (H.264 / H.265 10-bit HDR), batch render queue |

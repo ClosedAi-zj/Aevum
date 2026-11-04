@@ -97,6 +97,7 @@ pub struct Snapshot {
     pub def_strength: f64,
     pub def_multi: bool,
     pub def_channels: bool,
+    pub def_align_exif: bool,
     pub aspect: Aspect,
     /// 用户拖出来的裁剪框；和 `aspect` 一样是「构图类」设置，撤销要一起回。
     ///
@@ -528,6 +529,7 @@ impl History {
         changed!(def_strength, "去闪强度");
         changed!(def_multi, "去闪模式");
         changed!(def_channels, "去闪通道");
+        changed!(def_align_exif, "去闪预对齐");
         changed!(aspect, "画面比例");
         changed!(crop, "裁剪框");
         changed!(rotate, "拉直");

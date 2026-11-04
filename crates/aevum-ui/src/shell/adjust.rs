@@ -113,6 +113,7 @@ pub(crate) fn reset_group(state: &mut AppState, key: &str) {
             state.def_strength = 100.0;
             state.def_multi = false;
             state.def_channels = false;
+            state.def_align_exif = false;
             state.recompute_deflicker();
         }
         "frame" => {
@@ -731,6 +732,30 @@ fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
             .changed()
         {
             state.recompute_deflicker();
+        }
+        if ui
+            .checkbox(
+                &mut state.def_align_exif,
+                RichText::new(crate::i18n::t!("按 EXIF 预对齐（圣杯）")).size(SIZE_SMALL),
+            )
+            .on_hover_text(crate::i18n::t!(
+                "日转夜延时里相机一直在拉长曝光、开大光圈，去闪会把日夜过渡当成闪烁压掉；用 EXIF 的曝光三要素把相机补偿剥掉，只压真正的测光误差（只重分配每帧曝光，不改总亮度）"
+            ))
+            .changed()
+        {
+            state.recompute_deflicker();
+        }
+        if state.def_align_exif {
+            let ev = state.exif_ev_frames();
+            if ev == 0 {
+                note(ui, "这批帧没有曝光三要素（ISO/快门/光圈），预对齐不会生效");
+            } else {
+                let total = state.metrics.len();
+                note(
+                    ui,
+                    &crate::i18n::tr_fmt("{} / {} 帧有曝光三要素", &[&ev, &total]),
+                );
+            }
         }
         if bar_button(ui, "重新分析").clicked() {
             state.recompute_deflicker();

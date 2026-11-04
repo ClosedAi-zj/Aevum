@@ -37,6 +37,9 @@ fn roundtrip_keeps_everything() {
     p.def_window = 21.0;
     p.def_strength = 80.0;
     p.def_multi = true;
+    // 预对齐开关必须跟着存：它决定 def_offsets 是「对着相机拍到的画面」还是「对着
+    // 场景光」校正，少存一项，重开工程就再也解释不了那批数。
+    p.def_align_exif = true;
     p.crop = Some(CropRect {
         x: 4,
         y: 6,
@@ -105,6 +108,9 @@ fn roundtrip_keeps_everything() {
     assert_eq!(got.flags.get(&2), Some(&-1));
     assert_eq!(got.keyframes.get(&10).unwrap().exposure, 1.25);
     assert_eq!(got.align.as_ref().unwrap().offsets.len(), 2);
+    assert!(got.def_align_exif, "预对齐开关没活过工程文件");
+    assert_eq!(got.def_window, 21.0);
+    assert!(got.def_multi);
     assert_eq!(got.render.codec, "h264");
     // 成片档（容器、质量、EXIF 搬运、输出锐化）也要活过工程文件。
     assert_eq!(got.render.format, "jpeg");
@@ -166,6 +172,8 @@ fn old_file_with_missing_fields_uses_defaults() {
     assert!(got.stacks.is_empty());
     // 旧工程没有 copies 这一段：就是没有副本。
     assert!(got.copies.is_empty());
+    // 旧工程没有预对齐这一项：就是不对齐，与它存下来的 def_offsets 同一口径。
+    assert!(!got.def_align_exif);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
