@@ -7,9 +7,6 @@
 // Shared pieces (theme, i18n, sibling helpers) come in through mod.rs's use tree.
 use super::develop::{profiles_body, spec_field, sub_head};
 use super::*;
-/// 光学区：ACR 的 Optics 面板——手动校正三项在前，相机/镜头配置文件在后
-/// （配置文件折出的畸变/色差/暗角先于手动值生效，排在后面读起来是"标定打底"）。
-///
 /// 几何：透视校正。自动一路只修梯形（竖线收敛到一个画外消失点），不修旋转、
 /// 不修枕形畸变——证据不足时宁可不动作，也不猜一个把画面撕歪的四边形。
 ///
@@ -233,6 +230,9 @@ pub(super) fn adjust_retouch(state: &mut AppState, ui: &mut Ui) -> bool {
     changed
 }
 
+/// 光学区：ACR 的 Optics 面板——手动校正三项在前，相机/镜头配置文件在后
+/// （配置文件折出的畸变/色差/暗角先于手动值生效，排在后面读起来是"标定打底"）。
+///
 /// Optics, mirroring ACR: the three manual corrections first, then the camera/lens
 /// profiles (what the profile derives is applied ahead of the manual sliders, so
 /// reading it last says "the calibration is the base layer").
