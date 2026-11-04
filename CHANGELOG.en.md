@@ -15,6 +15,54 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.9.1 — 2026-11-05
+
+Patch release: fixes from a four-way code review (crashes / freezes / robustness / new
+features). No new features -- every change makes an existing one behave like paid software.
+
+### Three freezes are gone
+
+- "Export subsequence" now copies in the background: the bulk copy used to run inline on
+  the UI thread and froze the window for seconds to minutes on GB-scale sequences. The
+  button now shows "exporting…" and refuses duplicate orders until the copy finishes.
+- "One-click auto" metering decodes in the background: the first click used to decode the
+  whole RAW inline (0.3-1.5 s freeze); it now shows "metering…" and refreshes when done.
+- Choosing a soundtrack probes in the background with a timeout: a hung ffmpeg on a bad
+  file or a network drive used to freeze the interface forever; after 10 s the probe is
+  killed and a named error is shown.
+- Finding the XMP sidecar on open now checks only the first 3 frames (it used to stat
+  every frame -- thousands of stats on a network drive).
+
+### Two behavioural fixes
+
+- **Applying a preset no longer wipes repair strokes or the perspective quad**: any preset
+  used to silently discard half an hour of dust removal and the trapezoid you dragged
+  (undo could recover it, but nothing told you). Presets now replace only the grade /
+  develop parameters and also clear section "eye" bypasses (a full replacement should
+  light everything up).
+- **Hand-dragged perspective corners are validated on commit**: a crossed (butterfly)
+  quad used to persist, render nothing, and still read "straightened". The commit now
+  runs the homography, refuses degenerate quads with a named note, and near-unit quads
+  snap onto the fast path instead of paying a full-frame resample every render.
+
+### Robustness hardening (rarely reachable, recorded anyway)
+
+- The MCP server no longer exits on invalid bytes in the pipe, and a single line longer
+  than 64 MB can no longer exhaust memory; both answer a parse error and keep serving.
+- The heal iteration cap was raised (256 -> 2048): large-radius strokes used to
+  under-converge, so the export differed from the preview.
+- A dozen-plus defensive fixes (truncated ICC, out-of-range cube sizes, NaN parameter
+  chains, frame-count underflow) each with a criterion; the audio probe and the updater
+  download gained timeouts and temp-file cleanup.
+
+### Compatibility
+
+- The four public contracts (project file, presets, CLI arguments, MCP tools) are
+  unchanged; the `cull.extract` reply changed from a synchronous result to
+  `{"started": true, ...}` (an async receipt) -- MCP consumers should read the new field.
+
+---
+
 ## v1.9.0 — 2026-11-05
 
 Feature release: the two P0 gaps are filled in -- a **repair brush** and **perspective correction**

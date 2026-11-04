@@ -6,11 +6,11 @@
 ; 因此这里不做任何「只有安装版才有的功能」，也不写额外的注册表项。
 ;
 ; 编译（需先跑过 scripts/package.sh，产物在 dist/aevum）：
-;   iscc /DMyAppVersion=1.9.0 scripts/install/aevum.iss
+;   iscc /DMyAppVersion=1.9.1 scripts/install/aevum.iss
 ;   iscc scripts/install/aevum.iss            ; 版本号退回下面的默认值
 ; 产物：dist/installer/Aevum-Studio-<版本>-setup.exe
 ;
-; 静默安装：`Aevum-Studio-1.9.0-setup.exe /SILENT /NORESTART`（Inno 原生支持；
+; 静默安装：`Aevum-Studio-1.9.1-setup.exe /SILENT /NORESTART`（Inno 原生支持；
 ; /VERYSILENT 则不显示进度窗）。静默模式下所有交互都自动走默认值，见 [Code] 里的
 ; WizardSilent() 分支。
 ;
@@ -30,10 +30,10 @@
 ; installer-only, and no extra registry keys are written.
 ;
 ; Build (run scripts/package.sh first; its output is dist/aevum):
-;   iscc /DMyAppVersion=1.9.0 scripts/install/aevum.iss
+;   iscc /DMyAppVersion=1.9.1 scripts/install/aevum.iss
 ; Output: dist/installer/Aevum-Studio-<version>-setup.exe
 ;
-; Silent install: `Aevum-Studio-1.9.0-setup.exe /SILENT /NORESTART` (native to Inno;
+; Silent install: `Aevum-Studio-1.9.1-setup.exe /SILENT /NORESTART` (native to Inno;
 ; /VERYSILENT hides the progress window too). In silent mode every prompt takes its default;
 ; see the WizardSilent() branches in [Code].
 
@@ -51,7 +51,7 @@
 ; ISCC preprocessor cannot read files, and adding a third-party script would give "build the
 ; installer" one more prerequisite.
 #ifndef MyAppVersion
-  #define MyAppVersion "1.9.0"
+  #define MyAppVersion "1.9.1"
 #endif
 
 [Setup]
