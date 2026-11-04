@@ -17,6 +17,15 @@ serde_json.workspace = true
 # 胶片条批量解码；用独立线程池，不和预览渲染抢核。
 rayon.workspace = true
 
+[dev-dependencies]
+# 字体判据要读 `OS/2.usWeightClass` 与 cmap：这两个值没有别的来源，只能解析字体。
+# skrifa 已经在工作区锁文件里（epaint 带的），不新增任何下载。
+#
+# The font judges need `OS/2.usWeightClass` and the cmap, which only a font parser can
+# read. skrifa is already in the workspace lock file (pulled in by epaint), so this
+# adds no downloads.
+skrifa.workspace = true
+
 [lints.clippy]
 # `as_chunks::<N>().0` 与 `chunks_exact(N)` 生成的迭代一样，但多一层 `.0` 投影；
 # 三步一组的像素循环里保留 `chunks_exact`。整个工作区统一这一种写法。

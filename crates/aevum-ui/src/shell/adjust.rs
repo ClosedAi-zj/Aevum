@@ -1848,12 +1848,7 @@ fn adjust_merge(state: &mut AppState, ui: &mut Ui) {
 /// Callers translate first with `t!` (the macro only takes literals).
 fn sub_head(ui: &mut Ui, label: &str) {
     ui.add_space(6.0);
-    ui.label(
-        RichText::new(label)
-            .size(SIZE_SMALL)
-            .strong()
-            .color(muted()),
-    );
+    ui.label(RichText::new(label).font(bold(SIZE_SMALL)).color(muted()));
 }
 
 /// 按字段画一条推子：清单里写了表里没有的字段，debug 构建当场炸出来，

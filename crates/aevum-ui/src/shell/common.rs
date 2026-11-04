@@ -312,13 +312,13 @@ pub(super) fn group_header(
         },
         if resp.hovered() { text() } else { dim() },
     );
-    // 字号比正文大一档：项目只嵌了常规字重（无 bold 族），加粗无从谈起，
-    // 靠字号 + 满亮度色 + 下沿双线建立层次（台账记了「嵌粗体字重」这条 P1）。
+    // 字号比正文大一档 + 真粗体（700 子集字族）：ACR 的分区标题是 semibold，
+    // 只靠字号和颜色堆不出这层「这是标题」的体格差。
     //
-    // One step above body copy: the project ships a single regular weight (no bold
-    // family), so hierarchy comes from size, full-strength colour and the double rule
-    // below (the missing bold weight is logged as a P1 in the ledger).
-    let title_galley = p.layout_no_wrap(title.to_owned(), font(SIZE_LABEL + 1.0), text());
+    // One step above body copy plus real bold (the 700 subset family): ACR's section
+    // headers are semibold, and size plus colour alone cannot carry that "this is a
+    // heading" weight difference.
+    let title_galley = p.layout_no_wrap(title.to_owned(), bold(SIZE_LABEL + 1.0), text());
     let title_x = rect.left() + 20.0;
     p.galley(
         Pos2::new(title_x, rect.center().y - title_galley.size().y * 0.5),

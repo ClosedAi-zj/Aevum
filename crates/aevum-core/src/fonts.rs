@@ -24,3 +24,25 @@ pub const INTER: &[u8] = include_bytes!("../../../assets/fonts/Inter-Variable.tt
 /// and embedding it directly renders Chinese strokes hairline-thin, so the 500
 /// instance produced with fontTools is used instead.
 pub const NOTO_SC: &[u8] = include_bytes!("../../../assets/fonts/NotoSansSC-500.ttf");
+
+/// 粗体子集：分区标题与次级小标题专用，由 `tools/font_subset.py` 从可变字体
+/// 切出（wght=700 + 只留界面源码里出现过的字）。
+///
+/// 为什么是子集而不是完整字重：完整的 Noto Sans SC 一份 10.6 MB，界面上真正
+/// 需要粗体的只有十几处标题；1281 个 CJK 字的 700 子集是 442 KB。缺字不会变
+/// 豆腐块——`theme::set_fonts` 把常规体排在粗体后面当兜底，缺的字回落成常规。
+///
+/// Bold subsets: for section headings and sub-headings only, cut from the variable
+/// font by `tools/font_subset.py` (wght=700, keeping only characters that appear in
+/// the UI source).
+///
+/// Why a subset rather than a full weight: a full Noto Sans SC is 10.6 MB and only a
+/// dozen headings need bold; the 700 subset of 1281 CJK characters is 442 KB. A
+/// missing glyph is not tofu -- `theme::set_fonts` lists the regular family behind
+/// the bold one, so missing characters fall back to regular.
+pub const INTER_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-700-Subset.ttf");
+
+/// 见 [`INTER_BOLD`]。
+///
+/// See [`INTER_BOLD`].
+pub const NOTO_SC_BOLD: &[u8] = include_bytes!("../../../assets/fonts/NotoSansSC-700-Subset.ttf");

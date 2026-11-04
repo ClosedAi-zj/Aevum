@@ -855,9 +855,38 @@ const INTER: &[u8] = aevum_core::fonts::INTER;
 // Noto Sans SC 可变字体的默认字重是 100（Thin），直接嵌入会让中文细得像虚线；
 // 这里用 fontTools 实例化出的 500 静态字重。
 const NOTO: &[u8] = aevum_core::fonts::NOTO_SC;
+// 真粗体：两份 700 子集（`tools/font_subset.py` 切出来的），只覆盖界面源码里
+// 出现过的字。缺字由常规体兜底——粗体字族的列表里常规体排在后面。
+//
+// Real bold: two 700 subsets cut by `tools/font_subset.py`, covering only characters
+// that appear in the UI source. Missing glyphs fall back to the regular family,
+// which sits behind the bold entries in the family list.
+const INTER_BOLD: &[u8] = aevum_core::fonts::INTER_BOLD;
+const NOTO_BOLD: &[u8] = aevum_core::fonts::NOTO_SC_BOLD;
+
+/// 粗体字族在 `FontDefinitions` 里的名字。
+///
+/// The bold family's name inside `FontDefinitions`.
+const BOLD_FAMILY: &str = "aevum-bold";
 
 pub fn font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Proportional)
+}
+
+/// 粗体字族名。egui 的 `FontId` 只有「字族 + 字号」，没有字重——真粗体的唯一
+/// 做法是另注册一个字族，这里就是它的名字。
+///
+/// Bold family name. egui's `FontId` carries a family and a size but no weight, so
+/// the only way to get real bold is to register a second family -- this is its name.
+pub fn bold_family() -> FontFamily {
+    FontFamily::Name(BOLD_FAMILY.into())
+}
+
+/// 粗体：分区标题、次级小标题、对话框标题用。
+///
+/// Bold: section headings, sub-headings and dialog titles.
+pub fn bold(size: f32) -> FontId {
+    FontId::new(size, bold_family())
 }
 
 pub fn mono(size: f32) -> FontId {
@@ -878,6 +907,15 @@ pub fn apply(ctx: &Context, zoom: f32) {
 /// Install fonts only. Needs a rerun only when the size step changes (`ctx.set_fonts`
 /// drops the glyph cache).
 pub fn set_fonts(ctx: &Context) {
+    ctx.set_fonts(font_definitions());
+}
+
+/// 字族装配。拆出来是为了能不带 `Context` 直接断言——`set_fonts` 只是把它交给
+/// egui，装配本身没有副作用。
+///
+/// Family assembly, split out so it can be asserted without a `Context`: `set_fonts`
+/// only hands the result to egui, and the assembly itself has no side effects.
+pub fn font_definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     fonts
         .font_data
@@ -892,7 +930,34 @@ pub fn set_fonts(ctx: &Context) {
     if let Some(list) = fonts.families.get_mut(&FontFamily::Monospace) {
         list.push("noto".to_owned());
     }
-    ctx.set_fonts(fonts);
+    // 粗体字族：两份 700 子集打头，**后面整条接上常规字族的列表**（含 egui 自带的
+    // 兜底字体）。这样缺字只有一种结果：那个字画成常规体。整条兜底链复制而不是
+    // 手写两项，是因为 egui 自带的默认字体也在末尾兜着箭头、圈号这类符号——
+    // 手抄会漏，漏了就是豆腐块。
+    //
+    // Bold family: the two 700 subsets first, then **the entire regular family list**
+    // (including egui's bundled fallback fonts). A missing glyph then has exactly one
+    // outcome: it renders regular. The chain is copied rather than hand-listed because
+    // egui's own default fonts sit at the end covering arrows and circled digits --
+    // hand-copying misses them, and a miss means tofu.
+    fonts.font_data.insert(
+        "inter-bold".to_owned(),
+        FontData::from_static(INTER_BOLD).into(),
+    );
+    fonts.font_data.insert(
+        "noto-bold".to_owned(),
+        FontData::from_static(NOTO_BOLD).into(),
+    );
+    let mut bold_chain = vec!["inter-bold".to_owned(), "noto-bold".to_owned()];
+    bold_chain.extend(
+        fonts
+            .families
+            .get(&FontFamily::Proportional)
+            .cloned()
+            .unwrap_or_default(),
+    );
+    fonts.families.insert(bold_family(), bold_chain);
+    fonts
 }
 
 /// 只重刷 `Visuals`，不动字体。
@@ -1364,5 +1429,222 @@ mod token_tests {
         assert_eq!(overlay_white(panel, 0), panel);
         let c = overlay_white(panel, 217); // 白 85%
         assert!(c[0] >= 0xD8 && c[0] <= 0xE2, "{c:?}");
+    }
+}
+
+/// 字体装配的判据。这里要拦的两类事故都是「肉眼要过很久才发现」的：
+/// 字族名打错（整族静默变豆腐块）、以及子集字体没跟着源码更新。
+///
+/// Judges for font assembly. Both accidents guarded here take a long time to notice by
+/// eye: a mistyped family name (the whole family silently becomes tofu) and a subset
+/// font that fell behind the source.
+#[cfg(test)]
+mod font_tests {
+    use super::*;
+
+    fn weight(bytes: &[u8]) -> f32 {
+        use skrifa::MetadataProvider;
+        let font = skrifa::FontRef::new(bytes).expect("字体解析失败");
+        font.attributes().weight.value()
+    }
+
+    fn cmap(bytes: &[u8]) -> std::collections::HashSet<char> {
+        use skrifa::MetadataProvider;
+        let font = skrifa::FontRef::new(bytes).expect("字体解析失败");
+        let map = font.charmap();
+        let mut out = std::collections::HashSet::new();
+        for cp in 0x20u32..=0xFFFF {
+            if let Some(ch) = char::from_u32(cp)
+                && map.map(ch).is_some()
+            {
+                out.insert(ch);
+            }
+        }
+        out
+    }
+
+    /// 每个字族引用的名字都必须在 `font_data` 里真有那一份。名字打错时 egui 不报警，
+    /// 只是那个字族整片画不出来。
+    ///
+    /// Every family entry must name a face that actually exists in `font_data`. A
+    /// typo raises no error in egui -- the family simply fails to draw.
+    #[test]
+    fn every_family_entry_points_at_installed_font_data() {
+        let f = font_definitions();
+        for (family, list) in &f.families {
+            assert!(!list.is_empty(), "{family:?} 字族是空的");
+            for name in list {
+                assert!(
+                    f.font_data.contains_key(name),
+                    "{family:?} 引用了不存在的字体 {name}"
+                );
+            }
+        }
+    }
+
+    /// 粗体字族的兜底链必须**逐项等于**常规字族那条。少一项就意味着有一类字在
+    /// 粗体下没有兜底（egui 自带的符号字体也在末尾），画出来是豆腐块；顺序错了
+    /// 则意味着某些字会先撞上一个画不出它的字体。
+    ///
+    /// The bold family's fallback chain must **match the regular chain item for item**.
+    /// A missing entry means some class of character has no fallback under bold (egui's
+    /// bundled symbol fonts sit at the end too) and renders as tofu; a wrong order means
+    /// some characters hit a face that cannot draw them first.
+    #[test]
+    fn the_bold_family_falls_back_through_the_regular_chain() {
+        let f = font_definitions();
+        let bold = &f.families[&bold_family()];
+        let regular = &f.families[&FontFamily::Proportional];
+        assert_eq!(&bold[..2], ["inter-bold", "noto-bold"], "粗体项位置变了");
+        assert_eq!(
+            &bold[2..],
+            regular.as_slice(),
+            "粗体字族的兜底链与常规字族不一致"
+        );
+        for (bytes, name) in [(INTER, "inter"), (NOTO, "noto")] {
+            assert!(
+                weight(bytes) < 600.0,
+                "{name} 不是常规字重（{}），兜不住缺字",
+                weight(bytes)
+            );
+        }
+    }
+
+    /// 粗体那一份必须真的比常规那一份重。把常规体改名成 bold 也能骗过前两条，
+    /// 这一条骗不过——它直接读 `OS/2.usWeightClass`。
+    ///
+    /// The bold faces must genuinely be heavier than the regular ones. Renaming a
+    /// regular file to "bold" fools the two tests above but not this one: it reads
+    /// `OS/2.usWeightClass` directly.
+    #[test]
+    fn bold_faces_are_heavier_than_their_regular_twins() {
+        for (bold, regular, label) in [
+            (INTER_BOLD, INTER, "Inter"),
+            (NOTO_BOLD, NOTO, "Noto Sans SC"),
+        ] {
+            let (b, r) = (weight(bold), weight(regular));
+            assert!(
+                b >= 600.0 && b > r + 100.0,
+                "{label}: 粗体 {b} vs 常规 {r}，字重差不够"
+            );
+        }
+    }
+
+    /// 去掉注释、只留代码。注释里的字不进分母：判据关心的是「界面会画出哪些字」，
+    /// 一句注释里写个生僻字不该逼着别人去重切子集。
+    ///
+    /// 只做行注释与块注释两种粗判，不做真解析：字符串里出现 `//`（比如 URL）会把
+    /// 后半行截掉，方向是**少收**——漏掉几个字不会造成误报，宁可这样。
+    ///
+    /// Strip comments, keep code. Characters in comments stay out of the denominator: the
+    /// judge cares about "which characters the UI draws", and a rare character in a
+    /// comment should not force anyone to re-cut the subset.
+    ///
+    /// Only crude line- and block-comment handling, no real parsing: a `//` inside a
+    /// string (a URL, say) truncates the rest of that line, and the direction is to
+    /// **under-collect** -- missing a few characters cannot produce a false alarm.
+    fn code_only(src: &str) -> String {
+        let chars: Vec<char> = src.chars().collect();
+        let mut out = String::with_capacity(src.len());
+        let (mut in_block, mut in_str) = (false, false);
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            let next = chars.get(i + 1).copied().unwrap_or('\0');
+            if in_block {
+                if c == '*' && next == '/' {
+                    in_block = false;
+                    i += 1;
+                }
+            } else if c == '/' && next == '/' {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            } else if c == '/' && next == '*' {
+                in_block = true;
+                i += 1;
+            } else {
+                if c == '"' {
+                    in_str = !in_str;
+                }
+                out.push(c);
+            }
+            i += 1;
+        }
+        out
+    }
+
+    /// 子集必须盖住「我们自己的字体本来画得出」的每一个字。判据和
+    /// `tools/font_subset.py` 的收字区段是同一套：那边切子集、这边验证，忘了
+    /// 重跑脚本就红在这里。
+    ///
+    /// 分母取「常规那两份的 cmap」而不是「源码里所有字」：箭头、圈号这类符号
+    /// 两份源字体本来就没有，一直由 egui 自带的字体画，粗体下也照旧由它画——
+    /// 把它们算进分母只会逼着子集去收不属于自己的字。
+    ///
+    /// The subset must cover every character **our own fonts can already draw**. The
+    /// ranges match `tools/font_subset.py`: that script cuts the subset, this test
+    /// checks it, and forgetting to re-run turns red here.
+    ///
+    /// The denominator is the cmap of the two regular faces rather than "all source
+    /// characters": arrows and circled digits are absent from both source fonts and
+    /// have always been drawn by egui's bundled fonts, bold or not -- counting them
+    /// would only force the subset to carry glyphs that are not its own.
+    #[test]
+    fn bold_faces_cover_every_character_the_ui_uses() {
+        // 与 tools/font_subset.py 的 RANGES 一一对应。
+        const RANGES: [(u32, u32); 11] = [
+            (0x0020, 0x007E),
+            (0x00A0, 0x00FF),
+            (0x2000, 0x206F),
+            (0x2100, 0x214F),
+            (0x2190, 0x21FF),
+            (0x2200, 0x22FF),
+            (0x2460, 0x24FF),
+            (0x25A0, 0x25FF),
+            (0x3000, 0x303F),
+            (0x4E00, 0x9FFF),
+            (0xFF00, 0xFFEF),
+        ];
+        let covered: std::collections::HashSet<char> = cmap(INTER_BOLD)
+            .into_iter()
+            .chain(cmap(NOTO_BOLD))
+            .collect();
+        let drawable: std::collections::HashSet<char> =
+            cmap(INTER).into_iter().chain(cmap(NOTO)).collect();
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut missing: Vec<(char, String)> = Vec::new();
+        let mut files = vec![root.clone()];
+        while let Some(dir) = files.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    files.push(p);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    let text = std::fs::read_to_string(&p).unwrap_or_default();
+                    for ch in code_only(&text).chars() {
+                        let cp = ch as u32;
+                        if RANGES.iter().any(|(lo, hi)| *lo <= cp && cp <= *hi)
+                            && drawable.contains(&ch)
+                            && !covered.contains(&ch)
+                            && !missing.iter().any(|(c, _)| *c == ch)
+                        {
+                            missing.push((ch, p.display().to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "子集缺 {} 个字（重跑 python tools/font_subset.py）：{:?}",
+            missing.len(),
+            &missing[..missing.len().min(8)]
+        );
     }
 }
