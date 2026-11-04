@@ -721,9 +721,6 @@ pub const STATUS_H: f32 = 24.0;
 pub const TOOL_W: f32 = 52.0;
 /// 左侧预设栏：预设 / 快照 / 历史三张表，240 刚好放下"胶片 · 富士 400H"这种长名。
 ///
-/// Left preset column: three tables (presets / snapshots / history); 240 is just enough
-/// for a long name like "Fuji 400H".
-pub const LEFT_W: f32 = 240.0;
 pub const DOCK_W: f32 = 372.0;
 /// 最外那条 28px 竖条：网格 / 胶片 / 曲线三个开关，界面稿里是 ⌗ ◐ ◑ 三枚。
 ///

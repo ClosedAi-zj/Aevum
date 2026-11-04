@@ -345,16 +345,26 @@ pub const GROUP_SPECS: &[GroupSpec] = &[
 ///
 /// The set of group keys folded on the first screen. Used when the user has expressed
 /// no preference; afterwards his own clicks win.
-/// 预设栏的三节。次序可拖，但键名是**落盘契约**：改了名字，用户调好的次序就丢了。
+/// 「预设与快照」浮窗的三节。次序可拖，但键名是**落盘契约**：改了名字，用户调好的
+/// 次序就丢了。历史一节 2026-11-04 删除（dock「历史」页有完整撤销/重做+步骤列表，
+/// 侧栏那份是重复视图，docs/界面布局-ACR化-2026-11-04.md §2）；调色副本同日迁入
+/// ——它本质是「存一套参数+关键帧」，与快照同类。老落盘里的 "history" 键会被
+/// `normalise_preset_order` 当未知键丢弃、"copies" 按缺键补到末尾，无需迁移代码。
 ///
-/// The three preset-column sections. The order is draggable, but the keys are a
-/// **persistence contract**: renaming one throws away the order the user arranged.
-pub const PRESET_SECTIONS: [&str; 3] = ["builtin", "snapshots", "history"];
+/// The three sections of the Presets & Snapshots window. The order is draggable, but the
+/// keys are a **persistence contract**: renaming one throws away the order the user
+/// arranged. The history section was removed on 2026-11-04 (the dock's History tab has
+/// the full undo/redo + step list; the sidebar copy was a duplicate view, plan §2), and
+/// grade copies moved in the same day -- a copy is "one saved set of parameters plus
+/// keyframes", the same species as a snapshot. A persisted "history" key is dropped by
+/// `normalise_preset_order` as unknown and "copies" is appended as missing; no migration
+/// code needed.
+pub const PRESET_SECTIONS: [&str; 3] = ["builtin", "snapshots", "copies"];
 
-/// 预设栏的默认次序：内置 → 快照 → 历史（从"别人的"到"自己的"再到"刚才动过的"）。
+/// 「预设与快照」浮窗的默认次序：内置 → 快照 → 副本（从"别人的"到"自己的"）。
 ///
-/// Default preset-column order: built-in, then snapshots, then history -- from "someone
-/// else's" to "mine" to "what I just touched".
+/// Default window order: built-in, then snapshots, then copies -- from "someone else's"
+/// to "mine".
 pub fn default_preset_order() -> Vec<&'static str> {
     PRESET_SECTIONS.to_vec()
 }
@@ -1276,9 +1286,14 @@ pub struct AppState {
     pub hist: Option<[[u32; 256]; 3]>,
 
     pub show_dock: bool,
-    /// 左侧预设栏（预设 / 快照 / 历史）开没开。
+    /// 「预设与快照」浮窗（预设 / 快照 / 调色副本）开没开。字段名沿用旧左栏
+    /// （`show_left`）——settings.json 的键没变，老用户的开关状态照常读回；
+    /// 2026-11-04 起它不再是常驻侧栏而是浮窗（docs/界面布局-ACR化-2026-11-04.md §2）。
     ///
-    /// Whether the left preset column (presets / snapshots / history) is open.
+    /// Whether the Presets & Snapshots window (presets / snapshots / grade copies) is
+    /// open. The field name carries over from the old left column (`show_left`) -- the
+    /// settings.json key is unchanged, so existing toggles still load; since
+    /// 2026-11-04 it is a floating window rather than a resident sidebar (plan §2).
     pub show_left: bool,
     /// 最外那条 28px 竖条（网格 / 胶片 / 曲线）开没开。
     ///
@@ -14075,28 +14090,28 @@ mod frame_tests {
     #[test]
     fn preset_sections_reorder_and_persist() {
         let mut state = AppState::new();
-        assert_eq!(state.preset_order, vec!["builtin", "snapshots", "history"]);
+        assert_eq!(state.preset_order, vec!["builtin", "snapshots", "copies"]);
 
         state.settings_dirty = false;
-        state.move_preset_section("history", 0);
-        assert_eq!(state.preset_order, vec!["history", "builtin", "snapshots"]);
+        state.move_preset_section("copies", 0);
+        assert_eq!(state.preset_order, vec!["copies", "builtin", "snapshots"]);
         assert!(state.settings_dirty, "换序后没置脏，关掉就丢");
 
         // 拖回原位不算改动。
         state.settings_dirty = false;
-        state.move_preset_section("history", 0);
+        state.move_preset_section("copies", 0);
         assert!(!state.settings_dirty, "原地放下也置了脏");
 
         // 越界夹住，不是崩掉也不是乱插。
         state.move_preset_section("builtin", 99);
-        assert_eq!(state.preset_order, vec!["history", "snapshots", "builtin"]);
+        assert_eq!(state.preset_order, vec!["copies", "snapshots", "builtin"]);
 
         let saved = state.settings();
         assert_eq!(
             saved.preset_order.as_deref(),
             Some(
                 [
-                    "history".to_owned(),
+                    "copies".to_owned(),
                     "snapshots".to_owned(),
                     "builtin".to_owned()
                 ]
@@ -14105,7 +14120,7 @@ mod frame_tests {
         );
         let mut fresh = AppState::new();
         fresh.adopt_settings(saved);
-        assert_eq!(fresh.preset_order, vec!["history", "snapshots", "builtin"]);
+        assert_eq!(fresh.preset_order, vec!["copies", "snapshots", "builtin"]);
     }
 
     /// 落盘的次序可能是坏的：老文件没有这一项、手删一节、手写未知键、重复。
@@ -14120,24 +14135,34 @@ mod frame_tests {
             normalise_preset_order(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>())
         };
         // 老文件 / 空：回到默认次序。
-        assert_eq!(norm(&[]), vec!["builtin", "snapshots", "history"]);
-        // 手删一节：缺的按默认次序补到末尾。
+        assert_eq!(norm(&[]), vec!["builtin", "snapshots", "copies"]);
+        // 2026-11-04 起历史一节删除（dock「历史」页接管），老落盘里的 "history"
+        // 是未知键：丢掉、缺的 "copies" 按默认次序补到末尾。
+        //
+        // The history section was removed on 2026-11-04 (the dock's History tab takes
+        // over); a persisted "history" key is unknown now: dropped, with the missing
+        // "copies" appended in default order.
         assert_eq!(
             norm(&["history", "builtin"]),
-            vec!["history", "builtin", "snapshots"]
+            vec!["builtin", "snapshots", "copies"]
+        );
+        // 手删一节：缺的按默认次序补到末尾。
+        assert_eq!(
+            norm(&["copies", "builtin"]),
+            vec!["copies", "builtin", "snapshots"]
         );
         // 未知键：丢掉。
         assert_eq!(
-            norm(&["history", "bogus", "builtin", "snapshots"]),
-            vec!["history", "builtin", "snapshots"]
+            norm(&["bogus", "builtin", "snapshots"]),
+            vec!["builtin", "snapshots", "copies"]
         );
         // 重复：只留第一次。
         assert_eq!(
-            norm(&["snapshots", "snapshots", "history"]),
-            vec!["snapshots", "history", "builtin"]
+            norm(&["snapshots", "snapshots", "copies"]),
+            vec!["snapshots", "copies", "builtin"]
         );
         // 全是未知键：等于空。
-        assert_eq!(norm(&["x", "y"]), vec!["builtin", "snapshots", "history"]);
+        assert_eq!(norm(&["x", "y"]), vec!["builtin", "snapshots", "copies"]);
     }
 
     /// 位置要真的进 `settings.json` 的载荷，并且在读回来之后灌进状态。

@@ -300,27 +300,30 @@ fn every_floating_window_restores_and_records_its_position() {
 /// displays fine, it just silently drops the order the user arranged.
 #[test]
 fn preset_sections_are_ordered_by_state_and_draggable() {
-    let src = read_clean("shell/common.rs");
+    // 2026-11-04 起预设/快照/副本住「预设与快照」浮窗（windows.rs），判据跟着搬：
+    // 两个文件都不许把节头次序写死。
+    //
+    // Since 2026-11-04 presets/snapshots/copies live in the Presets & Snapshots window
+    // (windows.rs); the criteria moved with it: neither file may hard-code section order.
+    for file in ["shell/windows.rs", "shell/common.rs"] {
+        let src = read_clean(file);
+        assert!(
+            !src.contains("side_head(ui, \"内置\"")
+                && !src.contains("side_head(ui, \"快照\"")
+                && !src.contains("side_head(ui, \"历史\"")
+                && !src.contains("side_head(ui, \"调色副本\""),
+            "{file} 出现了写死的节头——次序应该由 `preset_order` 决定"
+        );
+    }
+    let src = read_clean("shell/windows.rs");
     assert!(
         src.contains("state.preset_order"),
-        "预设栏没有读 `state.preset_order`——次序又被写死进代码了"
+        "预设窗没有读 `state.preset_order`——次序又被写死进代码了"
     );
     assert!(
         src.contains("move_preset_section("),
-        "预设栏没有调用 `move_preset_section`——拖了也不会换序"
+        "预设窗没有调用 `move_preset_section`——拖了也不会换序"
     );
-    // 写死的三节次序长这样：连着三次 `side_head(ui, "内置"/"快照"/"历史"`。
-    // 现在标题是由 key 查出来的，源码里不该再出现这三个字面量作为 `side_head` 参数。
-    for hard in [
-        "side_head(ui, \"内置\"",
-        "side_head(ui, \"快照\"",
-        "side_head(ui, \"历史\"",
-    ] {
-        assert!(
-            !src.contains(hard),
-            "预设栏出现了写死的节头 `{hard}`——次序应该由 `preset_order` 决定"
-        );
-    }
 }
 
 #[test]

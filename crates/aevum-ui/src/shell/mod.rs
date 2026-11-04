@@ -14,7 +14,6 @@ use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
 use self::canvas::canvas_panel;
 use self::chrome::window_resize;
-use self::common::preset_panel;
 use self::dock::dock_panel;
 use self::menu::handle_input;
 use self::menu::menu_row;
@@ -25,6 +24,7 @@ use self::toolbar::tool_rail;
 use self::windows::about_window;
 use self::windows::look_window;
 use self::windows::market_window;
+use self::windows::presets_window;
 use crate::icons::{self, Glyph};
 use crate::layout::StatusSlot;
 use crate::platform;
@@ -132,7 +132,8 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     }
 
     // 4 侧栏。同一侧"先声明的在外"，所以顺序就是由外到内：
-    //   右：28px 竖条 → 调整面板 → 工具轨 → 预设栏；左：反过来。
+    //   右：28px 竖条 → 调整面板 → 工具轨；左：反过来。预设/快照/副本 2026-11-04
+    //   起改走「预设与快照」浮窗（presets_window），左栏不再有常驻面板。
     let rail_left = layout.rail.is_left();
     let dock_left = layout.dock_side.is_left();
 
@@ -156,13 +157,6 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .resizable(false)
             .frame(egui::Frame::NONE.fill(chrome()))
             .show(root, |ui| tool_rail(state, ui));
-        if state.show_left {
-            egui::Panel::right("preset-panel")
-                .exact_size(LEFT_W)
-                .resizable(false)
-                .frame(egui::Frame::NONE.fill(dock()))
-                .show(root, |ui| preset_panel(state, ui));
-        }
     }
     if rail_left {
         egui::Panel::left("tool-rail")
@@ -170,13 +164,6 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .resizable(false)
             .frame(egui::Frame::NONE.fill(chrome()))
             .show(root, |ui| tool_rail(state, ui));
-        if state.show_left {
-            egui::Panel::left("preset-panel")
-                .exact_size(LEFT_W)
-                .resizable(false)
-                .frame(egui::Frame::NONE.fill(dock()))
-                .show(root, |ui| preset_panel(state, ui));
-        }
     }
     if state.show_dock && dock_left {
         egui::Panel::left("dock")
@@ -191,6 +178,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         .show(root, |ui| canvas_panel(state, ui));
 
     state.history_commit();
+    presets_window(state, &ctx);
     about_window(state, &ctx);
     look_window(state, &ctx);
     market_window(state, &ctx);

@@ -4,9 +4,13 @@
 //! grading window, about.
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
+use super::adjust::copies_group;
+use super::common::{side_divider, side_head, side_note, side_row};
 use super::library::group_title;
 use super::menu::menu_item;
 use super::menu::menu_style;
+use super::toolbar::bar_button;
+use crate::icons::{self, Glyph};
 use crate::layout::StatusSlot;
 use crate::platform;
 use crate::state::AppState;
@@ -23,6 +27,7 @@ use egui::{Align, Context, Layout, Pos2, Rect, RichText, ScrollArea, Sense, Stro
 pub(super) const WIN_MARKET: &str = "market";
 pub(super) const WIN_LOOK: &str = "look";
 pub(super) const WIN_ABOUT: &str = "about";
+pub(super) const WIN_PRESETS: &str = "presets";
 
 /// 该浮窗上次落在哪儿；没存过就用 `fallback`（各窗的首开位置）。
 ///
@@ -776,6 +781,198 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
         // 只换了语言：色板与样式不用重算，但设置文件必须落盘 —— 否则下次启动
         // 又回到旧语言，用户会以为切换没生效。仍然只有这一条写路径。
         crate::settings::save(&state.settings());
+    }
+}
+
+/// 「预设与快照」浮窗：内置预设 / 快照 / 调色副本三节，节次可拖。
+///
+/// 2026-11-04 起它取代常驻左栏（docs/界面布局-ACR化-2026-11-04.md §2）：这三样
+/// 都是次要功能，不该占一整栏画布宽度；ACR 同样把预设/快照做成工具条上随叫随到
+/// 的面板而不是编辑面板的一部分。历史一节删除——dock「历史」页有完整撤销/重做。
+/// 开关是 `state.show_left`（settings.json 键沿用旧左栏），入口：工具轨顶部图标、
+/// 「显影」菜单、Ctrl+K。
+///
+/// The Presets & Snapshots window: built-in presets / snapshots / grade copies, with
+/// draggable sections. Since 2026-11-04 it replaces the resident left column (plan §2):
+/// all three are secondary tools that should not cost a full column of canvas; ACR
+/// likewise keeps presets/snapshots as on-demand panels on the tool strip rather than
+/// part of the edit panel. The history section is gone -- the dock's History tab has
+/// the full undo/redo. Toggled by `state.show_left` (settings key carried over from the
+/// old column); entrances: the tool-rail icon, the Develop menu, Ctrl+K.
+pub(super) fn presets_window(state: &mut AppState, ctx: &Context) {
+    if !state.show_left {
+        return;
+    }
+    let mut open = true;
+    // 首开贴左上（旧左栏的位置），之后按上次拖到的位置。
+    //
+    // First open near the top-left (where the old column sat), then back to where it
+    // was dragged.
+    let pos = restored_pos(
+        state,
+        ctx,
+        WIN_PRESETS,
+        Pos2::new(60.0, 96.0),
+        Vec2::new(248.0, 480.0),
+    );
+    let win = egui::Window::new(crate::i18n::t!("预设与快照"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(true)
+        .default_width(248.0)
+        .default_height(480.0)
+        .default_pos(pos)
+        .title_frame(title_frame())
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if bar_button(ui, "＋ 存快照")
+                    .on_hover_text(crate::i18n::t!("存快照：把当前整套参数钉一版"))
+                    .clicked()
+                {
+                    state.save_snapshot();
+                }
+            });
+            ui.add_space(2.0);
+
+            let mut want_preset: Option<&'static str> = None;
+            let mut want_snap: Option<usize> = None;
+            let mut drop_snap: Option<usize> = None;
+            let snapshot_n = state.snapshots.len();
+            let copies_n = state.copies.len();
+            // 每一节的节头矩形：拖拽落地时用它判「指针落在哪一节」。
+            //
+            // Header rect per section, used to decide which section the pointer is over
+            // when a dragged section is dropped.
+            let mut bands: Vec<(&'static str, egui::Rect)> = Vec::new();
+
+            egui::ScrollArea::vertical()
+                .id_salt("presets-scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    // 节次按 `state.preset_order` 排（可拖）。**不在这里写死次序**：
+                    // 那份次序是用户摆的，落盘在 settings.json，读回时已经规整成一个
+                    // 完整排列（见 `state::normalise_preset_order`）。
+                    //
+                    // Sections follow `state.preset_order` (draggable). The order is *not*
+                    // hard-coded here: it belongs to the user, persisted in settings.json,
+                    // and normalised into a full permutation on load.
+                    for (n, key) in state.preset_order.clone().into_iter().enumerate() {
+                        if n > 0 {
+                            side_divider(ui);
+                        }
+                        let (title, count) = match key {
+                            "builtin" => ("内置", aevum_core::grade::PRESET_NAMES.len()),
+                            "snapshots" => ("快照", snapshot_n),
+                            _ => ("调色副本", copies_n),
+                        };
+                        let dragging = state.drag_section == Some(key);
+                        let head = side_head(ui, title, count, dragging);
+                        if head.drag_started() {
+                            state.drag_section = Some(key);
+                        }
+                        bands.push((key, head.rect));
+
+                        match key {
+                            "builtin" => {
+                                for name in aevum_core::grade::PRESET_NAMES {
+                                    if side_row(
+                                        ui,
+                                        name,
+                                        Some(Glyph::Sliders),
+                                        state.preset == *name,
+                                    )
+                                    .clicked()
+                                    {
+                                        want_preset = Some(name);
+                                    }
+                                }
+                            }
+                            "snapshots" => {
+                                if snapshot_n == 0 {
+                                    side_note(ui, "上方 ＋ 存一版");
+                                }
+                                for (i, (label, _)) in state.snapshots.iter().enumerate() {
+                                    let row = side_row(ui, label, Some(Glyph::Star), false);
+                                    let x_rect = egui::Rect::from_center_size(
+                                        egui::Pos2::new(
+                                            row.rect.right() - 14.0,
+                                            row.rect.center().y,
+                                        ),
+                                        egui::Vec2::splat(18.0),
+                                    );
+                                    let xr = ui.interact(
+                                        x_rect,
+                                        ui.make_persistent_id(("snap-del", i)),
+                                        Sense::click(),
+                                    );
+                                    let show = row.hovered() || xr.hovered();
+                                    if show {
+                                        icons::paint(
+                                            ui.painter(),
+                                            x_rect.shrink(5.0),
+                                            Glyph::Close,
+                                            if xr.hovered() { danger() } else { dim() },
+                                        );
+                                    }
+                                    if row.clicked() {
+                                        want_snap = Some(i);
+                                    } else if xr.clicked() {
+                                        drop_snap = Some(i);
+                                    }
+                                }
+                            }
+                            _ => {
+                                if copies_n == 0 {
+                                    side_note(ui, "下方存一套当前调色");
+                                }
+                                copies_group(state, ui);
+                            }
+                        }
+                    }
+                });
+
+            // 拖拽落地：指针落在哪一节的范围里，就把正在拖的那一节挪到那个位置
+            // （范围取「本节节头顶 → 下一节节头顶」，最后一节到无穷远）。
+            //
+            // Drop handling: whichever section's range holds the pointer becomes the
+            // target index (this header's top to the next header's top; the last
+            // section is unbounded below).
+            if let Some(key) = state.drag_section {
+                if !ui.ctx().input(|i| i.pointer.any_down()) {
+                    state.drag_section = None;
+                } else if let Some(pos) = ui.ctx().pointer_latest_pos()
+                    && let Some(target) = bands.iter().enumerate().position(|(i, (k, r))| {
+                        if *k == key {
+                            return false;
+                        }
+                        let top = r.top();
+                        let bottom = bands
+                            .get(i + 1)
+                            .map_or(f32::INFINITY, |(_, next)| next.top());
+                        pos.y >= top && pos.y < bottom
+                    })
+                {
+                    state.move_preset_section(key, target);
+                }
+            }
+
+            if let Some(name) = want_preset {
+                state.apply_preset(name);
+            }
+            if let Some(i) = want_snap {
+                state.restore_snapshot(i);
+            }
+            if let Some(i) = drop_snap {
+                state.delete_snapshot(i);
+            }
+        });
+    if !open {
+        state.show_left = false;
+        state.settings_dirty = true;
+    }
+    if let Some(w) = win {
+        remember_pos(state, ctx, WIN_PRESETS, w.response.rect);
     }
 }
 

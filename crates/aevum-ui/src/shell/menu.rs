@@ -83,6 +83,11 @@ pub(super) fn handle_input(state: &mut AppState, ctx: &Context) {
             state.market_open = true;
             return;
         }
+        // Ctrl+K：「预设与快照」浮窗（工具轨首枚图标、显影菜单同款开关）。
+        if ctx.input(|i| i.key_pressed(Key::K)) {
+            state.show_left = !state.show_left;
+            state.settings_dirty = true;
+        }
         if ctx.input(|i| i.key_pressed(Key::Z)) {
             // Shift+Ctrl+Z 与 Ctrl+Y 都走命令注册表：键盘、菜单、MCP 撤的是同一步。
             let id = if shift {
@@ -704,7 +709,7 @@ fn view_menu(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
     ui.separator();
     ui.checkbox(
         &mut state.show_left,
-        RichText::new(crate::i18n::t!("左侧预设栏")).size(SIZE_BODY),
+        RichText::new(crate::i18n::t!("预设与快照 (Ctrl+K)")).size(SIZE_BODY),
     );
     ui.checkbox(
         &mut state.show_dock,

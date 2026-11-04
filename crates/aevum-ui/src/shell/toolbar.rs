@@ -592,11 +592,58 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
         [full.right_top(), full.right_bottom()],
         Stroke::new(1.0, border()),
     );
-    // 52px 的轨里不再给图标配两字标签：字比图标还抢眼，整条轨读下来像一列
-    // 挤扁的按钮。界内规矩是"图标 + 悬停说全"，名字交给提示和工具栏。
+    // 轨首一枚「预设与快照」开关：2026-11-04 起预设/快照/副本住浮窗
+    // （docs/界面布局-ACR化-2026-11-04.md §2），ACR 也把它们挂在工具条上而不是
+    // 编辑面板里。它是面板开关不是工具，所以与下面的动手类工具用一道缝隔开。
+    //
+    // The rail starts with a Presets & Snapshots toggle: since 2026-11-04 presets /
+    // snapshots / copies live in a floating window (plan §2), and ACR likewise keeps
+    // them on the tool strip rather than in the edit panel. It is a panel toggle, not a
+    // tool, so a divider separates it from the hands-on tools below.
     let size = 36.0;
     let x = full.left() + (TOOL_W - size) * 0.5;
     let mut y = full.top() + 8.0;
+    {
+        let rect = Rect::from_min_size(Pos2::new(x, y), Vec2::splat(size));
+        let resp = ui.interact(rect, ui.make_persistent_id("rail-presets"), Sense::click());
+        if state.show_left {
+            p.rect_filled(rect, radius_control(), selected());
+            p.rect_stroke(
+                rect,
+                radius_control(),
+                Stroke::new(1.0, accent()),
+                StrokeKind::Inside,
+            );
+        } else if resp.hovered() {
+            p.rect_filled(rect, radius_control(), elev_hover());
+        }
+        icons::paint(
+            &p,
+            rect.shrink(8.0),
+            Glyph::Sliders,
+            if state.show_left {
+                on_selected()
+            } else if resp.hovered() {
+                text()
+            } else {
+                muted()
+            },
+        );
+        if resp.clicked() {
+            state.show_left = !state.show_left;
+            state.settings_dirty = true;
+        }
+        resp.on_hover_text(crate::i18n::t!("预设与快照 (Ctrl+K)"));
+        y += size + 6.0;
+    }
+    p.line_segment(
+        [
+            Pos2::new(full.left() + 14.0, y - 3.0),
+            Pos2::new(full.right() - 14.0, y - 3.0),
+        ],
+        Stroke::new(1.0, divider()),
+    );
+    y += 8.0;
     for (i, t) in Tool::ALL.iter().enumerate() {
         // 查看类（抓手/缩放）与动手类（裁剪/对比/网格）之间留一道缝。
         if i == 2 {

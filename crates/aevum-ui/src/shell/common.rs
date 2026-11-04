@@ -1,4 +1,4 @@
-//! 面板公共件：预设栏、侧栏行、组头、滑杆、键值行（被 adjust/mask/dock 引用）。
+//! 面板公共件：侧栏行（「预设与快照」浮窗用）、组头、滑杆、键值行（被 adjust/mask/dock/window 引用）。
 //!
 //! Shared panel pieces: preset column, sidebar rows, group headers, sliders,
 //! key-value rows (used by adjust / mask / dock).
@@ -13,216 +13,14 @@ use crate::icons::{self, Glyph};
 use crate::state::AppState;
 use crate::theme::{self, *};
 use crate::widgets;
-use aevum_core::grade::{self};
 use egui::{
     Align, Align2, Color32, Layout, Pos2, Rect, Response, RichText, Sense, Stroke, Ui, UiBuilder,
     Vec2,
 };
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
-pub(super) fn preset_panel(state: &mut AppState, ui: &mut Ui) {
-    let full = ui.max_rect();
-    let p = ui.painter().clone();
-    p.line_segment(
-        [full.right_top(), full.right_bottom()],
-        Stroke::new(1.0, border()),
-    );
-
-    // 栏头与右栏页签同高：左右两条侧栏的顶边必须落在同一条横线上。
-    // 底色压成 header、字用小字档 dim —— 这一栏是"账本"，抬头不许抢条目的戏。
-    let head = Rect::from_min_size(full.min, Vec2::new(full.width(), TAB_H));
-    p.rect_filled(head, 0, header());
-    p.line_segment(
-        [head.left_bottom(), head.right_bottom()],
-        Stroke::new(1.0, divider()),
-    );
-    p.text(
-        Pos2::new(head.left() + 12.0, head.center().y),
-        Align2::LEFT_CENTER,
-        crate::i18n::t!("预设"),
-        font(SIZE_SMALL),
-        dim(),
-    );
-    let plus = Rect::from_center_size(
-        Pos2::new(head.right() - 16.0, head.center().y),
-        Vec2::splat(22.0),
-    );
-    let resp = ui.interact(plus, ui.make_persistent_id("snap-add"), Sense::click());
-    if resp.hovered() {
-        p.rect_filled(plus, radius_control(), elev());
-    }
-    icons::paint(
-        &p,
-        plus.shrink(7.0),
-        Glyph::Plus,
-        if resp.hovered() { text() } else { muted() },
-    );
-    let add = resp.clicked();
-    resp.on_hover_text(crate::i18n::t!("存快照：把当前整套参数钉一版"));
-    if add {
-        state.save_snapshot();
-    }
-
-    let body = Rect::from_min_max(full.min + Vec2::new(0.0, TAB_H), full.max);
-    let mut want_preset: Option<&'static str> = None;
-    let mut want_snap: Option<usize> = None;
-    let mut drop_snap: Option<usize> = None;
-    let mut want_jump: Option<usize> = None;
-    let n_steps = state.history.steps().len();
-    let cursor = state.history.cursor();
-    let snapshot_n = state.snapshots.len();
-    // 每一节的节头矩形：拖拽落地时用它判「指针落在哪一节」。
-    //
-    // Header rect per section, used to decide which section the pointer is over when a
-    // dragged section is dropped.
-    let mut bands: Vec<(&'static str, Rect)> = Vec::new();
-
-    ui.scope_builder(
-        UiBuilder::new()
-            .id_salt("preset-body")
-            .max_rect(body.shrink2(Vec2::new(0.0, 4.0)))
-            .layout(Layout::top_down(Align::Min)),
-        |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("preset-scroll")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-
-                    // 三节按 `state.preset_order` 排（可拖）。**不在这里写死次序**：
-                    // 那份次序是用户摆的，落盘在 settings.json，读回时已经规整成一个
-                    // 完整排列（见 `state::normalise_preset_order`）。
-                    //
-                    // The three sections follow `state.preset_order` (draggable). The order
-                    // is *not* hard-coded here: it belongs to the user, persisted in
-                    // settings.json, and normalised into a full permutation on load.
-                    for (n, key) in state.preset_order.clone().into_iter().enumerate() {
-                        if n > 0 {
-                            side_divider(ui);
-                        }
-                        let (title, count) = match key {
-                            "builtin" => ("内置", grade::PRESET_NAMES.len()),
-                            "snapshots" => ("快照", snapshot_n),
-                            _ => ("历史", n_steps),
-                        };
-                        let dragging = state.drag_section == Some(key);
-                        let head = side_head(ui, title, count, dragging);
-                        if head.drag_started() {
-                            state.drag_section = Some(key);
-                        }
-                        bands.push((key, head.rect));
-
-                        match key {
-                            "builtin" => {
-                                for name in grade::PRESET_NAMES {
-                                    if side_row(
-                                        ui,
-                                        name,
-                                        Some(Glyph::Sliders),
-                                        state.preset == *name,
-                                    )
-                                    .clicked()
-                                    {
-                                        want_preset = Some(name);
-                                    }
-                                }
-                            }
-                            "snapshots" => {
-                                if snapshot_n == 0 {
-                                    side_note(ui, "右上角 ＋ 存一版");
-                                }
-                                for (i, (label, _)) in state.snapshots.iter().enumerate() {
-                                    let row = side_row(ui, label, Some(Glyph::Star), false);
-                                    let x_rect = Rect::from_center_size(
-                                        Pos2::new(row.rect.right() - 14.0, row.rect.center().y),
-                                        Vec2::splat(18.0),
-                                    );
-                                    let xr = ui.interact(
-                                        x_rect,
-                                        ui.make_persistent_id(("snap-del", i)),
-                                        Sense::click(),
-                                    );
-                                    let show = row.hovered() || xr.hovered();
-                                    if show {
-                                        icons::paint(
-                                            ui.painter(),
-                                            x_rect.shrink(5.0),
-                                            Glyph::Close,
-                                            if xr.hovered() { danger() } else { dim() },
-                                        );
-                                    }
-                                    if row.clicked() {
-                                        want_snap = Some(i);
-                                    } else if xr.clicked() {
-                                        drop_snap = Some(i);
-                                    }
-                                }
-                            }
-                            _ => {
-                                if n_steps == 0 {
-                                    side_note(ui, "还没有可撤的改动");
-                                }
-                                // 最新在上：翻历史是为了"回到刚才那一步"，不是从头读流水账。
-                                for (i, step) in
-                                    state.history.steps().iter().enumerate().rev().take(80)
-                                {
-                                    if side_row(ui, &step.label, None, i == cursor).clicked() {
-                                        want_jump = Some(i);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                });
-        },
-    );
-
-    // 拖拽落地：指针落在哪一节的范围里，就把正在拖的那一节挪到那个位置。
-    //
-    // 范围取「本节节头顶 → 下一节节头顶」，比只认 32px 的节头宽容得多；最后一节没有
-    // 下一节，下界给到无穷远。松手（`any_down` 变假）时收尾，无论有没有移动。
-    //
-    // Drop handling: whichever section's range holds the pointer becomes the target index.
-    // The range spans "this header's top to the next header's top", far more forgiving than
-    // the 32px header alone; the last section has no next one, so its bottom is unbounded.
-    // Released (`any_down` false) ends the drag whether or not anything moved.
-    if let Some(key) = state.drag_section {
-        if !ui.ctx().input(|i| i.pointer.any_down()) {
-            state.drag_section = None;
-        } else if let Some(pos) = ui.ctx().pointer_latest_pos()
-            && let Some(target) = bands.iter().enumerate().position(|(i, (k, r))| {
-                if *k == key {
-                    return false;
-                }
-                let top = r.top();
-                let bottom = bands
-                    .get(i + 1)
-                    .map_or(f32::INFINITY, |(_, next)| next.top());
-                pos.y >= top && pos.y < bottom
-            })
-        {
-            state.move_preset_section(key, target);
-        }
-    }
-
-    if let Some(name) = want_preset {
-        state.apply_preset(name);
-    }
-    if let Some(i) = want_snap {
-        state.restore_snapshot(i);
-    }
-    if let Some(i) = drop_snap {
-        state.delete_snapshot(i);
-    }
-    if let Some(i) = want_jump
-        && let Some(mv) = state.history.jump(i)
-    {
-        state.restore(mv.snap);
-    }
-}
-
 /// 侧栏两节之间的软分割线：线短一截、压暗一档，读作「分节」而不是「切开」。
-fn side_divider(ui: &mut Ui) {
+pub(super) fn side_divider(ui: &mut Ui) {
     ui.add_space(5.0);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
     theme::soft_rule(ui.painter(), rect.left(), rect.right(), rect.center().y);
@@ -237,7 +35,7 @@ fn side_divider(ui: &mut Ui) {
 /// The header doubles as the **drag handle** (`Sense::click_and_drag`): hold it and drag
 /// the whole section up or down to reorder. When `dragging` is true an `elev()` fill marks
 /// which section is being carried.
-fn side_head(ui: &mut Ui, label: &str, count: usize, dragging: bool) -> Response {
+pub(super) fn side_head(ui: &mut Ui, label: &str, count: usize, dragging: bool) -> Response {
     let label = crate::i18n::tr(label);
     let (rect, resp) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), 32.0),
@@ -278,7 +76,7 @@ fn side_head(ui: &mut Ui, label: &str, count: usize, dragging: bool) -> Response
 ///
 /// 选中态对齐界面稿 `.li.on`：横向渐变蓝底（左深右浅）+ 左缘 2px 强调色竖条，
 /// 行字与图标一起翻成选中底上的白。
-fn side_row(ui: &mut Ui, label: &str, glyph: Option<Glyph>, active: bool) -> Response {
+pub(super) fn side_row(ui: &mut Ui, label: &str, glyph: Option<Glyph>, active: bool) -> Response {
     let label = crate::i18n::tr(label);
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
@@ -351,7 +149,7 @@ fn side_row(ui: &mut Ui, label: &str, glyph: Option<Glyph>, active: bool) -> Res
 }
 
 /// 空节的一行说明：比正文小一档、比 dim 再灰一档，不抢条目位置。
-fn side_note(ui: &mut Ui, text: &str) {
+pub(super) fn side_note(ui: &mut Ui, text: &str) {
     let text = crate::i18n::tr(text);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
     ui.painter().text(

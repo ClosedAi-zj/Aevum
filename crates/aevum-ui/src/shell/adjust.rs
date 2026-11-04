@@ -830,7 +830,12 @@ fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
 
 /// 调色副本：同一序列的多套调色并存。套用取回当前，覆盖把当前写进去，
 /// 导出 / 队列还能按名字指定用哪一套，互不覆盖。
-fn copies_group(state: &mut AppState, ui: &mut Ui) {
+/// 调色副本组：本体留在 adjust（它与参数面板的动作条同一套样式），
+/// 由「预设与快照」浮窗的第三节调用。
+///
+/// The grade-copies group: the body stays in adjust (same styling as the parameter
+/// panel action rows), called by the third section of the Presets & Snapshots window.
+pub(crate) fn copies_group(state: &mut AppState, ui: &mut Ui) {
     let active = state.active_copy().map(str::to_owned);
     let mut apply: Option<String> = None;
     let mut overwrite: Option<String> = None;
