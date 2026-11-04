@@ -285,6 +285,14 @@ pub const GROUP_SPECS: &[GroupSpec] = &[
     in_module("grade", Module::Develop, false),
     in_module("detail", Module::Develop, true),
     in_module("optics", Module::Develop, false),
+    // 几何与修复紧跟光学：镜头校正先摆平畸变与暗角，然后才谈拉正与点修，
+    // 两者都属于「整幅画面的一次性处理」，排在逐点调色之前读起来更顺。
+    //
+    // Geometry and repair sit right after optics: lens correction squares up distortion and
+    // vignetting first, and only then do straightening and spot repair make sense. Both are
+    // whole-frame one-off fixes, so they read better before the per-pixel grading groups.
+    in_module("geometry", Module::Develop, false),
+    in_module("retouch", Module::Develop, false),
     in_module("effects", Module::Develop, false),
     in_module("look", Module::Develop, false),
     in_module("masks", Module::Develop, true),

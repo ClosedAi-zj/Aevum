@@ -117,7 +117,13 @@ fn parse_spot(item: &Value) -> Result<SpotSpec, String> {
     if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
         return Err(format!("x/y 必须在 [0,1]（归一化坐标），收到 {x}/{y}"));
     }
-    if !(r > 0.0) || r > SpotSpec::MAX_RADIUS {
+    // 先判 is_finite：NaN 两个比较都为假，只写 `r <= 0.0` 会让 NaN 溜过去，
+    // 而 NaN 半径一路传到泊松求解就是整幅画面按分钟算。
+    //
+    // Check is_finite first: both comparisons are false for NaN, so a bare `r <= 0.0`
+    // would let NaN through, and a NaN radius reaching the Poisson solve means a
+    // full-frame job measured in minutes.
+    if !r.is_finite() || r <= 0.0 || r > SpotSpec::MAX_RADIUS {
         return Err(format!(
             "r 必须在 (0, {}]（相对长边），收到 {r}",
             SpotSpec::MAX_RADIUS

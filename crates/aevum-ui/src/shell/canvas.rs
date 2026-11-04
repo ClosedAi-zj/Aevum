@@ -543,13 +543,13 @@ fn heal_overlay(state: &mut AppState, p: &egui::Painter, img: Rect, resp: &Respo
     //
     // Clone source marker: a cross. Nothing is drawn before a source is picked, because at
     // that point the next tap is the one that picks it.
-    if state.heal_clone {
-        if let Some((su, sv)) = state.heal_src {
-            let c = to_screen(state, f64::from(su), f64::from(sv));
-            let st = Stroke::new(1.2, accent());
-            p.line_segment([c - Vec2::new(7.0, 0.0), c + Vec2::new(7.0, 0.0)], st);
-            p.line_segment([c - Vec2::new(0.0, 7.0), c + Vec2::new(0.0, 7.0)], st);
-        }
+    if state.heal_clone
+        && let Some((su, sv)) = state.heal_src
+    {
+        let c = to_screen(state, f64::from(su), f64::from(sv));
+        let st = Stroke::new(1.2, accent());
+        p.line_segment([c - Vec2::new(7.0, 0.0), c + Vec2::new(7.0, 0.0)], st);
+        p.line_segment([c - Vec2::new(0.0, 7.0), c + Vec2::new(0.0, 7.0)], st);
     }
 
     // 悬停圈：半径就是下一次落笔的半径（改推子立刻看得到）。
