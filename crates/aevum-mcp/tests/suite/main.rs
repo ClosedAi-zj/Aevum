@@ -18,3 +18,4 @@
 mod deflicker_align;
 mod mcp_stdio;
 mod tools;
+mod tools_list_snapshot;

@@ -160,7 +160,16 @@ fn initialize(params: &Value) -> Value {
     })
 }
 
-fn tool_list() -> Vec<Value> {
+/// `tools/list` 响应里 `tools` 数组的**唯一**构造点。
+///
+/// `crate::tool_list` 直接把它转出去给快照判据用，所以测试冻结的就是线上真正发出去
+/// 的那份字节，而不是测试里另写一遍的投影。
+///
+/// The **only** place that builds the `tools` array of a `tools/list` response.
+///
+/// `crate::tool_list` hands it straight to the snapshot criterion, so what the test freezes
+/// is the exact bytes that go out on the wire, not a projection re-written in the test.
+pub(crate) fn tool_list() -> Vec<Value> {
     commands()
         .iter()
         .map(|command| {

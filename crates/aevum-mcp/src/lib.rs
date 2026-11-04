@@ -48,6 +48,21 @@ pub fn commands() -> &'static [Command] {
     tools::commands()
 }
 
+/// `tools/list` 响应里 `tools` 数组的内容，与无头模式发出去的逐字节一致。
+///
+/// 单独露出来是给快照判据用的：`tests/suite/tools_list_snapshot.rs` 比对的就是这条
+/// 路径，不是测试里另写一遍的投影。拆分 `tools` 模块时必须保证它一个字节都不变。
+///
+/// The contents of the `tools` array in a `tools/list` response, byte-for-byte identical
+/// to what the headless mode puts on the wire.
+///
+/// It is exposed for the snapshot criterion: `tests/suite/tools_list_snapshot.rs` compares
+/// this path rather than a projection re-written in the test. Splitting the `tools` modules
+/// must leave it byte-for-byte unchanged.
+pub fn tool_list() -> Vec<serde_json::Value> {
+    server::tool_list()
+}
+
 /// 执行一个命令。错误是给调用方看的文案，不 panic。
 ///
 /// 入口先做一次工具名规范化：`lumen_*` 是旧名，静默别名成 `aevum_*`。
