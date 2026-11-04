@@ -1,11 +1,11 @@
-//! 金字塔合成法的六条判据（P-C1…P-C6）。
+//! 金字塔合成法的六条判据（P-C1…P-C6）与缓存上界判据（O2）。
 //!
 //! # 为什么单独一个文件
 //!
 //! `focus.rs` 的单元判据管的是深度图与加权平均，夹具是那两条的形状。金字塔要验的是
 //! 另一件事：**塔的每一层有没有按该层的口径融合**。六条各自钉一个失效模式
 //! （退化、常数场、分带、兜底、光晕、参数边界），放在同一处才看得出口径之间
-//! 有没有互相打架。
+//! 有没有互相打架。O2 那条钉的是「缓存上界不许改输出、也不许被静默忽略」。
 //!
 //! # 夹具都是 48×48
 //!
@@ -13,7 +13,7 @@
 //! 1 / 12 的用例单独标出。尺寸小不是偷懒：过冲、常数场、分带这些性质在这一尺度
 //! 上就能测出来，而 24 MP 的峰值内存与耗时由 T10 单独实测，不在这里假装测过。
 //!
-//! # Six assertions for pyramid fusion (P-C1...P-C6)
+//! # Six assertions for pyramid fusion (P-C1...P-C6) plus the cache-bound assertion (O2)
 //!
 //! # Why a separate file
 //!
@@ -21,7 +21,9 @@
 //! fixtures shaped for those two. The pyramid has to prove something else: **every level
 //! of the tower is fused according to that level's rule**. Each of the six assertions pins
 //! one failure mode (degeneration, constant field, band selection, fallback, halo,
-//! parameter bounds); keeping them together is what shows whether the rules conflict.
+//! parameter bounds); keeping them together is what shows whether the rules conflict. The
+//! O2 assertion pins "the cache bound must not change the output, and must not be silently
+//! ignored".
 //!
 //! # All fixtures are 48x48
 //!
@@ -118,6 +120,7 @@ fn pyramid(levels: usize, threshold: f32, radius: usize) -> Options {
         radius,
         smooth_z: 3,
         feather: 12.0,
+        measure_cache: 8,
     }
 }
 
@@ -177,6 +180,7 @@ fn p_c1_levels_one_degenerates_to_weighted() {
         smooth_z: 3,
         feather: 12.0,
         levels: 0,
+        measure_cache: 8,
     };
     let one = pyramid(1, 0.0, 2);
     let out_w = focus_stack(&frames, W, H, &weighted).expect("weighted stack");
@@ -493,4 +497,55 @@ fn p_c6_parameter_edges_stay_finite() {
     assert_eq!(aevum_core::pyramid::resolve_levels(6000, 4000, 0), 6);
     assert_eq!(aevum_core::pyramid::resolve_levels(W, H, usize::MAX), 12);
     assert_eq!(aevum_core::pyramid::resolve_levels(W, H, 1), 1);
+}
+
+/// O2 缓存上界：截断缓存的输出与不设上界**逐位相同**，且上界真的咬住了。
+///
+/// 两条断言各盯一个失效模式：重算计数管「上界被静默忽略」（变异：让
+/// `measure_cache` 失效，计数纹丝不动 → 红）；位比较管「重算引入漂移」（变异：
+/// 重算改返回零面或不同算式 → 红）。16 帧 × cap=4 给出 12 次重算，前 4 帧走
+/// 缓存、后 12 帧现算，两种路径都被覆盖。计数用前后差值断言：本二进制里其他
+/// 判据都是 3 帧（≤ 默认上界 8），不会给这个差值添数。
+///
+/// O2 cache bound: the capped output must be **bitwise identical** to the unbounded
+/// run, and the bound must actually bite. Two assertions, two failure modes: the
+/// recompute count catches "the bound was silently ignored" (mutation: make
+/// `measure_cache` inert -- the counter stays flat and this goes red); the bit
+/// comparison catches "recompute introduced drift" (mutation: return a zero plane or
+/// a different formula -- red). 16 frames with cap=4 give 12 recomputes: the first 4
+/// frames hit the cache, the other 12 recompute, so both paths are covered. The count
+/// is asserted as a before/after delta: every other assertion in this binary fuses 3
+/// frames (within the default bound of 8) and cannot add to the delta.
+#[test]
+fn o2_measure_cache_cap_is_bitwise_and_actually_engaged() {
+    let frames: Vec<Vec<f32>> = (0..16)
+        .map(|i| match i % 4 {
+            0 => planks(0),
+            1 => planks_h(),
+            2 => blur5(&planks(1)),
+            _ => blur5(&planks_h()),
+        })
+        .collect();
+    let refs: Vec<&[f32]> = frames.iter().map(Vec::as_slice).collect();
+
+    let mut capped = pyramid(3, 0.0, 2);
+    capped.measure_cache = 4;
+    let mut full = pyramid(3, 0.0, 2);
+    full.measure_cache = usize::MAX;
+
+    let before = aevum_core::pyramid::measure_recomputes();
+    let capped_out = focus_stack(&refs, W, H, &capped).expect("capped fusion");
+    let recomputes = aevum_core::pyramid::measure_recomputes() - before;
+    assert!(
+        recomputes >= 12,
+        "上界没咬住：16 帧 cap=4 应至少重算 12 张，实际 {recomputes}"
+    );
+
+    let full_out = focus_stack(&refs, W, H, &full).expect("unbounded fusion");
+    let drift = capped_out
+        .iter()
+        .zip(full_out.iter())
+        .filter(|(x, y)| x.to_bits() != y.to_bits())
+        .count();
+    assert_eq!(drift, 0, "截断缓存改了输出：{drift} 个样本位不同");
 }

@@ -613,6 +613,11 @@ pub fn gain_stats(
         smooth_z: 1,
         feather: 2.0,
         levels: 0,
+        // Weighted 不进金字塔，缓存上界对它无意义；取默认保持口径一致。
+        //
+        // Weighted never enters the pyramid, so the cache bound is irrelevant here; the
+        // default keeps one convention everywhere.
+        measure_cache: 8,
     };
     let unaligned: Vec<Vec<f32>> = proxies.iter().map(|p| p.data.clone()).collect();
     let aligned: Vec<Vec<f32>> = proxies

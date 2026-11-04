@@ -6927,6 +6927,10 @@ impl AppState {
             // 界面不暴露 levels，0 = auto（见 focus::Options）。
             // The UI does not expose levels; 0 = auto (see focus::Options).
             levels: 0,
+            // 界面同样不暴露测度缓存上界，用默认 8（见 focus::Options::measure_cache）。
+            // The UI does not expose the measure-cache bound either; default 8
+            // (see focus::Options::measure_cache).
+            measure_cache: 8,
         });
         let job = self.build_merge_job(kind, indices, &out_dir, spec, align)?;
         let mut started = self.start_merge(ctx, job);
@@ -7067,6 +7071,10 @@ impl AppState {
             // 深度图预览不需要塔，0 = auto。
             // The depth-map preview needs no tower; 0 = auto.
             levels: 0,
+            // 深度图不读金字塔缓存，用默认 8（见 focus::Options::measure_cache）。
+            // The depth map never reads the pyramid cache; default 8
+            // (see focus::Options::measure_cache).
+            measure_cache: 8,
         };
         let refs: Vec<&[f32]> = buffers.iter().map(|b| b.as_slice()).collect();
         let owner = match aevum_core::focus::depth_map(&refs, w, h, &opts) {

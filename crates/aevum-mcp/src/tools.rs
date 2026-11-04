@@ -1465,6 +1465,10 @@ fn focus_options(args: &Value) -> Result<aevum_core::focus::Options, String> {
         // 命令面不暴露 levels，0 = auto（见 focus::Options）。
         // The command surface does not expose levels; 0 = auto (see focus::Options).
         levels: 0,
+        // 命令面同样不暴露测度缓存上界，用默认 8（见 focus::Options::measure_cache）。
+        // The command surface does not expose the measure-cache bound either; default 8
+        // (see focus::Options::measure_cache).
+        measure_cache: 8,
     })
 }
 

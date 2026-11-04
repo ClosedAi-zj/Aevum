@@ -254,6 +254,7 @@ fn fuse(frames: &[Vec<f32>], w: usize, h: usize, radius: usize) -> Vec<f32> {
         smooth_z: 0,
         feather: 0.0,
         levels: 0,
+        measure_cache: 8,
     };
     let refs: Vec<&[f32]> = frames.iter().map(Vec::as_slice).collect();
     focus_stack(&refs, w, h, &opts).expect("weighted fusion")

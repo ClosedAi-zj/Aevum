@@ -222,6 +222,20 @@ pub struct Options {
     /// assertions and library callers may set it. `levels = 1` degenerates strictly to
     /// [`Method::Weighted`].
     pub levels: usize,
+    /// Pass A 最多为 Pass B 缓存多少张全分辨率测度面（每张 f32、24 MP 约 92 MiB）。
+    /// 超出上界的帧在 Pass B 用**同一套算式**现算——输出逐位不变，代价是长序列里
+    /// 每个未命中帧多跑一次测度链。`0` = 一张不缓存（最省内存、最慢）；
+    /// `usize::MAX` = 不设上界。默认 8：8 帧以内的常规焦点堆栈在时间与内存上都
+    /// 与不设上界完全一致。**界面与 MCP 不暴露**，判据与库调用方才能设。
+    ///
+    /// How many full-resolution measure planes Pass A may keep for Pass B (one f32
+    /// plane each, ~92 MiB at 24 MP). Frames beyond the bound are recomputed in Pass B
+    /// by the **very same arithmetic** -- the output is bitwise unchanged, the price is
+    /// one extra measure chain per cache-miss frame in a long sequence. `0` caches
+    /// nothing (least memory, slowest); `usize::MAX` is unbounded. The default 8 keeps
+    /// stacks of up to 8 frames completely identical in both time and memory. The UI
+    /// and MCP do **not** expose it; assertions and library callers may set it.
+    pub measure_cache: usize,
 }
 
 impl Default for Options {
@@ -233,6 +247,7 @@ impl Default for Options {
             smooth_z: 1,
             feather: 2.0,
             levels: 0,
+            measure_cache: 8,
         }
     }
 }

@@ -79,8 +79,9 @@
 //! **2.14 s**。峰值内存 4.14 → **3.86 GB**：缓存加了 768 MB，但测度链 churn、gate/weak/
 //! best 三张常驻面、掩膜塔 level-0 克隆与整张拉普拉斯面省掉了更多。逐位不变：探针
 //! `T10_DUMP` 改前改后各 288 MB 逐字节 `cmp` 相同，checksum 不变。
-//! 代价说明：Pass B 期间测度缓存驻留最高约 7×96 MB，是峰值内存的主要新增项；若
-//! 再压内存，只能减缓存面或换编码（f16 不满足逐位要求），无免费午餐。
+//! 代价说明：Pass B 期间测度缓存驻留最高约 7×96 MB，是峰值内存的主要新增项；再压
+//! 内存就是缓存上界（见下文「缓存上界」，`measure_cache` 旋钮，2026-11-04 落地）或
+//! 换编码（f16 不满足逐位要求），无免费午餐。
 //!
 //! # 内存量具与「地板」（2026-11-04 复测）
 //!
@@ -102,9 +103,40 @@
 //!    想把 f64 积分图改成行流式（省 192 MiB）在现有结构里没有收益，只有当「重算」
 //!    方案把整条测度链搬进 Pass B 时才有意义。
 //!
-//! 剩下的唯一杠杆是**给缓存加上界**（超出的帧在 Pass B 重算）：16 帧可从 2291 压到
-//! ~2000 MiB，代价是那 8 帧多跑一遍测度链（同机约 +0.8 s，+16 %）。这是个
-//! 内存 / 时间的取舍，没有免费的一侧——要动先在同一台机器上用本量具 A/B 出数字。
+//! 缓存上界（2026-11-04 晚，O2 收口）：`focus::Options::measure_cache`（默认 8）限制
+//! Pass A 保留的测度面张数，超出的帧在 Pass B 用**同一套算式**（`box_measure_into`，
+//! 唯一实现）现算——确定性纯函数，输出逐位不变。策略是**留最先**：Pass B 恰好按同序
+//! 消费每张恰好一次，LRU/FIFO 环形在这个访问模式下是最坏选择。重算缓冲首次未命中才
+//! 分配，且此刻最先进缓存的面已释放，峰值不动（仍在 Pass A 末尾）。24 MP 实测
+//! （计数分配器，数字确定）：16 帧融合增量从 2291 压到 **1558 MiB**——与 8 帧一字
+//! 不差，24 帧也是 1558：**峰值被钉在 `基线 + min(上界, 帧数)` 张面，与序列长度
+//! 解耦**，32/100 帧不再增长。时间用交错 A/B（同会话抵机器负载）：16 帧有界
+//! 12.40 / 12.59 s 对无界 12.61 / 13.75 s，**差在噪声内**——Pass A 对超出上界的帧
+//! 跳过盒平均（省掉积分图那一趟），几乎抵掉 Pass B 的重算开销。指纹与不设上界
+//! 逐位相同。`0` = 全现算（最省），
+//! `usize::MAX` = 不设上界。这是内存 / 时间的取舍，没有免费的一侧；上界只经
+//! `focus::Options` 走判据与库调用方，界面与 MCP 不暴露。
+//!
+//! Cache bound (evening 2026-11-04, closing O2): `focus::Options::measure_cache` (default
+//! 8) limits how many measure planes Pass A keeps; frames beyond it are recomputed in Pass
+//! B by the **very same arithmetic** (`box_measure_into`, the single implementation) -- a
+//! deterministic pure function, so the output is bitwise unchanged. The policy is
+//! **keep-the-first**: Pass B consumes each plane exactly once in the same order, so an
+//! LRU/FIFO ring would be the worst choice here. The recompute buffers are allocated at
+//! the first miss, by which time the earliest cached planes are freed, so the peak does
+//! not move (it stays at the end of Pass A). Measured at 24 MP with the counting
+//! allocator (the numbers are deterministic): 16 frames drop from 2291 to **1558 MiB** --
+//! byte-for-byte the 8-frame figure, and 24 frames also peak at 1558: **the peak is pinned
+//! at `base + min(bound, count)` planes, decoupled from sequence length** -- 32 or 100
+//! frames no longer grow it. Time via an interleaved A/B (one session, so machine load
+//! cancels): 16 frames capped 12.40 / 12.59 s against unbounded 12.61 / 13.75 s -- **within
+//! noise**. Pass A skips the box average for frames beyond the bound (dropping the
+//! summed-area-table trip), which almost exactly offsets the Pass B recompute. The
+//! fingerprint is bitwise equal to the unbounded run. `0` recomputes everything (least
+//! memory),
+//! `usize::MAX` is unbounded. This is a memory/time trade with no free side; the bound is
+//! reachable only through `focus::Options` by assertions and library callers -- the UI and
+//! MCP do not expose it.
 //!
 //! # Memory gauge and the floor (re-measured 2026-11-04)
 //!
@@ -130,11 +162,6 @@
 //!    exactly the same 1558 MiB. Streaming the f64 table row by row (saving 192 MiB) buys
 //!    nothing in the current shape; it only becomes relevant if the whole measure chain
 //!    moves into Pass B.
-//!
-//! The only remaining lever is **capping the cache** (frames beyond the cap recompute in
-//! Pass B): 16 frames could go from 2291 to ~2000 MiB at the price of one extra measure
-//! chain for those 8 frames (~+0.8 s, +16 % on this machine). That is a memory/time
-//! trade with no free side -- A/B it with this gauge before adopting.
 //!
 //! 第五轮（同日）：先打点拿分段构成（同轮 3 次取中位，中位 5.01 s，本机当轮比上表慢：
 //! 同轮 Weighted 1.58 s）：Pass A 0.84 s（其中 build_sat 0.27 s）、第 0 层 2.41 s、
@@ -278,13 +305,15 @@
 //! probe's `T10_DUMP` dumps before/after (288 MB each) compare equal byte for byte with
 //! `cmp`, checksum identical. Cost note: during Pass B the measure cache holds up to
 //! ~7 x 96 MB resident -- the main new contributor to peak memory; shrinking it further
-//! means fewer cached planes or a different encoding (f16 fails the bitwise requirement).
+//! means the cache bound (see "Cache bound" below, the `measure_cache` knob, landed
+//! 2026-11-04) or a different encoding (f16 fails the bitwise requirement).
 //!
 //! `feather` and `smooth_z` do **not apply** here: fusion is a per-level weighted
 //! normalisation, with no depth jumps, no feather mask and no mode filter. Callers may pass
 //! them; they are validated but not read.
 
 use crate::focus::{self, Options};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// 二项式 5-tap 核（下采样用）。和恒为 1，常数场经过 reduce 仍是常数场。
 ///
@@ -296,6 +325,24 @@ const K5: [f32; 5] = [1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 1.0 / 16.0
 ///
 /// A weight sum below this means no frame claims the pixel; fall back to the reference.
 const WSUM_EPS: f32 = 1e-6;
+
+/// Pass B 缓存未命中的重算次数（进程累计）。`fuse_pyramid` 每现算一张测度面加一。
+/// 诊断口：判据用它证明「上界真的咬住了」（上界被忽略时它纹丝不动），性能排查
+/// 用它数长序列付了多少次测度链。不是稳定 API。
+///
+/// How many Pass B cache misses have recomputed a measure plane, process-wide.
+/// `fuse_pyramid` bumps it once per recomputed plane. A diagnostic hook: the assertions
+/// use it to prove the cap actually bites (it stays flat when the cap is ignored), and
+/// performance work reads it to count what a long sequence pays. Not a stable API.
+static MEASURE_RECOMPUTES: AtomicUsize = AtomicUsize::new(0);
+
+/// 读 [`MEASURE_RECOMPUTES`]。判据用「前後差值」断言，避免依赖进程累计值。
+///
+/// Reads [`MEASURE_RECOMPUTES`]; assertions use before/after deltas, never the absolute.
+#[doc(hidden)]
+pub fn measure_recomputes() -> usize {
+    MEASURE_RECOMPUTES.load(Ordering::Relaxed)
+}
 
 /// 显式层数的硬上限：超过它一律夹紧，不许拿一张 48px 小图开 100 层。
 ///
@@ -888,6 +935,30 @@ fn box_from_sat(sat: &[f64], w: usize, h: usize, radius: usize, out: &mut [f32])
     });
 }
 
+/// 测度面的盒平均步（改进拉普拉斯 → 盒平均后的测度面），`radius = 0` 即恒等拷贝。
+/// Pass A 缓存与 Pass B 未命中重算**共用这一个实现**——一条算式只许一套判断
+/// （R4 的教训搬到算式上）：任何一边改动、另一边自动跟上，不存在漂移。
+///
+/// The box-average step of the measure plane (modified Laplacian in, box-averaged measure
+/// out); `radius = 0` is an identity copy. Pass A's caching and Pass B's recompute share
+/// **this one implementation** -- one arithmetic, one verdict (the R4 lesson applied to
+/// formulas): touching either side moves the other, so they cannot drift.
+fn box_measure_into(
+    ml: &[f32],
+    w: usize,
+    h: usize,
+    radius: usize,
+    sat: &mut [f64],
+    out: &mut [f32],
+) {
+    if radius == 0 {
+        out.copy_from_slice(ml);
+    } else {
+        build_sat(ml, w, h, sat);
+        box_from_sat(sat, w, h, radius, out);
+    }
+}
+
 /// 4096 桶直方图求「权重下限分位」，口径与 `compute_owner_map` 逐字一致。
 ///
 /// The 4096-bin histogram for the lower weight percentile, identical in convention to
@@ -1223,8 +1294,22 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
     let mut gray = vec![0.0f32; n];
     let mut ml = vec![0.0f32; n];
     let mut sat = vec![0.0f64; (w + 1) * (h + 1)];
-    let mut measures: Vec<Vec<f32>> = Vec::with_capacity(count);
-    for f in frames {
+    // 缓存上界（O2）：只保留**最先**的 `measure_cache` 张测度面。Pass B 恰好按同序
+    // 消费每张恰好一次，所以「留最先」就是这个访问模式下的最优策略——LRU/FIFO 环形
+    // 会把最后几张一直占着到 Pass B 结束、而前面每帧都在重算，恰是最坏选择。超出
+    // 上界的帧 Pass A 只算到原始 ml（峰值面只需要它），盒平均留给 Pass B 现算——
+    // 同一条算式（`box_measure_into` 是唯一实现），确定性纯函数，逐位等于缓存面。
+    //
+    // Cache bound (O2): keep only the **first** `measure_cache` measure planes. Pass B
+    // consumes each plane exactly once in the same order, so "keep the first" is optimal
+    // for this access pattern -- an LRU/FIFO ring would hold the last planes until Pass B
+    // ends while every early frame recomputes, which is the worst choice. Frames beyond
+    // the bound stop Pass A at the raw ml (all the peak needs); the box average is
+    // recomputed in Pass B by the very same arithmetic (`box_measure_into` is the single
+    // implementation), a deterministic pure function, bitwise equal to the cached plane.
+    let cache_cap = options.measure_cache;
+    let mut measures: Vec<Vec<f32>> = Vec::with_capacity(count.min(cache_cap));
+    for (fi, f) in frames.iter().enumerate() {
         luma_into(f, w, h, &mut gray);
         ml_into(&gray, w, h, &mut ml);
         crate::par::for_bands(h, &mut peak, w, |y0, _y1, band| {
@@ -1238,14 +1323,11 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
                 }
             }
         });
-        let mut m = vec![0.0f32; n];
-        if radius == 0 {
-            m.copy_from_slice(&ml);
-        } else {
-            build_sat(&ml, w, h, &mut sat);
-            box_from_sat(&sat, w, h, radius, &mut m);
+        if fi < cache_cap {
+            let mut m = vec![0.0f32; n];
+            box_measure_into(&ml, w, h, radius, &mut sat, &mut m);
+            measures.push(m);
         }
-        measures.push(m);
     }
     drop(gray);
     drop(ml);
@@ -1334,15 +1416,35 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
         .collect();
 
     // Pass B：逐帧流式。第 0 层的「高斯面」**直接借用帧数据本身**（交错 RGB 的排布
-    // 与 `Plane::from_rgb` 拷出来的完全一样，整幅 288 MB 拷贝纯属浪费），测度面从
-    // `measures` 缓存取、用完即还。
+    // 与 `Plane::from_rgb` 拷出来的完全一样，整幅 288 MB 拷贝纯属浪费），测度面优先
+    // 从缓存取；上界截掉的帧在首次未命中时分配复用缓冲、按同一套算式现算。现算缓冲
+    // **首次未命中才分配**（24 MP 级三张约 366 MiB 瞬态）——此刻最先进缓存的面已全部
+    // 消费释放，不会抬高 Pass A 末尾的峰值。
     //
     // Pass B: stream frame by frame. Level 0's "Gaussian plane" **borrows the frame data
     // itself** (the interleaved RGB layout is exactly what `Plane::from_rgb` would copy,
-    // so the full 288 MB copy was pure waste), and the measure plane comes from the
-    // `measures` cache, released right after use.
+    // so the full 288 MB copy was pure waste); the measure plane comes from the cache
+    // first, and frames cut by the bound recompute on the fly with the same arithmetic,
+    // allocating the reusable buffers at the **first miss** (three planes, ~366 MiB
+    // transient at 24 MP) -- by then the earliest cached planes are all consumed and
+    // released, so the Pass A-end peak is not raised.
+    let (mut miss_gray, mut miss_ml, mut miss_sat) = (Vec::new(), Vec::new(), Vec::new());
     for (fi, f) in frames.iter().enumerate() {
-        let m = std::mem::take(&mut measures[fi]);
+        let m = if fi < measures.len() {
+            std::mem::take(&mut measures[fi])
+        } else {
+            MEASURE_RECOMPUTES.fetch_add(1, Ordering::Relaxed);
+            if miss_gray.is_empty() {
+                miss_gray = vec![0.0f32; n];
+                miss_ml = vec![0.0f32; n];
+                miss_sat = vec![0.0f64; (w + 1) * (h + 1)];
+            }
+            let mut m = vec![0.0f32; n];
+            luma_into(f, w, h, &mut miss_gray);
+            ml_into(&miss_gray, w, h, &mut miss_ml);
+            box_measure_into(&miss_ml, w, h, radius, &mut miss_sat, &mut m);
+            m
+        };
         w0.fill(0.0);
         // 逐像素独立，按行带并行（逐位不变）。
         //
@@ -1442,6 +1544,13 @@ pub fn fuse_pyramid(frames: &[&[f32]], w: usize, h: usize, options: &Options) ->
     // For cells whose weight sum is near zero, fill from the reference frame's own
     // Laplacian tower. The reference tower reuses g_buf / lap_buf (the sizes match, and
     // the reduce / laplacian arithmetic is bitwise the same code path).
+    // 未命中的重算缓冲用完即弃：兜底阶段的常驻面不含它们。
+    //
+    // The recompute buffers are dropped once the frame loop ends: the fallback's resident
+    // set does not include them.
+    drop(miss_gray);
+    drop(miss_ml);
+    drop(miss_sat);
     let needs_fallback = wsum_tower.iter().any(|ws| ws.iter().any(|&v| v < WSUM_EPS));
     if needs_fallback {
         let rf = frames[reference];

@@ -17,6 +17,9 @@
 //!     --frames 8 --radius 2 --threshold 0 --levels 0 --repeat 3
 //! ```
 //!
+//! `--cache-cap N` 就是 `focus::Options::measure_cache`（默认 8）：每轮打印重算张数，
+//! 16 帧 cap=8 的融合增量应与 8 帧一字不差（峰值与序列长度解耦）。
+//!
 //! 输出里的 `fnv` 是逐位指纹（把每个 f32 的 `to_bits()` 按 FNV-1a 滚一遍），
 //! 改实现前后必须**完全相同**——`T10_DUMP` 那 288 MB 的逐字节 `cmp` 在仓库里没有夹具，
 //! 这个指纹就是它的轻量替身。`sum` 是同一批像素的 f64 和，用来在指纹不同时判断
@@ -35,6 +38,10 @@
 //! minus baseline is the **fusion delta** (third column of the module header's table). The
 //! allocator cannot see `mmap`, stack or driver-side memory, so its number is **smaller**
 //! than the working set; the two are not interchangeable and any citation must say which.
+//!
+//! `--cache-cap N` is `focus::Options::measure_cache` (default 8): each run prints the
+//! recompute count, and the 16-frame delta at cap=8 must equal the 8-frame figure
+//! byte-for-byte (the peak is decoupled from sequence length).
 //!
 //! `fnv` in the output is a bitwise fingerprint (FNV-1a over every f32's `to_bits()`).
 //! It must be **identical** before and after an implementation change -- there is no fixture
@@ -111,6 +118,7 @@ struct Args {
     radius: usize,
     threshold: f32,
     repeat: usize,
+    cache_cap: usize,
 }
 
 impl Default for Args {
@@ -123,6 +131,7 @@ impl Default for Args {
             radius: 2,
             threshold: 0.0,
             repeat: 3,
+            cache_cap: 8,
         }
     }
 }
@@ -149,6 +158,7 @@ fn parse_args() -> Args {
             "--radius" => a.radius = val().parse().expect("--radius 要整数"),
             "--threshold" => a.threshold = val().parse().expect("--threshold 要小数"),
             "--repeat" => a.repeat = val().parse().expect("--repeat 要整数"),
+            "--cache-cap" => a.cache_cap = val().parse().expect("--cache-cap 要整数"),
             other => panic!("不认识的参数 / unknown argument: {other}"),
         }
         i += 2;
@@ -205,7 +215,7 @@ fn main() {
     let a = parse_args();
     let px = a.width * a.height;
     println!(
-        "frames={} size={}x{} ({:.1} MP) radius={} threshold={} levels={}(0=auto) repeat={}",
+        "frames={} size={}x{} ({:.1} MP) radius={} threshold={} levels={}(0=auto) cache-cap={} repeat={}",
         a.frames,
         a.width,
         a.height,
@@ -213,6 +223,7 @@ fn main() {
         a.radius,
         a.threshold,
         a.levels,
+        a.cache_cap,
         a.repeat
     );
 
@@ -233,6 +244,7 @@ fn main() {
     opts.radius = a.radius;
     opts.threshold = a.threshold;
     opts.levels = a.levels;
+    opts.measure_cache = a.cache_cap;
 
     let mut times = Vec::with_capacity(a.repeat);
     let mut peaks = Vec::with_capacity(a.repeat);
@@ -241,16 +253,18 @@ fn main() {
     for r in 0..a.repeat {
         let base = LIVE.load(Ordering::Relaxed);
         PEAK.store(base, Ordering::Relaxed);
+        let rec0 = pyramid::measure_recomputes();
         let t = Instant::now();
         let out = pyramid::fuse_pyramid(&refs, a.width, a.height, &opts);
         let dt = t.elapsed().as_secs_f64();
+        let recompute = pyramid::measure_recomputes() - rec0;
         let peak = PEAK.load(Ordering::Relaxed);
         times.push(dt);
         peaks.push(peak.saturating_sub(base));
         prints.insert(fingerprint(&out));
         last_sum = out.iter().map(|&v| v as f64).sum();
         println!(
-            "  run {}: {:.2} s · 峰值堆 {:.0} MiB · 融合增量 {:.0} MiB · 指纹 {:016x}",
+            "  run {}: {:.2} s · 峰值堆 {:.0} MiB · 融合增量 {:.0} MiB · 重算 {recompute} 张 · 指纹 {:016x}",
             r + 1,
             dt,
             mib(peak),
