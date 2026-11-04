@@ -115,6 +115,15 @@ pub struct Settings {
     /// it still on. `None` = older file without the field, treated as off (the default, or
     /// everyone would see slightly dimmed whites on first launch).
     pub hdr_preview: Option<bool>,
+    /// 显影面板的分组模式：`true` = 单开（点开一组自动收起同模块其他组，ACR 默认），
+    /// `false` = 多开（各组各自开合，本仓旧行为）。`None` = 老文件没有这一项，
+    /// 按单开处理——它是照 ACR 组织面板的一部分，不是可选项。
+    ///
+    /// Develop panel group mode: `true` = single-open (opening one group folds the other
+    /// groups of the same module, ACR's default), `false` = multi-open (the older
+    /// behaviour here). `None` = older file without the field, treated as single-open --
+    /// it is part of organising the panel like ACR, not an opt-in.
+    pub panel_solo: Option<bool>,
     /// 合并面板的滑杆参数（HDR / 堆栈 / 时间合成 / 焦点合成），全局偏好：换序列不清、
     /// 重启还在。枚举字段存的是 key 串（`stack_mode` = "lighten"，`tb_layout` =
     /// "sky-ground"，`focus_method` = "depthmap"），读回来解析不了就落默认值。

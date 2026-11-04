@@ -272,24 +272,21 @@ pub const GROUP_SPECS: &[GroupSpec] = &[
     in_module("def-stats", Module::Deflicker, true),
     in_module("def-exposure", Module::Deflicker, false),
     // ── 显影 ────────────────────────────────────────────────────────────
-    // 展开的五组是「一张照片必然要过的手」；曲线/色阶/HSL/分级这些是深加工，
-    // 想用的时候点开——它们各自占半屏，全展开就是十八段连续滚动。
+    // ACR 九分区（docs/界面布局-ACR化-2026-11-04.md §3）：基本 → 曲线 →
+    // 颜色混合器 → 颜色分级 → 细节 → 光学 → 效果 → 外观 → 蒙版。旧组名
+    // color/parametric/levels/hsl/mono/grain/lens/profiles 已并入新组，
+    // 落盘的旧折叠键由 `legacy_group_key` 映射过来，用户的折叠偏好不丢。
+    // 首屏只有基本/细节/蒙版展开——ACR 默认也只有基本展开，其余是深加工。
     in_module("basic", Module::Develop, true),
-    in_module("color", Module::Develop, true),
-    in_module("effects", Module::Develop, true),
+    in_module("curve", Module::Develop, false),
+    in_module("mixer", Module::Develop, false),
+    in_module("grade", Module::Develop, false),
     in_module("detail", Module::Develop, true),
+    in_module("optics", Module::Develop, false),
+    in_module("effects", Module::Develop, false),
+    in_module("look", Module::Develop, false),
     in_module("masks", Module::Develop, true),
     in_module("mask-params", Module::Develop, true),
-    in_module("look", Module::Develop, false),
-    in_module("levels", Module::Develop, false),
-    in_module("parametric", Module::Develop, false),
-    in_module("curve", Module::Develop, false),
-    in_module("hsl", Module::Develop, false),
-    in_module("mono", Module::Develop, false),
-    in_module("grade", Module::Develop, false),
-    in_module("grain", Module::Develop, false),
-    in_module("profiles", Module::Develop, false),
-    in_module("lens", Module::Develop, false),
     // 2026-11-04 起五组文件级工具归属「合成」模块（docs/界面布局-ACR化-2026-11-04.md §4）：
     // 键名不变（用户的折叠偏好照常读回），只是所属模块换了——「只看这一组」的
     // 作用域随之切到合成页。
@@ -414,6 +411,28 @@ pub fn default_collapsed() -> HashSet<&'static str> {
 /// version, removed in this one) and it is dropped.
 pub fn group_spec(key: &str) -> Option<&'static GroupSpec> {
     GROUP_SPECS.iter().find(|s| s.key == key)
+}
+
+/// 把落盘的折叠键映射到当前键名，查不到登记表就丢弃。
+/// 2026-11-04 显影面板按 ACR 九分区重排（docs/界面布局-ACR化-2026-11-04.md §3），
+/// 旧组名并入新组：color→basic、parametric/levels→curve、hsl/mono→mixer、
+/// grain→effects、lens/profiles→optics；"copies" 随调色副本搬去浮窗，直接丢弃。
+/// 改键名而不做映射，等于悄悄清掉老用户的折叠偏好。
+///
+/// Map a persisted collapse key to the current one, dropping unknown keys. The Develop
+/// panel was reorganised into the ACR nine sections on 2026-11-04 (plan §3); old group
+/// names fold into new ones, and "copies" (moved to the presets window) is dropped.
+/// Renaming without mapping would silently wipe the user's persisted preferences.
+pub fn legacy_group_key(raw: &str) -> Option<&'static str> {
+    let mapped = match raw {
+        "color" => "basic",
+        "parametric" | "levels" => "curve",
+        "hsl" | "mono" => "mixer",
+        "grain" => "effects",
+        "lens" | "profiles" => "optics",
+        other => other,
+    };
+    group_spec(mapped).map(|s| s.key)
 }
 
 /// 面板折叠的三个整批动作（右键分组头调）。放在 state 而不是界面里，是因为
@@ -1059,6 +1078,13 @@ pub struct AppState {
     /// your arrangement is half of "reduce the information load", and the other half is
     /// not unrolling everything on the first screen.
     pub collapsed: HashSet<&'static str>,
+    /// 分组模式：`true` = 单开（点开一组就收起同模块其他组，ACR 默认），
+    /// `false` = 多开。落 `settings.json`，右键分组头可切换。
+    ///
+    /// Group mode: `true` = single-open (opening a group folds its siblings, ACR's
+    /// default), `false` = multi-open. Persisted to `settings.json`; toggled from a
+    /// group header's context menu.
+    pub panel_solo: bool,
     /// 预览里打开「白以上检视」：把白以上的亮度折进最后一段码值，让 SDR 面板能看见
     /// HDR 高光里还有没有细节。落 `settings.json`（观看方式，不是一次性动作）。
     ///
@@ -1717,6 +1743,17 @@ pub struct AppState {
     ///
     /// The channel the curve panel is editing: 0=RGB, 1=red, 2=green, 3=blue.
     pub curve_chan: usize,
+    /// 曲线区的模式片（ACR 的 Curve 面板同构）：0=参数曲线、1=点曲线、2=色阶。
+    /// 纯视图状态，不进历史也不进工程，重启回到参数曲线。
+    ///
+    /// Mode chips of the Curve section (mirrors ACR's Curve panel): 0=parametric,
+    /// 1=point, 2=levels. Pure view state -- not part of the history or the project;
+    /// resets to the parametric tab on restart.
+    pub curve_tab: usize,
+    /// 颜色混合器区的模式片（ACR 的 Color Mixer 同构）：0=HSL、1=黑白。
+    ///
+    /// Mode chips of the Color Mixer section (mirrors ACR): 0=HSL, 1=B&W.
+    pub mixer_tab: usize,
     /// 曲线 / 色阶正在拖动的控制点或把手序号。
     ///
     /// Index of the control point or handle being dragged on the curve / levels.
@@ -2247,6 +2284,7 @@ impl AppState {
             font_level: self.font_level,
             lang: self.lang,
             collapsed: Some(collapsed),
+            panel_solo: Some(self.panel_solo),
             hdr_preview: Some(self.hdr_preview),
             preset_order: Some(self.preset_order.iter().map(|k| (*k).to_owned()).collect()),
             win_pos: (!self.win_pos.is_empty()).then(|| self.win_pos.clone()),
@@ -2288,12 +2326,10 @@ impl AppState {
         // `None` = 老设置文件里没有这一项（或者从没打开过外观窗）→ 用首屏默认态；
         // `Some(vec![])` = 用户把每一组都展开了，这是明确表态，必须尊重。
         self.collapsed = match s.collapsed {
-            Some(list) => list
-                .iter()
-                .filter_map(|k| group_spec(k).map(|s| s.key))
-                .collect(),
+            Some(list) => list.iter().filter_map(|k| legacy_group_key(k)).collect(),
             None => default_collapsed(),
         };
+        self.panel_solo = s.panel_solo.unwrap_or(true);
         self.win_pos = s.win_pos.unwrap_or_default();
         self.hdr_preview = s.hdr_preview.unwrap_or(false);
         self.preset_order = normalise_preset_order(&s.preset_order.unwrap_or_default());
@@ -2407,6 +2443,7 @@ impl AppState {
             tool: Tool::Hand,
             dock_tab: DockTab::Adjust,
             collapsed: default_collapsed(),
+            panel_solo: true,
             hdr_preview: false,
             preset_order: default_preset_order(),
             drag_section: None,
@@ -2601,6 +2638,8 @@ impl AppState {
             motion_box: MotionBox::End,
             hsl_band: 0,
             curve_chan: 0,
+            curve_tab: 0,
+            mixer_tab: 0,
             curve_grab: None,
             levels_grab: None,
             retime_grab: None,
@@ -8572,19 +8611,14 @@ impl AppState {
     /// Counted by group rather than by parameter -- the badge only answers "was anything
     /// touched, and how much of it", while per-parameter detail is the dock tabs' job.
     pub fn changed_groups(&self) -> usize {
-        const KEYS: [&str; 12] = [
-            "basic",
-            "color",
-            "effects",
-            "look",
-            "levels",
-            "parametric",
-            "curve",
-            "hsl",
-            "mono",
-            "grade",
-            "detail",
-            "grain",
+        // 与 `GROUP_SPECS` 里显影模块的组一一对应（ACR 九分区去掉蒙版/蒙版参数
+        // 这两组纯动作组——它们没有「偏离默认值」可言；外观挂着 .cube，算一组）。
+        //
+        // One entry per Develop group in `GROUP_SPECS` that owns grading parameters
+        // (the ACR nine sections minus Masks/mask-params, which are action groups with
+        // nothing to deviate from; Look counts because it holds a .cube path).
+        const KEYS: [&str; 8] = [
+            "basic", "curve", "mixer", "grade", "detail", "optics", "effects", "look",
         ];
         KEYS.iter().filter(|k| self.group_changed(k)).count()
     }
@@ -8606,18 +8640,30 @@ impl AppState {
             let hit = crate::controls::specs_of_group(key)
                 .any(|s| crate::controls::param_get(p, s.field) != s.default);
             let extra = match key {
-                "parametric" => {
+                // 曲线区（ACR 的 Curve 面板）：参数曲线 / 点曲线 / 色阶三种调法共用
+                // 一个分区。表里只有 HDR 尾部一条，圆点还得看三条分界、五档色阶
+                // 与四条点曲线。
+                "curve" => {
                     p.par_split1 != d.par_split1
                         || p.par_split2 != d.par_split2
                         || p.par_split3 != d.par_split3
-                }
-                "mono" => p.mono_h != d.mono_h,
-                // 曲线组在规格表里有 HDR 尾部一条，圆点还得看四条点曲线动没动。
-                "curve" => {
-                    p.curve_rgb != d.curve_rgb
+                        || p.lv_black != d.lv_black
+                        || p.lv_white != d.lv_white
+                        || p.lv_gamma != d.lv_gamma
+                        || p.lv_out_black != d.lv_out_black
+                        || p.lv_out_white != d.lv_out_white
+                        || p.curve_rgb != d.curve_rgb
                         || p.curve_r != d.curve_r
                         || p.curve_g != d.curve_g
                         || p.curve_b != d.curve_b
+                }
+                // 颜色混合器（HSL / 黑白两种模式）：表里只有黑白强度一条，
+                // 八段色带与八段黑白亮度单独比。
+                "mixer" => {
+                    p.hsl_h != d.hsl_h
+                        || p.hsl_s != d.hsl_s
+                        || p.hsl_l != d.hsl_l
+                        || p.mono_h != d.mono_h
                 }
                 "grade" => {
                     p.grade_sh_h != d.grade_sh_h
@@ -8634,22 +8680,12 @@ impl AppState {
             };
             return hit || extra;
         }
+        // 表外组只剩外观一条（蒙版/蒙版参数是动作组，从不亮圆点）。
+        //
+        // Look is the only group left with no spec table; Masks/mask-params are action
+        // groups and never light the dot.
         match key {
             "look" => !p.look_cube.is_empty(),
-            "levels" => {
-                p.lv_black != d.lv_black
-                    || p.lv_white != d.lv_white
-                    || p.lv_gamma != d.lv_gamma
-                    || p.lv_out_black != d.lv_out_black
-                    || p.lv_out_white != d.lv_out_white
-            }
-            "curve" => {
-                p.curve_rgb != d.curve_rgb
-                    || p.curve_r != d.curve_r
-                    || p.curve_g != d.curve_g
-                    || p.curve_b != d.curve_b
-            }
-            "hsl" => p.hsl_h != d.hsl_h || p.hsl_s != d.hsl_s || p.hsl_l != d.hsl_l,
             _ => false,
         }
     }
@@ -11855,7 +11891,7 @@ impl AppState {
         self.mask_sel = Some(self.params.masks.len() - 1);
         self.preset = "自定义".to_owned();
         self.collapsed.insert("basic");
-        self.collapsed.insert("color");
+        self.collapsed.insert("optics");
         self.collapsed.insert("effects");
         self.collapsed.remove("masks");
         self.preview_dirty = true;
@@ -20534,7 +20570,7 @@ mod notice_tests {
 mod panel_tests {
     use super::*;
 
-    /// 首屏只留高频组：显影这一屏有十八组，默认若全摊开就是一条十八段的长滚。
+    /// 首屏只留高频组：显影这一屏按 ACR 分成九区，默认若全摊开就是一条长滚。
     #[test]
     fn first_screen_keeps_only_the_frequent_groups_open() {
         let dev_open = GROUP_SPECS
@@ -20546,10 +20582,10 @@ mod panel_tests {
             "显影首屏展开了 {dev_open} 组——「减少信息负担」就靠这个数往下压"
         );
         let closed = default_collapsed();
-        // 典型的高频/低频各取一个：开基本、折曲线。
+        // 典型的高频/低频各取一个：开基本、折光学。
         assert!(!closed.contains("basic"));
         assert!(closed.contains("curve"));
-        assert!(closed.contains("profiles"));
+        assert!(closed.contains("optics"));
         // 每个模块都得有展开的组，否则整屏只剩标题条，等于误伤。
         for module in Module::ALL {
             assert!(
@@ -20606,7 +20642,7 @@ mod panel_tests {
         // 同模块（显影）的兄弟组全收起来了，自己不动。
         assert!(!s.collapsed.contains("curve"), "被 solo 的那组得是展开的");
         assert!(s.collapsed.contains("basic"));
-        assert!(s.collapsed.contains("profiles"));
+        assert!(s.collapsed.contains("optics"));
         // 别的模块不受影响。
         assert!(!s.collapsed.contains("frame"));
         assert!(!s.collapsed.contains("render-out"));

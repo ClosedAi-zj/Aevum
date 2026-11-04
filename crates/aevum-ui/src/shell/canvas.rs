@@ -33,8 +33,22 @@ use egui::{
 
 // ---------------------------------------------------------------- 画布
 
-pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui) {
-    let full = ui.max_rect();
+pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) {
+    // 右边界以「整窗右缘减去右侧面板」为准，再与 egui 给的剩余区取小：
+    // 正常帧两者相等；egui 的 Panel 用记忆宽度缩剩余区的那几帧，取小值把画布
+    // 拉回真实边界（见 `mod.rs` 里的说明）。
+    //
+    // The right edge comes from "window right minus the right-hand panels", min'd with
+    // the remainder egui reports: equal on normal frames, and on the frames where egui
+    // shrinks by its remembered width, the min pulls the canvas back to the real edge.
+    let raw = ui.max_rect();
+    let right = raw
+        .right()
+        .min(ui.ctx().content_rect().right() - right_inset);
+    let full = Rect::from_min_max(
+        raw.min,
+        Pos2::new(right.max(raw.left() + 1.0), raw.bottom()),
+    );
     let p = ui.painter().clone();
     let ctx = ui.ctx().clone();
 

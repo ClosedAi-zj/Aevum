@@ -23,6 +23,7 @@ use super::toolbar::bar_button;
 use super::toolbar::bar_chip;
 use super::toolbar::bar_primary;
 use crate::controls;
+use crate::controls::Field;
 use crate::history;
 use crate::state::{AppState, Aspect, MergeKind, Module, MotionBox, Tool};
 use crate::theme::{self, *};
@@ -65,35 +66,38 @@ pub(crate) fn reset_group(state: &mut AppState, key: &str) {
         "look" => {
             state.params.look_cube = String::new();
         }
-        "levels" => {
+        // 曲线区（ACR 的 Curve 面板）三种模式同一个复位口径：参数曲线的三条分界、
+        // 色阶的五档、点曲线的四通道一起回默认——用户按的是分区头的复位，
+        // 期望的是"这一区回到出厂"，不是"只复位当前模式片"。
+        //
+        // One reset for all three Curve modes: parametric splits, the five levels
+        // handles and the four point curves go back together -- resetting a section
+        // header means "this whole section", not "the active chip".
+        "curve" => {
             let p = &mut state.params;
+            p.par_split1 = d.par_split1;
+            p.par_split2 = d.par_split2;
+            p.par_split3 = d.par_split3;
             p.lv_black = d.lv_black;
             p.lv_white = d.lv_white;
             p.lv_gamma = d.lv_gamma;
             p.lv_out_black = d.lv_out_black;
             p.lv_out_white = d.lv_out_white;
-            state.levels_grab = None;
-        }
-        "parametric" => {
-            let p = &mut state.params;
-            p.par_split1 = d.par_split1;
-            p.par_split2 = d.par_split2;
-            p.par_split3 = d.par_split3;
-        }
-        "curve" => {
-            let p = &mut state.params;
             p.curve_rgb = d.curve_rgb;
             p.curve_r = d.curve_r;
             p.curve_g = d.curve_g;
             p.curve_b = d.curve_b;
             state.curve_grab = None;
+            state.levels_grab = None;
         }
-        "hsl" => {
+        // 颜色混合器：HSL 八段与黑白八段一起回默认（黑白强度那条在表里已复位）。
+        //
+        // Color Mixer: both the HSL and the B&W band arrays go back together (the B&W
+        // strength slider is in the spec table and already reset above).
+        "mixer" => {
             state.params.hsl_h = d.hsl_h;
             state.params.hsl_s = d.hsl_s;
             state.params.hsl_l = d.hsl_l;
-        }
-        "mono" => {
             state.params.mono_h = d.mono_h;
         }
         "grade" => {
@@ -149,19 +153,7 @@ pub(crate) fn reset_group(state: &mut AppState, key: &str) {
     }
     if matches!(
         key,
-        "basic"
-            | "color"
-            | "effects"
-            | "look"
-            | "levels"
-            | "parametric"
-            | "curve"
-            | "hsl"
-            | "mono"
-            | "grade"
-            | "detail"
-            | "grain"
-            | "lens"
+        "basic" | "curve" | "mixer" | "grade" | "detail" | "optics" | "effects" | "look"
     ) {
         state.preset = "自定义".to_owned();
     }
@@ -1846,6 +1838,48 @@ fn adjust_merge(state: &mut AppState, ui: &mut Ui) {
     }
 }
 
+/// 分区内的次级小标题（ACR 的 subsection heading）：小号、半粗、弱色，上方留一口气。
+/// 与 `group_header` 不同，它不进折叠登记表——折叠始终以九分区组为单位，
+/// 小标题只是给一组推子分段。文案由调用方先过 `t!`（宏只吃字面量）。
+///
+/// A subsection heading inside a section (ACR's style): small, semibold, muted, with a
+/// breath above. Unlike `group_header` it is not registered for collapsing -- folding
+/// always works on the nine sections; the heading merely bands a group of sliders.
+/// Callers translate first with `t!` (the macro only takes literals).
+fn sub_head(ui: &mut Ui, label: &str) {
+    ui.add_space(6.0);
+    ui.label(
+        RichText::new(label)
+            .size(SIZE_SMALL)
+            .strong()
+            .color(muted()),
+    );
+}
+
+/// 按字段画一条推子：清单里写了表里没有的字段，debug 构建当场炸出来，
+/// 发布构建静默跳过（宁可少一根推子，也不要整块面板打不开）。
+///
+/// Draw one slider by field: a field listed in the UI but missing from the spec table
+/// trips a debug assertion, while release builds skip it silently (a missing slider
+/// beats a panel that cannot open).
+fn spec_field(ui: &mut Ui, state: &mut AppState, field: Field) -> bool {
+    match controls::spec_by_field(field) {
+        Some(s) => spec_slider(ui, state, s),
+        None => {
+            debug_assert!(false, "field {field:?} has no spec");
+            false
+        }
+    }
+}
+
+/// 显影面板：ACR 的九分区次序（基本 → 曲线 → 颜色混合器 → 颜色分级 → 细节 →
+/// 光学 → 效果 → 外观 → 蒙版）。旧版的 21 组混排已并入这九个分区，参数与
+/// 工程格式零改动，只动 UI 组织（docs/界面布局-ACR化-2026-11-04.md §3）。
+///
+/// The Develop panel in ACR's nine-section order (Basic, Curve, Color Mixer, Color
+/// Grading, Detail, Optics, Effects, Look, Masks). The old 21-group mixed list folded
+/// into these nine; parameters and the project format are untouched -- only the UI
+/// organisation moved.
 fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     ui.add_space(4.0);
     let mut auto = false;
@@ -1893,33 +1927,61 @@ fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     ui.add_space(6.0);
 
     let mut changed = false;
+
+    // ── 基本 ────────────────────────────────────────────────────────────
+    // ACR 的基本面板分三档：先定白平衡，再拉色调，最后是偏好（质感与色彩）。
+    // 推子按字段清单显式排布，显示序与表内物理序解耦——规格表是「一份参数
+    // 一行」的登记册，不是版面（docs/界面布局-ACR化-2026-11-04.md §3）。
+    //
+    // ACR's Basic panel runs in three bands: white balance, then tone, then presence.
+    // Sliders come from explicit field lists, so display order is decoupled from the
+    // table -- the table is the parameter registry, not the page layout.
     if group_header(ui, state, "basic", "基本", true) {
-        for s in controls::specs_of_group("basic") {
-            changed |= spec_slider(ui, state, s);
+        sub_head(ui, crate::i18n::t!("白平衡"));
+        for f in [Field::Temperature, Field::Tint] {
+            changed |= spec_field(ui, state, f);
+        }
+        // 小标题用「影调」而不是「色调」：中文里 tone 与 tint 都叫「色调」，
+        // 而 i18n 表以中文为键——同一个键只能有一条英文，区标题会被译成 Tint。
+        //
+        // The heading says 影调 (tonal range) rather than 色调: in Chinese both tone
+        // and tint are called 色调, and the i18n table keys on Chinese, so one key can
+        // only carry one English string -- the section title would read "Tint".
+        sub_head(ui, crate::i18n::t!("影调"));
+        for f in [
+            Field::Exposure,
+            Field::HlRolloff,
+            Field::Contrast,
+            Field::ContrastLinear,
+            Field::Highlights,
+            Field::Shadows,
+            Field::Whites,
+            Field::Blacks,
+            Field::BlackSoft,
+            Field::WhiteSoft,
+        ] {
+            changed |= spec_field(ui, state, f);
+        }
+        sub_head(ui, crate::i18n::t!("偏好"));
+        for f in [
+            Field::Texture,
+            Field::Clarity,
+            Field::Dehaze,
+            Field::DehazeDark,
+            Field::DehazeContrast,
+            Field::Vibrance,
+            Field::Saturation,
+        ] {
+            changed |= spec_field(ui, state, f);
         }
     }
-    if group_header(ui, state, "color", "色彩", true) {
-        for s in controls::specs_of_group("color") {
-            changed |= spec_slider(ui, state, s);
-        }
-    }
-    if group_header(ui, state, "effects", "效果", true) {
-        for s in controls::specs_of_group("effects") {
-            changed |= spec_slider(ui, state, s);
-        }
-    }
-    changed |= adjust_look(state, ui);
-    changed |= adjust_levels(state, ui);
-    changed |= adjust_parametric(state, ui);
     changed |= adjust_curve(state, ui);
-    changed |= adjust_hsl(state, ui);
-    changed |= adjust_mono(state, ui);
+    changed |= adjust_mixer(state, ui);
     changed |= adjust_grade(state, ui);
     changed |= adjust_detail(state, ui);
-    changed |= adjust_grain(state, ui);
-    let ctx = ui.ctx().clone();
-    adjust_profiles(state, &ctx, ui);
-    changed |= adjust_lens(state, ui);
+    changed |= adjust_optics(state, ui);
+    changed |= adjust_effects(state, ui);
+    changed |= adjust_look(state, ui);
     adjust_masks(state, ui);
     // 文件级工具沉到底部：第一屏先给基本/色彩，和 LR 的阅读顺序一致。
     // 2026-11-04 起 HDR/全景/堆栈/时间合成/焦点合成五组搬去「合成」模块
@@ -1984,10 +2046,11 @@ fn adjust_look(state: &mut AppState, ui: &mut Ui) -> bool {
 }
 
 /// 色阶：在直方图剪影上直接拖输入黑 / 灰 / 白与输出黑 / 白。
-fn adjust_levels(state: &mut AppState, ui: &mut Ui) -> bool {
-    if !group_header(ui, state, "levels", "色阶", true) {
-        return false;
-    }
+/// 曲线区的第三个模式片（ACR 的 Levels 同构）。
+///
+/// Levels: drag input black/gamma/white and output black/white right on the histogram
+/// silhouette. The third mode chip of the Curve section (mirrors ACR's Levels).
+fn levels_body(state: &mut AppState, ui: &mut Ui) -> bool {
     let changed = widgets::levels_strip(
         ui,
         state.hist.as_ref(),
@@ -2013,14 +2076,20 @@ fn adjust_levels(state: &mut AppState, ui: &mut Ui) -> bool {
 }
 
 /// 参数曲线：四个亮度区的升降 + 三条分界，与 LR 的 Parametric 同义。
-fn adjust_parametric(state: &mut AppState, ui: &mut Ui) -> bool {
-    if !group_header(ui, state, "parametric", "参数曲线", true) {
-        return false;
-    }
+/// 曲线区的第一个模式片。
+///
+/// Parametric curve: lift/drop four tonal zones plus three split points, same idea as
+/// Lightroom's Parametric. The first mode chip of the Curve section.
+fn parametric_body(state: &mut AppState, ui: &mut Ui) -> bool {
     let d = GradeParams::default();
     let mut changed = false;
-    for s in controls::specs_of_group("parametric") {
-        changed |= spec_slider(ui, state, s);
+    for f in [
+        Field::ParShadows,
+        Field::ParDarks,
+        Field::ParLights,
+        Field::ParHighlights,
+    ] {
+        changed |= spec_field(ui, state, f);
     }
     for (i, label) in [(1, "阴影分界"), (2, "中间分界"), (3, "高光分界")] {
         let key = match i {
@@ -2049,10 +2118,65 @@ fn adjust_parametric(state: &mut AppState, ui: &mut Ui) -> bool {
 }
 
 /// 曲线：主曲线 + 三条分通道，点空白加控制点，双击删点或整条复位。
+/// 曲线区：ACR 的 Curve 面板同构——区头下三枚模式片（参数 / 点 / 色阶）
+/// 切换三种调曲线的方式，共用一条历史记账与一个复位口径。
+///
+/// The Curve section, mirroring ACR's Curve panel: three mode chips (parametric /
+/// point / levels) under the header, sharing one history path and one reset scope.
 fn adjust_curve(state: &mut AppState, ui: &mut Ui) -> bool {
     if !group_header(ui, state, "curve", "曲线", true) {
         return false;
     }
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        if ui
+            .add(egui::Button::selectable(
+                state.curve_tab == 0,
+                crate::i18n::t!("参数曲线"),
+            ))
+            .on_hover_text(crate::i18n::t!(
+                "四个亮度区 + 三条分界，Lightroom 的 Parametric"
+            ))
+            .clicked()
+        {
+            state.curve_tab = 0;
+        }
+        if ui
+            .add(egui::Button::selectable(
+                state.curve_tab == 1,
+                crate::i18n::t!("点曲线"),
+            ))
+            .on_hover_text(crate::i18n::t!("手绘任意形状，分 RGB 主通道与三条单通道"))
+            .clicked()
+        {
+            state.curve_tab = 1;
+        }
+        if ui
+            .add(egui::Button::selectable(
+                state.curve_tab == 2,
+                crate::i18n::t!("色阶"),
+            ))
+            .on_hover_text(crate::i18n::t!("直方图上的输入 / 输出黑白场"))
+            .clicked()
+        {
+            state.curve_tab = 2;
+        }
+    });
+    ui.add_space(2.0);
+    match state.curve_tab {
+        0 => changed |= parametric_body(state, ui),
+        1 => changed |= point_curve_body(state, ui),
+        _ => changed |= levels_body(state, ui),
+    }
+    changed
+}
+
+/// 点曲线：主曲线 + 三条分通道，点空白加控制点，双击删点或整条复位。
+/// 曲线区的第二个模式片。
+///
+/// Point curve: the RGB master plus three per-channel curves; click empty space to add
+/// a point, double-click to delete it or reset the whole curve. The second chip.
+fn point_curve_body(state: &mut AppState, ui: &mut Ui) -> bool {
     let labels = ["RGB", "红", "绿", "蓝"];
     let mut moved = false;
     ui.horizontal(|ui| {
@@ -2098,19 +2222,57 @@ fn adjust_curve(state: &mut AppState, ui: &mut Ui) -> bool {
         &mut state.curve_grab,
         &mut state.curve_lut_cache,
     );
-    // HDR 尾部：曲线 x>1 的延伸量（对齐 LR 的 LumaHDR），挂在曲线组尾。
-    let mut spec_changed = false;
-    for s in controls::specs_of_group("curve") {
-        spec_changed |= spec_slider(ui, state, s);
-    }
+    // HDR 尾部：曲线 x>1 的延伸量（对齐 LR 的 LumaHDR），挂在点曲线下方。
+    // 参数曲线与色阶没有 x>1 的概念，所以只在点曲线模式下出现。
+    //
+    // HDR tail: the extension of the curve past x>1 (LR's LumaHDR), shown under the
+    // point curve -- parametric and levels have no notion of x>1.
+    let spec_changed = spec_field(ui, state, Field::CurveHdrTail);
     moved || changed || spec_changed
 }
 
-/// HSL：8 个色相带各自的色相 / 饱和度 / 明亮度，一次调一条。
-fn adjust_hsl(state: &mut AppState, ui: &mut Ui) -> bool {
-    if !group_header(ui, state, "hsl", "色相 / 饱和度 / 明亮度", true) {
+/// 颜色混合器：ACR 的 Color Mixer 面板同构——区头下两枚模式片（HSL / 黑白）。
+/// HSL 调每个色相带的色相/饱和度/明亮度，黑白调每个色相带转灰后的亮度。
+///
+/// Color Mixer, mirroring ACR: two mode chips (HSL / B&W) under the header. HSL tunes
+/// hue/saturation/luminance per band; B&W tunes how bright each band turns in mono.
+fn adjust_mixer(state: &mut AppState, ui: &mut Ui) -> bool {
+    if !group_header(ui, state, "mixer", "颜色混合器", true) {
         return false;
     }
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        if ui
+            .add(egui::Button::selectable(
+                state.mixer_tab == 0,
+                crate::i18n::t!("HSL"),
+            ))
+            .on_hover_text(crate::i18n::t!("八段色相各自的色相 / 饱和度 / 明亮度"))
+            .clicked()
+        {
+            state.mixer_tab = 0;
+        }
+        if ui
+            .add(egui::Button::selectable(
+                state.mixer_tab == 1,
+                crate::i18n::t!("黑白"),
+            ))
+            .on_hover_text(crate::i18n::t!("转黑白后每个色相带变成多亮"))
+            .clicked()
+        {
+            state.mixer_tab = 1;
+        }
+    });
+    ui.add_space(2.0);
+    match state.mixer_tab {
+        0 => changed |= hsl_body(state, ui),
+        _ => changed |= mono_body(state, ui),
+    }
+    changed
+}
+
+/// HSL：8 个色相带各自的色相 / 饱和度 / 明亮度，一次调一条。
+fn hsl_body(state: &mut AppState, ui: &mut Ui) -> bool {
     let used: Vec<f64> = (0..8)
         .map(|i| {
             state.params.hsl_h[i].abs() + state.params.hsl_s[i].abs() + state.params.hsl_l[i].abs()
@@ -2161,14 +2323,9 @@ fn adjust_hsl(state: &mut AppState, ui: &mut Ui) -> bool {
 }
 
 /// 黑白混合：转黑白后，8 个色相带各自变成多亮。
-fn adjust_mono(state: &mut AppState, ui: &mut Ui) -> bool {
-    if !group_header(ui, state, "mono", "黑白混合", true) {
-        return false;
-    }
+fn mono_body(state: &mut AppState, ui: &mut Ui) -> bool {
     let mut changed = false;
-    for s in controls::specs_of_group("mono") {
-        changed |= spec_slider(ui, state, s);
-    }
+    changed |= spec_field(ui, state, Field::Mono);
     for i in 0..8 {
         changed |= slider(
             ui,
@@ -2245,14 +2402,34 @@ fn adjust_detail(state: &mut AppState, ui: &mut Ui) -> bool {
     changed
 }
 
-/// 颗粒：强度 / 大小 / 密度，噪声种子固定，同一帧每次都一样。
-fn adjust_grain(state: &mut AppState, ui: &mut Ui) -> bool {
-    if !group_header(ui, state, "grain", "颗粒", true) {
+/// 效果区：ACR 的 Effects 面板——暗角在外圈（裁剪后晕影），颗粒是胶片质感。
+/// 两段各有小标题：九条推子混排在一起读不出层次。
+///
+/// Effects, mirroring ACR: post-crop vignette on the outer ring, grain as film texture.
+/// Each band gets a subsection heading -- nine mixed sliders read as a wall otherwise.
+fn adjust_effects(state: &mut AppState, ui: &mut Ui) -> bool {
+    if !group_header(ui, state, "effects", "效果", true) {
         return false;
     }
     let mut changed = false;
-    for s in controls::specs_of_group("grain") {
-        changed |= spec_slider(ui, state, s);
+    sub_head(ui, crate::i18n::t!("暗角"));
+    for f in [
+        Field::Vignette,
+        Field::VigMidpoint,
+        Field::VigRoundness,
+        Field::VigFeather,
+        Field::VigHlContrast,
+    ] {
+        changed |= spec_field(ui, state, f);
+    }
+    sub_head(ui, crate::i18n::t!("颗粒"));
+    for f in [
+        Field::Grain,
+        Field::GrainLum,
+        Field::GrainSize,
+        Field::GrainFreq,
+    ] {
+        changed |= spec_field(ui, state, f);
     }
     changed
 }
@@ -2260,10 +2437,12 @@ fn adjust_grain(state: &mut AppState, ui: &mut Ui) -> bool {
 /// Adobe 配置：DCP 相机配置接管 RAW 解码后的颜色，LCP 镜头配置按 EXIF 选帧。
 ///
 /// 两行都走 `profile.set`，和 MCP 同一条校验路径：机型/镜头对不上就在面板里直说。
-fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
-    if !group_header(ui, state, "profiles", "相机与镜头配置", true) {
-        return;
-    }
+/// 光学区的第二段（配置文件），不带组头——组头归 `adjust_optics`。
+///
+/// Both rows go through `profile.set`, the same validation path as MCP: a body/lens
+/// mismatch is said straight in the panel. The second band of the Optics section; no
+/// header of its own -- `adjust_optics` owns it.
+fn profiles_body(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
     let dcp_active = !state.params.dcp_profile.is_empty();
     let dcp_shown = if !state.dcp_name.is_empty() {
         state.dcp_name.clone()
@@ -2348,12 +2527,33 @@ fn adjust_profiles(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
     }
 }
 
-/// 镜头校正：畸变、暗角补偿、去紫边；三项都是空间操作，导出同样生效。
-/// 顶上一行是机型匹配：EXIF 对 lensfun 数据库折出的标定系数先走一步。
-fn adjust_lens(state: &mut AppState, ui: &mut Ui) -> bool {
-    if !group_header(ui, state, "lens", "镜头校正", true) {
+/// 光学区：ACR 的 Optics 面板——手动校正三项在前，相机/镜头配置文件在后
+/// （配置文件折出的畸变/色差/暗角先于手动值生效，排在后面读起来是"标定打底"）。
+///
+/// Optics, mirroring ACR: the three manual corrections first, then the camera/lens
+/// profiles (what the profile derives is applied ahead of the manual sliders, so
+/// reading it last says "the calibration is the base layer").
+fn adjust_optics(state: &mut AppState, ui: &mut Ui) -> bool {
+    if !group_header(ui, state, "optics", "光学", true) {
         return false;
     }
+    let mut changed = false;
+    sub_head(ui, crate::i18n::t!("镜头校正"));
+    changed |= lens_body(state, ui);
+    sub_head(ui, crate::i18n::t!("相机与镜头配置"));
+    let ctx = ui.ctx().clone();
+    profiles_body(state, &ctx, ui);
+    changed
+}
+
+/// 镜头校正：畸变、暗角补偿、去紫边；三项都是空间操作，导出同样生效。
+/// 顶上一行是机型匹配：EXIF 对 lensfun 数据库折出的标定系数先走一步。
+/// 光学区的第一段，不带组头。
+///
+/// Lens correction: distortion, vignette compensation, defringe -- all spatial and
+/// applied on export too. The top row is EXIF-based matching against the lensfun
+/// database. The first band of the Optics section, without a header of its own.
+fn lens_body(state: &mut AppState, ui: &mut Ui) -> bool {
     let mut changed = false;
     let mut auto = state.params.lens_profile.is_some();
     ui.horizontal(|ui| {
@@ -2388,8 +2588,8 @@ fn adjust_lens(state: &mut AppState, ui: &mut Ui) -> bool {
         ui.label(egui::RichText::new(&state.lens_profile_note).weak());
     }
     ui.add_space(2.0);
-    for s in controls::specs_of_group("lens") {
-        changed |= spec_slider(ui, state, s);
+    for f in [Field::LensDistort, Field::LensVignette, Field::LensFringe] {
+        changed |= spec_field(ui, state, f);
     }
     changed
 }
@@ -2560,13 +2760,23 @@ fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                 }
                 reveal_in_file_manager(&path);
             }
-            ui.label(
-                RichText::new(theme::ellipsis(
-                    &DeliveryTable::path().display().to_string(),
-                    34,
-                ))
-                .size(SIZE_SMALL)
-                .color(dim()),
+            // 路径按**可用宽度**截断，不按字符数：34 个半角字符在 372px 面板里
+            // 仍然宽过按钮剩下的位置，旧写法会让路径压到「预设表…」按钮上
+            // （2026-11-04 的重叠自检抓到的实例）。`truncate()` 走 egui 的布局，
+            // 拿到的是这一行真实的剩余宽度。
+            //
+            // Truncate by available width rather than by character count: 34 half-width
+            // characters still overrun the space left of the button on a 372 px panel,
+            // and the old form ran the path onto the button. `truncate()` asks egui's
+            // layout for the real remaining width.
+            ui.add(
+                egui::Label::new(
+                    RichText::new(DeliveryTable::path().display().to_string())
+                        .size(SIZE_SMALL)
+                        .color(dim()),
+                )
+                .truncate()
+                .selectable(false),
             )
             .on_hover_text(crate::i18n::t!("改完重启生效：预设在启动时读一次"));
         });
@@ -3995,16 +4205,16 @@ mod gradient_rail_tests {
         let ctx = Context::default();
         theme::apply(&ctx, 1.0);
         let mut state = AppState::new();
-        state.collapsed.insert("color");
-        state.dock_focus = Some("color".to_string());
+        state.collapsed.insert("optics");
+        state.dock_focus = Some("optics".to_string());
         {
             let mut draw = |root: &mut Ui| {
-                group_header(root, &mut state, "color", "色彩", true);
+                group_header(root, &mut state, "optics", "光学", true);
             };
             let mut out = ctx.run_ui(input(vec![]), &mut draw);
             out.textures_delta.clear();
         }
-        assert!(!state.collapsed.contains("color"), "滚到顶了还折着");
+        assert!(!state.collapsed.contains("optics"), "滚到顶了还折着");
         assert!(state.dock_focus.is_none(), "焦点没被消费，会每帧推一次");
     }
 }

@@ -173,9 +173,23 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .show(root, |ui| dock_panel(state, ui));
     }
 
+    // 画布右边界按已知的右侧面板宽度夹一次：切模块时 dock 内容一换，egui 的
+    // Panel 会用它记着的「上次宽度」去缩剩余区，而面板自己的 rect 已经是
+    // `exact_size`，两者会连着几十帧对不上（画布因此压在 dock 页签上，见判据
+    // `ui_tokens::text_never_overlaps_in_any_module`）。布局常量就摆在这里，
+    // 用它算边界比依赖第三方内部状态稳。
+    //
+    // Clamp the canvas right edge from the known right-hand panel widths: switching
+    // modules swaps the dock content, and egui's Panel shrinks the remainder using the
+    // width it remembers while its own rect already honours `exact_size`, so the two
+    // disagree for tens of frames (the canvas ends up sitting on the dock tabs -- see
+    // `text_never_overlaps_in_any_module`). The layout constants are right here, and
+    // deriving the edge from them beats depending on a third party's internal state.
+    let right_inset =
+        if state.show_strip { STRIP_W } else { 0.0 } + if state.show_dock { DOCK_W } else { 0.0 };
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(surround()))
-        .show(root, |ui| canvas_panel(state, ui));
+        .show(root, |ui| canvas_panel(state, ui, right_inset));
 
     state.history_commit();
     presets_window(state, &ctx);

@@ -22,6 +22,9 @@ use egui::{
 
 pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
     let full = ui.max_rect();
+    if std::env::var("AEVUM_DBG_RECT").is_ok() {
+        eprintln!("DOCK full={:?}", full);
+    }
     let p = ui.painter().clone();
     let strip = Rect::from_min_size(full.min, Vec2::new(full.width(), TAB_H));
     p.rect_filled(strip, 0, header());
@@ -545,7 +548,9 @@ mod dock_paint_tests {
             "stack",
             "timeblend",
             "basic",
-            "color",
+            "curve",
+            "mixer",
+            "optics",
         ] {
             let help = group_help(key).expect("分组没有说明入口");
             assert!(help.chars().count() >= 12, "{key} 的说明太短，等于没写");

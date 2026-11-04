@@ -318,13 +318,13 @@ pub const SPECS: &[ControlSpec] = &[
             0.0,
             0,
             true,
-            "color"
+            "basic"
         )
     },
     ControlSpec {
         grad: true,
         ..spec!(
-            "dev.tint", "色调", Tint, -100.0, 100.0, 0.0, 0, true, "color"
+            "dev.tint", "色调", Tint, -100.0, 100.0, 0.0, 0, true, "basic"
         )
     },
     spec!(
@@ -336,7 +336,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "color"
+        "basic"
     ),
     spec!(
         "dev.saturation",
@@ -347,7 +347,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "color"
+        "basic"
     ),
     // ── 效果 ────────────────────────────────────────────────
     spec!(
@@ -359,7 +359,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "effects"
+        "basic"
     ),
     // 暗通道去雾两枚滑杆紧挨「去朦胧」之下（LR 口径在 Basic 面板单滑杆，
     // 本仓库分组沿现状，不为单参数迁组）。
@@ -372,7 +372,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         false,
-        "effects"
+        "basic"
     ),
     spec!(
         "dev.dehaze-contrast",
@@ -383,7 +383,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "effects"
+        "basic"
     ),
     spec!(
         "dev.vignette",
@@ -450,7 +450,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "detail"
+        "basic"
     ),
     spec!(
         "dev.clarity",
@@ -461,7 +461,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "detail"
+        "basic"
     ),
     spec!(
         "dev.sharp-amount",
@@ -624,7 +624,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         false,
-        "grain"
+        "effects"
     ),
     // 亮度调制紧跟强度：正值暗部更重，负值反转（高光更重），双向。
     spec!(
@@ -636,7 +636,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "grain"
+        "effects"
     ),
     ControlSpec {
         unit: "px",
@@ -649,7 +649,7 @@ pub const SPECS: &[ControlSpec] = &[
             1.0,
             1,
             false,
-            "grain"
+            "effects"
         )
     },
     spec!(
@@ -661,7 +661,7 @@ pub const SPECS: &[ControlSpec] = &[
         1.0,
         2,
         false,
-        "grain"
+        "effects"
     ),
     // ── 镜头校正 ────────────────────────────────────────────
     spec!(
@@ -673,7 +673,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "lens"
+        "optics"
     ),
     spec!(
         "dev.lens-vignette",
@@ -684,7 +684,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "lens"
+        "optics"
     ),
     spec!(
         "dev.lens-fringe",
@@ -695,7 +695,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         false,
-        "lens"
+        "optics"
     ),
     // ── 色彩分级 ────────────────────────────────────────────
     spec!(
@@ -763,7 +763,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "parametric"
+        "curve"
     ),
     spec!(
         "dev.par-dark",
@@ -774,7 +774,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "parametric"
+        "curve"
     ),
     spec!(
         "dev.par-light",
@@ -785,7 +785,7 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "parametric"
+        "curve"
     ),
     spec!(
         "dev.par-hi",
@@ -796,10 +796,10 @@ pub const SPECS: &[ControlSpec] = &[
         0.0,
         0,
         true,
-        "parametric"
+        "curve"
     ),
     // ── 黑白 ────────────────────────────────────────────────
-    spec!("dev.mono", "单色", Mono, 0.0, 100.0, 0.0, 0, false, "mono"),
+    spec!("dev.mono", "单色", Mono, 0.0, 100.0, 0.0, 0, false, "mixer"),
     // ── 曲线 ────────────────────────────────────────────────
     // 曲线组只有这一条推子（点曲线本体走 curve_box），挂组尾。
     spec!(
@@ -950,6 +950,17 @@ pub fn param_get(p: &GradeParams, f: Field) -> f64 {
 /// Every spec in one group, preserving table order (that is, panel draw order).
 pub fn specs_of_group(group: &str) -> impl Iterator<Item = &'static ControlSpec> {
     SPECS.iter().filter(move |s| s.group == group)
+}
+
+/// 按字段取规格：显影面板的分区按 ACR 口径用字段清单显式排布
+/// （docs/界面布局-ACR化-2026-11-04.md §3），显示顺序与表内物理顺序解耦。
+/// 入参用 `Field` 枚举而非字符串，清单写错字段编译期即报。
+///
+/// Look up a spec by field: the Develop panel lays its sub-sections out by explicit
+/// field lists following ACR (plan §3), decoupling display order from table order.
+/// Takes the `Field` enum instead of a string so a wrong entry fails at compile time.
+pub fn spec_by_field(field: Field) -> Option<&'static ControlSpec> {
+    SPECS.iter().find(|s| s.field == field)
 }
 
 #[cfg(test)]

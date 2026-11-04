@@ -719,8 +719,12 @@ pub const OPTIONS_H: f32 = 44.0;
 pub const TAB_H: f32 = 28.0;
 pub const STATUS_H: f32 = 24.0;
 pub const TOOL_W: f32 = 52.0;
-/// 左侧预设栏：预设 / 快照 / 历史三张表，240 刚好放下"胶片 · 富士 400H"这种长名。
+/// 右侧调整面板宽 372：界面稿 `--dock-w`。推子行「标签 76 · 轨道弹性 · 读数 52」
+/// 的排布就是照这个宽度定的，窄一档标签就开始抢轨道的地盘。
 ///
+/// Right-hand adjustment panel, 372 px (mockup `--dock-w`). The slider row
+/// "label 76 · elastic rail · value 52" is dimensioned for exactly this width; one step
+/// narrower and the label starts eating the rail.
 pub const DOCK_W: f32 = 372.0;
 /// 最外那条 28px 竖条：网格 / 胶片 / 曲线三个开关，界面稿里是 ⌗ ◐ ◑ 三枚。
 ///

@@ -615,3 +615,267 @@ fn panel_groups_match_the_registry() {
         orphan
     );
 }
+
+/// 重叠自检：每个模块画一帧，同一行里的文本矩形不许相交。
+///
+/// 用户的原话是「底部或者其他地方存在字符重叠问题，请自检，不要出现这种明显的
+/// 低级错误」。这类缺陷静态扫源码抓不到——两条文案各自都没写错，错的是排布：
+/// 一条用了魔法数字的 x，另一条按字符数截断却在窄面板里溢出。所以这里画一帧取
+/// 真值：收每个 Text shape 的**可见**矩形（扣掉 clip），按行聚类后比 x 区间。
+///
+/// 三条口径，都是被误报逼出来的：
+///
+/// * 同一串文字平移 ≤1.5px 再画一次 = 投影/描边（胶片条序号就是黑影 + 白字），
+///   不算重叠；
+/// * 只算可见部分——被滚动区裁掉的半截文本按露出的那段比，否则滚动区外的
+///   内容会被当成"压在状态栏上"；
+/// * 容差 1px：kerning 让相邻字段首尾差零点几像素是正常的。
+///
+/// Overlap self-check: for every module, draw one frame and assert that text rects on
+/// the same row do not intersect. This is the class of bug static source scans cannot
+/// see -- each string is fine on its own, the fault is in the layout (a magic-number
+/// x in one place, a character-count truncation overflowing a narrow panel in another).
+///
+/// Three rules, each forced by a false positive: a same-string repeat offset by
+/// <=1.5 px is a drop shadow, not an overlap; only the clipped-visible part counts;
+/// and 1 px of tolerance absorbs kerning.
+#[test]
+fn text_never_overlaps_in_any_module() {
+    use aevum_ui::state::{AppState, Module};
+    // 语言是进程级全局态，i18n 那几个测试会在别的线程里切它：不拿同一把锁，
+    // 这一帧可能画着英文、下一帧画中文，宽度一变就排出用户永远看不到的错位。
+    // 中英各跑一遍——英文文案更长，本来就更容易挤，只测中文等于放过了半边。
+    //
+    // The language is process-global and the i18n tests switch it from other threads:
+    // without the shared lock a frame can paint English and the next Chinese, and the
+    // width change produces a misalignment no user ever sees. Both languages are swept;
+    // English runs longer and is the more likely to crowd.
+    let _lang_guard = crate::common::i18n_guard();
+    let mut hits: Vec<String> = Vec::new();
+    for lang in [aevum_ui::i18n::Lang::ZH, aevum_ui::i18n::Lang::EN] {
+        aevum_ui::i18n::set(lang);
+        let ctx = egui::Context::default();
+        aevum_ui::theme::apply(&ctx, 1.0);
+        let mut state = AppState::demo();
+        state.install_demo_textures(&ctx);
+        for module in Module::ALL {
+            state.module = module;
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1600.0, 1000.0),
+                )),
+                max_texture_side: Some(8192),
+                ..Default::default()
+            };
+            // 每个模块先画一帧热身再取数据：egui 首帧还没拿到 galley 尺寸，
+            // 顶栏这类「按实测宽度排」的段落会在那一帧挤在一起，取首帧等于
+            // 判一个用户看不见的暂态。第二帧才是屏幕上稳定的样子。
+            //
+            // One warm-up frame per module before measuring: egui has no galley sizes on the
+            // first frame, so anything laid out from measured widths bunches up there. That
+            // transient is never on screen; the second frame is what the user sees.
+            // 三帧热身：egui 的面板宽度按内容收敛（切模块后 dock 内容一变，
+            // 右侧面板宽度会连着几帧往 372 走），画布右边界也跟着挪。这些帧都是
+            // 16ms 级的过渡，用户看不见，判据却会当成错位。
+            //
+            // Three warm-up frames: egui converges panel widths from content (switching
+            // modules changes the dock's content, and its width walks back to 372 over a few
+            // frames), so the canvas right edge moves with it. Those are 16 ms transients the
+            // user never sees, but the sweep would read them as overlaps.
+            for _ in 0..3 {
+                let mut warm = ctx.run_ui(input.clone(), |ui| aevum_ui::shell::ui(&mut state, ui));
+                warm.textures_delta.clear();
+            }
+            let mut out = ctx.run_ui(input, |ui| aevum_ui::shell::ui(&mut state, ui));
+            let mut rows = Vec::new();
+            collect_text_rects(&out.shapes, &mut rows);
+            out.textures_delta.clear();
+            rows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            for i in 0..rows.len() {
+                for j in (i + 1)..rows.len() {
+                    if (rows[i].0 - rows[j].0).abs() > 3.0 {
+                        break;
+                    }
+                    let overlap = rows[i].2.min(rows[j].2) - rows[i].1.max(rows[j].1);
+                    let shadow = rows[i].3 == rows[j].3
+                        && (rows[i].1 - rows[j].1).abs() <= 1.5
+                        && (rows[i].0 - rows[j].0).abs() <= 1.5;
+                    if overlap > 1.0 && !shadow {
+                        hits.push(format!(
+                            "{:?}/{:?} y={:.1}  「{}」×「{}」  重叠 {:.1}px",
+                            lang, module, rows[i].0, rows[i].3, rows[j].3, overlap
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "同一条水平线上有 {} 处文字互相压着（用户会直接骂「低级错误」）：\n{}\n\n         修法看来源：魔法数字定位 → 按实测 galley 宽度排；路径/长文案 → \
+         `Label::truncate()` 按可用宽度截；键值两列 → `kv()` 已经按剩余宽度裁，\
+         不要绕过它自己 `p.text` 右对齐。",
+        hits.len(),
+        hits.join("\n"),
+    );
+}
+
+fn collect_text_rects(
+    shapes: &[egui::epaint::ClippedShape],
+    out: &mut Vec<(f32, f32, f32, String)>,
+) {
+    for cs in shapes {
+        walk_shape(&cs.shape, cs.clip_rect, out);
+    }
+}
+
+fn walk_shape(shape: &egui::Shape, clip: egui::Rect, out: &mut Vec<(f32, f32, f32, String)>) {
+    match shape {
+        egui::Shape::Text(t) => {
+            let r = t.galley.rect.translate(t.pos.to_vec2());
+            // 被滚动区裁掉的文本不会上屏，不该算进重叠。
+            let vis = clip.intersect(r);
+            if vis.width() < 2.0 || vis.height() < 2.0 {
+                return;
+            }
+            let txt = t.galley.text().to_owned();
+            if !txt.trim().is_empty() {
+                // 用可见部分的左右边界比较：一半在裁切线外的文本只按露出的那段算。
+                out.push((vis.center().y, vis.left(), vis.right(), txt));
+            }
+        }
+        egui::Shape::Vec(v) => {
+            for s in v {
+                walk_shape(s, clip, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 显影面板有一半分区按**显式字段清单**摆推子（`spec_field(Field::…)`，
+/// 见 `docs/界面布局-ACR化-2026-11-04.md` §3）：基本分白平衡/影调/偏好三档，
+/// 曲线走模式片，混合器两种模式，光学与效果各分两段。
+///
+/// 清单和规格表是两份手写事实，最容易出的事故是：表里加了一根推子，清单忘了补，
+/// 那根推子从此永不上屏——不报错、不告警，只有用户发现「某个参数消失了」。
+/// 这条判据把两份对上：凡走显式清单的组，表里每条规格的字段都必须在
+/// `adjust.rs` 里出现。
+///
+/// `detail` 与 `grade` 仍按 `specs_of_group(…)` 整组铺，不在本条范围内。
+///
+/// Half the Develop sections lay their sliders out from explicit field lists
+/// (`spec_field(Field::…)`, plan §3). The list and the spec table are two hand-written
+/// facts, and the classic accident is: a slider is added to the table, the list is not
+/// updated, and that slider never reaches the screen -- no error, no warning, only a
+/// user noticing "a parameter disappeared". This test puts the two side by side.
+/// `detail` and `grade` still iterate `specs_of_group(…)` and are out of scope.
+#[test]
+fn explicit_develop_field_lists_cover_the_spec_table() {
+    let controls = read_clean("controls.rs");
+    let adjust = read_clean("shell/adjust.rs");
+    let listed: std::collections::HashSet<String> = adjust
+        .match_indices("Field::")
+        .map(|(i, _)| {
+            adjust[i + "Field::".len()..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric())
+                .collect::<String>()
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    assert!(
+        listed.len() > 20,
+        "adjust.rs 里只数到 {} 个 Field::，解析口径变了？",
+        listed.len()
+    );
+    let mut missing = Vec::new();
+    let mut checked = 0usize;
+    for (variant, group) in spec_fields(&controls) {
+        if matches!(
+            group.as_str(),
+            "basic" | "curve" | "mixer" | "optics" | "effects"
+        ) {
+            checked += 1;
+            if !listed.contains(&variant) {
+                missing.push(format!("{group} / Field::{variant}"));
+            }
+        }
+    }
+    // 解析器自己也要有牙口：真扫到三十多条才算跑了这一趟，否则「解析出空表 →
+    // 没有缺项 → 通过」会变成一条永远绿的假判据。
+    assert!(
+        checked >= 30,
+        "只核对到 {checked} 条规格——表解析口径变了，这条判据等于没跑"
+    );
+    assert!(
+        missing.is_empty(),
+        "规格表里有 {} 条参数没被显式清单摆上屏（参数会静默消失）：\n{}\n\n\
+         补 `spec_field(ui, state, Field::…)` 进对应的 sub_head 段。",
+        missing.len(),
+        missing.join("\n"),
+    );
+}
+
+/// 从 `controls.rs` 的 `SPECS` 表里取每个规格的 (字段变体, 分组)。
+///
+/// 手写解析：按 `spec!(` 切段，段内第一个「逗号 → 大写标识符 → 逗号」就是字段
+/// 变体（前两个参数是两个字符串），最后一个白名单分组串就是分组名。
+/// 不引正则依赖，正因为表本身的形状是固定的。
+fn spec_fields(src: &str) -> Vec<(String, String)> {
+    const GROUPS: [&str; 7] = [
+        "basic", "effects", "optics", "mixer", "grade", "detail", "curve",
+    ];
+    let start = src.find("pub const SPECS").unwrap_or(0);
+    let mut out = Vec::new();
+    for seg in src[start..].split("spec!(").skip(1) {
+        let seg = seg.split("];").next().unwrap_or(seg);
+        let Some(variant) = first_type_arg(seg) else {
+            continue;
+        };
+        let mut best: Option<(usize, &str)> = None;
+        for g in GROUPS {
+            if let Some(p) = seg.rfind(&format!("\"{g}\""))
+                && best.is_none_or(|(bp, _)| p > bp)
+            {
+                best = Some((p, g));
+            }
+        }
+        if let Some((_, g)) = best {
+            out.push((variant, g.to_owned()));
+        }
+    }
+    out
+}
+
+/// 段内第一个类型参数：逗号后紧跟大写标识符、再以逗号收尾。
+fn first_type_arg(seg: &str) -> Option<String> {
+    let b = seg.as_bytes();
+    let is_ws = |c: u8| (c as char).is_whitespace();
+    for i in 0..b.len() {
+        if b[i] != b',' {
+            continue;
+        }
+        let mut j = i + 1;
+        while j < b.len() && is_ws(b[j]) {
+            j += 1;
+        }
+        if j >= b.len() || !(b[j] as char).is_ascii_uppercase() {
+            continue;
+        }
+        let mut k = j;
+        while k < b.len() && (b[k] as char).is_alphanumeric() {
+            k += 1;
+        }
+        let ident = &seg[j..k];
+        let mut m = k;
+        while m < b.len() && is_ws(b[m]) {
+            m += 1;
+        }
+        if m < b.len() && (b[m] == b',' || b[m] == b'}') && ident.len() > 2 {
+            return Some(ident.to_owned());
+        }
+    }
+    None
+}

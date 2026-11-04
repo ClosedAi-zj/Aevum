@@ -198,27 +198,25 @@ pub(super) fn group_help(key: &str) -> Option<&'static str> {
             "把一组不同对焦距离的帧融成一张全景深。深度图法：逐像素取测度最强的帧，测度低于阈值的无细节区整块判给参考帧（序列中位帧），深度跳变处按羽化宽度交叠——保色彩、平坦区不出斑块；加权平均法：测度四次方当权重直接混，最简单但对强纹理可能轻微发糊。测度在 γ2.0 亮度上算，半径是分析窗口（越大抗噪、越小分辨近邻深度）。\n阈值按全图最佳测度的分位数表达（0 = 关闭），跨序列可迁移——这就是 DMap 那根对比度滑杆的口径。"
         }
         "basic" => {
-            "整体亮度与影调范围。曝光以 EV 计，其余参数相对中间调调整。\n高光过渡（对齐 LR）：曝光推过 1 的区域走有理肩部缓收，不再硬剪。\n线性对比（对齐 LR）：对比度改在线性光域计算，暗部响应更接近 LR。\n黑场/白场软化（对齐 LR）：两端用抛物线软拐点收进 [0,1]，直方图边缘不再堆尖。"
+            "白平衡与影调范围：先定冷暖（色温）与绿品（色调），再拉曝光 / 对比 / 高光 / 阴影 / 黑白场，最后是纹理、清晰度、去朦胧与色彩浓度。\n曝光以 EV 计，其余参数相对中间调调整。\n高光过渡（对齐 LR）：曝光推过 1 的区域走有理肩部缓收，不再硬剪。\n线性对比（对齐 LR）：对比度改在线性光域计算，暗部响应更接近 LR。\n黑场/白场软化（对齐 LR）：两端用抛物线软拐点收进 [0,1]，直方图边缘不再堆尖。"
         }
-        "color" => "白平衡与色彩浓度。色温、色调的轨道直接表示冷暖与绿品方向。",
-        "effects" => "去雾、暗角与暗角高光保护。",
-        "look" => "载入 .cube 3D LUT 作为外观层，不改动底层调色参数。",
-        "levels" => "输入黑白场、灰度系数与输出范围，在色阶卡上直接拖动。",
-        "parametric" => "按亮度区间（阴影、中间调、高光）调整影调曲线。",
         "curve" => {
-            "RGB 与单通道点曲线，坐标即输入输出值。\nHDR 尾部（对齐 LR）：x>1 的过曝层次按曲线末端斜率延伸进曲线，不再硬截。"
+            "三种调法：参数曲线按亮度区间（阴影、中间调、高光）拉起落，另有三条分界；点曲线是 RGB 与三条单通道，坐标即输入输出值；色阶在输入黑白场、灰度系数与输出范围上直接拖动。\nHDR 尾部（对齐 LR）：x>1 的过曝层次按曲线末端斜率延伸进曲线，不再硬截。"
         }
-        "hsl" => "按颜色范围调整色相、饱和度与明亮度。",
-        "mono" => "黑白混合：各色相在灰度中的权重。",
+        "mixer" => {
+            "两种模式：HSL 按颜色范围调整色相、饱和度与明亮度；黑白混合决定各色相在灰度中的权重。"
+        }
         "grade" => "阴影、中间调、高光四向色彩分级，可分别指定色轮与亮度。",
         "detail" => {
             "锐化、降噪与蒙版。\n锐化保护（对齐 LR）：按噪声底自适应保护平坦区，与蒙版叠加生效。"
         }
-        "grain" => {
-            "按尺寸与粗糙度叠加胶片颗粒。\n颗粒亮度（对齐 LR）：颗粒强度随亮度分级，正值暗部更重、负值反转（高光更重）。"
+        "optics" => {
+            "手动三项（畸变、暗角、去紫边）与配置文件：相机 DCP 接管 RAW 颜色，镜头 LCP 按 EXIF 选帧，可另选 lensfun 库。"
         }
-        "profiles" => "相机 DCP 与镜头 LCP 配置文件，可另选 lensfun 库。",
-        "lens" => "暗角、色差与畸变校正。",
+        "effects" => {
+            "暗角（含中点、圆度、羽化与高光保护）与胶片颗粒。\n颗粒亮度（对齐 LR）：颗粒强度随亮度分级，正值暗部更重、负值反转（高光更重）。"
+        }
+        "look" => "载入 .cube 3D LUT 作为外观层，不改动底层调色参数。",
         "masks" => {
             "局部调整：线性、径向与画笔蒙版，参数独立于全局调色。选中后在画布上拖两端、圆心与半径，或用画笔涂抹；画笔大小按短边百分比计。"
         }
@@ -281,7 +279,21 @@ pub(super) fn group_header(
         state.collapsed.remove(key);
     }
     let p = ui.painter();
-    theme::rule(p, rect.left(), rect.right(), rect.top(), border());
+    // ACR 的分区头签名：标题条下沿一道实线，再往上 2px 一道更淡的细线——
+    // 双线把「一个分区从这里开始」和表格横线区分开。旧版只在顶部画单线，
+    // 十四组排下来整屏读着像一张表格。
+    //
+    // ACR's section-header signature: a solid rule at the bottom edge plus a fainter
+    // hairline 2 px above it. The double rule reads as "a section starts here", where
+    // the old single top rule read as a table row divider.
+    theme::rule(p, rect.left(), rect.right(), rect.bottom() - 1.0, border());
+    theme::rule(
+        p,
+        rect.left(),
+        rect.right(),
+        rect.bottom() - 4.0,
+        divider().gamma_multiply(0.55),
+    );
     let open = !state.collapsed.contains(key);
     // 悬停是一整条圆角高亮，不是方条：macOS 侧栏分组头的口径。
     if resp.hovered() {
@@ -300,7 +312,13 @@ pub(super) fn group_header(
         },
         if resp.hovered() { text() } else { dim() },
     );
-    let title_galley = p.layout_no_wrap(title.to_owned(), font(SIZE_LABEL + 0.5), text());
+    // 字号比正文大一档：项目只嵌了常规字重（无 bold 族），加粗无从谈起，
+    // 靠字号 + 满亮度色 + 下沿双线建立层次（台账记了「嵌粗体字重」这条 P1）。
+    //
+    // One step above body copy: the project ships a single regular weight (no bold
+    // family), so hierarchy comes from size, full-strength colour and the double rule
+    // below (the missing bold weight is logged as a P1 in the ledger).
+    let title_galley = p.layout_no_wrap(title.to_owned(), font(SIZE_LABEL + 1.0), text());
     let title_x = rect.left() + 20.0;
     p.galley(
         Pos2::new(title_x, rect.center().y - title_galley.size().y * 0.5),
@@ -370,11 +388,22 @@ pub(super) fn group_header(
     }
     if resp.clicked() {
         if state.collapsed.contains(key) {
-            state.collapsed.remove(key);
+            // 单开模式（ACR 默认）：点开一组，同模块其他组自动收起——面板永远
+            // 只有一区摊开，视线不用在两条长列之间跳。多开模式下各组互不干涉。
+            //
+            // Single-open mode (ACR's default): opening a group folds its siblings in the
+            // same module, so exactly one section is unrolled at a time. In multi-open
+            // mode the groups stay independent.
+            if state.panel_solo {
+                state.solo_group(key);
+            } else {
+                state.collapsed.remove(key);
+                state.settings_dirty = true;
+            }
         } else {
             state.collapsed.insert(key);
+            state.settings_dirty = true;
         }
-        state.settings_dirty = true;
     }
     // 右键：Lightroom 的「Solo Mode」那套。面板摊开十来个组之后，逐个点头收起来
     // 太笨；右键标题条给三个动作，全部展开 / 全部收起 / 只看这一组。
@@ -391,6 +420,23 @@ pub(super) fn group_header(
         if ui.button(crate::i18n::t!("全部展开")).clicked() {
             state.expand_all_groups();
             ui.close();
+        }
+        ui.separator();
+        // 第四项：ACR 的「面板模式」单选。放在菜单最后并加分隔线——它是设置，
+        // 上面三条是动作，混在一起会让人以为它也只影响这一次。
+        //
+        // Fourth item: ACR's panel-mode choice. Last, behind a separator -- it is a
+        // preference while the three above are one-off actions.
+        let mut solo = state.panel_solo;
+        if ui
+            .checkbox(&mut solo, crate::i18n::t!("单开模式"))
+            .on_hover_text(crate::i18n::t!(
+                "点开一组时自动收起同模块的其他组（Camera Raw 的默认行为）"
+            ))
+            .changed()
+        {
+            state.panel_solo = solo;
+            state.settings_dirty = true;
         }
     });
     ui.add_space(4.0);
@@ -742,22 +788,69 @@ pub(super) fn kv(ui: &mut Ui, key: &str, value: impl Into<String>, color: Color3
     let value = crate::i18n::tr(&value);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), kv_h()), Sense::hover());
     let p = ui.painter();
+    let key_font = font(SIZE_LABEL);
+    let key_w = p
+        .layout_no_wrap(key.to_owned(), key_font.clone(), muted())
+        .size()
+        .x;
     p.text(
         Pos2::new(rect.left(), rect.center().y),
         Align2::LEFT_CENTER,
         key,
-        font(SIZE_LABEL),
+        key_font,
         muted(),
     );
-    // 右端留 6px：非浮动的滚动条虽然不压在内容上，但读数紧贴那根竖条时
-    // 会读成"和滚动条撞在一起"，一列数字右缘齐平反而更脏。
+    // 值按「右侧剩余宽度」裁：路径一类长值从前是直接右对齐铺过去，超过剩余宽度
+    // 就压到左边的键名上（2026-11-04 的重叠自检抓到的实例：交付面板里一条
+    // `C:\Users\…` 压在「预设表」上）。留 12px 间隙，且至少给 24px——
+    // 键再长也得让值露出几个字，不然这一行等于只写了键。
+    //
+    // The value is clipped to the width left on the right: long values (paths and the
+    // like) used to be right-aligned unconditionally and would run into the key on the
+    // left (caught by the 2026-11-04 overlap sweep: a `C:\Users\…` sitting on "预设表").
+    // A 12 px gap, and at least 24 px so a long key cannot swallow the value entirely.
+    let value_font = mono(SIZE_LABEL);
+    let avail = (rect.right() - 6.0 - (rect.left() + key_w + 12.0)).max(24.0);
+    let value = fit_one_line(p, value, value_font.clone(), avail);
     p.text(
         Pos2::new(rect.right() - 6.0, rect.center().y),
         Align2::RIGHT_CENTER,
         value,
-        mono(SIZE_LABEL),
+        value_font,
         color,
     );
+}
+
+/// 单行宽度不够时按字符二分截断并补省略号。给读数与路径用：`Label::truncate`
+/// 走的是 egui 的布局流程，而这里是在 painter 上直接落字（`kv` 两列对齐靠它）。
+///
+/// Truncate to one line with an ellipsis, binary-searching on the character count.
+/// Used for values and paths: `Label::truncate` goes through egui's layout, while
+/// these are painted directly (that is what keeps `kv`'s two columns aligned).
+fn fit_one_line(p: &egui::Painter, text: &str, font_id: egui::FontId, max_w: f32) -> String {
+    let width = |s: String| {
+        p.layout_no_wrap(s, font_id.clone(), Color32::WHITE)
+            .size()
+            .x
+    };
+    if width(text.to_owned()) <= max_w {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let (mut lo, mut hi) = (0usize, chars.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let mut probe: String = chars[..mid].iter().collect();
+        probe.push('…');
+        if width(probe) <= max_w {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let mut out: String = chars[..lo].iter().collect();
+    out.push('…');
+    out
 }
 
 pub(super) fn note(ui: &mut Ui, text: &str) {
