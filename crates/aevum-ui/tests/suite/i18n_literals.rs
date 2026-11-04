@@ -210,3 +210,184 @@ fn tooltips_from_data_tables_are_translated() {
         hits.join("\n"),
     );
 }
+
+// ---------------------------------------------------------------- 表的两端
+
+/// 从译文表里取出全部键。
+///
+/// 保留源码里的转义写法（`\n` 仍是两个字符），因为下面比对的是**源码里的字面量原文**
+/// ——两边同一套写法才能逐字相等，不必先反转义再比。
+///
+/// All keys of the translation table, kept in their source spelling (`\n` stays two
+/// characters): the comparison below is against **literal text in the source**, so both
+/// sides must use the same spelling and no unescaping is needed.
+fn table_rows() -> Vec<String> {
+    let table = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/i18n_en.rs");
+    let src = std::fs::read_to_string(&table).expect("读译文表");
+    let mut out = Vec::new();
+    for line in src.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("(\"") else {
+            continue;
+        };
+        let b = rest.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b[i] == b'"' {
+                out.push(rest[..i].to_owned());
+                break;
+            }
+            i += 1;
+        }
+    }
+    out
+}
+
+/// 扫出源码里所有 `t!("…")` 的字面量原文及其偏移。
+///
+/// 只认**词边界上的** `t!(`：`format!("…")` 的尾巴长着同样的四个字符，前一个字符是
+/// 标识符字符就说明它不是这个宏（这条曾让第一次扫描多出四百多条假警报）。
+///
+/// Every `t!("…")` literal in the source, with its offset. Only a `t!(` on a word
+/// boundary counts: the tail of `format!("…")` looks identical, and a preceding identifier
+/// character means it is not this macro (that mistake once produced 400+ false alarms).
+fn t_literals(src: &str) -> Vec<(usize, String)> {
+    let b = src.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 4 <= b.len() {
+        let boundary = i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_');
+        if boundary && &b[i..i + 4] == b"t!(\"" {
+            let mut j = i + 4;
+            let mut buf = String::new();
+            while j < b.len() {
+                if b[j] == b'\\' {
+                    buf.push_str(&src[j..j + 2]);
+                    j += 2;
+                    continue;
+                }
+                if b[j] == b'"' {
+                    break;
+                }
+                let ch = src[j..].chars().next().expect("字符边界");
+                buf.push(ch);
+                j += ch.len_utf8();
+            }
+            out.push((i, buf));
+            i = j + 1;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// 每个 `t!` 字面量都必须在译文表里有一行。
+///
+/// # 这条补的是「已经包了 t!、但表里没有」这一半
+///
+/// `ui_call_sites_have_no_bare_chinese` 管的是反方向（写死了中文没包 `t!`）；
+/// `i18n_coverage` 管的是「上屏的字有没有译」。两条都发现不了本文件尾部这类情况：
+/// 文案已经正确地包了 `t!`，表里却漏了一行，于是英文界面回退成中文。
+/// 实测它抓到过 `t!("HSL")`——一个看起来「不用译」的缩写，仍然得有一行，
+/// 否则回退逻辑走的是「键不存在」，与「译文恰好等于原文」在探针里是两种状态。
+///
+/// # What this covers
+///
+/// `ui_call_sites_have_no_bare_chinese` covers the opposite direction (Chinese left
+/// unwrapped) and `i18n_coverage` covers what actually reaches the screen. Neither sees the
+/// case this test exists for: the call site is wrapped correctly but the table has no row,
+/// so the English UI falls back to Chinese. It caught `t!("HSL")` — an acronym that looks
+/// like it needs no translation but still needs a row, because "key missing" and
+/// "translation equals the original" are different states to the missing-translation probe.
+#[test]
+fn every_t_literal_has_a_row() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let rows = table_rows();
+    assert!(rows.len() > 1200, "译文表没读到东西：{} 条", rows.len());
+
+    let mut files = Vec::new();
+    rs_files(&src_dir, &mut files);
+    let mut hits: Vec<String> = Vec::new();
+    for path in &files {
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        if matches!(name, "i18n.rs" | "i18n_en.rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(path).expect("读源码");
+        for (at, key) in t_literals(&src) {
+            if !rows.iter().any(|r| r == &key) {
+                hits.push(format!(
+                    "{}:{}  t!({key:?})",
+                    path.strip_prefix(&src_dir).unwrap_or(path).display(),
+                    line_of(&src, at),
+                ));
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "这些 t! 字面量在译文表里没有行，英文界面会回退成中文 {} 处：\n{}\n\n\
+         改法：给 src/i18n_en.rs 补一行（键就是中文原文），缩写也要补。",
+        hits.len(),
+        hits.join("\n"),
+    );
+}
+
+/// 译文表里不许有「源码里再也找不到」的孤儿行。
+///
+/// # 为什么孤儿也算缺陷
+///
+/// 面板里的长文案、MCP 工具说明是**数据表里的字符串**，翻译走 `i18n::tr(spec.summary)`
+/// 这类动态查表。改文案时只改数据表、忘了改译文表，删除的那一行就变成孤儿，
+/// 而新文案没有行——英文界面静默回退中文。孤儿行本身不显示，但它是「漂移发生过」的
+/// 唯一痕迹，所以直接当红处理。
+///
+/// # Why orphans are a defect
+///
+/// Long panel copy and MCP tool descriptions are **strings in data tables**, translated by
+/// dynamic lookups such as `i18n::tr(spec.summary)`. Edit the data table and forget the
+/// translation table and the dropped row becomes an orphan while the new wording has no row
+/// at all — the English UI silently falls back to Chinese. An orphan never shows on screen,
+/// but it is the only trace that the drift happened, so it fails the build.
+#[test]
+fn no_row_is_orphaned() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    for dir in [
+        "crates/aevum-ui/src",
+        "crates/aevum-core/src",
+        "crates/aevum-mcp/src",
+        "apps/aevum-studio/src",
+    ] {
+        rs_files(&root.join(dir), &mut files);
+    }
+    assert!(files.len() > 100, "工作区没扫到源码：{:?}", root);
+
+    let mut hay = String::new();
+    for path in &files {
+        if path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|n| n == "i18n_en.rs")
+        {
+            continue;
+        }
+        hay.push_str(&std::fs::read_to_string(path).expect("读源码"));
+    }
+
+    let dead: Vec<String> = table_rows()
+        .into_iter()
+        .filter(|k| !hay.contains(&format!("\"{k}\"")))
+        .collect();
+    assert!(
+        dead.is_empty(),
+        "这些译文条目在源码里找不到任何引用（文案改了没同步，英文会回退中文）{} 条：\n{}\n\n\
+         改法：删掉孤儿行，并给**现在的**文案补一行。",
+        dead.len(),
+        dead.join("\n"),
+    );
+}
