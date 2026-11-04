@@ -208,6 +208,9 @@ pub const TOOL_ROUTES: &[ToolRoute] = &[
     route_only_server("aevum_keyframe_add"),
     route_only_server("aevum_keyframe_remove"),
     route_only_server("aevum_keyframe_list"),
+    // 修复与透视校正：GUI 侧是画布落笔与面板按钮，没有可被路由的独立命令。
+    route_only_server("aevum_retouch"),
+    route_only_server("aevum_upright"),
     // 预览渲染：GUI 有 `render.set`（改输出设置），没有「渲染这一帧」命令。
     route_only_server("aevum_render_preview"),
     route("aevum_export_stills", "export.stills"),

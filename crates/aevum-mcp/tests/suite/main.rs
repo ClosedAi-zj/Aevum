@@ -17,5 +17,6 @@
 
 mod deflicker_align;
 mod mcp_stdio;
+mod retouch;
 mod tools;
 mod tools_list_snapshot;

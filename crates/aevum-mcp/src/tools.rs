@@ -86,6 +86,7 @@ mod library;
 mod merge;
 mod project;
 mod queue;
+mod retouch;
 mod sequence;
 mod shared;
 mod spec;
@@ -107,6 +108,7 @@ use self::queue::{
     batch_run, queue_add, queue_cancel, queue_clear, queue_list, queue_remove, queue_run,
     queue_status,
 };
+use self::retouch::{retouch_edit, upright_set};
 use self::sequence::{deflicker_analyze, measure, open_sequence, sequence_info};
 use self::spec::build_commands;
 
@@ -147,6 +149,8 @@ fn dispatch_inner(session: &mut Session, id: &str, args: &Value) -> Result<Value
         "aevum_keyframe_add" => keyframe_add(session, args),
         "aevum_keyframe_remove" => keyframe_remove(session, args),
         "aevum_keyframe_list" => keyframe_list(session, args),
+        "aevum_retouch" => retouch_edit(session, args),
+        "aevum_upright" => upright_set(session, args),
         "aevum_render_preview" => render_preview(session, args),
         "aevum_export_stills" => export_stills(session, args),
         "aevum_export_video" => export_video(session, args),

@@ -9,49 +9,27 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
-const TOOLS: &[&str] = &[
-    "aevum_open_sequence",
-    "aevum_sequence_info",
-    "aevum_measure",
-    "aevum_deflicker_analyze",
-    "aevum_grade_get",
-    "aevum_grade_set",
-    "aevum_grade_preset",
-    "aevum_grade_reset",
-    "aevum_grade_copy",
-    "aevum_keyframe_add",
-    "aevum_keyframe_remove",
-    "aevum_keyframe_list",
-    "aevum_render_preview",
-    "aevum_export_stills",
-    "aevum_export_video",
-    "aevum_hdr_merge",
-    "aevum_pano_merge",
-    "aevum_focus_merge",
-    "aevum_stack_merge",
-    "aevum_timeblend_merge",
-    "aevum_cull_evaluate",
-    "aevum_cull_extract",
-    "aevum_project_get",
-    "aevum_project_save",
-    "aevum_journal_list",
-    "aevum_xmp_read",
-    "aevum_xmp_write",
-    "aevum_cube_import",
-    "aevum_cube_export",
-    "aevum_align",
-    "aevum_align_status",
-    "aevum_cancel",
-    "aevum_queue_list",
-    "aevum_queue_add",
-    "aevum_queue_remove",
-    "aevum_queue_clear",
-    "aevum_queue_run",
-    "aevum_queue_status",
-    "aevum_queue_cancel",
-    "aevum_sequences_scan",
-    "aevum_batch_run",
-];
+/// 期望的工具名，取自 [`tools_list.json`] 快照，而不是在这里再抄一遍。
+///
+/// 手抄一份清单意味着「加一个工具要改三张表」，而漏改的那张会在别的测试里
+/// 以完全无关的报错炸掉。快照本来就被 `tools_list_snapshot` 逐字节守着，
+/// 直接读它既不会漏、也不会多。
+///
+/// Expected tool names, read from the [`tools_list.json`] snapshot instead of being
+/// copied here. A hand-kept third list means "add one tool, edit three tables", and the
+/// table you forget blows up in some unrelated test with an unrelated message. The
+/// snapshot is already byte-guarded by `tools_list_snapshot`, so reading it can neither
+/// miss a tool nor invent one.
+fn expected_tool_names() -> Vec<String> {
+    const SNAPSHOT: &str = include_str!("../snapshots/tools_list.json");
+    let doc: serde_json::Value = serde_json::from_str(SNAPSHOT).expect("快照必须是合法 JSON");
+    doc["tools"]
+        .as_array()
+        .expect("快照要有 tools 数组")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+        .collect()
+}
 
 struct Server {
     child: Child,
@@ -302,8 +280,9 @@ fn stdio_session_end_to_end() {
     // tools/list：清单里的工具一个不少，每个都有 JSON Schema。
     let listed = server.request("tools/list", json!({}));
     let tools = listed["result"]["tools"].as_array().expect("tools 数组");
-    assert_eq!(tools.len(), TOOLS.len());
-    for expected in TOOLS {
+    let expected = expected_tool_names();
+    assert_eq!(tools.len(), expected.len());
+    for expected in &expected {
         let tool = tools
             .iter()
             .find(|tool| tool["name"] == *expected)

@@ -841,6 +841,8 @@ fn every_tool_has_an_explicit_write_classification() {
         ("aevum_keyframe_add", true),
         ("aevum_keyframe_remove", true),
         ("aevum_keyframe_list", false),
+        ("aevum_retouch", true),
+        ("aevum_upright", true),
         ("aevum_render_preview", false),
         ("aevum_export_stills", true),
         ("aevum_export_video", true),

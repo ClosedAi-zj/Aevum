@@ -185,6 +185,57 @@ pub(super) fn build_commands() -> Vec<Command> {
             ),
         },
         Command {
+            id: "aevum_retouch",
+            description: "修复画笔与仿制图章的笔触表：op=list/add/undo/clear（省=list）。坐标归一化（x 相对宽、y 相对高，r 与 source 相对长边），因为同一份参数要在预览与导出上落到同一块区域；按落盘顺序依次作用，后一笔看得到前一笔的结果。",
+            input_schema: object(
+                json!({
+                    "op": {"type": "string", "enum": ["list", "add", "undo", "clear"], "description": "省略即 list"},
+                    "spots": {
+                        "type": "array",
+                        "description": "op=add 时的笔触（可一次给多笔）",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number", "minimum": 0.0, "maximum": 1.0, "description": "中心横坐标，归一化"},
+                                "y": {"type": "number", "minimum": 0.0, "maximum": 1.0, "description": "中心纵坐标，归一化"},
+                                "r": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 0.1, "description": "半径，相对长边"},
+                                "feather": {"type": "number", "minimum": 0.0, "maximum": 1.0, "description": "羽化占半径的比例，默认 0.35"},
+                                "source": {
+                                    "type": "array",
+                                    "description": "仿制源偏移 [dx, dy]（相对长边）；省略即修复（斑内解拉普拉斯）",
+                                    "items": {"type": "number"},
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                }
+                            },
+                            "required": ["x", "y", "r"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "count": {"type": "integer", "minimum": 1, "description": "op=undo 撤几笔，默认 1"}
+                }),
+                &[],
+            ),
+        },
+        Command {
+            id: "aevum_upright",
+            description: "透视校正（梯形）：op=get/set/auto/clear（省=get）。auto 用当前帧估竖直主直线并反推四边形，只修上下透视、不修旋转与畸变，证据不足会明确报错而不是硬猜；校正后四边形之外的一圈被裁掉。",
+            input_schema: object(
+                json!({
+                    "op": {"type": "string", "enum": ["get", "set", "auto", "clear"], "description": "省略即 get"},
+                    "quad": {
+                        "type": "array",
+                        "description": "op=set：四个 [x, y] 角点，左上→右上→右下→左下，归一化",
+                        "items": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                        "minItems": 4,
+                        "maxItems": 4
+                    },
+                    "frame": {"type": "integer", "minimum": 0, "description": "op=auto：用哪一帧估消失点，默认 0"}
+                }),
+                &[],
+            ),
+        },
+        Command {
             id: "aevum_render_preview",
             description: "渲染一帧带当前调色、关键帧插值与去闪烁补偿的预览 PNG，返回落盘路径与尺寸。",
             input_schema: object(

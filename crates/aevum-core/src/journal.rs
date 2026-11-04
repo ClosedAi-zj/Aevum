@@ -86,6 +86,8 @@ pub fn is_write_op(op: &str) -> bool {
             | "aevum_cube_export"
             | "aevum_keyframe_add"
             | "aevum_keyframe_remove"
+            | "aevum_retouch"
+            | "aevum_upright"
             | "aevum_align"
             | "aevum_export_stills"
             | "aevum_export_video"
