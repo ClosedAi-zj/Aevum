@@ -603,6 +603,7 @@ impl AppState {
             heal_clone: false,
             heal_src: None,
             heal_last: None,
+            upright_editing: false,
             brush_radius: 6.0,
             brush_hardness: 70.0,
             brush_flow: 100.0,

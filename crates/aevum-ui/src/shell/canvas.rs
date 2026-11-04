@@ -231,7 +231,13 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     {
         state.pan += resp.drag_delta();
     }
-    if resp.double_clicked() {
+    // 双击空白处回到「适应窗口」。四角编辑态里双击要留给「把这个角放回原位」，
+    // 所以这一下让给下面的把手；否则拖歪一个角想复位，画面反而缩走了。
+    //
+    // Double-clicking empty space fits the view to the window. In corner-edit mode the
+    // double-click belongs to "put this corner back", so the handles below claim it; otherwise
+    // resetting a corner would also shrink the view away.
+    if resp.double_clicked() && !state.upright_editing {
         fit_view(state);
     } else if resp.clicked() && state.tool == Tool::Zoom {
         let alt = ui.input(|i| i.modifiers.alt);
@@ -424,6 +430,14 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         crop_overlay(state, ui, &p, img, &resp);
     } else if state.motion_editing() {
         motion_overlay(state, ui, &p, img, &resp);
+    } else if state.module == Module::Develop && state.upright_editing {
+        // 四角排在修复画笔前面：它是面板上明确的开关，开着的时候画布归它。
+        // 选画笔时 `set_tool` 会自动把它关掉，所以两者不会同时想要这一只手。
+        //
+        // Corners come before the repair brush: this is an explicit toggle on the panel, and
+        // while it is on the canvas belongs to it. Picking the brush switches it off in
+        // `set_tool`, so the two never compete for the same hand.
+        upright_overlay(state, ui, &p, img);
     } else if state.module == Module::Develop && state.tool == Tool::Heal {
         heal_overlay(state, &p, img, &resp);
     }
@@ -494,11 +508,86 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     }
 }
 
-/// 裁剪态的取景框：拖拽交互 + 框外压暗 + 三分线 + 八向把手 + 尺寸标签。
+/// 透视四角：画出四边形与四个把手，拖动即改参数。
 ///
-/// 这一层全是矢量：拖动只挪框，一个像素都不重画，所以 24MP 的图也跟手。
-/// 取景态下预览画的是整块可见区（`state.crop_view()`，拉直后即安全框），于是屏幕和
-/// 那幅像素只剩一层等比缩放，换算就在下面两个闭包里。
+/// 每秒都在变的东西只有矢量：四个角的屏幕位置由参数算出，拖动只改参数、由预览那边重画，
+/// 所以和裁剪框一样跟手。把手各用一份 `ui.interact`，于是每个角能独立拖、独立双击复位，
+/// 也不必和画布整体的「双击适应窗口」抢——那一处在编辑态里已经让开了。
+///
+/// The perspective quad: draws the quadrilateral and its four handles; dragging edits the
+/// parameters.
+///
+/// Only vector work happens per frame: the four screen positions derive from the parameters,
+/// and a drag only writes parameters for the preview side to redraw, so it keeps up just like
+/// the crop box. Each handle owns a `ui.interact`, which lets corners drag and reset
+/// independently and keeps them clear of the canvas-wide "double-click to fit" -- that one
+/// steps aside while editing.
+fn upright_overlay(state: &mut AppState, ui: &mut Ui, p: &egui::Painter, img: Rect) {
+    let screen: Vec<Pos2> = state
+        .upright_corners()
+        .iter()
+        .map(|(cu, cv)| Pos2::new(img.left() + cu * img.width(), img.top() + cv * img.height()))
+        .collect();
+
+    // 四边形：先压一道半透明黑，再压强调色。亮画面（天空、白墙）与暗画面上都得看得见，
+    // 只画一种颜色的话总有一半照片里它消失了。
+    //
+    // The quadrilateral: a translucent black pass under the accent pass, so it stays visible
+    // on both bright frames (sky, white walls) and dark ones -- one colour alone disappears in
+    // half of all photos.
+    for (a, b) in [
+        (screen[0], screen[1]),
+        (screen[1], screen[2]),
+        (screen[2], screen[3]),
+        (screen[3], screen[0]),
+    ] {
+        p.line_segment([a, b], Stroke::new(3.2, Color32::from_black_alpha(90)));
+        p.line_segment([a, b], Stroke::new(1.4, accent()));
+    }
+
+    for (i, c) in screen.iter().copied().enumerate() {
+        let rect = Rect::from_center_size(c, Vec2::splat(24.0));
+        let g = ui.interact(
+            rect,
+            ui.make_persistent_id(("upright-corner", i)),
+            Sense::click_and_drag(),
+        );
+        if g.dragged()
+            && let Some(pos) = g.interact_pointer_pos()
+        {
+            state.upright_drag_corner(
+                i,
+                f64::from((pos.x - img.left()) / img.width().max(1.0)),
+                f64::from((pos.y - img.top()) / img.height().max(1.0)),
+            );
+        }
+        if g.drag_stopped() {
+            state.upright_commit();
+        }
+        if g.double_clicked() {
+            state.upright_reset_corner(i);
+        }
+        let hot = g.hovered() || g.dragged();
+        if hot {
+            ui.ctx().set_cursor_icon(if g.dragged() {
+                CursorIcon::Grabbing
+            } else {
+                CursorIcon::Grab
+            });
+        }
+        let fill = if g.dragged() {
+            accent()
+        } else if hot {
+            elev_hover()
+        } else {
+            Color32::from_rgba_unmultiplied(24, 24, 26, 230)
+        };
+        p.circle_filled(c + Vec2::new(0.0, 1.0), 7.5, Color32::from_black_alpha(90));
+        p.circle_filled(c, 6.0, fill);
+        p.circle_stroke(c, 6.0, Stroke::new(1.0, Color32::from_white_alpha(200)));
+    }
+}
+
 /// 修复画笔层：落点、拖动补点，并把已落的笔触与仿制源画在画面上。
 ///
 /// Healing-brush layer: lay strokes, top them up while dragging, and draw the placed strokes
@@ -627,6 +716,19 @@ fn ui_note(state: &mut AppState) {
     }
 }
 
+/// 裁剪态的取景框：拖拽交互 + 框外压暗 + 三分线 + 八向把手 + 尺寸标签。
+///
+/// 这一层全是矢量：拖动只挪框，一个像素都不重画，所以 24MP 的图也跟手。
+/// 取景态下预览画的是整块可见区（`state.crop_view()`，拉直后即安全框），于是屏幕和
+/// 那幅像素只剩一层等比缩放，换算就在下面两个闭包里。
+///
+/// The crop box: drag interaction, dimming outside the box, thirds, eight handles and a size
+/// label.
+///
+/// The whole layer is vector: dragging only moves the box and repaints not a single pixel, so
+/// a 24MP frame keeps up. In crop-edit mode the preview draws the entire visible area
+/// (`state.crop_view()`, which after straightening is the safety frame), so screen and pixels
+/// differ by one uniform scale -- the conversion lives in the two closures below.
 fn crop_overlay(state: &mut AppState, ui: &mut Ui, p: &egui::Painter, img: Rect, resp: &Response) {
     let view = state.crop_view();
     if view.w == 0 || view.h == 0 {

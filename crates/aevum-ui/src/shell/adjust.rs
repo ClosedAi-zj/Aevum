@@ -2514,16 +2514,49 @@ fn adjust_geometry(state: &mut AppState, ui: &mut Ui) -> bool {
     }
     let mut auto = false;
     let mut clear = false;
+    let mut corners = false;
     ui.horizontal(|ui| {
         auto = bar_button(ui, "自动直立")
             .on_hover_text(crate::i18n::t!(
                 "找画面里的竖直主直线，把梯形拉正；只修上下透视，不修旋转与畸变"
             ))
             .clicked();
+        // 「四角」是自动直立的兜底：自动解要求画面里真有一条像样的竖直主直线，室内
+        // 广角、纯风景、对着墙拍的片子经常一条都没有。这时只能手动把四个角拖到画面的
+        // 方角上——ACR 里这个入口叫 Transform 的角点手柄。开着时按钮变「完成」。
+        //
+        // "Corners" is the fallback for auto-upright: the automatic solve needs a decent
+        // dominant vertical, and wide interiors, pure landscapes or anything shot against a
+        // wall often have none. Then the four corners have to be dragged onto the square
+        // object by hand -- the corner handles of Transform in ACR. While on, the chip reads
+        // "Done".
+        corners = bar_chip(
+            ui,
+            if state.upright_editing {
+                "完成"
+            } else {
+                "四角"
+            },
+            state.upright_editing,
+        )
+        .on_hover_text(crate::i18n::t!(
+            "拖四个角对齐画面里的方形物体；双击某个角放回原处"
+        ))
+        .clicked();
         clear = bar_button(ui, "清除")
             .on_hover_text(crate::i18n::t!("卸下透视校正，回到整幅画面"))
             .clicked();
     });
+    if corners {
+        let was = state.upright_editing;
+        let now = state.upright_edit_toggle();
+        if !was && !now {
+            state.auto_note = Some(
+                crate::i18n::t!("画布当前不是整幅（拉直 / 推近 / 裁剪中），四角抓不到；先复位")
+                    .to_owned(),
+            );
+        }
+    }
     if auto {
         state.auto_note = Some(match state.upright_auto() {
             Ok(()) => {
@@ -2562,6 +2595,12 @@ fn adjust_geometry(state: &mut AppState, ui: &mut Ui) -> bool {
             kv(ui, "状态", label, text());
         }
         _ => kv(ui, "状态", crate::i18n::t!("未校正"), dim()),
+    }
+    if state.upright_editing {
+        note(
+            ui,
+            crate::i18n::t!("画布上四个圆点就是四角：拖到方形物体的边上，双击某个角放回原处"),
+        );
     }
     changed
 }

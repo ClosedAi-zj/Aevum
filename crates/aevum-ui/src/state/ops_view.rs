@@ -52,6 +52,14 @@ impl AppState {
         if t == Tool::Crop {
             self.set_motion_picking(false);
         }
+        // 修复画笔与四角拖拽抢的也是同一只手：选了画笔就退出四角编辑，否则拖下去
+        // 只会落一笔到画面上，而四边形一动不动。
+        //
+        // The repair brush and corner dragging compete for the same hand: picking the brush
+        // leaves corner mode, otherwise dragging lays a stroke while the quad never moves.
+        if t == Tool::Heal && self.upright_editing {
+            self.upright_edit_toggle();
+        }
         let before = (self.crop_editing(), self.motion_editing());
         self.tool = t;
         if before != (self.crop_editing(), self.motion_editing()) {

@@ -195,4 +195,150 @@ impl AppState {
         self.retouch_changed("清除透视校正");
         true
     }
+
+    /// 四角拖拽能不能开工：整幅画面得**全部**显示在画布上，四个角才抓得到。
+    ///
+    /// 与修复画笔同一套拒绝态（裁剪中 / 拉直 / 运镜推近 / 无帧），另加一条画幅裁剪：
+    /// 3:2 的片子选了 16:9 之后上下两条边已经在画面之外，那两个角在屏幕上根本不出现。
+    ///
+    /// Whether corner dragging can start: the whole frame has to be **fully** on the canvas,
+    /// otherwise the corners cannot be grabbed.
+    ///
+    /// The same refusal states as the repair brush (cropping, straightened, motion box pushed
+    /// in, no frame) plus one of its own: with an aspect crop such as 16:9 on a 3:2 frame the
+    /// top and bottom edges are already outside the canvas, so those two corners never appear.
+    pub fn upright_can_drag(&self) -> bool {
+        if self.crop_editing() || self.rotate != 0.0 {
+            return false;
+        }
+        let n = self.frame_count();
+        if n == 0 {
+            return false;
+        }
+        if self
+            .motion_view_at(self.selected.min(n.saturating_sub(1)), n)
+            .is_some()
+        {
+            return false;
+        }
+        self.preview_crop().is_none()
+    }
+
+    /// 开关四角拖拽。返回是否真的停在编辑态里（开不起来时为 `false`）。
+    ///
+    /// 进入时若还没有四边形，先种一个**单位方**：单位方就是「不动作」，预览因此不会跳变，
+    /// 而四个把手立刻出现在画面四角，可以开始拖。退出时若四边形仍是单位方就删掉——
+    /// 工程文件里不该留一个什么都不做的参数。
+    ///
+    /// Toggles corner dragging; returns whether it is now in edit mode (`false` if it could not
+    /// start).
+    ///
+    /// Entering with no quad seeds the **unit square**: the unit square means "do nothing", so
+    /// the preview does not jump, while four handles appear at the frame's corners ready to
+    /// drag. Leaving with the quad still at the unit square removes it -- a parameter that does
+    /// nothing has no business staying in the project file.
+    pub fn upright_edit_toggle(&mut self) -> bool {
+        if self.upright_editing {
+            self.upright_editing = false;
+            if self
+                .params
+                .upright
+                .as_ref()
+                .is_some_and(|q| q.is_identity())
+            {
+                self.params.upright = None;
+            }
+            self.preview_dirty = true;
+            return false;
+        }
+        if !self.upright_can_drag() {
+            return false;
+        }
+        if self.params.upright.is_none() {
+            self.params.upright = Some(perspective::Quad::default());
+        }
+        self.upright_editing = true;
+        self.preview_dirty = true;
+        true
+    }
+
+    /// 四个角在**画布**归一坐标里的位置（画四边形与把手用）。没有四边形时按单位方给。
+    ///
+    /// The four corners in **canvas**-normalized coordinates, for drawing the quad and its
+    /// handles. Falls back to the unit square when there is no quad.
+    pub fn upright_corners(&self) -> [(f32, f32); 4] {
+        let q = self.params.upright.unwrap_or_default();
+        let mut out = [(0.0f32, 0.0f32); 4];
+        for (i, (u, v)) in q.p.iter().enumerate() {
+            let (cu, cv) = self.frame_to_canvas(*u, *v);
+            out[i] = (cu as f32, cv as f32);
+        }
+        out
+    }
+
+    /// 把第 `i` 个角拖到画布位置 `(cu, cv)`。夹进 `[0,1]`，非有限值忽略，没动就返回 `false`。
+    ///
+    /// **拖动途中只标脏、不记历史**：一次拖拽每帧都会调到这里，逐帧记历史会把撤销栈刷爆；
+    /// 松手时由 [`Self::upright_commit`] 记一条。
+    ///
+    /// Drags corner `i` to canvas position `(cu, cv)`. Clamped to `[0,1]`, non-finite values
+    /// ignored, and a no-op returns `false`.
+    ///
+    /// **Mid-drag this only marks the preview dirty and records no history**: the call happens
+    /// every frame of a drag, and one history entry per frame would bury the undo stack. A
+    /// single entry is recorded on release by [`Self::upright_commit`].
+    pub fn upright_drag_corner(&mut self, i: usize, cu: f64, cv: f64) -> bool {
+        if i >= 4 {
+            return false;
+        }
+        let (u, v) = self.canvas_to_frame(cu, cv);
+        if !(u.is_finite() && v.is_finite()) {
+            return false;
+        }
+        let at = (u.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
+        let mut q = self.params.upright.unwrap_or_default();
+        if q.p[i] == at {
+            return false;
+        }
+        q.p[i] = at;
+        self.params.upright = Some(q);
+        self.preview_dirty = true;
+        true
+    }
+
+    /// 松手：四边形真有动作才记一条历史（单位方不记，否则空拖一下也会留痕）。
+    ///
+    /// On release: record one history entry only if the quad actually does something. The unit
+    /// square records nothing, so an idle drag leaves no trace.
+    pub fn upright_commit(&mut self) -> bool {
+        let Some(q) = self.params.upright else {
+            return false;
+        };
+        if q.is_identity() {
+            return false;
+        }
+        self.retouch_changed("透视四角");
+        true
+    }
+
+    /// 把一个角放回单位方的位置（双击角）。返回是否真的动了。
+    ///
+    /// Puts one corner back where the unit square has it (double-clicking a corner). Returns
+    /// whether anything moved.
+    pub fn upright_reset_corner(&mut self, i: usize) -> bool {
+        if i >= 4 {
+            return false;
+        }
+        let unit = perspective::Quad::default();
+        let Some(mut q) = self.params.upright else {
+            return false;
+        };
+        if q.p[i] == unit.p[i] {
+            return false;
+        }
+        q.p[i] = unit.p[i];
+        self.params.upright = Some(q);
+        self.retouch_changed("透视四角复位");
+        true
+    }
 }

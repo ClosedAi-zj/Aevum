@@ -220,6 +220,18 @@ impl AppState {
         for g in &self.bypassed {
             crate::controls::neutralise_group(&mut p, g);
         }
+        // 拖四角时预览要显示**未校正**的画面：四边形画在原图的梯形上才拖得准。带着
+        // 校正显示等于让人对着已经拉正的画面猜原来的角在哪儿，拖一格画面跳一下。
+        // 与旁路同一个性质：只改预览，导出与工程文件仍用 `self.params`。
+        //
+        // While dragging corners the preview has to show the **uncorrected** frame: the quad
+        // is drawn over the original trapezoid, which is what makes dragging accurate.
+        // Showing it corrected would mean guessing where the corners used to be while the
+        // picture jumps on every step. Same nature as bypass: preview only; export and the
+        // project file still use `self.params`.
+        if self.upright_editing {
+            p.upright = None;
+        }
         p
     }
 

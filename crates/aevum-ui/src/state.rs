@@ -1699,6 +1699,13 @@ pub struct AppState {
     /// The canvas position of the last stroke: dragging lays points at a spacing, otherwise one
     /// point per frame would smear the stroke into a blob.
     pub heal_last: Option<egui::Pos2>,
+    /// 四角拖拽态：画布画出透视四边形，四个角可以拖。自动直立解不出来时的兜底路径——
+    /// 自动解需要「画面里有一条像样的竖直主直线」，室内广角往往没有。
+    ///
+    /// Corner-drag mode: the canvas draws the perspective quad and its four corners can be
+    /// dragged. This is the fallback when auto-upright finds nothing, which is common in wide
+    /// interiors with no usable dominant vertical.
+    pub upright_editing: bool,
     pub brush_flow: f64,
     pub brush_erase: bool,
     /// 吸管取色态：下一次画布单击把像素色相写进选中蒙版的颜色范围。

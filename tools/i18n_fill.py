@@ -50,7 +50,7 @@ def main() -> int:
 
     pairs = json.loads(Path(rest[0]).read_text(encoding="utf-8"))
     incoming: dict[str, str] = {}
-    neutral: list[str] = []
+    neutral = 0
     for item in pairs:
         if not (isinstance(item, list) and len(item) == 2):
             raise SystemExit(f"i18n_fill: {item!r} 不是 [源文, 译文] 二元组")
@@ -61,12 +61,13 @@ def main() -> int:
             raise SystemExit("i18n_fill: 中文键不能为空")
         if not en.strip():
             raise SystemExit(f"i18n_fill: {zh!r} 的译文是空的——没译好就别写进来")
-        # 译文与原文相同 = 这条本来就不需要翻译（`confirm`、`index?` 这类参数名）。
-        # 表里放一条 a→a 只会让 `entries_are_translated` 报警，不如不入表：
-        # 查不到就回退原文，效果一样。
+        # 译文与原文相同（`HSL`、`confirm` 这类缩写与参数名）**照样入表**。
+        # 曾经这里跳过、写盘时还把历史遗留的 a→a 一并删掉，理由是「查不到就回退原文，
+        # 效果一样」——运行时确实一样，但 `every_t_literal_has_a_row` 判据要求每个
+        # `t!` 字面量都有行，删掉它当场变红（2026-11-05 实测：删掉 `HSL` 之后那条判据
+        # 报「1 处回退成中文」）。两处的口径应当是同一个：**表里有行**才叫译过。
         if zh == en:
-            neutral.append(zh)
-            continue
+            neutral += 1
         if zh in incoming and incoming[zh] != en:
             raise SystemExit(f"i18n_fill: {zh!r} 给了两个不同译文：\n  {incoming[zh]!r}\n  {en!r}")
         incoming[zh] = en
@@ -77,14 +78,12 @@ def main() -> int:
     updated = [k for k in incoming if k in existing and existing[k] != incoming[k]]
     same = len(incoming) - len(added) - len(updated)
     merged = {**existing, **incoming}
-    # 清掉历史遗留的 a→a：它们不是译文，留着只会让完整性测试报警。
-    pruned = [k for k, v in merged.items() if k == v]
-    for k in pruned:
-        del merged[k]
+    # 不再清 a→a：见上面那段——「语言中立」不等于「不必有行」。
+    pruned: list[str] = []
 
     print(
         f"i18n_fill: 现有 {len(existing)} 条 · 新增 {len(added)} · 改译 {len(updated)} · "
-        f"未变 {same} · 语言中立跳过 {len(neutral)} · 清掉自映射 {len(pruned)}"
+        f"未变 {same} · 其中语言中立（原文即译文，照样入表）{neutral} · 清掉自映射 {len(pruned)}"
     )
     for k in added:
         print(f"  + {k}  →  {incoming[k]}")

@@ -242,3 +242,195 @@ fn clearing_an_absent_correction_is_a_no_op() {
     assert!(st.params.upright.is_none());
     assert!(st.preview_dirty);
 }
+
+// ─────────────────────────────── 四角拖拽 ───────────────────────────────
+// Corner dragging
+
+/// 开一个只有一帧的最小序列，供四角拖拽的前置条件（有帧、有尺寸）用。
+///
+/// A minimal one-frame sequence, so the corner-drag preconditions (a frame, a size) hold.
+fn one_frame_state(tag: &str) -> (AppState, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("aevum-upright-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("建临时目录");
+    image::RgbImage::new(32, 24)
+        .save(dir.join("f001.png"))
+        .expect("写测试图");
+    let mut st = AppState::new();
+    st.resolution = Some((4000, 3000));
+    st.seq = Some(aevum_core::sequence::Sequence::open(&dir).expect("开序列"));
+    (st, dir)
+}
+
+/// 进四角模式时种一个单位方，退出时把它收走：工程里不该留一个什么都不做的参数。
+///
+/// Entering corner mode seeds the unit square and leaving drops it again: a parameter that
+/// does nothing has no business staying in the project file.
+#[test]
+fn corner_mode_seeds_a_unit_square_and_drops_it_on_exit() {
+    let (mut st, dir) = one_frame_state("seed");
+    assert!(!st.upright_editing);
+    assert!(st.upright_edit_toggle(), "整幅 + 有帧，应当进得去");
+    assert!(st.upright_editing);
+    let q = st.params.upright.expect("进入时应种下四边形");
+    assert!(q.is_identity(), "种下的必须是单位方：预览不该跳变");
+
+    assert!(!st.upright_edit_toggle(), "再点一次就退出");
+    assert!(!st.upright_editing);
+    assert!(st.params.upright.is_none(), "没动过的单位方要收走");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 拖一个角只动那一个；位置没变时不标脏（拖动每帧都会调到这里）。
+///
+/// Dragging one corner moves only that one, and an unchanged position marks nothing dirty
+/// (this runs on every frame of a drag).
+#[test]
+fn dragging_a_corner_moves_only_that_corner() {
+    let (mut st, dir) = one_frame_state("drag");
+    assert!(st.upright_edit_toggle());
+    let before = st.params.upright.expect("四边形").p;
+
+    st.preview_dirty = false;
+    assert!(st.upright_drag_corner(1, 0.7, 0.05), "应当改动第二个角");
+    let after = st.params.upright.expect("四边形").p;
+    assert!((after[1].0 - 0.7).abs() < 1e-6 && (after[1].1 - 0.05).abs() < 1e-6);
+    for i in [0, 2, 3] {
+        assert_eq!(after[i], before[i], "第 {i} 个角不该跟着动");
+    }
+    assert!(st.preview_dirty, "改动之后要标脏");
+
+    st.preview_dirty = false;
+    assert!(
+        !st.upright_drag_corner(1, 0.7, 0.05),
+        "同一个位置再报一次不算改动"
+    );
+    assert!(!st.preview_dirty, "没动就不该重画");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 角点夹在画幅里，非有限值直接忽略：拖到画面外不该把四边形送到 [0,1] 之外。
+///
+/// Corners clamp into the frame and non-finite values are ignored: dragging outside must not
+/// push the quad beyond [0,1].
+#[test]
+fn corners_clamp_into_the_frame() {
+    let (mut st, dir) = one_frame_state("clamp");
+    assert!(st.upright_edit_toggle());
+    assert!(st.upright_drag_corner(0, -0.5, 1.7));
+    let q = st.params.upright.expect("四边形");
+    assert_eq!(q.p[0], (0.0, 1.0), "越界的角要夹回来：{:?}", q.p[0]);
+
+    let before = st.params.upright.expect("四边形").p;
+    assert!(!st.upright_drag_corner(0, f64::NAN, 0.5), "NaN 要忽略");
+    assert!(!st.upright_drag_corner(9, 0.5, 0.5), "越界的角号要忽略");
+    assert_eq!(st.params.upright.expect("四边形").p, before);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 松手才记历史，单位方不记：一次拖拽只该留下一条撤销记录。
+///
+/// History is recorded on release and not for the unit square: one drag leaves exactly one
+/// undo entry.
+#[test]
+fn the_quad_commits_once_on_release() {
+    let (mut st, dir) = one_frame_state("commit");
+    assert!(st.upright_edit_toggle());
+    assert!(!st.upright_commit(), "单位方不该记一条历史");
+    assert!(st.upright_drag_corner(2, 0.95, 0.95));
+    assert!(st.upright_commit(), "有动作之后松手要记一条");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 双击一个角把它放回单位方的位置，别的角不动。
+///
+/// Double-clicking a corner puts it back where the unit square has it, leaving the others
+/// alone.
+#[test]
+fn double_click_puts_one_corner_back() {
+    let (mut st, dir) = one_frame_state("reset");
+    assert!(st.upright_edit_toggle());
+    assert!(st.upright_drag_corner(0, 0.2, 0.1));
+    assert!(st.upright_drag_corner(3, 0.1, 0.9));
+    assert!(st.upright_reset_corner(0), "第一个角应当被放回去");
+    let q = st.params.upright.expect("四边形");
+    assert_eq!(q.p[0], (0.0, 0.0));
+    assert!((q.p[3].0 - 0.1).abs() < 1e-6, "别的角不该被动");
+    assert!(!st.upright_reset_corner(0), "已经在原位就返回 false");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 裁剪态、拉直态、没有帧时进不去：那时四个角里有几个根本不在屏幕上。
+///
+/// Corner mode is refused while cropping, straightened, or with no frame: some of the four
+/// corners are simply not on the canvas then.
+#[test]
+fn corner_mode_is_refused_when_the_whole_frame_is_not_visible() {
+    let mut bare = AppState::new();
+    bare.resolution = Some((4000, 3000));
+    assert!(!bare.upright_edit_toggle(), "没有帧不该进得去");
+    assert!(!bare.upright_editing);
+
+    let (mut st, dir) = one_frame_state("refuse");
+    st.tool = Tool::Crop;
+    assert!(!st.upright_edit_toggle(), "裁剪态不该进得去");
+    st.tool = Tool::Hand;
+    st.rotate = 4.0;
+    assert!(!st.upright_edit_toggle(), "拉直态不该进得去");
+    st.rotate = 0.0;
+    assert!(st.upright_edit_toggle(), "复位之后应当恢复");
+
+    // 画幅裁剪同理：16:9 的取景把上下两条边切到了画面之外。
+    //
+    // Same for an aspect crop: a 16:9 framing puts the top and bottom edges outside.
+    st.upright_edit_toggle();
+    st.aspect = Aspect::Wide;
+    assert!(!st.upright_can_drag(), "画幅裁剪之后角就不在屏幕上了");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 拖四角时预览要显示未校正的画面（否则等于对着已经拉正的图猜原来的角），
+/// 但 `params` 与导出用的那份一个字都不许动。
+///
+/// While dragging corners the preview must show the uncorrected frame (otherwise you are
+/// guessing old corner positions on an already-corrected picture), yet `params` -- what export
+/// uses -- must not change at all.
+#[test]
+fn the_preview_shows_the_uncorrected_frame_while_dragging() {
+    let (mut st, dir) = one_frame_state("preview");
+    st.params.upright = Some(aevum_core::perspective::Quad {
+        p: [(0.05, 0.02), (0.95, 0.0), (1.0, 1.0), (0.0, 0.98)],
+    });
+    assert_eq!(st.preview_params().upright, st.params.upright);
+
+    assert!(st.upright_edit_toggle());
+    assert!(
+        st.preview_params().upright.is_none(),
+        "编辑中预览必须是不带校正的"
+    );
+    assert!(st.params.upright.is_some(), "真参数不许动——那是导出的依据");
+
+    st.upright_edit_toggle();
+    assert_eq!(st.preview_params().upright, st.params.upright, "退出后复原");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 选修复画笔时自动退出四角模式：两者抢的是同一只手。
+///
+/// Picking the repair brush leaves corner mode, since the two compete for the same hand.
+#[test]
+fn choosing_the_heal_brush_leaves_corner_mode() {
+    let (mut st, dir) = one_frame_state("tool");
+    assert!(st.upright_edit_toggle());
+    st.set_tool(Tool::Heal);
+    assert!(!st.upright_editing, "选了画笔就该退出四角");
+    assert!(st.params.upright.is_none(), "没动过的四边形要收走");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
