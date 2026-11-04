@@ -38,6 +38,7 @@ pub mod fonts;
 pub mod grade;
 pub mod hdr;
 pub mod hdr_output;
+pub mod heal;
 pub mod interp;
 pub mod journal;
 pub mod lcp;
@@ -49,6 +50,7 @@ pub mod measures;
 pub mod metrics;
 pub mod pano;
 pub mod paths;
+pub mod perspective;
 
 mod par;
 pub mod plugin;
