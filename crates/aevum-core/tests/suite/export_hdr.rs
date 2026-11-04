@@ -261,13 +261,25 @@ fn nclx_of(bytes: &[u8]) -> Option<[u16; 3]> {
 
 /// 用 ffmpeg 把 AVIF 解成 rgb48 并读回第一条扫描线。
 ///
+/// 显式 `-nostdin` 并把 stdin 接空：`status()` 会把测试进程的 stdin 继承给子进程，
+/// 而 ffmpeg 在非交互管道上仍会去读它（等一个永远不会来的键）。2026-11-05 门槛就是
+/// 卡在这一步：`cargo` 与 `ffmpeg` 的 CPU 累计都停在 0.0x 秒，进程在、一动不动。
+/// 生产代码走 `Command::output()`（stdin 本来就是关的），这里补的是测试侧那条路。
+///
 /// Decodes the AVIF back to rgb48 with ffmpeg and reads the first scanline.
+///
+/// `-nostdin` plus a null stdin on purpose: `status()` hands the test process's stdin to
+/// the child, and ffmpeg still reads it on a non-interactive pipe (waiting for a keypress
+/// that never comes). That is where the gate stalled on 2026-11-05 -- both `cargo` and
+/// `ffmpeg` sat at 0.0x seconds of CPU, alive but unmoving. Production code goes through
+/// `Command::output()`, whose stdin is already closed; this fixes the test-side path.
 fn decode_rgb48(ffmpeg: &Path, avif: &Path, w: u32, h: u32, out: &Path) -> Vec<u16> {
     let status = Command::new(ffmpeg)
-        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i"])
         .arg(avif)
         .args(["-pix_fmt", "rgb48le", "-f", "rawvideo"])
         .arg(out)
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
