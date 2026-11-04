@@ -868,6 +868,8 @@ fn every_tool_has_an_explicit_write_classification() {
         ("aevum_queue_run", true),
         ("aevum_queue_status", false),
         ("aevum_queue_cancel", false),
+        ("aevum_sequences_scan", false),
+        ("aevum_batch_run", true),
     ]);
 
     let actual: BTreeSet<&str> = aevum_mcp::commands().iter().map(|c| c.id).collect();
@@ -1351,4 +1353,122 @@ fn headless_metrics_write_a_cache_the_gui_can_read() {
         let want_m = headless[i].expect("无头那趟测到了这一帧");
         assert_metrics_close(&got_m, &want_m, &format!("第 {i} 帧"));
     }
+}
+
+/// F6 跨序列编排：一次调用扫目录、入队、跑完，坏序列单独报出原因。
+///
+/// 判据盯的是**输出**不是自述：三段里两段真的出了成片文件、坏的那段状态是失败且
+/// `note` 有一句人能读的原因。只断言「返回了 ok/failed 两个数」的写法会被「两处一起
+/// 算错」蒙过去——那正是 R4 抓到的教训。
+///
+/// F6 cross-sequence orchestration: one call scans a directory, enqueues, runs, and reports
+/// the broken sequence with its reason. The criteria watch the **output** rather than the
+/// tool's self-report: two of three segments really produce a file, and the broken one comes
+/// back failed with a readable `note`. Asserting only "it returned ok and failed counts"
+/// would be fooled by both sides being wrong together -- the R4 lesson.
+#[test]
+fn batch_run_covers_a_directory_and_names_the_broken_sequence() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let temp = TempDir::new("batch");
+    let queue_file = temp.path().join("render_queue.json");
+    // SAFETY: 与队列用例同一把 LOCK 串行，不并发读写这个变量。
+    unsafe { std::env::set_var("AEVUM_RENDER_QUEUE", queue_file.as_os_str()) };
+    reset_session();
+
+    let library = temp.path().join("library");
+    make_sequence(&library.join("a_first"));
+    make_sequence(&library.join("b_second"));
+    // 坏序列：文件名是帧名、内容是垃圾。`Sequence::open` 只看后缀，所以它开得成，
+    // 直到导出真去解码才炸——这正是「2 成功 1 失败」要覆盖的形状。
+    let broken = library.join("c_broken");
+    std::fs::create_dir_all(&broken).expect("建坏序列目录");
+    for i in 0..3 {
+        std::fs::write(broken.join(format!("f{i:02}.png")), b"not a png at all").expect("写坏帧");
+    }
+    // 空文件夹：不是序列，也不该被算进「读不出来」。
+    std::fs::create_dir_all(library.join("d_empty")).expect("建空目录");
+
+    // 只看不写：扫出来两条好的 + 一条能开但解不开的，空目录不进 skipped。
+    let scan = ok(
+        "aevum_sequences_scan",
+        json!({"root": library.display().to_string()}),
+    );
+    assert_eq!(scan["count"], 3, "{scan}");
+    let names: Vec<String> = scan["sequences"]
+        .as_array()
+        .expect("sequences 是数组")
+        .iter()
+        .map(|s| s["name"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    for want in ["a_first", "b_second", "c_broken"] {
+        assert!(
+            names.iter().any(|n| n == want),
+            "{want} 没被扫到：{names:?}"
+        );
+    }
+    assert!(
+        !names.iter().any(|n| n == "d_empty"),
+        "空目录不是序列：{names:?}"
+    );
+
+    // 少 confirm 一律拒绝：这是一条会批量写盘的调用。
+    let err = call(
+        "aevum_batch_run",
+        json!({"root": library.display().to_string()}),
+    )
+    .unwrap_err();
+    assert!(err.contains("confirm"), "{err}");
+    // 批量给同一个 out 会互相覆盖，先拒绝。
+    let err = call(
+        "aevum_batch_run",
+        json!({"root": library.display().to_string(), "confirm": true,
+               "out": temp.path().join("one.mp4").display().to_string()}),
+    )
+    .unwrap_err();
+    assert!(err.contains("out"), "{err}");
+
+    let out = ok(
+        "aevum_batch_run",
+        json!({
+            "root": library.display().to_string(),
+            "confirm": true,
+            "fps": 5, "crf": 30, "preset": "ultrafast",
+        }),
+    );
+    assert_eq!(out["scanned"], 3, "{out}");
+    assert_eq!(out["queued"], 3, "{out}");
+    assert_eq!(out["ok"], 2, "{out}");
+    assert_eq!(out["failed"], 1, "{out}");
+
+    let items = out["items"].as_array().expect("items 是数组");
+    let mut finished = 0;
+    for item in items {
+        let root = item["root"].as_str().unwrap_or_default();
+        match item["status"].as_str().unwrap_or_default() {
+            "完成" => {
+                finished += 1;
+                let file = PathBuf::from(item["out"].as_str().expect("成片路径"));
+                assert!(file.is_file(), "报完成但成片不在：{}", file.display());
+            }
+            "失败" => {
+                assert!(root.ends_with("c_broken"), "坏的应该是 c_broken：{root}");
+                let note = item["note"].as_str().unwrap_or_default();
+                assert!(!note.is_empty(), "失败必须带原因：{item}");
+            }
+            other => panic!("意料之外的状态 {other}：{item}"),
+        }
+    }
+    assert_eq!(finished, 2, "两段真的写完：{out}");
+
+    // 默认先清空队列：上一批的残留不许混进来。
+    let again = ok(
+        "aevum_batch_run",
+        json!({
+            "root": library.join("a_first").display().to_string(),
+            "confirm": true, "fps": 5, "crf": 30, "preset": "ultrafast",
+        }),
+    );
+    assert_eq!(again["scanned"], 1, "{again}");
+    assert_eq!(again["cleared"], 3, "默认清空上一批：{again}");
+    assert_eq!(again["ok"], 1, "{again}");
 }

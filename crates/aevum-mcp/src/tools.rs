@@ -43,7 +43,7 @@ use aevum_core::preview;
 use aevum_core::project;
 use aevum_core::queue::{self, QueueItem, QueueStatus};
 use aevum_core::retime::{self, Retime, SpeedKey};
-use aevum_core::sequence::Sequence;
+use aevum_core::sequence::{Sequence, SequenceError, is_supported_extension};
 use aevum_core::warp::{self, Framing};
 use aevum_core::watermark::Watermark;
 use aevum_core::xmp;
@@ -125,6 +125,8 @@ fn dispatch_inner(session: &mut Session, id: &str, args: &Value) -> Result<Value
         "aevum_queue_run" => queue_run(session, args),
         "aevum_queue_status" => queue_status(session),
         "aevum_queue_cancel" => queue_cancel(session),
+        "aevum_sequences_scan" => sequences_scan(session, args),
+        "aevum_batch_run" => batch_run(session, args),
         "aevum_journal_list" => journal_list(session, args),
         other => Err(format!("未知工具：{}", clip_echo(other))),
     }
@@ -2596,6 +2598,29 @@ fn queue_add(session: &mut Session, args: &Value) -> Result<Value, String> {
         Some(text) => absolute(Path::new(text))?,
         None => session.require_root()?,
     };
+    let item = queue_item_from_args(&root, args)?;
+    let index = queue::add(&mut session.queue, item)?;
+    session.save_queue()?;
+    let mut out = queue_json(session);
+    if let Some(object) = out.as_object_mut() {
+        object.insert("added".to_owned(), json!(index + 1));
+    }
+    Ok(out)
+}
+
+/// 一份渲染规格：`queue_add` 与 `aevum_batch_run` **共用这一份校验**。
+///
+/// 差别只有一处：`out` 省略时都默认落在序列目录下的 `<名字>_成片.mp4`。共用不是为了
+/// 省代码，是为了不让「加一条」和「加一批」对同一个参数给出两套口径——R4 的教训
+/// （一条文件只许一套判断）搬到参数上就是：一个参数只许一套判断。
+///
+/// One render spec: `queue_add` and `aevum_batch_run` **share this single validation pass**.
+///
+/// The only difference is that both default `out` to `<name>_成片.mp4` inside the sequence
+/// directory when it is omitted. Sharing is not about saving code: it stops "add one" and
+/// "add a batch" from reaching two verdicts about the same argument -- the R4 lesson (one
+/// file, one verdict) applied to arguments: one argument, one verdict.
+fn queue_item_from_args(root: &Path, args: &Value) -> Result<QueueItem, String> {
     let name = root
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -2651,7 +2676,7 @@ fn queue_add(session: &mut Session, args: &Value) -> Result<Value, String> {
         }
         None => String::new(),
     };
-    let item = QueueItem {
+    Ok(QueueItem {
         root: root.display().to_string(),
         out: out.display().to_string(),
         width,
@@ -2664,14 +2689,7 @@ fn queue_add(session: &mut Session, args: &Value) -> Result<Value, String> {
         resume,
         copy,
         ..QueueItem::default()
-    };
-    let index = queue::add(&mut session.queue, item)?;
-    session.save_queue()?;
-    let mut out = queue_json(session);
-    if let Some(object) = out.as_object_mut() {
-        object.insert("added".to_owned(), json!(index + 1));
-    }
-    Ok(out)
+    })
 }
 
 fn queue_remove(session: &mut Session, args: &Value) -> Result<Value, String> {
@@ -2712,6 +2730,14 @@ fn queue_run(session: &mut Session, args: &Value) -> Result<Value, String> {
     if session.queue.is_empty() {
         return Err("队列是空的：先用 aevum_queue_add 加入序列".to_owned());
     }
+    run_queue_now(session, args)
+}
+
+/// 真正跑队列：`queue_run` 与 `aevum_batch_run` 共用，前置检查由调用方做。
+///
+/// Actually run the queue: shared by `queue_run` and `aevum_batch_run`, with the pre-checks
+/// left to the caller.
+fn run_queue_now(session: &mut Session, args: &Value) -> Result<Value, String> {
     let ffmpeg = export::find_ffmpeg()
         .ok_or_else(|| "找不到 ffmpeg（设 AEVUM_FFMPEG 或加进 PATH）".to_owned())?;
     let background = opt_bool(args, "background")?.unwrap_or(false);
@@ -2813,6 +2839,232 @@ fn queue_cancel(session: &mut Session) -> Result<Value, String> {
         "cancel_requested": session.shared.cancel_requested(),
         "note": "取消只停住还没写完的段；已完成的段保留结果。"
     }))
+}
+
+/// 扫到的一条序列。
+///
+/// One sequence found by the scan.
+struct FoundSeq {
+    root: PathBuf,
+    name: String,
+    frames: usize,
+    first: Option<String>,
+    last: Option<String>,
+}
+
+/// 枚举目录下的序列：根目录自己 + 往下 `depth` 层子目录，`Sequence::open` 认得的就是。
+///
+/// 隐藏目录（`.` 开头——序列自己的 `.aevum` 就在里面）直接跳过；一旦某个目录能开成
+/// 序列就不再往里钻（序列的父目录里是帧，不是序列）。第二项返回「看着像序列却读不出来」
+/// 的目录与原因：有图但解不开值得说出来，纯空文件夹不值得。
+///
+/// Enumerate sequences under a directory: the root itself plus subdirectories down to
+/// `depth` levels; whatever `Sequence::open` accepts counts as one.
+///
+/// Hidden directories (leading `.` -- where a sequence keeps its own `.aevum`) are skipped
+/// outright, and once a directory opens as a sequence the walk does not descend into it (the
+/// children are frames, not sequences). The second value lists directories that *looked* like
+/// sequences but would not read, with the reason: "there are images but they will not open"
+/// deserves saying, while an empty folder does not.
+fn scan_sequences(root: &Path, depth: usize) -> (Vec<FoundSeq>, Vec<(PathBuf, String)>) {
+    let mut found = Vec::new();
+    let mut skipped = Vec::new();
+    scan_into(root, depth, &mut found, &mut skipped);
+    found.sort_by(|a, b| a.root.cmp(&b.root));
+    skipped.sort_by(|a, b| a.0.cmp(&b.0));
+    (found, skipped)
+}
+
+fn scan_into(
+    dir: &Path,
+    depth: usize,
+    found: &mut Vec<FoundSeq>,
+    skipped: &mut Vec<(PathBuf, String)>,
+) {
+    match Sequence::open(dir) {
+        Ok(seq) => {
+            found.push(FoundSeq {
+                root: dir.to_path_buf(),
+                name: seq.name(),
+                frames: seq.len(),
+                first: seq.frames.first().map(|f| f.path.display().to_string()),
+                last: seq.frames.last().map(|f| f.path.display().to_string()),
+            });
+            return;
+        }
+        Err(SequenceError::Io(e)) => {
+            skipped.push((dir.to_path_buf(), format!("读取目录失败：{e}")));
+            return;
+        }
+        Err(e) => {
+            // 只有「确实有图」才记一笔：普通文件夹的 `Empty` 不是缺陷。
+            //
+            // Record only when images are actually present: `Empty` on an ordinary folder
+            // is not a defect.
+            if has_frame_file(dir) {
+                skipped.push((dir.to_path_buf(), e.to_string()));
+            }
+        }
+    }
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut children: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .filter(|p| {
+            !p.file_name()
+                .map(|n| n.to_string_lossy().starts_with('.'))
+                .unwrap_or(false)
+        })
+        .collect();
+    children.sort();
+    for child in children {
+        scan_into(&child, depth - 1, found, skipped);
+    }
+}
+
+/// 目录里有没有一张「我们认的」图（不看它能不能解码）。
+///
+/// Whether the directory holds at least one file we recognise as an image, decodable or not.
+fn has_frame_file(dir: &Path) -> bool {
+    fs::read_dir(dir)
+        .map(|entries| {
+            entries.flatten().any(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| is_supported_extension(&ext.to_string_lossy()))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn scan_depth(args: &Value) -> Result<usize, String> {
+    let depth = opt_u32(args, "depth")?.unwrap_or(1) as usize;
+    if depth > 4 {
+        return Err("depth 必须在 0..=4（0 = 只看这个目录自己）".to_owned());
+    }
+    Ok(depth)
+}
+
+/// `aevum_sequences_scan`：只看不写，不需要 confirm。
+///
+/// `aevum_sequences_scan`: read-only, no `confirm` needed.
+fn sequences_scan(_session: &mut Session, args: &Value) -> Result<Value, String> {
+    let root = absolute(Path::new(&arg_str(args, "root")?))?;
+    if !root.is_dir() {
+        return Err(format!("不是文件夹：{}", echo_path(&root)));
+    }
+    let depth = scan_depth(args)?;
+    let (found, skipped) = scan_sequences(&root, depth);
+    Ok(json!({
+        "root": root.display().to_string(),
+        "depth": depth,
+        "count": found.len(),
+        "sequences": found
+            .iter()
+            .map(|s| {
+                json!({
+                    "name": s.name,
+                    "root": s.root.display().to_string(),
+                    "frames": s.frames,
+                    "first": s.first,
+                    "last": s.last,
+                })
+            })
+            .collect::<Vec<_>>(),
+        "skipped": skipped
+            .iter()
+            .map(|(dir, why)| json!({"root": dir.display().to_string(), "reason": why}))
+            .collect::<Vec<_>>(),
+        "note": "skipped 是「目录里有图但读不出来」的条目；空文件夹不算。depth=0 只看这个目录自己。",
+    }))
+}
+
+/// `aevum_batch_run`：扫一批 → 全部入队 → 直接跑，一次调用给出逐段结果。
+///
+/// 无人值守场景要的就是这个：调用方给一个父目录，拿回「几段成功、几段失败、每段为什么」。
+/// 默认**先清空队列**（`append: true` 才往后追加）——「跑这个目录下所有序列」如果混进
+/// 上一批的残留，结果就没法看。规格先整批校验再动队列：半批入队比一批不进去更难收拾。
+///
+/// `aevum_batch_run`: scan a batch, enqueue all of it, run it, and return per-item results in
+/// one call. That is exactly what unattended use needs: the caller passes a parent directory
+/// and gets back how many succeeded, how many failed and why. The queue is **cleared first**
+/// by default (`append: true` appends instead), because "render every sequence under this
+/// directory" contaminated by leftovers from the previous batch is unreadable. All specs are
+/// validated before the queue is touched: half a batch enqueued is harder to clean up than
+/// none.
+fn batch_run(session: &mut Session, args: &Value) -> Result<Value, String> {
+    if !confirm(args) {
+        return Err("aevum_batch_run 会批量入队并写视频，需参数 confirm: true".to_owned());
+    }
+    if session.is_running() {
+        return Err("已有后台任务正在运行，先看 aevum_queue_status 或调用 aevum_cancel".to_owned());
+    }
+    let root = absolute(Path::new(&arg_str(args, "root")?))?;
+    if !root.is_dir() {
+        return Err(format!("不是文件夹：{}", echo_path(&root)));
+    }
+    let depth = scan_depth(args)?;
+    let (found, skipped) = scan_sequences(&root, depth);
+    if found.is_empty() {
+        return Err(format!("这个目录下没扫到序列：{}", echo_path(&root)));
+    }
+    // 一条 out 对一批序列只会互相覆盖，直接拒绝比「最后一段赢」好收拾。
+    //
+    // One `out` across a batch would overwrite itself, so refuse rather than let the last
+    // item win.
+    if found.len() > 1 && opt_str(args, "out")?.is_some() {
+        return Err("批量跑时不要给 out：每段默认写 <序列目录>/<名字>_成片.mp4".to_owned());
+    }
+    let mut items = Vec::with_capacity(found.len());
+    for s in &found {
+        items.push(queue_item_from_args(&s.root, args)?);
+    }
+    session.ensure_queue_loaded();
+    let append = opt_bool(args, "append")?.unwrap_or(false);
+    let cleared = if append {
+        0
+    } else {
+        let n = session.queue.len();
+        session.queue.clear();
+        n
+    };
+    let mut queued = 0usize;
+    for item in items {
+        queue::add(&mut session.queue, item)?;
+        queued += 1;
+    }
+    session.save_queue()?;
+    let mut out = run_queue_now(session, args)?;
+    if let Some(object) = out.as_object_mut() {
+        object.insert("root".to_owned(), json!(root.display().to_string()));
+        object.insert("depth".to_owned(), json!(depth));
+        object.insert("scanned".to_owned(), json!(found.len()));
+        object.insert("queued".to_owned(), json!(queued));
+        object.insert("cleared".to_owned(), json!(cleared));
+        object.insert(
+            "skipped".to_owned(),
+            json!(
+                skipped
+                    .iter()
+                    .map(|(dir, why)| json!({"root": dir.display().to_string(), "reason": why}))
+                    .collect::<Vec<_>>()
+            ),
+        );
+        object.insert(
+            "note".to_owned(),
+            json!(
+                "items 里每段带状态与失败原因；ok/failed 是段数。skipped 是目录里有图却读不出来的条目。"
+            ),
+        );
+    }
+    Ok(out)
 }
 
 /// 逐段渲染；段与段之间检查取消，段内由导出层逐帧检查。
@@ -4257,6 +4509,41 @@ fn build_commands() -> Vec<Command> {
             id: "aevum_queue_cancel",
             description: "请求取消正在渲染的队列；已完成的段保留结果，未开始的段保持待渲。",
             input_schema: object(json!({}), &[]),
+        },
+        Command {
+            id: "aevum_sequences_scan",
+            description: "枚举目录下的序列（只看不写）：根目录自己 + 往下 depth 层子目录；同时列出「有图却读不出来」的目录与原因。",
+            input_schema: object(
+                json!({
+                    "root": {"type": "string", "description": "父目录；序列通常是它的子目录"},
+                    "depth": {"type": "integer", "minimum": 0, "maximum": 4, "default": 1, "description": "往下找几层；0 = 只看这个目录自己"}
+                }),
+                &["root"],
+            ),
+        },
+        Command {
+            id: "aevum_batch_run",
+            description: "无人值守批量：扫目录下所有序列 → 入队 → 直接渲染，一次调用返回逐段结果（成功数/失败数/每段原因）。默认先清空队列，append=true 才追加。",
+            input_schema: object(
+                json!({
+                    "root": {"type": "string", "description": "父目录；下面的序列全部参与"},
+                    "depth": {"type": "integer", "minimum": 0, "maximum": 4, "default": 1, "description": "往下找几层；0 = 只看这个目录自己"},
+                    "confirm": {"type": "boolean", "description": "批量写操作必须为 true"},
+                    "append": {"type": "boolean", "default": false, "description": "true 时保留队列里已有的段并追加；默认先清空"},
+                    "background": {"type": "boolean", "default": false, "description": "true 时后台渲染并立即返回，用 aevum_queue_status 查进度"},
+                    "out": {"type": "string", "description": "只在扫到单条序列时可用；多条时省略（每段默认写 <序列目录>/<名字>_成片.mp4）"},
+                    "width": {"type": "integer", "minimum": 2, "description": "精确输出宽（偶数，需与 height 同时给；省略=原生）"},
+                    "height": {"type": "integer", "minimum": 2, "description": "精确输出高（偶数，需与 width 同时给；省略=原生）"},
+                    "fps": {"type": "number", "exclusiveMinimum": 0, "maximum": 240, "default": 24},
+                    "codec": {"type": "string", "enum": ["h265", "h264"], "default": "h265"},
+                    "crf": {"type": "integer", "minimum": 0, "maximum": 51, "default": 18},
+                    "preset": {"type": "string", "default": "medium", "description": "x264/x265 速度档：ultrafast…veryslow"},
+                    "keep_frames": {"type": "boolean", "default": false, "description": "编码后保留中间帧"},
+                    "resume": {"type": "boolean", "default": false, "description": "断点续跑：已经写完的帧原样留着，这一趟只补没写出来的那些"},
+                    "copy": {"type": "string", "description": "各段统一改用序列工程里某套命名调色副本渲染；省略用工程主调色"}
+                }),
+                &["root", "confirm"],
+            ),
         },
     ]
 }

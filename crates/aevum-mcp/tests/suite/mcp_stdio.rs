@@ -49,6 +49,8 @@ const TOOLS: &[&str] = &[
     "aevum_queue_run",
     "aevum_queue_status",
     "aevum_queue_cancel",
+    "aevum_sequences_scan",
+    "aevum_batch_run",
 ];
 
 struct Server {

@@ -239,6 +239,10 @@ pub const TOOL_ROUTES: &[ToolRoute] = &[
     route("aevum_queue_run", "queue.run"),
     route("aevum_queue_status", "queue.status"),
     route("aevum_queue_cancel", "queue.cancel"),
+    // 跨序列编排只在 server 侧：GUI 的队列面板是「一条一条加」，没有「扫一个目录全加进来」
+    // 这一档命令，也没有「跑完给一份逐段汇总」的入口。
+    route_only_server("aevum_sequences_scan"),
+    route_only_server("aevum_batch_run"),
 ];
 
 /// 工具名 → 附着模式的命令 ID。
@@ -332,7 +336,7 @@ mod tests {
 
     #[test]
     fn every_tool_appears_once_and_points_at_a_real_command() {
-        assert_eq!(TOOL_ROUTES.len(), 39, "服务模式共 39 个工具");
+        assert_eq!(TOOL_ROUTES.len(), 41, "服务模式共 41 个工具");
         let mut seen = HashSet::new();
         for route in TOOL_ROUTES {
             assert!(route.tool.starts_with(TOOL_PREFIX), "{}", route.tool);

@@ -8,7 +8,7 @@ window: **align → composite → crop (with camera motion) → color grade → 
 (speed ramps & motion blur)**. Each step feeds the next automatically; drop a file or
 folder onto the window and it switches to the right module.
 
-> **Current version**: `1.6.0`: core features work and are pinned by numeric golden
+> **Current version**: `1.7.0`: core features work and are pinned by numeric golden
 > tests, and the four compatibility promises under "Versioning" (project format / presets and
 > parameters / command line / MCP tools) take effect from this release. Per-version changes and
 > known limitations live in `docs/发布说明-v1.0.0.en.md` and `CHANGELOG.en.md`.
@@ -67,7 +67,7 @@ whole point.
   platform delivery presets (Douyin / WeChat Channels / Xiaohongshu / Bilibili / master:
   frame, rate, encoder and quality in one click, from an editable table — no rebuild to retune);
   HDR stills go out as AVIF 10bit + PQ (203-nit reference white, BT.2020, full range)
-- **AI Agent control plane**: a built-in MCP stdio server (39 `aevum_*` tools), plus a
+- **AI Agent control plane**: a built-in MCP stdio server (41 `aevum_*` tools), plus a
   loopback HTTP proxy that forwards headless MCP calls to a running GUI (attach mode,
   exposing all 77 GUI commands with live UI updates)
 - **Numeric goldens**: the Python reference (`acceptance/reference/grade.py`) mirrors the Rust pipeline
@@ -93,7 +93,7 @@ presets are read directly. The difference is the *sequence*:
 | HDR / stacking | manual, script-driven stacking in PS | multi-frame merge feeds straight into the develop chain |
 | video output | LRT → LR → AE/PR, three hops | direct mp4 export (H.264 / H.265 10-bit HDR), batch render queue |
 | grading parameters | XMP presets | the same XMP (`crs:` keys) + keyframes inside the project |
-| automation | — | a built-in MCP control plane: 39 tools an AI agent can drive directly |
+| automation | — | a built-in MCP control plane: 41 tools an AI agent can drive directly |
 | licence | subscription | MIT, free and open source |
 
 One sentence: **single-photo retouching remains Lightroom / Photoshop territory;
@@ -185,7 +185,7 @@ two consecutive freezes must be byte-identical.
 ## Versioning
 
 `Cargo.toml` is the single source of truth for the version; the current release is
-`1.6.0`. That is the first stable release; from here every fix or feature bump gets a tag,
+`1.7.0`. That is the first stable release; from here every fix or feature bump gets a tag,
 and there is nothing to migrate from the `0.x` tags.
 
 **Compatibility promises start with `1.0.0`** and hold for the whole 1.x series — the

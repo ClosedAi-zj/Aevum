@@ -15,6 +15,43 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.7.0 — 2026-11-04
+
+Feature release: cross-sequence batch orchestration on the AI-agent side, plus a fix for a RAW
+fidelity report that could mislead.
+
+### Cross-sequence batch orchestration (MCP)
+
+A dozen timelapses under one directory used to mean letting the agent loop "open, tweak,
+export" -- and after a dozen rounds nobody knew which sequence it was on. Two new tools:
+
+- `aevum_sequences_scan`: read-only. Hand it a parent directory and it returns every sequence
+  below it (name, frame count, first and last frame) plus the directories that hold images but
+  will not open, with the reason; `depth` controls how far down it looks.
+- `aevum_batch_run`: scan, validate the whole batch, enqueue, render -- and **one call** returns
+  how many succeeded, how many failed and why. The queue is cleared first by default
+  (`append: true` appends); a failure's reason lands in that item's `note`. With
+  `background: true` the call returns immediately; poll `aevum_queue_status` and cancel with
+  `aevum_cancel`.
+
+Tool count 39 -> 41. **Please refresh `tools/list` in your MCP client after upgrading.**
+
+### Fixed: the info panel reported RAW fidelity that disagreed with the decode
+
+On a Canon CR3 and four Panasonic RW2 samples the info panel reported "camera embedded JPEG
+preview (8-bit)" while the actual decode returned 16-bit sensor data (the CR3 even differed in
+size by 22x14 pixels). Two consequences: users assumed there was no headroom left to edit, and
+"apply camera profile" refused on that basis. The cause was two separate judgements -- one in the
+info panel, one in the decoder. They are now one: whether it decodes, how large it is and where
+the black/white levels sit all come from a single place, and what each sample is expected to
+produce is a registered table -- an unregistered new sample fails loudly instead of drifting.
+
+### Compatibility
+
+The four public contracts (project format / presets and parameters / command line / MCP tool set)
+remain add-only: no existing tool changed its name, input schema or result shape this round; two
+tools were appended.
+
 ## v1.6.0 — 2026-11-04
 
 Feature release: two new features -- platform delivery presets and deflicker pre-alignment

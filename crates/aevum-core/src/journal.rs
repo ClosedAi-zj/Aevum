@@ -100,6 +100,7 @@ pub fn is_write_op(op: &str) -> bool {
             | "aevum_queue_remove"
             | "aevum_queue_clear"
             | "aevum_queue_run"
+            | "aevum_batch_run"
             | "aevum_project_save"
     )
 }
