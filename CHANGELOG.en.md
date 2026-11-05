@@ -15,6 +15,36 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.9.3 — 2026-11-05
+
+Patch release: two updater failures that only appear on a real machine. **If your install path
+contains Chinese characters or spaces (`D:\软件\Aevum\`, or a Chinese user name such as
+`C:\Users\张三\...`), take this one** -- the previous build answers an update click with
+"nothing happened".
+
+### Updating failed silently under a Chinese path (fixed)
+
+- Cause: the replacement batch carried the install path inline, but `cmd` decodes a batch file
+  with the system code page (936 on Chinese Windows) while the app writes UTF-8. One Chinese
+  character in the path and both `if exist` and `move` miss their target; the errors were
+  swallowed and the script rolled back silently after fifteen retries.
+- Paths now travel to the batch as command-line arguments; the body carries no path at all.
+
+### Updating started too early when launched from a terminal (fixed)
+
+- Cause: the script uses `tasklist | find` to wait for the app to exit. With a Unix `find` on
+  `PATH` (any machine with Git/MSYS) that test fails outright and the swap starts while the app
+  is still running.
+- System tools are now spelled as absolute `%SystemRoot%\System32` paths, so `PATH` no longer
+  matters.
+
+### Also
+
+- New update-chain harness (developer-facing): runs 下载 → 校验 → 解包 → 替换 → 回滚 against a
+  local fake release, four modes, see `docs/分发与更新.en.md` §6.2.
+
+---
+
 ## v1.9.2 — 2026-11-05
 
 Feature release: closes the last "installed but unreachable" gap -- the built-in updater

@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.9.2"
+version = "1.9.3"
 edition = "2024"
 rust-version = "1.89"  # 界面代码用了 let-chain（1.88 起）；1.89 的下限来自 rawler 0.8（见下）
 license = "MIT"
