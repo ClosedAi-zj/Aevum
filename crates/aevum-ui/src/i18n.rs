@@ -364,36 +364,125 @@ impl Lang {
             .map(Lang::of)
     }
 
-    /// 读取系统语言。Windows 上 `LANG` 常常不存在，所以再看 `LC_ALL` / `LC_MESSAGES`。
+    /// 读取系统界面语言。Windows 上问系统 API，其余平台（以及 API 失败时）退回
+    /// `LC_ALL` / `LC_MESSAGES` / `LANG` 三个环境变量。
+    ///
+    /// 为什么不能只读环境变量：Windows 双击启动时它们通常不存在，于是永远退回中文；
+    /// 而从终端启动时 Git/MSYS 之类的 shell 会注入 `LANG=en_US.UTF-8`，同一台中文机器
+    /// 就变成英文。两者都不是「跟随系统」。系统语言优先，环境变量只是回退。
     ///
     /// 三种写法都认：`ja`、`ja-JP`、`ja_JP.UTF-8`。都不认识时退到 [`Lang::default`]
     /// （中文）——本项目的主要用户群在中文环境里，猜错的代价比反过来小。
     ///
-    /// Read the system language. On Windows `LANG` is often absent, so `LC_ALL` /
-    /// `LC_MESSAGES` are checked too.
+    /// Read the system UI language. On Windows it asks the OS; on other platforms
+    /// (and when the API fails) it falls back to `LC_ALL` / `LC_MESSAGES` / `LANG`.
+    ///
+    /// Why environment variables alone do not work: a double-click launch on Windows
+    /// has none of them, so it always falls back to Chinese, while a terminal launch
+    /// may inject `LANG=en_US.UTF-8` and turn the same Chinese machine English.
+    /// Neither follows the system. The OS answer wins; the variables are a fallback.
     ///
     /// All three shapes are accepted: `ja`, `ja-JP`, `ja_JP.UTF-8`. When nothing is
     /// recognised the answer is [`Lang::default`] (Chinese): the project's main
     /// audience is in a Chinese environment and a wrong guess costs less that way.
     pub fn from_system() -> Lang {
-        for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
-            let Some(v) = std::env::var_os(key) else {
-                continue;
-            };
-            let v = v.to_string_lossy().to_ascii_lowercase();
-            // 整串先试（`zh-cn` 这种别名带连字符，拆开会丢）；再拆主语言码
-            // （`ja_JP.UTF-8` → `ja`）。顺序不能反：反了 `zh-cn` 会先被拆成 `zh`，
-            // 虽然结果一样，但别名表就白建了。
-            if let Some(l) = Lang::from_code(&v) {
-                return l;
-            }
-            let primary = v.split(['.', '_', '-']).next().unwrap_or("");
-            if let Some(l) = Lang::from_code(primary) {
-                return l;
-            }
-        }
-        Lang::default()
+        #[cfg(windows)]
+        let win = windows_ui_locale();
+        #[cfg(not(windows))]
+        let win: Option<String> = None;
+        let vars = locale_vars();
+        let refs: Vec<Option<&str>> = vars.iter().map(|v| v.as_deref()).collect();
+        resolve_system(win.as_deref(), &refs)
     }
+}
+
+/// 环境里那三个语言变量，按原有优先级取回。
+///
+/// The three language variables from the environment, in the original priority order.
+fn locale_vars() -> [Option<String>; 3] {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .map(|k| std::env::var_os(k).map(|v| v.to_string_lossy().into_owned()))
+}
+
+/// 语言码字符串 → 已注册语言。整串先试（别名带连字符），再拆主码（`ja_JP.UTF-8` → `ja`）。
+///
+/// 顺序不能反：反了 `zh-cn` 会先被拆成 `zh`，虽然结果一样，别名表就白建了。
+/// 判定仍然只走 [`Lang::from_code`] 那张注册表，加一种语言不必碰这里。
+///
+/// Locale string to registered language: try the whole string first (aliases carry
+/// hyphens), then the primary subtag (`ja_JP.UTF-8` -> `ja`). Reversing the order
+/// would split `zh-cn` into `zh` and make the alias table pointless. Resolution
+/// still goes through [`Lang::from_code`]'s registry, so adding a language never
+/// touches this function.
+fn from_locale(s: &str) -> Option<Lang> {
+    let v = s.trim().to_ascii_lowercase();
+    if let Some(l) = Lang::from_code(&v) {
+        return Some(l);
+    }
+    let primary = v.split(['.', '_', '-']).next().unwrap_or_default();
+    Lang::from_code(primary)
+}
+
+/// 把「系统 UI 语言 + 环境变量」解析成具体语言。系统优先，环境变量是回退。
+///
+/// 抽成纯函数是为了能在测试里注入：本机是中文系统但 shell 注入 `LANG=en_US.UTF-8`，
+/// 这种组合在真实机器上才有，写成断言才拦得住「只看环境变量」的回归。
+///
+/// Resolve the system UI language plus environment variables into a concrete language.
+/// The OS answer wins; the variables are only a fallback. A pure function so tests can
+/// inject "Chinese OS + LANG=en_US.UTF-8", a combination that only occurs on a real
+/// machine and is what catches a regression to environment-only detection.
+fn resolve_system(windows: Option<&str>, vars: &[Option<&str>]) -> Lang {
+    if let Some(l) = windows.and_then(from_locale) {
+        return l;
+    }
+    for v in vars.iter().flatten() {
+        if let Some(l) = from_locale(v) {
+            return l;
+        }
+    }
+    Lang::default()
+}
+
+/// Windows 用户默认 UI 语言的 BCP-47 名（"zh-CN" / "en-US"）。
+///
+/// `GetUserDefaultUILanguage` 给 LANGID，`LCIDToLocaleName` 转成 BCP-47 字符串；
+/// 之后照常喂给 [`Lang::from_code`]，所以这里没有任何语言名，加语言只改注册表。
+/// 两个函数都在 kernel32（系统默认链接库），不需要新依赖——`export_bench.rs` 的
+/// `GetProcessTimes` 也是这么内联声明的。
+///
+/// The Windows user-default UI language as a BCP-47 name ("zh-CN" / "en-US").
+/// `GetUserDefaultUILanguage` returns a LANGID and `LCIDToLocaleName` converts it;
+/// the result goes through [`Lang::from_code`], so no language is named here.
+/// Both live in kernel32 (linked by default), so there is no new dependency --
+/// `export_bench.rs` declares `GetProcessTimes` the same way.
+#[cfg(windows)]
+fn windows_ui_locale() -> Option<String> {
+    unsafe extern "system" {
+        fn GetUserDefaultUILanguage() -> u16;
+        fn LCIDToLocaleName(lcid: u32, name: *mut u16, cch: i32, flags: u32) -> i32;
+    }
+    // winnt.h: LOCALE_NAME_MAX_LENGTH = 85（含结尾 NUL）。
+    // winnt.h: LOCALE_NAME_MAX_LENGTH is 85, including the trailing NUL.
+    const MAX: usize = 85;
+    // SAFETY: 两个调用都是 kernel32 的无状态查询；buf 是长度 MAX 的 u16 数组，
+    // cch 传的就是它的长度，且返回长度含 NUL，切片时减一。调用失败返回 0。
+    // SAFETY: both are stateless kernel32 queries; buf is a MAX-element u16 array,
+    // cch is exactly its length, and the returned length includes the NUL we drop.
+    // A failed call returns 0.
+    let lang_id = unsafe { GetUserDefaultUILanguage() };
+    if lang_id == 0 {
+        return None;
+    }
+    // MAKELCID(langid, SORT_DEFAULT)：SORT_DEFAULT 为 0，低 16 位原样即可。
+    // MAKELCID(langid, SORT_DEFAULT): SORT_DEFAULT is 0, so the low 16 bits suffice.
+    let mut buf = [0u16; MAX];
+    let n = unsafe { LCIDToLocaleName(u32::from(lang_id), buf.as_mut_ptr(), MAX as i32, 0) };
+    if n <= 1 || n as usize > MAX {
+        return None;
+    }
+    let name = String::from_utf16_lossy(&buf[..n as usize - 1]);
+    (!name.trim().is_empty()).then_some(name)
 }
 
 /// 设置里存的偏好：跟随系统，或钉死某一种。
@@ -985,6 +1074,70 @@ mod tests {
                     cat.code
                 );
             }
+        }
+    }
+
+    /// 「跟随系统」必须真的跟随系统：系统 UI 语言优先于 shell 注入的环境变量。
+    ///
+    /// 本机实测过这个组合：Windows 是 zh-CN，终端里却有 `LC_ALL=C.UTF-8` 与
+    /// `LANG=en_US.UTF-8`。只看环境变量的旧实现会得 EN（界面变英文），从资源管理器
+    /// 双击又因变量不存在退回 ZH——同一台机器两种语言，都不等于系统语言。
+    ///
+    /// "Follow the system" must really follow the system: the OS UI language wins
+    /// over shell-injected environment variables. Measured on this box: Windows is
+    /// zh-CN while the terminal has `LC_ALL=C.UTF-8` and `LANG=en_US.UTF-8`. The old
+    /// environment-only implementation returned EN there, and fell back to ZH on a
+    /// double-click launch with no variables at all -- two languages on one machine.
+    #[test]
+    fn system_language_wins_over_shell_environment() {
+        let none = [None, None, None];
+        assert_eq!(resolve_system(Some("en-US"), &none), Lang::EN);
+        assert_eq!(resolve_system(Some("zh-CN"), &none), Lang::ZH);
+        assert_eq!(resolve_system(Some("  ZH-hans-CN  "), &none), Lang::ZH);
+        // 关键回归：中文系统 + 英文 shell 变量，必须仍是中文。
+        // The regression that matters: Chinese OS plus an English shell stays Chinese.
+        assert_eq!(
+            resolve_system(Some("zh-CN"), &[Some("C.UTF-8"), None, Some("en_US.UTF-8")]),
+            Lang::ZH
+        );
+        // 未注册的语言不猜，回退源语言。
+        // An unregistered language is not guessed: fall back to the source language.
+        assert_eq!(resolve_system(Some("ja-JP"), &none), Lang::ZH);
+        // 非 Windows / 系统 API 失败时，环境变量仍是有效回退。
+        // Without an OS answer the environment variables remain a valid fallback.
+        assert_eq!(
+            resolve_system(None, &[None, None, Some("en_US.UTF-8")]),
+            Lang::EN
+        );
+        assert_eq!(resolve_system(None, &none), Lang::ZH);
+    }
+
+    /// `from_system` 真的接了 Windows 分支，而不是只留着纯函数好看。
+    ///
+    /// 把调用删掉（等价于回退到旧实现）时，本机「系统 zh-CN + LANG=en_US.UTF-8」
+    /// 会让左边得 EN、右边得 ZH，这条当场红。判据不断言系统具体是哪种语言，
+    /// 所以在英文 runner 上也成立。
+    ///
+    /// `from_system` really calls the Windows branch rather than leaving the pure
+    /// function unused. Delete the call (i.e. restore the old implementation) and
+    /// on this box the left side becomes EN while the right stays ZH, so this fails.
+    /// Nothing here assumes which language the OS uses, so it holds on an English
+    /// runner too.
+    #[test]
+    fn from_system_really_reads_the_windows_ui_language() {
+        #[cfg(windows)]
+        let win = windows_ui_locale();
+        #[cfg(not(windows))]
+        let win: Option<String> = None;
+        let vars = locale_vars();
+        let refs: Vec<Option<&str>> = vars.iter().map(|v| v.as_deref()).collect();
+        assert_eq!(Lang::from_system(), resolve_system(win.as_deref(), &refs));
+        #[cfg(windows)]
+        {
+            assert!(
+                win.as_deref().is_some_and(|s| !s.trim().is_empty()),
+                "Windows UI 语言查询不该返回空"
+            );
         }
     }
 }
