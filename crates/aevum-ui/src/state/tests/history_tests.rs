@@ -246,6 +246,82 @@ fn crop_drag_adds_exactly_one_step_and_zero_per_intermediate_frame() {
     );
 }
 
+/// 慢拖：拖动中手停下来超过合并容差，也必须仍然只是 1 步。
+///
+/// 这是用户截图「10 条全是裁剪 4000 × 6000」的**直接回归**：v1.9.7 的合并只看
+/// `frame - tip.frame <= MERGE_FRAME_TOLERANCE`（30 帧 ≈ 半秒），手一停就另起一条。
+/// 修法是拖动序号（epoch）：一次 `crop_begin` 到 `crop_end` 之间不论停多少帧，
+/// 所有落账都带同一个序号，因此恒为一步。
+///
+/// 本测试在旧判据下必然红（每次停顿都会 +1），是这条修复的判别项。
+///
+/// Slow drag: pausing inside one drag for longer than the merge tolerance must still
+/// yield exactly one step.
+///
+/// This is the direct regression for the user's "ten rows all crop 4000 x 6000"
+/// screenshot: v1.9.7 merged only on `frame - tip.frame <= MERGE_FRAME_TOLERANCE`
+/// (30 frames ~= half a second), so any pause started a new row. The fix is the drag
+/// serial (epoch): everything between one `crop_begin` and its `crop_end` carries the
+/// same serial and therefore always folds into one step.
+///
+/// This test necessarily fails under the old criterion (each pause adds one), which is
+/// what makes it the discriminator for this fix.
+#[test]
+fn a_paused_crop_drag_is_still_one_history_step() {
+    use crate::history::MERGE_FRAME_TOLERANCE;
+
+    let mut state = AppState::new();
+    state.resolution = Some((4000, 6000));
+    let base = state.history.steps().len();
+
+    state.history.begin_frame();
+    state.crop_begin([100.0, 100.0], crop::Hit::Outside);
+    state.history_commit();
+
+    // 六段，每段之间插「空转帧」——比容差多 1 帧，模拟手停半秒以上。
+    //
+    // Six segments, each separated by idle frames -- one more than the tolerance, which
+    // simulates a pause longer than half a second.
+    let idle = (MERGE_FRAME_TOLERANCE + 1) as u32;
+    let mut k = 0u32;
+    for seg in 0..6u32 {
+        for sub in 0..5u32 {
+            state.history.begin_frame();
+            let x = 200.0 + f64::from(seg * 5 + sub) * 20.0;
+            let y = 300.0 + f64::from(seg * 5 + sub) * 15.0;
+            state.crop_drag_to([x, y]);
+            state.history_commit();
+            k += 1;
+            let _ = k;
+        }
+        for _ in 0..idle {
+            state.history.begin_frame();
+            state.history_commit();
+        }
+        // 停顿之后继续拖同一个框：不许新开一步。
+        state.history.begin_frame();
+        state.crop_drag_to([
+            200.0 + f64::from(seg * 5 + 4) * 20.0 + 10.0,
+            300.0 + f64::from(seg * 5 + 4) * 15.0 + 10.0,
+        ]);
+        state.history_commit();
+        assert_eq!(
+            state.history.steps().len(),
+            base + 1,
+            "第 {seg} 段停顿后仍应只有一步（旧容差判据会在这里多开一条）"
+        );
+    }
+
+    state.history.begin_frame();
+    state.crop_end();
+    state.history_commit();
+    assert_eq!(
+        state.history.steps().len(),
+        base + 1,
+        "整次慢拖净增恰好 1 步"
+    );
+}
+
 /// 诊断用例（不锁死现状，只打印）：复现用户截图「91–100 全是裁剪 4000 × 6000」。
 /// 五个场景各自新建一份状态独立跑，逐帧记录 (frame, 步数, 末条文案, 末条键, 光标)；
 /// 只有场景 A 断言净增 1，其余仅打印，供判断成因。
@@ -317,7 +393,16 @@ fn diagnose_crop_history_spam_reproduction() {
                 f += 1;
             }
         }
-        println!("[B] 净增 = {}", state.history.steps().len() - base);
+        // B 是旧版刷屏的原样复现：旧判据（只看 30 帧容差）这里会得到 6。
+        // 这条断言让「慢拖刷屏」永远回不来。
+        //
+        // B is the exact reproduction of the old spam: under the old criterion (30-frame
+        // tolerance only) this yielded 6. The assertion keeps that regression out forever.
+        assert_eq!(
+            state.history.steps().len() - base,
+            1,
+            "慢拖中途停顿后仍应只有一步（旧判据在这里是 6）"
+        );
     }
 
     // C：每 5 帧 crop_end() + crop_begin()（反复松手）。
@@ -363,6 +448,58 @@ fn diagnose_crop_history_spam_reproduction() {
             dump("D", i64::from(k), &state);
         }
         println!("[D] 净增 = {}", state.history.steps().len() - base);
+    }
+
+    // F：同点反复松手（框尺寸始终不变）——用户截图「10 条全同尺寸」的最像场景。
+    {
+        let mut state = AppState::new();
+        state.resolution = Some((4000, 6000));
+        let base = state.history.steps().len();
+        for _ in 0..10u32 {
+            state.history.begin_frame();
+            state.crop_begin([100.0, 100.0], crop::Hit::Outside);
+            state.history_commit();
+            state.history.begin_frame();
+            state.crop_drag_to([200.0, 300.0]);
+            state.history_commit();
+            state.history.begin_frame();
+            state.crop_end();
+            state.history_commit();
+        }
+        // 框始终一样 = 状态没有变化，历史只该留一条（「无改动不记账」）。
+        // 旧版在这里也恰好是 1，因为帧距都在容差内；真正被修好的是 B 场景。
+        //
+        // An identical box means the state never changed, so history keeps exactly one row
+        // ("no change, no entry"). The old build also gave 1 here because every frame fell
+        // inside the tolerance; what the fix really repaired is scenario B.
+        assert_eq!(
+            state.history.steps().len() - base,
+            1,
+            "框始终相同 = 状态没变，只该留一步"
+        );
+    }
+
+    // G：同一次拖动里坐标完全不动（指针停住但按键未松）——最该被合并的场景。
+    {
+        let mut state = AppState::new();
+        state.resolution = Some((4000, 6000));
+        let base = state.history.steps().len();
+        state.history.begin_frame();
+        state.crop_begin([100.0, 100.0], crop::Hit::Outside);
+        state.history_commit();
+        for _ in 0..10u32 {
+            state.history.begin_frame();
+            state.crop_drag_to([200.0, 300.0]);
+            state.history_commit();
+        }
+        state.history.begin_frame();
+        state.crop_end();
+        state.history_commit();
+        assert_eq!(
+            state.history.steps().len() - base,
+            1,
+            "同一次拖动里坐标不动，只能一步"
+        );
     }
 
     // E：拖动中夹一条 run_ui_command("crop.set")。
