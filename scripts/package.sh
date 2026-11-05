@@ -7,6 +7,7 @@
 #                                       # tools/ffmpeg.exe（上次打包留下的）→ PATH
 #   AEVUM_FFMPEG_SRC=D:/tools/ffmpeg.exe scripts/package.sh
 #   SKIP_CHECK=1 scripts/package.sh     # 只跳过门槛，其余步骤照跑
+#   CARGO_FLAGS= scripts/package.sh     # CI 无依赖缓存，允许联网（本机默认 --offline）
 #
 # 产物：dist/aevum/{aevum.exe, tools/ffmpeg.exe, tools/README-ffmpeg.txt,
 #                      README.md, THIRD-PARTY-NOTICES.txt,
@@ -27,6 +28,15 @@ cd "$ROOT"
 # 本机 gitconfig 里有死代理，cargo 必须临时清掉代理变量。
 CARGO=(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
     -u all_proxy -u ALL_PROXY CARGO_HTTP_PROXY= cargo)
+
+# 与 acceptance/check.sh 用**同一个变量、同一个默认值**：本机依赖已缓存，默认离线；
+# CI 干净 runner 上显式设 CARGO_FLAGS= 才联网。显式空串用 `:-` 会被当成没设，
+# 于是 CI 变成「没缓存还强制 offline」，所以这里必须是 `-`（同上个脚本的教训）。
+# export 是给下面的门槛子进程用：父子必须看到同一个值，不能一个联网一个离线。
+# Same variable and default as acceptance/check.sh: local builds are offline, CI sets
+# CARGO_FLAGS= to allow fetching. `-` (not `:-`) keeps an explicit empty string; exporting
+# it makes the gate child process see the same value as this one.
+export CARGO_FLAGS="${CARGO_FLAGS---offline}"
 
 # 直删目录，不进回收站。
 # 这台机器（CODEBUDDY_SAFE_DELETE_ENABLED=1）的 rm 不真删，而是把文件搬到本盘的
@@ -108,7 +118,8 @@ else
 fi
 
 echo "==> 编译 release"
-"${CARGO[@]}" build -p aevum-studio --release --offline
+# 故意不加引号：CARGO_FLAGS 为空串时展开成零个参数；加引号会给 cargo 一个空参数。
+"${CARGO[@]}" build -p aevum-studio --release $CARGO_FLAGS
 
 echo "==> 组装 $DIST"
 mkdir -p "$DIST/tools"

@@ -1,0 +1,126 @@
+name: release
+
+# 发行包的自动入口：tag 触发时跑**与本机完全相同**的打包链，把 zip 与 SHA256SUMS 直接
+# 发成 GitHub Release；workflow_dispatch 只打包并上传 artifact，用来在打 tag 之前把整条链
+# 在干净的 runner 上验一遍（第一次别拿真 tag 试）。
+# 这里不重抄 acceptance/check.sh 或 scripts/package.sh 的任何一步：CI 与本机必须跑同一个
+# 脚本，否则「本机能过 / CI 不能过」会变成常态。
+#
+# Automated release entry point: a version tag runs exactly the same packaging chain as a
+# local build and publishes the zip plus SHA256SUMS as a GitHub Release. workflow_dispatch
+# only builds and uploads an artifact, so the chain can be verified on a clean runner before
+# any tag is pushed. No step of acceptance/check.sh or scripts/package.sh is copied here:
+# CI and local builds must run the same script.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    env:
+      # CI 没有依赖缓存，允许 cargo 联网解析；本机默认 --offline（同一个变量，见 check.sh）。
+      CARGO_FLAGS: ""
+      # runner 上没有本机那层「删除被拦进回收站」的文件系统钩子，清 bin 只会白跑。
+      AEVUM_SKIP_BIN_PURGE: "1"
+      # 随包 ffmpeg 不进 git（87 MB）。固定 tag、固定文件、对**真正进包的那个 exe**做
+      # 字节校验：上游没有发布 zip 的 checksum 文件，GitHub 的 asset digest 也为空。
+      # 这个 hash 与本机 dist/aevum/tools/ffmpeg.exe 逐字节相同（7.1 essentials GPLv3 构建）。
+      FFMPEG_URL: "https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip"
+      FFMPEG_ZIP_SIZE: "92100272"
+      FFMPEG_EXE_SHA256: "2ce797a0f88d7f067180338fb227f7b1928ea727bd9a4d7a1d022f7c52af71a3"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show
+          rustc --version
+          cargo --version
+
+      - name: ffmpeg (pinned build, byte-verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/ffmpeg"
+          mkdir -p "$work/bin"
+          curl -fL --retry 3 --retry-delay 5 -o "$work/ffmpeg.zip" "$FFMPEG_URL"
+          size="$(wc -c < "$work/ffmpeg.zip" | tr -d '[:space:]')"
+          test "$size" = "$FFMPEG_ZIP_SIZE" || {
+            echo "ffmpeg 构建包大小不对：$size，期望 $FFMPEG_ZIP_SIZE" >&2
+            exit 1
+          }
+          unzip -q -j -o "$work/ffmpeg.zip" '*/bin/ffmpeg.exe' -d "$work/bin"
+          printf '%s  %s\n' "$FFMPEG_EXE_SHA256" "$work/bin/ffmpeg.exe" | sha256sum -c -
+          "$work/bin/ffmpeg.exe" -hide_banner -version | head -n 1
+          echo "AEVUM_FFMPEG_SRC=$(cygpath -m "$work/bin/ffmpeg.exe")" >> "$GITHUB_ENV"
+
+      - name: LGPL source bundle (rawler crate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fetch
+          src="$(ls "$HOME"/.cargo/registry/cache/*/rawler-*.crate 2>/dev/null | sort | tail -n 1 || true)"
+          if [ -z "$src" ] || [ ! -f "$src" ]; then
+            echo "找不到 rawler 的 .crate 源码包；LGPL-2.1 要求随二进制提供对应源码" >&2
+            exit 1
+          fi
+          echo "AEVUM_RAWLER_SRC=$src" >> "$GITHUB_ENV"
+
+      - name: package (same script as local)
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v unzip >/dev/null || { echo "runner 缺 unzip，解压回验做不了" >&2; exit 1; }
+          bash scripts/package.sh
+          ver="$(awk -F'"' '/^version /{print $2; exit}' Cargo.toml)"
+          zip="dist/Aevum-Studio-v${ver}-windows-x64.zip"
+          test -s "$zip"
+          test -s dist/SHA256SUMS
+          ( cd dist && sha256sum -c SHA256SUMS )
+          test -s dist/aevum/licenses/LGPL-2.1-rawler.txt
+          ls dist/aevum/third-party-src/rawler-*.crate >/dev/null 2>&1 || {
+            echo "包里没有 rawler 源码（LGPL-2.1 义务）" >&2
+            exit 1
+          }
+          echo "RELEASE_VER=$ver" >> "$GITHUB_ENV"
+          echo "RELEASE_ZIP=$zip" >> "$GITHUB_ENV"
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aevum-studio-windows-x64
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+      # 只有 tag 才发 Release：workflow_dispatch 到这里就停，产物只作为 artifact 留着。
+      - name: publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          test "$tag" = "v${RELEASE_VER}" || {
+            echo "tag $tag 与 Cargo.toml 的 v${RELEASE_VER} 不一致" >&2
+            exit 1
+          }
+          kind="$(python scripts/release_body.py --kind)"
+          python scripts/release_body.py "$tag" > "$RUNNER_TEMP/body.md"
+          gh release create "$tag" "$RELEASE_ZIP" dist/SHA256SUMS \
+            --title "恒晷 · Aevum Studio ${RELEASE_VER}（${kind}）" \
+            --notes-file "$RUNNER_TEMP/body.md" \
+            --verify-tag
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$RUNNER_TEMP/release.json"
+          python scripts/release_body.py --verify "$RUNNER_TEMP/release.json" "$RELEASE_ZIP"
