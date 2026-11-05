@@ -32,6 +32,36 @@ pub const NAME_CN: &str = "恒晷";
 /// Window title: Chinese and English side by side, separated by a middle dot.
 pub const TITLE: &str = "恒晷 · Aevum Studio";
 
+/// 版本号，编译期取自 `CARGO_PKG_VERSION`。
+///
+/// 为什么收成一条：命令行 `--version`、更新窗口的「当前版本」、MCP `serverInfo` 三处
+/// 都要报同一个数，各写一遍 `env!` 迟早有一处漏改——而版本号错了，用户报障时给的
+/// 线索就是错的。工作区四个成员的版本同步由门禁 0/6 把关，所以取哪个 crate 的
+/// `CARGO_PKG_VERSION` 结果都一样。
+///
+/// 为什么不读 exe 的版本资源：那是后处理步骤写进去的，开发构建里是空的；编译期常量
+/// 在任何构建下都有值。
+///
+/// The version, taken from `CARGO_PKG_VERSION` at compile time.
+///
+/// Why one function: the `--version` flag, the update window's "current version" and the
+/// MCP `serverInfo` all report the same number, and three copies of `env!` are three
+/// chances to forget one -- a wrong version number sends support down the wrong path. Gate
+/// 0/6 keeps the four workspace members in sync, so any crate's value is the same.
+///
+/// Why not the exe version resource: a post-processing step writes that, so it is empty in
+/// development builds; the compile-time constant always has a value.
+pub fn version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// 一行版本标识：`恒晷 · Aevum Studio 1.9.4`。`--version` 的输出就是这一行。
+///
+/// The one-line version banner, exactly what `--version` prints.
+pub fn version_line() -> String {
+    format!("{} {}", TITLE, version())
+}
+
 /// 可执行文件名（不含扩展名）。
 ///
 /// Executable file name (without extension).

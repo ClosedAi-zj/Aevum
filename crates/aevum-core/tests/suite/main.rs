@@ -28,6 +28,7 @@ mod support;
 
 mod align_golden;
 mod align_synthetic;
+mod brand;
 mod camera_samples;
 mod crop_golden;
 mod cube_golden;

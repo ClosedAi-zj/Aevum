@@ -177,6 +177,18 @@ fn main() -> ExitCode {
                 print_help();
                 return ExitCode::SUCCESS;
             }
+            // 版本号单独一条出口，且**先于**窗口初始化：`aevum --version` 是脚本、
+            // 排障、以及「你装的是哪一版」这三个场景里的唯一入口，为它起一次窗口
+            // 既慢又可能在无显示器环境里失败。
+            //
+            // A dedicated exit for the version, **before** any window setup: `--version`
+            // is the only entry point for scripts, for support and for "which build do I
+            // have", and spinning up a window for it is both slow and liable to fail
+            // without a display.
+            "-V" | "--version" => {
+                say!("{}", aevum_core::brand::version_line());
+                return ExitCode::SUCCESS;
+            }
             other if !other.starts_with('-') => open = Some(PathBuf::from(arg)),
             other => {
                 warn!("未知参数：{other}");
@@ -397,6 +409,7 @@ fn print_help() {
     say!("  --mcp             以 MCP stdio server 无头运行，供 agent 调用");
     say!("  --mcp --attach <control.json>");
     say!("                    附着到正在运行的 GUI，把工具调用转给窗口（界面实时更新）");
+    say!("  -V, --version     打印版本号后退出（一行，脚本可解析）");
     say!("  -h, --help        显示这段说明");
 }
 

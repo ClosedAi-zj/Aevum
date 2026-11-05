@@ -151,7 +151,7 @@ pub fn adopt_in(base: &Path) -> Report {
 
     // 哨兵：写在新目录里（rename 成功时新目录已存在）。
     if std::fs::create_dir_all(&fresh).is_ok() {
-        let note = format!("{} {}\n", brand::BIN, env!("CARGO_PKG_VERSION"));
+        let note = format!("{} {}\n", brand::BIN, brand::version());
         let _ = std::fs::write(fresh.join(SENTINEL), note);
     }
 

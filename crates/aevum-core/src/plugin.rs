@@ -775,7 +775,7 @@ pub fn builtin() -> Vec<Manifest> {
             plugin: Meta {
                 id: id.to_owned(),
                 name: name.to_owned(),
-                version: env!("CARGO_PKG_VERSION").to_owned(),
+                version: crate::brand::version().to_owned(),
                 vendor: "Aevum".to_owned(),
                 kind: Kind::Filter,
                 entry: String::new(),

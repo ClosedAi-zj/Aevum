@@ -761,7 +761,7 @@ impl ControlServer {
             port,
             token: random_token(),
             pid: std::process::id(),
-            version: env!("CARGO_PKG_VERSION").to_owned(),
+            version: aevum_core::brand::version().to_owned(),
             started: unix_secs(),
             root: root.display().to_string(),
         };

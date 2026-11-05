@@ -504,7 +504,7 @@ fn initialize(params: &Value, target: &ControlTarget) -> Value {
         "capabilities": {"tools": {}},
         "serverInfo": {
             "name": "aevum-studio",
-            "version": env!("CARGO_PKG_VERSION")
+            "version": aevum_core::brand::version()
         },
         "instructions": format!(
             "附着模式：工具代理到正在运行的 Aevum Studio GUI{where_}，界面会实时显示修改。批量写与覆盖已有输出需要参数 confirm: true。"

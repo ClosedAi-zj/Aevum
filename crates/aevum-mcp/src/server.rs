@@ -200,7 +200,7 @@ fn initialize(params: &Value) -> Value {
         "capabilities": {"tools": {}},
         "serverInfo": {
             "name": "aevum-studio",
-            "version": env!("CARGO_PKG_VERSION")
+            "version": aevum_core::brand::version()
         },
         "instructions": format!(
             "{} 延时摄影工作台。先 aevum_open_sequence 打开帧文件夹，再测光/去闪/调色/导出；批量写与覆盖已有文件需要参数 confirm: true。",

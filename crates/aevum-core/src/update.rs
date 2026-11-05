@@ -139,18 +139,19 @@ pub type Fetcher = dyn Fn(&str) -> Result<Vec<u8>, String>;
 /// Executable lookup on this machine (the test seam for [`fetch_with`]).
 pub type Locator = dyn Fn(&str) -> Option<PathBuf>;
 
-/// 当前版本，取自编译期的 `CARGO_PKG_VERSION`。
+/// 当前版本。真源在 [`crate::brand::version`]，这里只是给更新链一个贴合语义的别名。
 ///
-/// 为什么不读 exe 的版本资源：那是后处理步骤写进去的，开发构建里是空的；编译期常量
-/// 在任何构建下都有值，且与 `Cargo.toml` 的唯一真源一致。
+/// 整个工作区只有 `brand.rs` 读那个编译期版本宏（判据 `brand::only_the_brand_module_…`
+/// 盯着）：更新链、命令行、MCP 三处报的必须是同一个数，分散在各处的宏调用迟早会漏改一个。
 ///
-/// The current version, from the compile-time `CARGO_PKG_VERSION`.
+/// The current version. The single source is [`crate::brand::version`]; this is just a
+/// semantically apt alias for the update chain.
 ///
-/// Why not read the exe version resource: that is written by a post-processing step and is
-/// empty in development builds. The compile-time constant always has a value and matches the
-/// single source of truth in `Cargo.toml`.
+/// Across the whole workspace only `brand.rs` reads that compile-time version macro (the
+/// `brand::only_the_brand_module_…` test watches it): the update chain, the CLI and MCP must
+/// all report the same number, and scattered macro calls will eventually leave one stale.
 pub fn current_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+    crate::brand::version()
 }
 
 /// 查「最新发布」的地址。写在这里而不是散在界面层：换仓库、换镜像只需要改一处。
