@@ -736,6 +736,54 @@ fn help_menu(state: &mut AppState, ui: &mut Ui) {
         state.about_open = true;
         ui.close();
     }
+    ui.separator();
+    // 菜单项文案随「有没有可装的新版本」变：查到了就把结论摆在菜单上
+    // （「有新版本 vX.Y.Z…」），否则维持「检查更新…」。
+    //
+    // 为什么不在这里显示远端版本号以外的东西：菜单是"去哪找"，一行结论已经够；
+    // 版本号是唯一能让用户立刻判断"要不要现在装"的信息。
+    //
+    // The menu item's label follows "is there something installable": a found update puts
+    // the conclusion on the menu itself ("new version vX.Y.Z ..."), otherwise it stays
+    // "check for updates ...".
+    //
+    // Why nothing beyond the version: the menu answers "where do I go", and one line of
+    // conclusion is enough -- the version number is the only fact a user needs in order to
+    // decide "install now or later".
+    let label = match state.update_available() {
+        Some(v) => crate::i18n::tr_fmt("有新版本 {}…", &[&v]),
+        None => crate::i18n::t!("检查更新…").to_owned(),
+    };
+    // 不走 `menu_item`：那个帮手会再翻一次 `tr(label)`，而这里的 label 已经是译文。
+    //
+    // Not `menu_item`: that helper runs `tr(label)` again, and this label is already
+    // translated.
+    let clicked = ui
+        .add(egui::Button::new(RichText::new(label).size(SIZE_BODY)))
+        .clicked();
+    if clicked {
+        state.update_open = true;
+        // 从这个进程还没查过就顺手查一次：用户点「检查更新」的意思就是要结论，
+        // 打开一扇写着「还没有检查过」的空窗是没把他当回事。
+        //
+        // Start a check here if this process has not checked yet: clicking "check for
+        // updates" means "give me a conclusion", and opening an empty window that says
+        // "never checked" is not taking the click seriously.
+        if state.update_check.is_none() && state.update_phase == crate::state::UpdatePhase::Idle {
+            state.manual_update_check(ui.ctx());
+        }
+        ui.close();
+    }
+    // 程序旁边有 `.old`（安装脚本留下的上一版）才给回滚：点了必然有效的项才配出现在
+    // 菜单里，否则用户点完得到一句「找不到上一版」。
+    //
+    // Only offer a rollback when `<exe>.old` sits next to the program (the previous build
+    // the install script kept): a menu item that always works is the only kind that
+    // belongs there, or the click ends in "no previous version found".
+    if state.has_rollback_backup() && menu_item(ui, "回滚到上一版…", "") {
+        state.rollback_confirm = true;
+        ui.close();
+    }
 }
 
 #[cfg(test)]

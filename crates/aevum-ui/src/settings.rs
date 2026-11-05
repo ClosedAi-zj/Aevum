@@ -136,6 +136,22 @@ pub struct Settings {
     /// the defaults on load. Result state (the last output path, errors, preview
     /// textures) does not live here -- that is session business.
     pub merge: MergeParams,
+    /// 上次「检查更新」完成的时间（Unix 秒）；`None` = 从没检查过。
+    ///
+    /// 只给启动静默检查做节流用：不足 24 小时就跳过这一趟。存的是**完成**时刻，
+    /// 失败也算一次——断网的机器每次启动都去敲一遍网络，用户看不见，却是白等。
+    /// 手动点「检查更新…」不受它约束：那是用户的明确意图，25 小时之内点第二次也
+    /// 应该真的去查，否则「点了没反应」会被当成 bug。
+    ///
+    /// When the last update check **finished** (Unix seconds); `None` = never checked.
+    ///
+    /// Only used to throttle the silent startup check: less than 24 hours means skip this
+    /// pass. The stamp is written on completion, failures included -- an offline machine
+    /// knocking on the network every launch is invisible to the user and still wasted
+    /// time. A manual "check for updates" ignores it: that is an explicit intent, and a
+    /// second click within 25 hours must really go out, or "clicking does nothing" reads
+    /// as a bug.
+    pub last_update_check: Option<u64>,
 }
 
 /// 合并面板滑杆参数的落盘形状。字段与 `AppState` 的 `hdr_` / `stack_` / `tb_` /

@@ -1059,6 +1059,31 @@ enum Msg {
         path: PathBuf,
         result: Result<AudioProbe, String>,
     },
+    /// 更新检查的后台回包：结论 + 发布说明 + 清单地址。
+    ///
+    /// `token` 是发任务时的 `update_job`。更新任务与序列无关，所以不复用
+    /// `reload_token`：换序列不该丢掉一次正在跑的更新检查。
+    ///
+    /// The update-check background reply: the conclusion plus the release notes and the
+    /// manifest URL.
+    ///
+    /// `token` is `update_job` at dispatch. Update jobs have nothing to do with
+    /// sequences, so `reload_token` is not reused -- switching sequence must not throw
+    /// away a running check.
+    UpdateChecked {
+        token: u64,
+        result: Box<UpdateCheckOut>,
+    },
+    /// 下载安装准备的后台回包：备好的脚本，或失败原因。
+    /// `job` 与检查共用一套编号：一次新的下载会让更早的下载回包作废。
+    ///
+    /// The download-and-prepare background reply: the prepared script, or the reason it
+    /// failed. `job` shares the numbering with checks: a newer download invalidates the
+    /// replies of older ones.
+    UpdatePrepared {
+        job: u64,
+        result: Result<PreparedInstall, String>,
+    },
 }
 
 /// 状态栏剩余时间的滑动窗口。
@@ -1084,6 +1109,84 @@ struct EtaWindow {
     ///
     /// The last progress value seen; a drop back to 0 means a new run.
     last_done: usize,
+}
+
+/// 更新窗口的阶段：空闲 / 正在检查 / 正在下载 / 已备好可安装。
+///
+/// 为什么用一个枚举而不是三个布尔（`busy` + `ready` + `downloading`）：这三个状态
+/// 互斥，三个布尔能拼出八种组合，其中五种没有意义，而界面上「现在该显示哪个按钮」
+/// 恰好是这四种之一。枚举让非法组合根本写不出来，也让窗口里的 `match` 一眼穷尽。
+///
+/// Update window phase: idle / checking / downloading / ready to install.
+///
+/// Why an enum instead of three booleans (`busy` + `ready` + `downloading`): the three
+/// states are mutually exclusive, and three booleans spell eight combinations of which
+/// five mean nothing -- while "which button shows now" is exactly one of these four. The
+/// enum makes the illegal combinations unrepresentable and lets the window's `match`
+/// exhaust at a glance.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UpdatePhase {
+    /// 没有任务在跑（也可能是上一次失败了，原因在 `update_error` 里）。
+    ///
+    /// Nothing running (the last attempt may have failed; the reason sits in
+    /// `update_error`).
+    #[default]
+    Idle,
+    /// 后台线程正在拉发布信息。
+    ///
+    /// A background thread is pulling the release metadata.
+    Checking,
+    /// 后台线程正在下载、校验、解包、写安装脚本。
+    ///
+    /// A background thread is downloading, verifying, unpacking and writing the
+    /// install script.
+    Downloading,
+    /// 安装脚本已备好，等用户点「立即重启并安装」。
+    ///
+    /// The install script is ready and waits for "restart and install".
+    Ready,
+}
+
+/// 一次更新检查的全部产出：给界面看的结论、发布说明正文、清单地址。
+///
+/// 为什么把三者装在一个结构里：它们来自**同一份**发布 JSON，分成三个字段落账就
+/// 可能出现「结论是新版本、正文是上一次的」。一个结构 = 一次发布的快照。
+///
+/// Everything one update check produced: the conclusion for the UI, the release-notes
+/// body, and the manifest URL.
+///
+/// Why bundle the three: they come from **one** release JSON, and landing them in three
+/// separate fields lets "the conclusion is the new version, the body is the previous
+/// one" happen. One struct = one release snapshot.
+struct UpdateCheckOut {
+    /// 结论：当前 / 远端 / 资产 / 一行说明。
+    ///
+    /// The conclusion: current / latest / asset / one-line note.
+    check: aevum_core::update::UpdateCheck,
+    /// 发布说明正文，窗口里滚动显示。
+    ///
+    /// Release-notes body, shown in a scrolling area.
+    body: String,
+    /// `SHA256SUMS` 资产的直链；发布里没有这一项时为 `None`（那就装不了）。
+    ///
+    /// Direct URL of the `SHA256SUMS` asset; `None` when the release has no such asset
+    /// (which means installing is not possible).
+    sums_url: Option<String>,
+}
+
+/// 后台线程准备好的安装：版本号（给文案用）+ 待拉起的 `.cmd` 路径。
+///
+/// The install prepared by the background thread: the version (for the copy) plus the
+/// path of the `.cmd` to launch.
+struct PreparedInstall {
+    /// 远端版本号（`vX.Y.Z`）。
+    ///
+    /// The remote version (`vX.Y.Z`).
+    version: String,
+    /// 写好的批处理脚本，内含替换顺序与回滚备份。
+    ///
+    /// The written batch script, carrying the replacement order and the rollback backup.
+    script: PathBuf,
 }
 
 pub struct AppState {
@@ -1516,6 +1619,76 @@ pub struct AppState {
     /// measure pixels.
     pub rulers: bool,
     pub about_open: bool,
+
+    /// 更新窗口是否打开（菜单「帮助 → 检查更新…」）。
+    ///
+    /// Whether the update window is open (Help -> Check for updates).
+    pub update_open: bool,
+    /// 最近一次检查的结论；`None` = 这个进程里还没查过。
+    ///
+    /// 启动静默检查失败时这里是一个「失败」结论（`latest` 为空），界面照它显示一行
+    /// 原因，菜单文案则因为 `installable()` 为假而保持「检查更新…」。
+    ///
+    /// The conclusion of the latest check; `None` = not checked in this process yet.
+    ///
+    /// When the silent startup check fails this holds a "failed" conclusion (`latest` is
+    /// empty): the window shows the reason verbatim, while the menu keeps saying "check for
+    /// updates" because `installable()` is false.
+    pub update_check: Option<aevum_core::update::UpdateCheck>,
+    /// 发布说明正文（同上，与结论同源）。
+    ///
+    /// Release-notes body (same source as the conclusion above).
+    pub update_body: String,
+    /// `SHA256SUMS` 的直链；下载校验要用，`UpdateCheck` 里装不下（那是「装哪个包」
+    /// 的结论，不是发布资产清单）。
+    ///
+    /// Direct URL of `SHA256SUMS`, needed by the download-and-verify step. `UpdateCheck`
+    /// cannot carry it: that type answers "which package to install", not "what assets
+    /// the release has".
+    pub(crate) update_sums_url: Option<String>,
+    /// 更新流程当前阶段，界面按它决定显示哪颗按钮。
+    ///
+    /// The current phase of the update flow; the window picks its button from it.
+    pub update_phase: UpdatePhase,
+    /// 上一次失败的原因（下载 / 校验 / 解包 / 写脚本），红字一行显示；成功后清空。
+    ///
+    /// Why the last attempt failed (download / verify / unpack / write), shown as one red
+    /// line and cleared on success.
+    pub update_error: Option<String>,
+    /// 下载进度：`(已写字节, 资产声明字节)`。后台线程写、界面线程读。
+    ///
+    /// 为什么用共享内存而不是每条进度发一条消息：`download_to_file` 的进度回调
+    /// 每 50 ms 一次，一秒二十条消息只为了把一个数搬进 `AppState`，而 `poll` 每帧
+    /// 都要把它们全部排空；共享一个元组只要一次无竞争的加锁，而且不会因为界面卡了
+    /// 两帧就积压出二十条过期的进度。
+    ///
+    /// Download progress: `(bytes written, bytes declared)`. Written by the background
+    /// thread, read by the UI thread.
+    ///
+    /// Why shared memory instead of one message per tick: `download_to_file` calls the
+    /// progress callback every 50 ms, so a message per tick is twenty messages a second to
+    /// move one number into `AppState`, all of which `poll` then has to drain every frame;
+    /// a shared tuple costs one uncontended lock and cannot pile up twenty stale readings
+    /// when the UI stalls for two frames.
+    pub update_progress: Arc<Mutex<(u64, u64)>>,
+    /// 已备好的安装：`(版本号, .cmd 路径)`，只有 `update_phase == Ready` 时非空。
+    ///
+    /// The prepared install: `(version, .cmd path)`, non-empty only when
+    /// `update_phase == Ready`.
+    pub update_ready: Option<(String, PathBuf)>,
+    /// 发任务的编号：每起一次更新任务 +1，迟到回包按它丢弃。
+    ///
+    /// The job counter: bumped for every update job, so a late reply can be dropped.
+    pub(crate) update_job: u64,
+    /// 上次检查完成的时间（Unix 秒），随 `settings.json` 落盘给静默检查做节流。
+    ///
+    /// When the last check finished (Unix seconds); persisted through `settings.json` to
+    /// throttle the silent check.
+    pub last_update_check: Option<u64>,
+    /// 「回滚到上一版」的二次确认窗是否打开。
+    ///
+    /// Whether the "roll back to the previous version" confirmation is open.
+    pub rollback_confirm: bool,
 
     pub keyframes: BTreeMap<usize, GradeParams>,
     /// 命名调色副本（当前序列工程文件里的那一份）；存/删/改名都进撤销栈。
@@ -2171,6 +2344,7 @@ mod ops_queue;
 mod ops_retouch;
 mod ops_session;
 mod ops_undo;
+mod ops_update;
 mod ops_view;
 
 /// 胶片条专用线程池：拿一半核心，其余留给预览渲染。

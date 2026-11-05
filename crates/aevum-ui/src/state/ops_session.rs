@@ -272,6 +272,11 @@ impl AppState {
             hdr_preview: Some(self.hdr_preview),
             preset_order: Some(self.preset_order.iter().map(|k| (*k).to_owned()).collect()),
             win_pos: (!self.win_pos.is_empty()).then(|| self.win_pos.clone()),
+            // 上次检查更新的时间：静默检查的 24 小时节流就挂在这一项上。
+            //
+            // The timestamp of the last update check; the silent check's 24-hour
+            // throttle hangs off exactly this field.
+            last_update_check: self.last_update_check,
             // 合并参数是全局偏好：结果态（*_last / *_error / 预览纹理）不进来。
             merge: crate::settings::MergeParams {
                 hdr_around: self.hdr_around,
@@ -315,6 +320,13 @@ impl AppState {
         };
         self.panel_solo = s.panel_solo.unwrap_or(true);
         self.win_pos = s.win_pos.unwrap_or_default();
+        // 上次检查更新的时刻：`None`（老设置文件没有这一项）等于「从没查过」，
+        // 于是首启会静默查一次，正是想要的行为。
+        //
+        // The last update-check stamp: `None` (an older settings file without the field)
+        // means "never checked", so the first launch runs one silent check -- exactly what
+        // is wanted.
+        self.last_update_check = s.last_update_check;
         self.hdr_preview = s.hdr_preview.unwrap_or(false);
         self.preset_order = normalise_preset_order(&s.preset_order.unwrap_or_default());
         // 合并参数是全局偏好：坏 key / 越界值当场夹回默认，不让手改过的
@@ -709,6 +721,17 @@ impl AppState {
             saved_snap: None,
             saved_stamp: None,
             reload_token: 0,
+            update_open: false,
+            update_check: None,
+            update_body: String::new(),
+            update_sums_url: None,
+            update_phase: UpdatePhase::Idle,
+            update_error: None,
+            update_progress: Arc::new(Mutex::new((0, 0))),
+            update_ready: None,
+            update_job: 0,
+            last_update_check: None,
+            rollback_confirm: false,
             tx,
             rx,
             control: None,
@@ -1803,6 +1826,68 @@ impl AppState {
                         Err(e) => self.audio_probe_err = Some(e),
                     }
                 }
+                Msg::UpdateChecked { token, result } => {
+                    // 不是最新那次任务的回包直接丢：连点两次「检查更新」时，先发的那次
+                    // 可能后到，让它的结论盖掉新的那一份就等于「点第二次没反应」。
+                    //
+                    // A reply from anything but the newest job is dropped: when "check for
+                    // updates" is clicked twice the first request may land last, and
+                    // letting its conclusion overwrite the newer one looks like the second
+                    // click did nothing.
+                    if token != self.update_job {
+                        continue;
+                    }
+                    let UpdateCheckOut {
+                        check,
+                        body,
+                        sums_url,
+                    } = *result;
+                    self.update_phase = UpdatePhase::Idle;
+                    // 失败也落账：窗口要显示那一行原因，菜单则因为 `installable()` 为假
+                    // 而回到「检查更新…」。覆盖旧结论是有意的——「上次查到了新版本、
+                    // 这次没查通」不该继续挂着一条装不了的提示。
+                    //
+                    // A failure is recorded too: the window shows the reason while the menu
+                    // falls back to "check for updates" because `installable()` is false.
+                    // Overwriting the old conclusion is deliberate -- "found an update last
+                    // time, could not reach the server this time" must not keep advertising
+                    // something that cannot be installed.
+                    self.update_check = Some(check);
+                    self.update_body = body;
+                    self.update_sums_url = sums_url;
+                    // 时间戳只在**完成**时写，失败也写：断网的机器每次启动都去敲一遍
+                    // 网络，用户看不见，却要白等一次 DNS 超时。
+                    //
+                    // The stamp is written on **completion**, failures included: an offline
+                    // machine knocking on the network every launch is invisible to the user
+                    // and still wastes one DNS timeout.
+                    self.last_update_check = Some(super::ops_update::unix_now());
+                    self.settings_dirty = true;
+                }
+                Msg::UpdatePrepared { job, result } => {
+                    if job != self.update_job {
+                        continue;
+                    }
+                    match result {
+                        Ok(prepared) => {
+                            self.update_phase = UpdatePhase::Ready;
+                            self.update_ready = Some((prepared.version, prepared.script));
+                            self.update_error = None;
+                        }
+                        Err(e) => {
+                            // 回落到 Idle 而不是留一个「下载中」：失败之后那颗按钮要变回
+                            // 「下载并安装」（重试），否则进度条会停在一个永远不动的
+                            // 百分比上。
+                            //
+                            // Fall back to Idle rather than staying "downloading": after a
+                            // failure the button must become "download and install" again,
+                            // or the bar freezes at a percentage that never moves.
+                            self.update_phase = UpdatePhase::Idle;
+                            self.update_ready = None;
+                            self.update_error = Some(e);
+                        }
+                    }
+                }
             }
         }
 
@@ -1817,6 +1902,16 @@ impl AppState {
             || self.cull_export_busy
             || self.audio_probe_busy
             || self.auto_probe_inflight.is_some()
+            // 更新检查 / 下载期间要低频重绘：进度条的值在共享元组里，没有消息进来时
+            // 只有这个心跳能让它动起来。`Ready` / `Idle` 不再重绘——那时画面是静的。
+            //
+            // A low-frequency repaint during check / download: the bar's value lives in the
+            // shared tuple, and with no message arriving this heartbeat is what makes it
+            // move. `Ready` / `Idle` do not repaint -- the picture is static then.
+            || matches!(
+                self.update_phase,
+                UpdatePhase::Checking | UpdatePhase::Downloading
+            )
         {
             ctx.request_repaint_after(Duration::from_millis(100));
         }

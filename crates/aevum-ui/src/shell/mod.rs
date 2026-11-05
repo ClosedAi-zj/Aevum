@@ -25,6 +25,8 @@ use self::windows::about_window;
 use self::windows::look_window;
 use self::windows::market_window;
 use self::windows::presets_window;
+use self::windows::rollback_window;
+use self::windows::update_window;
 use crate::icons::{self, Glyph};
 use crate::layout::StatusSlot;
 use crate::platform;
@@ -229,6 +231,14 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     about_window(state, &ctx);
     look_window(state, &ctx);
     market_window(state, &ctx);
+    // 更新窗口与回滚确认：都排在最后，压在其它浮窗之上——它们是「这一版要不要换掉」
+    // 这种全局问题，不该被面板挡住。
+    //
+    // The update window and the rollback confirmation draw last, above the other floating
+    // windows: both answer a global question ("should this build be replaced") and must not
+    // hide behind a panel.
+    update_window(state, &ctx);
+    rollback_window(state, &ctx);
     window_resize(root, &ctx, full);
 
     state.ensure_preview(&ctx);

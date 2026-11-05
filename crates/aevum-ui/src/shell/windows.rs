@@ -10,24 +10,32 @@ use super::library::group_title;
 use super::menu::menu_item;
 use super::menu::menu_style;
 use super::toolbar::bar_button;
+use super::toolbar::bar_primary;
 use crate::icons::{self, Glyph};
 use crate::layout::StatusSlot;
 use crate::platform;
-use crate::state::AppState;
+use crate::state::{AppState, UpdatePhase};
 use crate::theme::{self, *};
 use egui::{Align, Context, Layout, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
-/// 三个浮窗在 `settings.json` 里的键。改名字等于丢掉用户已经调好的位置，
-/// 所以这三个字符串是**对外契约**的一部分，不要顺手重命名。
+/// 这些浮窗在 `settings.json` 里的键。改名字等于丢掉用户已经调好的位置，
+/// 所以这些字符串是**对外契约**的一部分，不要顺手重命名。
 ///
-/// Keys of the three floating windows in `settings.json`. Renaming one throws away
-/// the position the user already arranged, so these strings are part of the
-/// **external contract** -- do not rename them casually.
+/// Keys of these floating windows in `settings.json`. Renaming one throws away the
+/// position the user already arranged, so these strings are part of the **external
+/// contract** -- do not rename them casually.
 pub(super) const WIN_MARKET: &str = "market";
 pub(super) const WIN_LOOK: &str = "look";
 pub(super) const WIN_ABOUT: &str = "about";
 pub(super) const WIN_PRESETS: &str = "presets";
+/// 更新窗口的位置同样落盘：它可能是用户唯一会开两次以上的浮窗（先看一眼，
+/// 过几天想起来再装），位置能记住比每次居中更顺手。
+///
+/// The update window's position is persisted too: it may be the one floating window a
+/// user opens more than once (glance now, install days later), and a remembered
+/// position beats re-centring every time.
+pub(super) const WIN_UPDATE: &str = "update";
 
 /// 该浮窗上次落在哪儿；没存过就用 `fallback`（各窗的首开位置）。
 ///
@@ -1062,5 +1070,319 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
     }
     if !open {
         state.about_open = false;
+    }
+}
+
+/// 「检查更新」窗口：当前/远端版本、一行状态、发布说明、以及随阶段变化的那颗按钮。
+///
+/// 四段结构对应四种「用户此刻该知道什么」：
+/// 1. **两枚版本号** —— 我在哪、对面在哪，比一句「有新版本」有用；
+/// 2. **一行状态** —— 直接用 `UpdateCheck::note`（core 已经把它写成一句完整的话，
+///    成功失败都是）；界面不再自己拼，否则四处措辞会漂；
+/// 3. **发布说明** —— 可滚动、最多占窗口一半高度：说明可以很长，但不能把按钮挤出屏幕；
+/// 4. **动作区** —— 空闲时「下载并安装」或「检查更新」，下载中进度条 + 禁用按钮，
+///    失败红字一行，备好后「立即重启并安装」。
+///
+/// 所有耗时动作都只是**置一个意图**，真正的后台任务在窗口关掉之后再起——窗口里调
+/// `&mut self` 的方法会和 `show` 闭包对 `state` 的借用打架，而且先收集意图再执行的
+/// 写法与「插件市场」那扇窗完全一致。
+///
+/// The "check for updates" window: current and remote versions, one status line, the
+/// release notes, and the single button that changes with the phase.
+///
+/// The four sections answer four "what does the user need to know now" questions:
+/// 1. **two version numbers** -- where I am and where the other side is beats "an update
+///    exists";
+/// 2. **one status line** -- `UpdateCheck::note` verbatim (core already writes it as a
+///    complete sentence, success or failure); the window does not re-derive it, or the
+///    wording drifts between the four outcomes;
+/// 3. **release notes** -- scrollable, at most half the window height: notes can be long,
+///    but they must not push the buttons off screen;
+/// 4. **the action area** -- idle gives "download and install" or "check", downloading shows
+///    a bar with a disabled button, a failure shows one red line, and a prepared install
+///    shows "restart and install".
+///
+/// Every slow action here only **records an intent**; the real background job starts after
+/// the window closes -- calling an `&mut self` method inside `show` would fight the closure's
+/// borrow of `state`, and collect-then-act is exactly how the plugin market window works.
+pub(super) fn update_window(state: &mut AppState, ctx: &Context) {
+    if !state.update_open {
+        return;
+    }
+    let mut open = state.update_open;
+    let mut want_check = false;
+    let mut want_download = false;
+    let mut want_launch = false;
+
+    let pos = restored_pos(
+        state,
+        ctx,
+        WIN_UPDATE,
+        ctx.input(|i| i.viewport_rect()).center() - Vec2::new(240.0, 210.0),
+        Vec2::new(480.0, 420.0),
+    );
+    let win = egui::Window::new(crate::i18n::t!("检查更新"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(true)
+        .default_size(Vec2::new(480.0, 420.0))
+        .min_size(Vec2::new(420.0, 300.0))
+        .default_pos(pos)
+        .title_frame(title_frame())
+        .show(ctx, |ui| {
+            // 标题区下面压一条软线，与「关于 / 插件」两扇窗同一套结构。
+            //
+            // A soft rule under the title area, the same structure as the about and
+            // plugin windows.
+            let head =
+                Rect::from_min_size(ui.min_rect().min, Vec2::new(ui.available_width(), 1.0));
+            theme::soft_rule(ui.painter(), head.left(), head.right(), head.top());
+            ui.add_space(4.0);
+
+            // 1 两枚版本号。
+            let latest = state.update_check.as_ref().and_then(|c| c.latest.clone());
+            let remote = latest.unwrap_or_else(|| crate::i18n::t!("未知").to_owned());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(crate::i18n::tr_fmt(
+                        "当前版本 {}",
+                        &[&aevum_core::update::current_version()],
+                    ))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
+                );
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new(crate::i18n::tr_fmt("远端版本 {}", &[&remote]))
+                        .size(SIZE_SMALL)
+                        .color(muted()),
+                );
+            });
+
+            // 2 一行状态。core 的 `note` 恒非空，直接用；这个进程还没查过时给一句话，
+            // 免得窗口上是一片空白。
+            let note = match state.update_check.as_ref() {
+                Some(c) => c.note.clone(),
+                None => crate::i18n::t!("还没有检查过").to_owned(),
+            };
+            ui.add_space(5.0);
+            ui.label(RichText::new(note).size(SIZE_BODY).color(text()));
+
+            // 3 发布说明：可滚动，最多占窗口一半高度。
+            if !state.update_body.is_empty() {
+                ui.add_space(7.0);
+                ui.label(
+                    RichText::new(crate::i18n::t!("发布说明"))
+                        .size(SIZE_SMALL)
+                        .color(dim()),
+                );
+                let cap = (ctx.input(|i| i.viewport_rect()).height() * 0.5).max(80.0);
+                egui::ScrollArea::vertical()
+                    .max_height(cap)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(&state.update_body)
+                                .size(SIZE_SMALL)
+                                .color(muted()),
+                        );
+                    });
+            }
+
+            // 4 动作区。失败那行红字放在按钮之前：先读到「为什么没成」，再看到那颗
+            // 可以重试的按钮，顺序才顺。
+            //
+            // The action area. The red failure line goes above the button: read "why it
+            // failed" first, then see the button that can retry.
+            ui.add_space(9.0);
+            soft_sep(ui);
+            ui.add_space(6.0);
+            if let Some(e) = &state.update_error {
+                ui.label(RichText::new(e.as_str()).size(SIZE_SMALL).color(danger()));
+                ui.add_space(5.0);
+            }
+
+            match state.update_phase {
+                UpdatePhase::Checking => {
+                    ui.label(
+                        RichText::new(crate::i18n::t!("正在检查…"))
+                            .size(SIZE_SMALL)
+                            .color(dim()),
+                    );
+                    ui.add_space(4.0);
+                    // 禁用而不是隐藏：按钮留在原位，用户看得见「这个动作正在跑」。
+                    //
+                    // Disabled rather than hidden: the button stays put so the user can see
+                    // that this action is the one running.
+                    ui.add_enabled(
+                        false,
+                        egui::Button::new(crate::i18n::t!("检查更新"))
+                            .min_size(Vec2::new(0.0, 26.0)),
+                    );
+                }
+                UpdatePhase::Downloading => {
+                    let (done, total) = state.update_progress_snapshot();
+                    let frac = if total > 0 {
+                        (done as f32 / total as f32).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    // 1024 进制、一位小数：与资源管理器显示的「MB」同口径，用户对得上。
+                    //
+                    // Base 1024 with one decimal: same reading as Explorer's "MB", so the
+                    // numbers line up for the user.
+                    let mb = |v: u64| format!("{:.1}", v as f64 / (1024.0 * 1024.0));
+                    let text = if total > 0 {
+                        crate::i18n::tr_fmt("{} / {} MB", &[&mb(done), &mb(total)])
+                    } else {
+                        crate::i18n::tr_fmt("{} MB", &[&mb(done)])
+                    };
+                    let mut bar = egui::ProgressBar::new(frac)
+                        .desired_height(6.0)
+                        .text(RichText::new(text).size(SIZE_SMALL));
+                    // 资产没声明大小时（`total == 0`）用不确定进度条：一根停在 0% 的
+                    // 实心条会被读成「卡住了」。
+                    //
+                    // When the asset declares no size (`total == 0`) the bar goes
+                    // indeterminate: a solid bar parked at 0% reads as "stuck".
+                    if total == 0 {
+                        bar = bar.animate(true);
+                    }
+                    ui.add(bar);
+                    ui.add_space(4.0);
+                    ui.add_enabled(
+                        false,
+                        egui::Button::new(crate::i18n::t!("下载并安装"))
+                            .min_size(Vec2::new(0.0, 26.0)),
+                    );
+                }
+                UpdatePhase::Ready => {
+                    let version = state
+                        .update_ready
+                        .as_ref()
+                        .map(|(v, _)| v.clone())
+                        .unwrap_or_default();
+                    ui.label(
+                        RichText::new(crate::i18n::tr_fmt(
+                            "已准备好 {}，重启后完成安装",
+                            &[&version],
+                        ))
+                        .size(SIZE_SMALL)
+                        .color(ok()),
+                    );
+                    ui.add_space(6.0);
+                    if bar_primary(ui, "立即重启并安装").clicked() {
+                        want_launch = true;
+                    }
+                }
+                UpdatePhase::Idle => {
+                    let installable = state
+                        .update_check
+                        .as_ref()
+                        .is_some_and(|c| c.installable());
+                    if installable {
+                        if bar_primary(ui, "下载并安装").clicked() {
+                            want_download = true;
+                        }
+                    } else if bar_button(ui, "检查更新").clicked() {
+                        want_check = true;
+                    }
+                }
+            }
+        });
+    if let Some(w) = win {
+        remember_pos(state, ctx, WIN_UPDATE, w.response.rect);
+    }
+    state.update_open = open;
+    if want_check {
+        state.manual_update_check(ctx);
+    }
+    if want_download
+        && let Err(e) = state.start_install(ctx)
+    {
+        state.update_error = Some(e);
+    }
+    if want_launch
+        && let Err(e) = state.launch_installer(ctx)
+    {
+        state.update_error = Some(e);
+    }
+}
+
+/// 「回滚到上一版」的二次确认窗。
+///
+/// 为什么必须有这一步：回滚会**替换正在运行的 exe**，而且用户点它的动机通常是「新版
+/// 起不来了」——那一刻他心情最差、最容易误点，所以不给一次「确定吗」是不负责任的。
+/// 窗口里把两件后果写清楚：当前版改名成 `.failed`（留着排查，不删）、上一版随即启动。
+///
+/// 为什么用 `Modal` 而不是 `Window`：确认框要在用户回答之前**挡住**后面的面板，否则
+/// 用户可以在回答「要不要换掉当前版本」的同时继续调色，那就等于两个状态同时在动。也正
+/// 因为它是模态框而不是工具窗，它不参与浮窗位置记账（没有「摆到角落」这回事）。
+///
+/// The second confirmation for "roll back to the previous version".
+///
+/// Why this step is mandatory: a rollback **replaces the running exe**, and the motive for
+/// clicking it is usually "the new build will not start" -- the worst moment for a
+/// misclick, so not asking once would be irresponsible. The window spells out both
+/// consequences: this build is renamed to `.failed` (kept for diagnosis, not deleted) and
+/// the previous one starts right away.
+///
+/// Why `Modal` and not `Window`: a confirmation has to **block** the panels behind it until
+/// it is answered, otherwise the user can keep grading while deciding whether to swap the
+/// running build -- two states moving at once. That is also why it takes no part in the
+/// floating-window position bookkeeping: it is not a tool window anyone parks in a corner.
+pub(super) fn rollback_window(state: &mut AppState, ctx: &Context) {
+    if !state.rollback_confirm {
+        return;
+    }
+    let mut cancel = false;
+    let mut go = false;
+    let modal = egui::Modal::new(egui::Id::unique("aevum-rollback-confirm")).show(ctx, |ui| {
+        ui.set_width(430.0);
+        ui.label(
+            RichText::new(crate::i18n::t!("回滚到上一版"))
+                .size(SIZE_BODY)
+                .color(text()),
+        );
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(crate::i18n::t!(
+                "回滚到上一版？当前这一版会被改名成 .failed 留着排查，上一版随即启动。"
+            ))
+            .size(SIZE_SMALL)
+            .color(text()),
+        );
+        ui.add_space(9.0);
+        ui.horizontal(|ui| {
+            if bar_button(ui, "取消").clicked() {
+                cancel = true;
+            }
+            if bar_primary(ui, "回滚并重启").clicked() {
+                go = true;
+            }
+        });
+    });
+    // Esc 与点背景都算取消：模态框必须留一条不改任何东西的出口，否则它就成了陷阱。
+    //
+    // Escape and a backdrop click both cancel: a modal must keep an exit that changes
+    // nothing, or it becomes a trap.
+    if modal.should_close() {
+        cancel = true;
+    }
+    if cancel {
+        state.rollback_confirm = false;
+        return;
+    }
+    if go {
+        state.rollback_confirm = false;
+        if let Err(e) = state.launch_rollback(ctx) {
+            // 起不来就把原因挂到状态栏那条既有通道上：确认窗已经关了，这时候再弹一个
+            // 只会是第二层惊吓。
+            //
+            // A failure goes out through the existing status/error channel: the
+            // confirmation is already gone, and popping another window now would only be a
+            // second scare.
+            state.error = Some(e);
+        }
     }
 }

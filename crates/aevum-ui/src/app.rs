@@ -290,6 +290,23 @@ impl AevumApp {
         if shot.is_some() {
             crate::platform::preview_focus(true);
         }
+        // 启动静默检查一次（24 小时内只跑一次，见 `state/ops_update.rs`）。
+        //
+        // 为什么放在这里而不是 `shell::ui` 里：`shell::ui` 也被 `--selftest` 与截图
+        // 路径调用，那两条路不该碰网络。这里只知道真实的启动路径。**后台线程**，失败
+        // 不弹窗、不打断，找到新版本也只改菜单文案。
+        //
+        // One silent check at startup (at most once per 24 hours, see
+        // `state/ops_update.rs`).
+        //
+        // Why here and not inside `shell::ui`: `shell::ui` also runs for `--selftest` and
+        // the screenshot paths, and those must not touch the network. Only the real launch
+        // path reaches this line. It runs on a **background thread**; a failure never pops
+        // a dialog or interrupts anything, and finding a new version only changes the menu
+        // label.
+        if shot.is_none() {
+            state.startup_update_check(&cc.egui_ctx);
+        }
         Self { state, boot, shot }
     }
 
