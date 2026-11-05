@@ -52,10 +52,11 @@ trap 'bash "$ROOT/tools/purge-bin.sh" "$BIN_DRIVE" || true' EXIT
 # + 代码注释双语（模块级 //! 与 pub 项的 /// 必须有英文块）
 # + 变异残留扫描（见下）
 # 只读文件、不碰 cargo，所以 CARGO_FLAGS（CI 联网 / 本机 --offline）对它无影响。
-echo "==> 0/6 版本与文档一致性（Cargo.toml 真源 → lock / README / CHANGELOG；中英孪生；注释双语；变异残留）"
+echo "==> 0/6 版本与文档一致性（Cargo.toml 真源 → lock / README / CHANGELOG；中英孪生；注释双语；发行链契约；变异残留）"
 python "$ROOT/acceptance/check_version.py"
 python "$ROOT/acceptance/check_docs.py"
 python "$ROOT/tools/doc_lint.py"
+python "$ROOT/acceptance/check_release.py"
 
 # 变异残留扫描。**这条是为了堵一个真实事故**：2026-11-03 一个 `if false &&` 被提交进
 # HEAD，预览草图的半尺寸快路在出货代码里死掉，而六关照样全绿——因为时延判据只量墙钟，
