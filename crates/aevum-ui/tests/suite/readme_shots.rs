@@ -197,11 +197,39 @@ fn the_shot_script_and_the_doc_agree_and_the_script_never_writes_samples() {
 
     // 四张样张真实存在，且文档记录了它们。
     //
+    // 但仓库用白名单把 `samples/cameras/*` 排除了（只放行两个 README，清单与校验值在
+    // `samples/cameras/README.md`），所以干净的 clone 里一张都没有——那是素材本来就不
+    // 入库，不是缺陷。因此分两种情形：
+    //   · 一张都没有 → 跳过素材检查（脚本与文档的结构判据照跑，那部分与本机素材无关）；
+    //   · 有但缺了一部分 → 本地素材被删或改名了，仍然红。
+    // 一刀切地要求文件必须在，会让这条判据只能在开发机上成立，CI 上永远红。
+    //
     // The four samples really exist, and the docs record them.
-    for s in SAMPLES {
+    //
+    // The repo whitelists `samples/cameras/*` away (only the two READMEs are tracked; the
+    // manifest and checksums live in `samples/cameras/README.md`), so a clean clone has none
+    // of them -- the material is simply out of tree, which is not a defect. Two cases:
+    //   * none present -> skip the material check (the script/doc structure checks above are
+    //     independent of local material and still ran);
+    //   * some present but not all -> the local material was deleted or renamed, still red.
+    // Demanding the files unconditionally would make this criterion hold only on a dev
+    // machine and stay red on CI forever.
+    let missing: Vec<&str> = SAMPLES
+        .iter()
+        .filter(|s| !root.join("samples/cameras").join(s).is_file())
+        .copied()
+        .collect();
+    let present = SAMPLES.len() - missing.len();
+    if present == 0 {
+        eprintln!(
+            "跳过样张检查：samples/cameras/ 下一张样张都没有。仓库不跟踪它们（见 .gitignore \
+             的白名单与 samples/cameras/README.md 的清单），截图脚本要真跑得按那份清单在本机 \
+             放置素材。这条跳过只影响素材这一段，脚本与文档的结构判据已经跑过。"
+        );
+    } else {
         assert!(
-            root.join("samples/cameras").join(s).is_file(),
-            "缺样张 samples/cameras/{s}"
+            missing.is_empty(),
+            "样张不全，缺 {missing:?}——本地素材被删或改名了"
         );
     }
 
