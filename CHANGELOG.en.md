@@ -15,6 +15,41 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.9.7 — 2026-11-05
+
+Patch release: ships the close-out hardening that followed v1.9.6, and is the first real tag
+release to run the stricter publishing reconciliation. **No functional or UI behaviour
+changes**: usage is identical to v1.9.6. Only the version number, the version resource in the
+exe's Properties page, and the bundled changelog moved.
+
+### What you can verify about the download is stricter (new)
+
+- The release read-back used to check only "not a draft, both assets uploaded, sha256 matches",
+  and when the API returned **no digest it printed "skipped" but still reported success** --
+  meaning the shipped bytes were never actually verified. A missing digest now fails outright,
+  and the Release tag is additionally checked against the zip file name so a JSON from another
+  release cannot slip through.
+- Nothing changes for users: download `SHA256SUMS`, keep it next to the zip, and run
+  `sha256sum -c SHA256SUMS`. A SmartScreen "unknown publisher" warning on first download is
+  still expected (code signing remains explicitly out of scope).
+
+### Continuous guards in the build (no user-visible effect)
+
+- Gate 0 gained two automatic criteria: no live `TODO` / `FIXME` markers in production Rust,
+  and a self-test of eight failure scenarios of the release read-back on every gate run. These
+  used to be one-off manual checks; they are now regression assets.
+- Several documentation claims that contradicted the code were corrected in both languages
+  (the updater's "UI entry point missing" had long been wired, the CI release chain was still
+  listed as an open decision after it landed, "five gates" should be six, and so on).
+
+### Compatibility
+
+- The four 1.x public contracts (project file format, presets and parameters, command-line
+  arguments, MCP tool set) are unchanged; `--version`, the updater and the rollback entry all
+  work as before.
+
+---
+
 ## v1.9.6 — 2026-11-05
 
 Patch release: first-run language really follows the system, and release packages now come
