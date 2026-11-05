@@ -8,6 +8,16 @@
 # 六步任何一步红就停，别把脏改动带进 scripts/package.sh。
 set -euo pipefail
 
+# 门禁里的 Python 脚本要打印中文。英文 Windows 上 Python 的 stdout 默认取 cp1252，
+# 一句中文就是 UnicodeEncodeError，第一关当场红——2026-11-05 的 CI 从 919f69c 起
+# 连红四次就是这么来的（本地 cp936 永远复现不了，属于「只有在别人机器上才发作」）。
+# 这里统一给子进程定成 UTF-8，不依赖 runner 的语言设置。
+# The Python gates below print Chinese. On an English Windows the default stdout
+# encoding is cp1252, so the first Chinese sentence raises UnicodeEncodeError and gate 1
+# dies -- which is exactly why CI was red from 919f69c onward while local runs (cp936)
+# stayed green. Pin the children to UTF-8 instead of trusting the runner locale.
+export PYTHONIOENCODING=utf-8
+
 # 本脚本在 acceptance/ 下，上一层才是仓库根（cargo 必须在根上跑）。
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"

@@ -272,5 +272,21 @@ def _line_of(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
+def _utf8_streams() -> None:
+    """把 stdout/stderr 掰成 UTF-8，别让终端语言决定能不能打印。
+
+    英文 Windows 上 Python 默认按 cp1252 输出，而本脚本每句话都是中文：第一个
+    print 就抛 UnicodeEncodeError，检查还没做就被判成「脚本崩了」。2026-11-05 的
+    CI 连红四次就是这个原因，本地 cp936 永远复现不了。
+    errors="replace" 是最后一道保险——编码对了它不起作用，遇到意料之外的字符也
+    只是显示成问号，不会把「检查结果」变成一次崩溃。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 if __name__ == "__main__":
+    _utf8_streams()
     sys.exit(main())

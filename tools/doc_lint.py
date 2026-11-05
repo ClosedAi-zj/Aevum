@@ -86,5 +86,20 @@ def main() -> int:
     return 1
 
 
+def _utf8_streams() -> None:
+    """把 stdout/stderr 掰成 UTF-8，别让终端语言决定能不能打印。
+
+    这份脚本既被门禁调用，也常被单独跑。英文 Windows 上 Python 默认按 cp1252
+    输出，而报告里的文件名与修法说明都是中文，一句就抛 UnicodeEncodeError——
+    结果是「有个文档缺英文」变成「脚本自己崩了」，两件事的排查方向完全不同。
+    errors 取 replace：意料之外的字符只显示成问号，不再吃掉整份报告。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 if __name__ == "__main__":
+    _utf8_streams()
     raise SystemExit(main())

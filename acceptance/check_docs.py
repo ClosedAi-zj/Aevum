@@ -143,5 +143,20 @@ def main() -> int:
     return 0
 
 
+def _utf8_streams() -> None:
+    """把 stdout/stderr 掰成 UTF-8，别让终端语言决定能不能打印。
+
+    英文 Windows 上 Python 默认按 cp1252 输出，而本脚本的结论句是中文：第一个
+    print 就抛 UnicodeEncodeError，检查还没做完就被判成「脚本崩了」。errors 取
+    replace 是最后一道保险——编码对了它不起作用，遇到意料之外的字符也只是显示成
+    问号，不会把结论变成一次崩溃。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 if __name__ == "__main__":
+    _utf8_streams()
     sys.exit(main())
