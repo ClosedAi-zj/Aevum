@@ -15,6 +15,45 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.9.6 — 2026-11-05
+
+Patch release: first-run language really follows the system, and release packages now come
+from CI.
+
+### Default language (fixed)
+
+- Settings → Language → Follow system used to read only the three Unix-style environment
+  variables `LC_ALL` / `LC_MESSAGES` / `LANG` and **never asked Windows**. On a Chinese
+  Windows, launching from some terminals therefore produced an English UI while double-
+  clicking the exe produced Chinese; on an English Windows the opposite happened. It now
+  reads the Windows user UI language directly, keeps the environment variables as a fallback,
+  and still hard-codes no list of supported languages.
+- Users who explicitly picked Chinese or English are unaffected; only the "follow system"
+  preference changes behaviour. If the first-run language changed for you, pick one
+  explicitly in Settings once — the choice is persisted as before.
+
+### Release packages now built in CI (new)
+
+- Pushing a `vX.Y.Z` tag makes GitHub Actions run **exactly the same** `scripts/package.sh`
+  as a local build on a clean Windows runner (six gates, release build, selftest, real export,
+  zip, unzip-and-verify), publish the zip and `SHA256SUMS` as a Release, and read the API back
+  to reconcile asset state and sha256. Release artifacts no longer depend on one machine and
+  can be reproduced from the tag by anyone.
+- The bundled ffmpeg is still the 87 MB file that is not tracked in git: CI downloads a pinned
+  build and byte-verifies **the exe that actually ships**. Licence texts and the LGPL
+  corresponding source are shipped as before.
+- The releases page and download flow used by "Check for updates" are unchanged; no action is
+  needed. Code signing remains explicitly out of scope, so a SmartScreen "unknown publisher"
+  warning on first download is expected.
+
+### Compatibility
+
+- The four 1.x public contracts (project file format, presets and parameters, command-line
+  arguments, MCP tool set) are unchanged; `--version`, the updater and the rollback entry
+  all behave as before.
+
+---
+
 ## v1.9.5 — 2026-11-05
 
 Patch release: the exe properties page is no longer blank.
