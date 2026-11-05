@@ -301,3 +301,31 @@ fn thumbnails_carry_the_original_chip() {
         "i18n_en.rs 缺「原片」的英文键（i18n_literals 会红，这里提前指路）"
     );
 }
+
+#[test]
+fn floating_windows_read_as_floating() {
+    // 「很假很廉价」的主因之一：浮窗描边 alpha 20 在深底上隐形、没有自己的
+    // 阴影、标题带与内容只差两度——浮窗贴在内容上而不是浮在内容上。
+    // 三处必须同时成立：border_strong 描边、自有 window_shadow、header 标题带。
+    // One cause of the "cheap" look: invisible window stroke (alpha 20), no
+    // window-specific shadow, title band two steps from the body -- windows stuck
+    // on instead of floating over. All three must hold together.
+    let theme = clean("theme.rs");
+    assert!(
+        theme.contains("v.window_stroke = Stroke::new(1.0, border_strong())"),
+        "浮窗描边退回 border()（深底上隐形）"
+    );
+    assert!(
+        theme.contains("v.window_shadow"),
+        "theme.rs 的 window_shadow 不见了（egui 默认深色阴影在深底上不可见）"
+    );
+    let windows = clean("shell/windows.rs");
+    assert!(
+        windows.contains("fn title_frame()") && {
+            let i = windows.find("fn title_frame()").unwrap();
+            let block = &windows[i..(i + 700).min(windows.len())];
+            block.contains(".fill(header())")
+        },
+        "title_frame 不再用 header()，标题带与窗口主体糊回一片"
+    );
+}

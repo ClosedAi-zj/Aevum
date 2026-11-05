@@ -90,7 +90,15 @@ fn remember_pos(state: &mut AppState, ctx: &Context, key: &str, rect: Rect) {
 fn title_frame() -> egui::Frame {
     let r = radius_window() as u8;
     egui::Frame::new()
-        .fill(panel())
+        // 标题带走 header()（与画布顶栏同源）：窗口本体是最亮的 bg()，
+        // 标题带比它暗一档才读得出「这是标题不是内容」——全应用统一的
+        // 头部带语言。panel() 与 bg() 只差两度，标题与内容糊成一片。
+        //
+        // The title band takes header() (same source as the canvas top bars): the
+        // window body is the lightest material, so the band must sit one step darker
+        // to read as *title, not content* -- the app-wide header-band language.
+        // panel() and bg() differ by only two steps and blurred together.
+        .fill(header())
         .stroke(Stroke::NONE)
         .corner_radius(egui::CornerRadius {
             nw: r,

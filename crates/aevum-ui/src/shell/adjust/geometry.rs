@@ -299,13 +299,21 @@ fn lens_body(state: &mut AppState, ui: &mut Ui) -> bool {
 
 pub(super) fn adjust_frame(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "frame", "画幅", true) {
-        ui.horizontal_wrapped(|ui| {
-            for a in Aspect::ALL {
-                if bar_chip(ui, a.label(), state.aspect == a).clicked() {
-                    state.set_aspect(a);
+        // 比例胶囊 9 枚，336px 面板一行装不下——horizontal_wrapped 会在第 8 枚
+        // 后孤行挂一枚「2:3」，读作排版事故。改成 5+4 两行均衡排。
+        //
+        // Nine aspect chips do not fit one row of the 336 px panel; horizontal wrap
+        // stranded "2:3" alone on line two, which reads as a layout accident. Lay
+        // them out as two balanced rows of 5 and 4.
+        for row in Aspect::ALL.chunks(5) {
+            ui.horizontal(|ui| {
+                for &a in row {
+                    if bar_chip(ui, a.label(), state.aspect == a).clicked() {
+                        state.set_aspect(a);
+                    }
                 }
-            }
-        });
+            });
+        }
         if state.resolution.is_some() {
             ui.add_space(4.0);
             // 推子只管取值，0 附近吸附和重画标记都交给 set_rotate。

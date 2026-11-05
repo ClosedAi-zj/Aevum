@@ -135,6 +135,28 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
                         }
                         ui.add_space(16.0);
                     });
+                    // 滚动区底部 14px 渐隐：滚动到中间时最后一行常被硬切成半行字，
+                    // 渐隐垫让内容「没入」面板而不是被裁掉。六段黑阶渐变——面板本
+                    // 就近黑，黑阶等于面板色阶，肉眼连续，代价可忽略。
+                    //
+                    // A 14 px fade at the bottom of the scroll: mid-scroll, the last
+                    // row used to be sliced mid-glyph. Six stepped black-alpha rects
+                    // (the panel is near-black, so black == panel here) read as one
+                    // continuous fade at negligible cost.
+                    let fade_bottom = ui.max_rect().bottom();
+                    let pf = ui.painter();
+                    for s in 0..6u8 {
+                        let y0 = fade_bottom - 14.0 + 14.0 * s as f32 / 6.0;
+                        let y1 = fade_bottom - 14.0 + 14.0 * (s as f32 + 1.0) / 6.0;
+                        pf.rect_filled(
+                            Rect::from_min_max(
+                                Pos2::new(ui.max_rect().left(), y0),
+                                Pos2::new(ui.max_rect().right(), y1),
+                            ),
+                            0.0,
+                            Color32::from_black_alpha(15 * (s + 1)),
+                        );
+                    }
                 });
         },
     );

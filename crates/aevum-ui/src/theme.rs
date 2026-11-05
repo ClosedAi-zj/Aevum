@@ -1039,7 +1039,22 @@ pub fn apply_style(ctx: &Context, zoom: f32) {
     v.extreme_bg_color = surround();
     v.faint_bg_color = header();
     v.code_bg_color = canvas();
-    v.window_stroke = Stroke::new(1.0, border());
+    // 浮窗边界要能从面板上读出来：border 的 20 透明度在深底上几乎隐形，
+    // 浮窗因此「贴」在内容上而不是「浮」在内容上——成熟软件的浮层都有
+    // 一圈读得到的边。描边抬到 border_strong（46），阴影自己给一套：
+    // egui 默认深色阴影在深底上不可见，等于没有。
+    //
+    // Floating-window edges must read against the panel: border's alpha 20 is
+    // nearly invisible on dark surfaces, so windows looked *stuck on* rather than
+    // *floating over*. Stroke steps up to border_strong (46) and the shadow is
+    // our own -- egui's default dark shadow disappears on a dark background.
+    v.window_stroke = Stroke::new(1.0, border_strong());
+    v.window_shadow = egui::epaint::Shadow {
+        offset: [0, if light { 5 } else { 8 }],
+        blur: if light { 22 } else { 30 },
+        spread: 2,
+        color: Color32::from_black_alpha(if light { 64 } else { 165 }),
+    };
     v.window_corner_radius = radius_window().into();
     v.menu_corner_radius = radius_window().into();
     v.hyperlink_color = accent();
