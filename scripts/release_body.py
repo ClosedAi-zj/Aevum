@@ -10,13 +10,22 @@ release.yml 调它，本机也能单独跑来验证。
     python scripts/release_body.py v1.9.6                 # 打印完整正文
     python scripts/release_body.py --kind                # 只打印「补丁版 / 正式版」
     python scripts/release_body.py --verify api.json dist/Aevum-Studio-v1.9.6-windows-x64.zip
-        # 回读 gh api 返回的 release JSON：非 draft、两个资产、state=uploaded，
-        # 且 zip 资产的 digest 与本地文件 sha256 逐字节相等。
+        # 回读 gh api 返回的 release JSON：非 draft、tag_name 与 zip 名一致、恰好两个资产、
+        # state=uploaded、zip 的 digest 必须存在且等于本地 sha256、本地 SHA256SUMS 与 zip 一致。
+        # 任何一环缺失都判红，不假装验过。
 
 Why this exists: release notes used to be hand-written in a throwaway local script, so the
 download table, changelog and compatibility note drifted independently of Cargo.toml. Now the
 repository owns the generator; Cargo.toml is the single source for the version and
 CHANGELOG.md for the changes. release.yml calls it, and it can also be run locally to verify.
+
+Usage (Python 3, Windows/Linux; no third-party dependencies):
+    python scripts/release_body.py v1.9.6                 # print the full body
+    python scripts/release_body.py --kind                # print just the release type
+    python scripts/release_body.py --verify api.json dist/Aevum-Studio-v1.9.6-windows-x64.zip
+        # Read back the release JSON: not a draft, tag_name matching the zip name, exactly two
+        # assets with state=uploaded, a digest that must exist and equal the local sha256, and a
+        # local SHA256SUMS that agrees with the zip. A missing link fails instead of faking a pass.
 """
 
 from __future__ import annotations
@@ -95,10 +104,33 @@ def sha256(path: Path) -> str:
 
 
 def verify(api_json: Path, zip_path: Path) -> None:
-    """发布不是「gh 说成功」就算完：回读 API，确认非 draft、资产齐、digest 对得上。"""
+    """发布不是「gh 说成功」就算完：回读 API，确认非 draft、tag 一致、资产齐、state 与 digest 对得上。
+
+    A successful `gh release create` is not proof: read the API back and check that the
+    release is not a draft, the tag matches the zip, both assets are present with
+    state=uploaded, the digest exists and matches the local bytes, and SHA256SUMS agrees.
+    """
     data = json.loads(api_json.read_text(encoding="utf-8"))
     if data.get("draft"):
         raise SystemExit("release_body: Release 还是 draft")
+
+    # 从 zip 名反推期望 tag，防「回读到别的 Release 的 JSON 却通过」。
+    # 后缀必须锚住 -windows-x64.zip：否则可选的预发布段会把 "-windows" 也吃进去，
+    # 把 v1.9.6 误读成 v1.9.6-windows。
+    # Derive the expected tag from the zip name so a JSON from another Release cannot pass.
+    # The suffix has to be anchored: without it the optional pre-release segment swallows
+    # "-windows" and turns v1.9.6 into v1.9.6-windows.
+    match = re.search(
+        r"(v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)-windows-x64\.zip$", zip_path.name
+    )
+    if not match:
+        raise SystemExit(f"release_body: 从 {zip_path.name} 里读不出期望的 tag")
+    expected_tag = match.group(1)
+    if data.get("tag_name") != expected_tag:
+        raise SystemExit(
+            f"release_body: 回读的是 tag={data.get('tag_name')}，期望 {expected_tag}"
+        )
+
     assets = {a["name"]: a for a in data.get("assets", [])}
     zip_name = zip_path.name
     if set(assets) != {zip_name, "SHA256SUMS"}:
@@ -107,15 +139,16 @@ def verify(api_json: Path, zip_path: Path) -> None:
         if asset.get("state") != "uploaded":
             raise SystemExit(f"release_body: {name} 的 state 是 {asset.get('state')}")
 
+    # GitHub API 现在确实返回 digest（v1.9.6 两资产均已实证）：缺了就是没验过，判红而不是跳过。
+    # The API does return a digest now (proven on both v1.9.6 assets); a missing one means
+    # "not verified", which must fail rather than be reported as a pass.
     digest = assets[zip_name].get("digest")
+    if not digest:
+        raise SystemExit("release_body: API 未返回 digest，无法确认分发出去的字节与本地一致")
     local = sha256(zip_path)
-    if digest:
-        if digest != "sha256:" + local:
-            raise SystemExit(f"release_body: {zip_name} 的 digest 与本地 sha256 不一致")
-        checked = f"digest 对账一致（{local[:16]}…）"
-    else:
-        # 老版本 API / 某些资产类型不返回 digest。不假装验过，明说这一环缺了。
-        checked = "API 未返回 digest，跳过字节对账"
+    if digest != "sha256:" + local:
+        raise SystemExit(f"release_body: {zip_name} 的 digest 与本地 sha256 不一致")
+    checked = f"digest 对账一致（{local[:16]}…）"
 
     sums = (zip_path.parent / "SHA256SUMS").read_text(encoding="utf-8").strip()
     if not sums.startswith(local) or zip_name not in sums:

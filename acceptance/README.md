@@ -6,10 +6,12 @@
 
 ```
 acceptance/
-  check.sh           提交门槛：版本一致性 → 格式 → clippy → 全量测试 → 界面自检
+  check.sh           提交门槛：版本一致性 → 格式 → clippy → 全量测试 → 界面自检 → 帧时预算（release）
   check_version.py   check.sh 的第 0 关（Cargo.toml 单一真源 → lock / README / CHANGELOG）
   check_docs.py      第 0 关后半段：每份入库文档都有中英孪生，且顶部互链
   check_release.py   第 0 关：发行链静态契约 R1–R9（CI 打包是否仍是本机那一条链）
+  check_todo.py      第 0 关：生产代码无活 TODO/FIXME 标记
+  test_release_body.py  第 0 关：Release 回读 verify() 的失败分支自测
   ../tools/doc_lint.py  第 0 关末段：生产代码的模块级 //! 与 pub 项的 /// 必须有英文块
   reference/         Python 参考实现（与 Rust 逐式同构的 numpy 镜像）
   oracle/            freeze_golden.py 等冻结脚本 + golden/ 里已冻结的金标数据
@@ -54,7 +56,7 @@ Python 在这里只有一个身份：**裁判**。一个算法要算得对，光
    （进程池顺序、JPEG 解码差异都会让第二遍漂，那种基准不能拿来判对错）。
 3. **改 Rust 对齐金标**：改 `crates/aevum-core`，让 `cargo test` 里的 `*_golden` 全过；
    断言不许为了迁就实现而放宽——验收口径在动手前就冻结。
-4. **过客观验收**：`bash acceptance/check.sh` 五关全绿，退出码 0。绿了才算改完，
+4. **过客观验收**：`bash acceptance/check.sh` 六关全绿，退出码 0。绿了才算改完，
    评审看的是这条命令的输出，不是"我觉得对了"。
 
 四类东西必须同一次改动里同步：Rust 实现、Python 参考实现、金标数据、验收阈值。缺一个就是漏改。
@@ -151,3 +153,13 @@ trap '…; bash "$ROOT/tools/purge-bin.sh" "$BIN_DRIVE" || true' EXIT
 新增文档就得两份一起加。`docs/*` 默认不入库，要随行的文档得在 `.gitignore` 里加白名单，
 且白名单要能覆盖 `.en.md` 孪生（`!docs/发布说明-*.md` 的 `*` 顺带匹配 `.en`，精确文件名
 则要单独写一条——这条规则已经被漏过一次）。
+
+## 判据边界（静态契约不验判据自身）
+
+第 0 关的静态契约——`check_release.py` 的 R1–R9、`check_todo.py` 与 `test_release_body.py`
+的自举——只回答「脚本有没有被真实调用、配置文本是不是那个形状」，**不回答判据自己还有没有牙**。
+QA 的独立变异 M4 验证过这一点：把 `check_todo.py` 的 `MARKER` 正则改成永不命中、同时在某个
+crate 里插一条真 `FIXME`，六个第 0 关脚本仍全部 exit 0。这与 R9（只盯调用、不盯判据内部）
+属同一类已知边界，**不打算为此把判据复杂化**。因此改判据自身（扫描正则、期望表、失败分支）
+时，必须**人工做一次变异验证**：先断言锚点唯一，施加变异确认判据真的红且点名，还原后复绿。
+`check.sh` 第 0 关只能证明「判据被挂上了」，不能代替那一次人工验证。

@@ -7,10 +7,12 @@ product code:
 
 ```
 acceptance/
-  check.sh           commit gate: versions → format → clippy → full tests → UI self-check
+  check.sh           commit gate: versions → format → clippy → full tests → UI self-check → release frame-time budget
   check_version.py   gate 0 of check.sh (Cargo.toml as the single source of truth → lock / README / CHANGELOG)
   check_docs.py      gate 0, second half: every tracked document has a Chinese/English twin, cross-linked
   check_release.py   gate 0: release-chain contracts R1-R9 (is CI still the same chain as local?)
+  check_todo.py      gate 0: no live TODO/FIXME markers in production code
+  test_release_body.py  gate 0: self-test of the failure branches in Release read-back verify()
   ../tools/doc_lint.py  gate 0, last step: module-level //! and /// on pub items need an English block
   reference/         the Python reference implementation (a numpy mirror, formula by formula)
   oracle/            freeze_golden.py and friends + the frozen golden data under golden/
@@ -63,7 +65,7 @@ implementation until my own assertion passed", which is not verification.
 3. **Change Rust to match**: edit `crates/aevum-core` until every `*_golden` test in `cargo test`
    passes. Do not loosen an assertion to accommodate the implementation — the acceptance criteria
    were frozen before you started.
-4. **Pass the objective acceptance**: `bash acceptance/check.sh` all green, exit code 0. Green is
+4. **Pass the objective acceptance**: `bash acceptance/check.sh` all six gates green, exit code 0. Green is
    what "done" means; review looks at that command's output, not at "I think it's right".
 
 Four things must move in the same change: the Rust implementation, the Python reference, the
@@ -170,3 +172,17 @@ than one file in two languages, with a switch line at the top of both
 Adding a document means adding both editions. `docs/*` is ignored by default, so a new document
 that should ship needs a whitelist rule in `.gitignore` — and that rule has to cover the
 `.en.md` twin too.
+
+## Limits of the contracts (static checks do not test the criteria themselves)
+
+Gate 0's static contracts -- R1-R9 in `check_release.py` and the bootstraps in
+`check_todo.py` / `test_release_body.py` -- only answer "is the script really called, and is
+the config text shaped as expected". They do **not** answer "does the criterion still have
+teeth". QA's independent mutation M4 proved it: making `check_todo.py`'s `MARKER` regex never
+match while inserting a real `FIXME` into a crate leaves all six gate-0 scripts at exit 0.
+This is the same known boundary as R9 (it watches the call, not the criterion's internals), and
+we deliberately do **not** complicate the criteria to close it. So whenever a criterion itself
+changes (scan regex, expected table, failure branch), a **manual mutation check is required**:
+assert the anchor is unique, apply the mutation, confirm the criterion goes red and names the
+problem, restore, and confirm green again. Gate 0 proves a criterion is wired up; it does not
+replace that manual check.

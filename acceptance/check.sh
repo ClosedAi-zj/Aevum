@@ -50,13 +50,22 @@ trap 'bash "$ROOT/tools/purge-bin.sh" "$BIN_DRIVE" || true' EXIT
 # 第 0 关：版本号一致性（1.0.0 验收清单 B5，beta.2 当天就漂移过一次 README）
 # + 文档双语一致性（中英分册之后：缺孪生、缺切换链接、死链都是静默失效）
 # + 代码注释双语（模块级 //! 与 pub 项的 /// 必须有英文块）
+# + 发行链静态契约（R1–R9：CI 打包是否仍是本机那一条链）
+# + 活 TODO 计数（生产代码不许留 TODO( / FIXME 标记）
+# + 发行回读自测（verify() 的失败分支真的会红）
 # + 变异残留扫描（见下）
 # 只读文件、不碰 cargo，所以 CARGO_FLAGS（CI 联网 / 本机 --offline）对它无影响。
-echo "==> 0/6 版本与文档一致性（Cargo.toml 真源 → lock / README / CHANGELOG；中英孪生；注释双语；发行链契约；变异残留）"
+#
+# Gate 0: version consistency, bilingual docs, bilingual code comments,
+# release-chain contracts (R1-R9), live TODO/FIXME count, release read-back self-test,
+# and mutation-residue scan. All read-only, so CARGO_FLAGS does not affect them.
+echo "==> 0/6 版本与文档一致性（Cargo.toml 真源 → lock / README / CHANGELOG；中英孪生；注释双语；发行链契约；活 TODO 计数；发行回读自测；变异残留）"
 python "$ROOT/acceptance/check_version.py"
 python "$ROOT/acceptance/check_docs.py"
 python "$ROOT/tools/doc_lint.py"
 python "$ROOT/acceptance/check_release.py"
+python "$ROOT/acceptance/check_todo.py"
+python "$ROOT/acceptance/test_release_body.py"
 
 # 变异残留扫描。**这条是为了堵一个真实事故**：2026-11-03 一个 `if false &&` 被提交进
 # HEAD，预览草图的半尺寸快路在出货代码里死掉，而六关照样全绿——因为时延判据只量墙钟，
