@@ -517,7 +517,17 @@ impl AppState {
             history: History::new(),
             hist: None,
             show_dock: true,
-            show_left: true,
+            // 「预设与快照」浮窗默认关：它悬浮在画布上，开屏即开正好压住主图
+            // （用户 2026-11-06 的模块截图里它都盖着画布左上）。入口仍在工具轨
+            // 图标与「视图」菜单；该字段不进 settings.json，这只改首启/重置的
+            // 默认态，会话内开关照旧。
+            //
+            // The Presets & Snapshots window defaults to closed: it floats over the
+            // canvas and opened right on top of the image at startup (the user's
+            // 2026-11-06 module screenshots show it covering the canvas). Entries stay
+            // on the rail icon and the View menu; the field is not persisted in
+            // settings.json, so this only changes the fresh/reset default.
+            show_left: false,
             show_strip: true,
             snapshots: Vec::new(),
             appearance: crate::theme::Appearance::default(),

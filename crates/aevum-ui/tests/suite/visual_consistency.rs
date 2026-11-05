@@ -231,3 +231,73 @@ fn destructive_controls_are_not_dim_by_default() {
         );
     }
 }
+
+#[test]
+fn presets_window_defaults_to_closed() {
+    // 「预设与快照」浮窗悬浮在画布上，默认 true 意味着每次启动都压住主图
+    // （2026-11-06 用户模块截图里它盖着画布左上）。默认态必须关，入口保留。
+    // The Presets & Snapshots window floats over the canvas; defaulting to true meant
+    // every launch started with it covering the image (user module screenshots of
+    // 2026-11-06). The default must be closed; the entries stay.
+    let ops = clean("state/ops_session.rs");
+    assert!(
+        ops.contains("show_left: false"),
+        "ops_session.rs 的 show_left 默认值必须是 false（浮窗不该开屏压住画布）"
+    );
+    // 双向钉住：别为了过判据把入口一起删了——工具轨的取反开关必须还在。
+    // Two-sided: do not delete the entry to go green -- the rail toggle must remain.
+    let toolbar = clean("shell/toolbar.rs");
+    assert!(
+        toolbar.contains("state.show_left = !state.show_left"),
+        "工具轨的「预设与快照」开关不见了，别误伤入口"
+    );
+}
+
+#[test]
+fn canvas_top_bar_frame_size_is_labelled() {
+    // 裸数字曾引发「× 是关闭叉」的误读（评审 E3 / 用户反馈 #7）：顶栏中段的
+    // W × H 必须经 frame_size_text() 加「画幅」标签，不许退回裸 format!。
+    // The bare numbers invited the "× is a close button" misreading (review E3 /
+    // feedback #7): the top-bar W × H must go through frame_size_text() and carry the
+    // Frame-size label; a bare format! is a regression.
+    let canvas = clean("shell/canvas.rs");
+    assert!(
+        canvas.contains("fn frame_size_text"),
+        "canvas.rs 的 frame_size_text() 不见了，顶栏画幅又变回裸数字"
+    );
+    assert!(
+        canvas.contains("frame_size_text(state.resolution, bits)"),
+        "顶栏中段没有走 frame_size_text()（行 {:?}）",
+        hits(&canvas, "× {h}")
+    );
+    // 双向钉住：底部状态栏自己的「画幅」标签别被顺手删掉。
+    // Two-sided: the bottom status bar keeps its own Frame-size label.
+    let toolbar = clean("shell/toolbar.rs");
+    assert!(
+        toolbar.contains("t!(\"画幅\")"),
+        "底部状态栏的「画幅」标签不见了"
+    );
+}
+
+#[test]
+fn thumbnails_carry_the_original_chip() {
+    // 评审 E2 的可见标记：行内说明字已在（d701cca），但验收口径是「每个缩略图
+    // 有可见标记」——胶片条每格右上角的「原片」角标不许回退，英文表要有键。
+    // The visible marker from review E2: the inline caption already exists (d701cca),
+    // but the acceptance wording is "every thumbnail carries a visible marker" -- the
+    // per-cell chip must not regress, and the English table must have the key.
+    let tl = clean("shell/timeline.rs");
+    assert!(
+        tl.contains("t!(\"原片\")"),
+        "胶片条缩略图的「原片」角标不见了（评审 E2 回退）"
+    );
+    assert!(
+        tl.contains("rect_filled(chip_rect"),
+        "「原片」角标没有自己的底色，会重新糊进缩略图里"
+    );
+    let en = clean("i18n_en.rs");
+    assert!(
+        en.contains("(\"原片\", \"ORIG\")"),
+        "i18n_en.rs 缺「原片」的英文键（i18n_literals 会红，这里提前指路）"
+    );
+}

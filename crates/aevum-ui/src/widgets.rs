@@ -364,6 +364,21 @@ pub(crate) fn curve_lut_fingerprint(pts: &[[f64; 2]]) -> u64 {
     h
 }
 
+/// 曲线网格的主次线（纯函数以便判据直测）：50% 中线是主线——divider 全宽；
+/// 25/75% 四分线是次线——同色半宽。主次可分，不数格子也找得到中间（评审 E8）。
+///
+/// Major/minor grid strokes for the curve editor (pure so the gate can test it):
+/// the 50 % midline is major -- full-width divider; the 25/75 % quarters are minor --
+/// same colour at half width. The hierarchy is what makes the middle findable
+/// without counting cells (review E8).
+fn curve_grid_stroke(major: bool) -> Stroke {
+    if major {
+        Stroke::new(1.0, divider())
+    } else {
+        Stroke::new(0.5, divider())
+    }
+}
+
 /// 色调曲线编辑框：横轴输入、纵轴输出，都在 0..255。
 ///
 /// 拖动只改纵坐标，点空白加一个点，双击中间点删掉，双击空白整条复位。
@@ -407,19 +422,22 @@ pub fn curve_box(
 
     for i in 1..4 {
         let f = i as f32 / 4.0;
+        // 主次线（评审 E8）：50% 中线是主线，25/75% 四分线是次线——同色半宽，
+        // 不数格子也找得到中间。次要线不许比主线粗，判据钉在 curve_grid_stroke。
+        let grid = curve_grid_stroke(i == 2);
         p.line_segment(
             [
                 Pos2::new(inner.left() + inner.width() * f, inner.top() + 1.0),
                 Pos2::new(inner.left() + inner.width() * f, inner.bottom() - 1.0),
             ],
-            Stroke::new(1.0, divider()),
+            grid,
         );
         p.line_segment(
             [
                 Pos2::new(inner.left() + 1.0, inner.top() + inner.height() * f),
                 Pos2::new(inner.right() - 1.0, inner.top() + inner.height() * f),
             ],
-            Stroke::new(1.0, divider()),
+            grid,
         );
     }
     p.line_segment(
@@ -944,6 +962,19 @@ pub fn levels_strip(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn curve_grid_midline_is_the_major_stroke() {
+        // 评审 E8：中线主、四分线次，只许宽度有别、不许换色。
+        let (major, minor) = (curve_grid_stroke(true), curve_grid_stroke(false));
+        assert!(
+            major.width > minor.width,
+            "曲线网格中线必须比四分线粗：{:?} vs {:?}",
+            major,
+            minor
+        );
+        assert_eq!(major.color, minor.color, "主次线同色，宽度是唯一的层级");
+    }
 
     #[test]
     fn hue_endpoints_land_on_expected_primaries() {

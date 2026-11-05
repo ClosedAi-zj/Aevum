@@ -68,20 +68,14 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
             Vec2::new(tab_w, TL_HD_H),
         ),
     );
-    // 中段：{w} × {h} · {n} bit（位深从 RAW/DNG 解析注记里取，普通文件不显示）。
-    let res = state
-        .resolution
-        .map(|(w, h)| format!("{w} × {h}"))
-        .unwrap_or_else(|| "—".to_owned());
+    // 中段：画幅 W × H · 位深 n bit（位深从 RAW/DNG 解析注记里取，普通文件不显示）。
+    // 裸数字曾被当成关闭叉（评审 E3 / 用户反馈 #7）：「画幅」标签把它框成尺寸读数。
     let bits = state.source_note.as_ref().and_then(|s| {
         s.strip_suffix(" 位")
             .and_then(|t| t.rsplit(' ').next())
             .and_then(|t| t.parse::<u32>().ok())
     });
-    let mid_text = match bits {
-        Some(b) => format!("{res} · {b} bit"),
-        None => res,
-    };
+    let mid_text = frame_size_text(state.resolution, bits);
     p.text(
         Pos2::new(tb.left() + 10.0 + tab_w + 12.0, tb.center().y),
         Align2::LEFT_CENTER,
@@ -1338,5 +1332,50 @@ fn empty_state(state: &mut AppState, ui: &mut Ui, content: Rect) {
     );
     if presp.clicked() {
         open_photos_dialog(state, &ctx);
+    }
+}
+
+/// 画布顶栏中段的画幅读数（纯函数以便判据直测）：带「画幅」标签把 W × H 框成
+/// 尺寸——× 是乘号，不是关闭叉（评审 E3 / 用户反馈 #7）；位深来自 RAW/DNG
+/// 注记，普通文件不显示。未打开序列时退成一段占位横线。
+///
+/// The canvas top-bar frame-size readout (pure so the gate can test it directly):
+/// the label frames W × H as a dimension -- × is a multiplication sign, not a close
+/// cross (review E3 / user feedback #7). Bit depth comes from the RAW/DNG note and is
+/// hidden for plain files. With no sequence open it degrades to a placeholder dash.
+fn frame_size_text(res: Option<(u32, u32)>, bits: Option<u32>) -> String {
+    let Some((w, h)) = res else {
+        return "—".to_owned();
+    };
+    match bits {
+        Some(b) => format!("{} {w} × {h} · {b} bit", crate::i18n::t!("画幅")),
+        None => format!("{} {w} × {h}", crate::i18n::t!("画幅")),
+    }
+}
+
+#[cfg(test)]
+mod frame_size_tests {
+    use super::*;
+
+    #[test]
+    fn frame_size_readout_carries_the_label_and_bit_depth() {
+        // 有位深：标签 + 尺寸 + 位深三段全在。
+        let s = frame_size_text(Some((6000, 4000)), Some(16));
+        assert!(
+            s.starts_with(crate::i18n::t!("画幅")),
+            "顶栏画幅读数缺「画幅」标签：{s}"
+        );
+        assert!(s.contains("6000 × 4000") && s.contains("16 bit"), "{s}");
+
+        // 普通文件没有位深段，也不该冒出 bit。
+        let s = frame_size_text(Some((1280, 720)), None);
+        assert!(
+            s.starts_with(crate::i18n::t!("画幅")) && s.ends_with("1280 × 720"),
+            "{s}"
+        );
+        assert!(!s.contains("bit"), "{s}");
+
+        // 未打开序列：占位横线，不画标签。
+        assert_eq!(frame_size_text(None, Some(16)), "—");
     }
 }

@@ -426,6 +426,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("历史", "History"),
     ("压帧是真丢帧，拆帧是相邻两帧交叉淡化，不做光流补帧。快门决定一帧混进多少邻居；关闭时导出走 1:1 快路。曲线上点空白加点、双击删点，横轴即序列位置。", "Dropping really discards frames; blending cross-fades adjacent frames with no optical flow. Shutter decides how many neighbours bleed into one frame; when it is off, export takes the 1:1 fast path. Click empty space to add a point, double-click to remove one — the x axis is the sequence position."),
     ("原始", "Original"),
+    ("原片", "ORIG"),
     ("原生", "Native"),
     ("原生 {} × {}", "Native {} × {}"),
     ("去掉最后落下的那一笔", "Drop the stroke that landed last"),

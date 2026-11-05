@@ -626,6 +626,25 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                                 dim().gamma_multiply(0.7),
                             );
                         }
+                        // 「原片」角标（评审 E2）：缩略图恒为机身内嵌未显影原片，
+                        // 与主画布的显影效果不同口径——不标出来，用户会以为参数
+                        // 没生效或被偷偷丢掉。半透明黑底压右上角，随 cell 可见。
+                        //
+                        // The "original" chip (review E2): a thumbnail is always the
+                        // in-camera undeveloped original, a different convention from the
+                        // developed canvas -- unmarked, it reads as "my edits vanished".
+                        // Translucent black chip pinned top-right, visible with the cell.
+                        let chip_g = p.layout_no_wrap(
+                            crate::i18n::t!("原片").to_owned(),
+                            font(SIZE_SMALL),
+                            text(),
+                        );
+                        let chip_rect = Rect::from_min_size(
+                            Pos2::new(cell.right() - 7.0 - chip_g.size().x, cell.top() + 3.0),
+                            Vec2::new(chip_g.size().x + 4.0, chip_g.size().y + 1.0),
+                        );
+                        p.rect_filled(chip_rect, 2.0, Color32::from_black_alpha(160));
+                        p.galley(chip_rect.left_top() + Vec2::new(2.0, 0.5), chip_g, text());
                         let label = state.label_at(i);
                         if label > 0 {
                             p.rect_filled(
