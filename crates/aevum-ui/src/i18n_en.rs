@@ -12,13 +12,15 @@
 //!
 //! 本文件**不许手改**，两条路都是脚本：
 //!
-//! * 加键：`python tools/i18n_extract.py --write`（合并新键、删多余键、按码点排序）
+//! * 加键：`python tools/i18n_extract.py --write`（**只增不删**，按码点排序）
 //! * 填值：`python tools/i18n_fill.py pairs.json --write`
 //!
-//! 漏译不 panic：`t!` 回退中文原文。但**表里多余**（代码里已经找不到的键）说明
-//! 改文案时忘了清表，`i18n_extract.py` 会因此返回非零。真正的守门人是
-//! `tests/suite/i18n_coverage.rs`：它把整个界面用英文画一遍，扫渲染出来的每一个字，
-//! 屏幕上出现汉字就红。
+//! 漏译不 panic：`t!` 回退中文原文。静态守门人是 `tests/suite/i18n_literals.rs`
+//! 两条判据：`every_t_literal_has_a_row` 盯「每个 `t!` 字面量在表里有行」，
+//! `no_row_is_orphaned` 盯「表里没有源码找不到的孤儿行」——改文案忘了同步会红。
+//! `i18n_extract.py` 只是**发现**键的工具：多出来的行可能来自数据表，它既不
+//! 据此报错也**绝不删除**（见该脚本模块头）。`tests/suite/i18n_coverage.rs`
+//! 另把整个界面用英文画一遍、扫渲染出来的每一个字，那是覆盖数据表的运行期真值。
 //!
 //! English UI copy table. Keys are the Chinese original (see the `i18n` module
 //! docs for the reasoning).
@@ -38,16 +40,19 @@
 //!
 //! This file **must not be edited by hand**; both routes are scripts:
 //!
-//! * add keys: `python tools/i18n_extract.py --write` (merges new keys, drops
-//!   stale ones, sorts by code point)
+//! * add keys: `python tools/i18n_extract.py --write` (merges new keys only,
+//!   **never drops rows**, sorts by code point)
 //! * add values: `python tools/i18n_fill.py pairs.json --write`
 //!
 //! A missing translation does not panic: `t!` falls back to the Chinese original.
-//! But a **stale row** (a key the code no longer uses) means the table was not
-//! cleaned when the copy changed, and `i18n_extract.py` returns non-zero for it.
-//! The real gatekeeper is `tests/suite/i18n_coverage.rs`: it draws the whole UI in
-//! English and scans every glyph rendered -- one Han character on screen turns it
-//! red.
+//! The static gatekeepers are two assertions in `tests/suite/i18n_literals.rs`:
+//! `every_t_literal_has_a_row` requires a row for every `t!` literal, and
+//! `no_row_is_orphaned` rejects rows no longer referenced by the sources (the trace
+//! left behind when copy changes without a table update). `i18n_extract.py` only
+//! **discovers** keys: extra rows may come from data tables, so it neither fails nor
+//! deletes them (see that script's module doc). `tests/suite/i18n_coverage.rs` also
+//! draws the whole UI in English and scans every glyph rendered -- the runtime truth
+//! that covers data tables.
 
 // rustfmt::skip：整表一条一行是 `tools/i18n_table.py` 与两个维护脚本共同的稳定
 // 口径。折行本身合法（解析器也认），但单行形态让 diff 与合并都可预测。
