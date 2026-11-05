@@ -1178,15 +1178,24 @@ struct UpdateCheckOut {
 ///
 /// The install prepared by the background thread: the version (for the copy) plus the
 /// path of the `.cmd` to launch.
-struct PreparedInstall {
+#[derive(Clone)]
+pub struct PreparedInstall {
     /// 远端版本号（`vX.Y.Z`）。
     ///
     /// The remote version (`vX.Y.Z`).
-    version: String,
+    pub version: String,
     /// 写好的批处理脚本，内含替换顺序与回滚备份。
     ///
     /// The written batch script, carrying the replacement order and the rollback backup.
-    script: PathBuf,
+    pub script: PathBuf,
+    /// 解包出来的新 exe（脚本的 `%~1`）。
+    ///
+    /// The unpacked new exe (the script's `%~1`).
+    pub new_exe: PathBuf,
+    /// 要被替换的 exe（脚本的 `%~2`）。
+    ///
+    /// The exe to replace (the script's `%~2`).
+    pub target: PathBuf,
 }
 
 pub struct AppState {
@@ -1671,11 +1680,11 @@ pub struct AppState {
     /// a shared tuple costs one uncontended lock and cannot pile up twenty stale readings
     /// when the UI stalls for two frames.
     pub update_progress: Arc<Mutex<(u64, u64)>>,
-    /// 已备好的安装：`(版本号, .cmd 路径)`，只有 `update_phase == Ready` 时非空。
+    /// 已备好的安装（脚本 + 三个路径），只有 `update_phase == Ready` 时非空。
     ///
-    /// The prepared install: `(version, .cmd path)`, non-empty only when
+    /// The prepared install (script plus the three paths), non-empty only when
     /// `update_phase == Ready`.
-    pub update_ready: Option<(String, PathBuf)>,
+    pub update_ready: Option<PreparedInstall>,
     /// 发任务的编号：每起一次更新任务 +1，迟到回包按它丢弃。
     ///
     /// The job counter: bumped for every update job, so a late reply can be dropped.

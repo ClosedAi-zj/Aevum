@@ -1259,7 +1259,7 @@ pub(super) fn update_window(state: &mut AppState, ctx: &Context) {
                     let version = state
                         .update_ready
                         .as_ref()
-                        .map(|(v, _)| v.clone())
+                        .map(|p| p.version.clone())
                         .unwrap_or_default();
                     ui.label(
                         RichText::new(crate::i18n::tr_fmt(
@@ -1502,7 +1502,12 @@ mod update_window_tests {
         //
         // Ready -> "… is ready, restart to finish" plus "restart and install".
         state.update_phase = UpdatePhase::Ready;
-        state.update_ready = Some(("v9.9.9".to_owned(), std::path::PathBuf::from("t.cmd")));
+        state.update_ready = Some(crate::state::PreparedInstall {
+            version: "v9.9.9".to_owned(),
+            script: std::path::PathBuf::from("t.cmd"),
+            new_exe: std::path::PathBuf::from("new.exe"),
+            target: std::path::PathBuf::from("aevum.exe"),
+        });
         let ready = painted(&mut state, &ctx);
         for want in ["已准备好 v9.9.9", "立即重启并安装"] {
             assert!(ready.contains(want), "就绪态缺「{want}」：\n{ready}");

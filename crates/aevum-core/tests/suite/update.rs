@@ -333,69 +333,77 @@ fn check_and_download_flow_never_touches_network() {
 // ---------------------------------------------------------------------------
 
 /// 真替换在单测里没法安全执行（会把测试进程的 exe 换掉），所以判据断言**文本**：
-/// 五步齐全、顺序正确、带空格的路径被引号包住。
+/// 五步齐全、顺序正确、正文里一个路径都没有（路径全走 `%~1`/`%~2`/`%~3` 参数）。
+///
+/// 「正文不含路径」不是洁癖：批处理按 OEM 代码页解码，UTF-8 的中文安装路径写进正文会
+/// 变成乱码，`if exist` 与 `move` 全部落空而错误又被 `>NUL` 吞掉——用户看到的是「点了
+/// 更新，什么都没发生」。2026-11-05 在 `E:\tmp\...\恒晷 程序\` 上实测到过这一幕。
 ///
 /// A real replacement cannot run safely in a unit test (it would swap the test binary), so
-/// the judgement asserts the **text**: all five steps, in order, with spaced paths quoted.
+/// the judgement asserts the **text**: all five steps, in order, and **no path in the body**
+/// (paths arrive as `%~1`/`%~2`/`%~3`).
+///
+/// "No path in the body" is not tidiness: a batch file is decoded with the OEM code page, so
+/// a UTF-8 Chinese install path inline becomes mojibake, `if exist` and `move` both miss,
+/// and `>NUL` swallows the errors -- the user sees "clicked update, nothing happened".
+/// Measured on `E:\tmp\...\恒晷 程序\` on 2026-11-05.
 #[test]
-fn install_script_has_five_steps_and_quotes_spaces() {
-    let target = Path::new(r"C:\Program Files\Aevum Studio\aevum.exe");
-    let new = Path::new(r"C:\Users\Some User\AppData\Local\Temp\aevum-1.9.0.exe");
-    let script = install_script(new, target);
+fn install_script_has_five_steps_and_takes_paths_as_arguments() {
+    let script = install_script();
 
-    // 带空格的路径必须整段被引号包住，否则 `move` 会把空格当成参数分隔符。
-    for p in [
-        r#""C:\Program Files\Aevum Studio\aevum.exe""#,
-        r#""C:\Users\Some User\AppData\Local\Temp\aevum-1.9.0.exe""#,
+    // 三个参数被显式接住：路径只要写进正文就会踩 OEM 代码页的坑。
+    for needle in [
+        r#"set "NEW=%~1""#,
+        r#"set "TARGET=%~2""#,
+        r#"set "IMAGE=%~3""#,
     ] {
-        assert!(script.contains(p), "路径没有被引号包住：{p}\n{script}");
+        assert!(script.contains(needle), "缺少参数接收：{needle}\n{script}");
+    }
+    assert!(
+        !script.contains(":\\"),
+        "正文里不能出现盘符路径（会被 OEM 代码页弄成乱码）\n{script}"
+    );
+
+    // 系统工具用绝对路径：PATH 上有个 Unix `find`（装了 Git/MSYS）时，`find /I` 会解析
+    // 到它并直接报错，等待循环于是形同虚设——程序还开着就开始替换。
+    for tool in ["tasklist.exe", "find.exe", "ping.exe"] {
+        let needle = format!(r#""%SystemRoot%\System32\{tool}""#);
+        assert!(
+            script.contains(&needle),
+            "系统工具必须走绝对路径：{needle}\n{script}"
+        );
     }
 
-    // 五步的关键片段
-    let steps: [(&str, &str); 5] = [
-        ("等待退出", "tasklist /FI \"IMAGENAME eq aevum.exe\""),
+    // 五步的关键片段（顺序在下面单独钉）
+    for (what, needle) in [
+        ("等待退出", "IMAGENAME eq %IMAGE%"),
         ("等待循环", "goto wait"),
-        (
-            "改名旧文件",
-            r#"move /Y "C:\Program Files\Aevum Studio\aevum.exe" "C:\Program Files\Aevum Studio\aevum.exe.old""#,
-        ),
-        (
-            "搬入新文件",
-            r#"move /Y "C:\Users\Some User\AppData\Local\Temp\aevum-1.9.0.exe" "C:\Program Files\Aevum Studio\aevum.exe""#,
-        ),
-        (
-            "启动新文件",
-            r#"start "" "C:\Program Files\Aevum Studio\aevum.exe""#,
-        ),
-    ];
-    for (what, needle) in steps {
+        ("改名旧文件", r#"move /Y "%TARGET%" "%TARGET%.old""#),
+        ("搬入新文件", r#"move /Y "%NEW%" "%TARGET%""#),
+        ("启动新文件", r#"start "" "%TARGET%""#),
+    ] {
         assert!(
             script.contains(needle),
             "缺少「{what}」这一步：{needle}\n{script}"
         );
     }
 
-    // 顺序：等退出 → 改名 → 搬入 → 启动。顺序错了脚本照样能生成，但会在真实的
-    // 更新里把正在运行的 exe 覆盖失败，所以必须在这里钉死。
+    // 顺序：等退出 → 改名 → 搬入 → 启动。顺序错了脚本照样能生成，但会在真实的更新里
+    // 把正在运行的 exe 覆盖失败，所以必须在这里钉死。
     let pos = |needle: &str| {
         script
             .find(needle)
             .unwrap_or_else(|| panic!("缺少 {needle}"))
     };
-    assert!(pos(":wait") < pos(".old"));
-    assert!(
-        pos(r#"move /Y "C:\Users\Some User\AppData\Local\Temp\aevum-1.9.0.exe""#)
-            < pos(r#"start "" "#)
-    );
+    assert!(pos(":wait") < pos(r#""%TARGET%.old""#));
+    assert!(pos(r#"move /Y "%NEW%" "%TARGET%""#) < pos(r#"start "" "%TARGET%""#));
 
-    // 备份**不删**：新版起不来时，回滚脚本要靠这份 `.old` 回到上一版。曾经这里删得很
-    // 干脆，于是「更新完打不开」等于必须重新下载整包。
+    // 备份**不删**：新版起不来时，回滚脚本要靠这份 `.old` 回到上一版。
     //
     // The backup is **kept**: when the new build does not start, the rollback script needs
-    // `.old` to go back. It used to be deleted eagerly, so "updated and it will not launch"
-    // meant re-downloading the whole package.
+    // `.old` to go back.
     assert!(
-        !script.contains(r#"del /F /Q "C:\Program Files\Aevum Studio\aevum.exe.old""#),
+        !script.contains(r#"del /F /Q "%TARGET%.old""#),
         "备份不能被删掉，否则没有回滚路径\n{script}"
     );
     assert!(
@@ -410,18 +418,11 @@ fn install_script_has_five_steps_and_quotes_spaces() {
     // 失败要能回滚，而不是留下一个没有 exe 的安装目录
     assert!(script.contains(":rollback"), "必须有回滚分支");
 
-    // 脚本必须是纯 ASCII：中文注释在 GBK 代码页下会吃字符。
+    // 脚本必须是纯 ASCII：中文注释/路径在 GBK 代码页下会乱码吞行。
     assert!(
         script.is_ascii(),
         "批处理脚本只能含 ASCII，否则中文系统上会乱码吞行"
     );
-
-    // 不带空格的路径也不该被改坏（引号是幂等的）
-    let plain = install_script(
-        Path::new("D:\\tmp\\new.exe"),
-        Path::new("D:\\app\\aevum.exe"),
-    );
-    assert!(plain.contains(r#""D:\app\aevum.exe""#));
 }
 
 // ---------------------------------------------------------------------------
@@ -500,10 +501,14 @@ fn end_to_end_release_to_script() {
     std::fs::write(&staged, &bytes).expect("写临时文件");
     assert_eq!(sha256_of(&bytes), PAYLOAD_SHA);
 
-    let script = install_script(&staged, &dir.join("aevum.exe"));
+    let script = install_script();
     assert!(
-        script.contains(&format!("\"{}\"", staged.display())),
-        "脚本里要引用刚下好的文件"
+        script.contains(r#"set "NEW=%~1""#),
+        "新 exe 走参数进来（正文里写路径会被 OEM 代码页弄成乱码）"
+    );
+    assert!(
+        !script.contains(&staged.display().to_string()),
+        "下载路径不能写进脚本正文"
     );
     assert!(script.contains(":started"), "校验通过后才走到启动");
 
@@ -645,24 +650,32 @@ fn expand_without_a_channel_fails() {
 
 /// 回滚脚本：把当前版本挪成 `*.failed`、把 `*.old` 搬回来、再启动；没有备份时明确退出 1。
 ///
+/// 路径同样走参数（`%~1` 目标 exe、`%~2` 进程名），正文纯 ASCII 且不含盘符。
+///
 /// The rollback script: move the current build to `*.failed`, bring `*.old` back, start it;
 /// exit 1 with a message when there is no backup.
+///
+/// Paths arrive as arguments too (`%~1` target exe, `%~2` image name); the body is ASCII and
+/// carries no drive path.
 #[test]
 fn rollback_script_restores_the_backup_and_never_leaves_no_exe() {
-    let target = Path::new(r"C:\Program Files\Aevum Studio\aevum.exe");
-    let script = rollback_script(target);
-    let back = r#""C:\Program Files\Aevum Studio\aevum.exe.old" "C:\Program Files\Aevum Studio\aevum.exe""#;
-    let back_move = format!("move /Y {back}");
+    let script = rollback_script();
 
     for needle in [
-        r#"if not exist "C:\Program Files\Aevum Studio\aevum.exe.old""#,
-        r#"move /Y "C:\Program Files\Aevum Studio\aevum.exe" "C:\Program Files\Aevum Studio\aevum.exe.failed""#,
-        back_move.as_str(),
-        r#"start "" "C:\Program Files\Aevum Studio\aevum.exe""#,
-        "tasklist /FI \"IMAGENAME eq aevum.exe\"",
+        r#"set "TARGET=%~1""#,
+        r#"set "IMAGE=%~2""#,
+        r#"if not exist "%TARGET%.old""#,
+        r#"move /Y "%TARGET%" "%TARGET%.failed""#,
+        r#"move /Y "%TARGET%.old" "%TARGET%""#,
+        r#"start "" "%TARGET%""#,
+        r#""%SystemRoot%\System32\tasklist.exe" /FI "IMAGENAME eq %IMAGE%""#,
     ] {
         assert!(script.contains(needle), "回滚脚本缺少：{needle}\n{script}");
     }
+    assert!(
+        !script.contains(":\\"),
+        "正文里不能出现盘符路径（会被 OEM 代码页弄成乱码）\n{script}"
+    );
     // 顺序：先等退出 → 再挪走当前版本 → 再搬回备份 → 最后启动。
     let pos = |needle: &str| {
         script
@@ -670,8 +683,8 @@ fn rollback_script_restores_the_backup_and_never_leaves_no_exe() {
             .unwrap_or_else(|| panic!("缺少 {needle}"))
     };
     assert!(pos(":wait") < pos(".failed"));
-    assert!(pos(".failed") < pos(back));
-    assert!(pos("start \"\"") > pos(back));
+    assert!(pos(".failed") < pos(r#"move /Y "%TARGET%.old" "%TARGET%""#));
+    assert!(pos(r#"start "" "%TARGET%""#) > pos(".old"));
     assert!(script.is_ascii(), "批处理只能含 ASCII");
     // 所有删除动作都只能指向脚本自己：失败的版本必须留在盘上供排查。
     // Every deletion must target the script itself: the failed build stays for diagnosis.

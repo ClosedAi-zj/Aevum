@@ -1871,7 +1871,7 @@ impl AppState {
                     match result {
                         Ok(prepared) => {
                             self.update_phase = UpdatePhase::Ready;
-                            self.update_ready = Some((prepared.version, prepared.script));
+                            self.update_ready = Some(prepared);
                             self.update_error = None;
                         }
                         Err(e) => {

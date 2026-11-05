@@ -262,9 +262,18 @@ fn rollback_backup(target_exe: &Path) -> PathBuf {
 /// The empty `""` argument is the **window-title slot**: without it, the first quoted
 /// argument is swallowed as the title when the path contains spaces, and the script never
 /// runs.
-fn spawn_detached(script: &Path) -> Result<(), std::io::Error> {
+fn spawn_detached(script: &Path, args: &[&std::ffi::OsStr]) -> Result<(), std::io::Error> {
     let mut cmd = Command::new("cmd");
     cmd.arg("/c").arg("start").arg("").arg(script.as_os_str());
+    // 参数走命令行而不是写进批处理正文：批处理按 OEM 代码页解码，写进去的中文路径会
+    // 变成乱码；命令行是 UTF-16，不受影响。见 `aevum_core::update::install_script`。
+    //
+    // Arguments travel on the command line rather than inside the batch: the file is decoded
+    // with the OEM code page and an inline Chinese path would turn to mojibake, while the
+    // command line is UTF-16. See `aevum_core::update::install_script`.
+    for a in args {
+        cmd.arg(a);
+    }
     // 工作目录设在脚本旁边：脚本里写的是绝对路径，但某些系统上 `start` 会先按当前
     // 目录解析相对项，指过去一步就少一类意外。
     //
@@ -352,7 +361,7 @@ fn run_install(
     let new_exe = update::expand_exe(&zip, &unpack, &exe_name)?;
 
     let script = work.join("apply-update.cmd");
-    std::fs::write(&script, update::install_script(&new_exe, &target)).map_err(|e| {
+    std::fs::write(&script, update::install_script()).map_err(|e| {
         crate::i18n::tr_fmt(
             "写不了安装脚本（{}）：{}",
             &[
@@ -362,7 +371,18 @@ fn run_install(
         )
     })?;
 
-    Ok(PreparedInstall { version, script })
+    // 三个路径随 `PreparedInstall` 一起带走：脚本正文是纯 ASCII 的（中文路径写进去会被
+    // OEM 代码页弄成乱码），真正的路径要在拉起脚本时当参数传。
+    //
+    // The three paths ride along in `PreparedInstall`: the script body is pure ASCII (an
+    // inline Chinese path would be mangled by the OEM code page), so the real paths are
+    // handed over as arguments when the script is launched.
+    Ok(PreparedInstall {
+        version,
+        script,
+        new_exe,
+        target,
+    })
 }
 
 impl AppState {
@@ -544,19 +564,40 @@ impl AppState {
     /// exit, so it must be running before we close ourselves. Only "launch" and "request
     /// close" happen here, both instant, so the UI thread never blocks.
     pub fn launch_installer(&mut self, ctx: &Context) -> Result<(), String> {
-        let Some((version, script)) = self.update_ready.clone() else {
+        let Some(prepared) = self.update_ready.clone() else {
             return Err(crate::i18n::t!("还没有备好安装包：先下载并校验").to_owned());
         };
-        spawn_detached(&script).map_err(|e| {
+        let image = prepared
+            .target
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .ok_or_else(|| {
+                crate::i18n::t!("当前程序没有文件名，无法确定要替换哪一个 exe").to_owned()
+            })?;
+        // 三个路径当参数传（`%~1` 新 exe / `%~2` 目标 exe / `%~3` 进程名）：脚本正文是
+        // 纯 ASCII 的，中文路径写进去会被 OEM 代码页弄成乱码。
+        //
+        // The three paths travel as arguments (`%~1` new exe, `%~2` target exe, `%~3` image
+        // name): the batch body is pure ASCII, and an inline Chinese path would be mangled by
+        // the OEM code page.
+        spawn_detached(
+            &prepared.script,
+            &[
+                prepared.new_exe.as_os_str(),
+                prepared.target.as_os_str(),
+                std::ffi::OsStr::new(&image),
+            ],
+        )
+        .map_err(|e| {
             crate::i18n::tr_fmt(
                 "拉起安装脚本失败（{}）：{}",
                 &[
-                    &path_text(&script),
+                    &path_text(&prepared.script),
                     &aevum_core::errmsg::clip_echo(&e.to_string()),
                 ],
             )
         })?;
-        self.status = crate::i18n::tr_fmt("正在安装 {}，程序即将退出", &[&version]);
+        self.status = crate::i18n::tr_fmt("正在安装 {}，程序即将退出", &[&prepared.version]);
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         Ok(())
     }
@@ -595,7 +636,7 @@ impl AppState {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let script = std::env::temp_dir().join(format!("aevum-rollback-{stamp}.cmd"));
-        std::fs::write(&script, update::rollback_script(&target)).map_err(|e| {
+        std::fs::write(&script, update::rollback_script()).map_err(|e| {
             crate::i18n::tr_fmt(
                 "写不了回滚脚本（{}）：{}",
                 &[
@@ -604,15 +645,26 @@ impl AppState {
                 ],
             )
         })?;
-        spawn_detached(&script).map_err(|e| {
-            crate::i18n::tr_fmt(
-                "拉起回滚脚本失败（{}）：{}",
-                &[
-                    &path_text(&script),
-                    &aevum_core::errmsg::clip_echo(&e.to_string()),
-                ],
-            )
-        })?;
+        // 与安装同一条规矩：路径走参数，正文纯 ASCII。
+        //
+        // Same rule as installing: paths travel as arguments, the body stays pure ASCII.
+        let image = target
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .ok_or_else(|| {
+                crate::i18n::t!("当前程序没有文件名，无法确定要替换哪一个 exe").to_owned()
+            })?;
+        spawn_detached(&script, &[target.as_os_str(), std::ffi::OsStr::new(&image)]).map_err(
+            |e| {
+                crate::i18n::tr_fmt(
+                    "拉起回滚脚本失败（{}）：{}",
+                    &[
+                        &path_text(&script),
+                        &aevum_core::errmsg::clip_echo(&e.to_string()),
+                    ],
+                )
+            },
+        )?;
         self.status = crate::i18n::t!("正在回滚，程序即将退出").to_owned();
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         Ok(())
