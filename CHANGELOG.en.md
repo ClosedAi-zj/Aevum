@@ -15,6 +15,33 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.9.5 — 2026-11-05
+
+Patch release: the exe properties page is no longer blank.
+
+### Version resource (new)
+
+- Right-click `aevum.exe` → Properties → Details used to show an empty page (the resource
+  section contained only the icon). It now shows: file and product version `1.9.5`, product
+  name "恒晷 · Aevum Studio / Aevum Studio", company `Aevum Studio contributors`, copyright
+  `MIT License`. Two language blocks (English and Simplified Chinese); Explorer picks the one
+  matching the UI language.
+- This page is the earliest-visible face of the app — earlier than any signature — and also
+  the metadata source that Explorer, installers and antivirus tools read when querying the file.
+
+### Also: CI is green again on English Windows
+
+- Since the evening of Nov 4 CI had failed four times in a row, always at the first gate:
+  on English Windows Python's stdout defaults to cp1252, so the gate scripts crashed on their
+  first Chinese line. Unreproducible locally (Chinese Windows), so only CI showed it. Fixed:
+  the gate entry forces UTF-8, and the scripts no longer rely on the caller to be printable.
+- One test required four camera sample files to exist on disk, while the repo intentionally
+  does not track them (the manifest and hashes live in `samples/cameras/README.md`). Changed:
+  with none of the samples present the check skips with a reason (the normal state of a clean
+  clone); with some but not all present it still fails — that means local samples got broken.
+
+---
+
 ## v1.9.4 — 2026-11-05
 
 Patch release: the app can now tell you which build you have.
