@@ -1386,3 +1386,166 @@ pub(super) fn rollback_window(state: &mut AppState, ctx: &Context) {
         }
     }
 }
+
+#[cfg(test)]
+mod update_window_tests {
+    use super::*;
+    use aevum_core::update::{ReleaseAsset, UpdateCheck};
+
+    /// 与 `--selftest` 同一块画布：1600×1000，最大纹理 8192。
+    ///
+    /// The same canvas as `--selftest`: 1600x1000, max texture side 8192.
+    fn raw_input() -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1600.0, 1000.0),
+            )),
+            max_texture_side: Some(8192),
+            ..Default::default()
+        }
+    }
+
+    /// 画一帧，把这一帧上屏的每个文字形状拼成一段返回。
+    ///
+    /// Paint one frame and concatenate every text shape that reached the screen.
+    fn painted(state: &mut AppState, ctx: &Context) -> String {
+        let mut out = ctx.run_ui(raw_input(), |ui| crate::shell::ui(state, ui));
+        let mut text = String::new();
+        for clipped in &out.shapes {
+            collect(&clipped.shape, &mut text);
+        }
+        out.textures_delta.clear();
+        text
+    }
+
+    /// 递归收字：分组形状（`Shape::Vec`）里也压着文字，只扫顶层会漏掉半个窗口。
+    ///
+    /// Collect text recursively: grouped shapes (`Shape::Vec`) carry text too, and a
+    /// top-level-only scan misses half a window.
+    fn collect(shape: &egui::Shape, out: &mut String) {
+        match shape {
+            egui::Shape::Text(t) => {
+                out.push_str(t.galley.text());
+                out.push('\n');
+            }
+            egui::Shape::Vec(shapes) => {
+                for s in shapes {
+                    collect(s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 一条「有新版本」的结论，资产与清单地址都齐（安装按钮要的就是这两样）。
+    ///
+    /// An "update available" conclusion with both the asset and the manifest URL, which
+    /// is exactly what the install button needs.
+    fn found_update() -> UpdateCheck {
+        UpdateCheck {
+            current: aevum_core::update::current_version().to_owned(),
+            latest: Some("v9.9.9".to_owned()),
+            asset: Some(ReleaseAsset {
+                name: "Aevum-Studio-v9.9.9-windows-x64.zip".to_owned(),
+                url: "https://example.invalid/pkg.zip".to_owned(),
+                size: 4 * 1024 * 1024,
+            }),
+            note: "发现新版本 v9.9.9".to_owned(),
+        }
+    }
+
+    /// 更新窗口的四种阶段每种都要真的画出来。
+    ///
+    /// 这条挡的是「阶段分支写错但编译通过」：漏一个分支、把进度读数拼错成空串、
+    /// 或者 `match` 里某一臂忘了摆按钮，都不会报错，只会让用户在某个时刻面对一扇
+    /// 空窗。断言里只认**那一刻该看见的那几个字**。
+    ///
+    /// Every one of the four phases must really paint.
+    ///
+    /// This catches "the phase branch is wrong but it compiles": a missing arm, a progress
+    /// reading that formats to an empty string, or a `match` arm that forgets its button
+    /// all fail silently and leave the user facing an empty window at some moment. The
+    /// assertions only require the few words that must be visible at that moment.
+    #[test]
+    fn every_update_phase_paints_its_own_copy() {
+        let ctx = Context::default();
+        theme::apply(&ctx, 1.0);
+        let mut state = AppState::demo();
+        state.install_demo_textures(&ctx);
+        state.update_open = true;
+
+        // 首开还没查过：给一句话，不画一片空白。
+        //
+        // Never checked when first opened: one line rather than a blank area.
+        let _ = painted(&mut state, &ctx);
+        let cold = painted(&mut state, &ctx);
+        assert!(
+            cold.contains("还没有检查过"),
+            "首开状态没有说明：\n{cold}"
+        );
+
+        // 空闲 + 可安装 → 主按钮「下载并安装」。
+        //
+        // Idle and installable -> the primary "download and install" button.
+        state.update_check = Some(found_update());
+        state.update_body = "改动 1\n改动 2".to_owned();
+        let idle = painted(&mut state, &ctx);
+        for want in ["当前版本", "远端版本", "发布说明", "下载并安装"] {
+            assert!(idle.contains(want), "空闲态缺「{want}」：\n{idle}");
+        }
+
+        // 下载中 → 进度读数 + 禁用的按钮（禁用态照样画字，所以这里认字不认灰）。
+        //
+        // Downloading -> the progress reading plus a disabled button (a disabled widget
+        // still paints its label, so the text is what gets asserted).
+        state.update_phase = UpdatePhase::Downloading;
+        if let Ok(mut slot) = state.update_progress.lock() {
+            *slot = (1024 * 1024, 4 * 1024 * 1024);
+        }
+        let mid = painted(&mut state, &ctx);
+        assert!(
+            mid.contains("1.0 / 4.0 MB"),
+            "下载中没有真实字节读数：\n{mid}"
+        );
+
+        // 备好 → 「已准备好 …，重启后完成安装」+「立即重启并安装」。
+        //
+        // Ready -> "… is ready, restart to finish" plus "restart and install".
+        state.update_phase = UpdatePhase::Ready;
+        state.update_ready = Some(("v9.9.9".to_owned(), std::path::PathBuf::from("t.cmd")));
+        let ready = painted(&mut state, &ctx);
+        for want in ["已准备好 v9.9.9", "立即重启并安装"] {
+            assert!(ready.contains(want), "就绪态缺「{want}」：\n{ready}");
+        }
+
+        // 失败 → 红字一行 + 可以重试的按钮。
+        //
+        // Failed -> one red line plus a retry button.
+        state.update_phase = UpdatePhase::Idle;
+        state.update_ready = None;
+        state.update_error = Some("下载失败（退出码 6）：网络不可达".to_owned());
+        let failed = painted(&mut state, &ctx);
+        assert!(
+            failed.contains("下载失败（退出码 6）"),
+            "失败态没有显示原因：\n{failed}"
+        );
+    }
+
+    /// 回滚确认框要真的上屏，并且按钮文案在。
+    ///
+    /// The rollback confirmation must paint, with its buttons' copy present.
+    #[test]
+    fn the_rollback_confirmation_paints() {
+        let ctx = Context::default();
+        theme::apply(&ctx, 1.0);
+        let mut state = AppState::demo();
+        state.install_demo_textures(&ctx);
+        state.rollback_confirm = true;
+        let _ = painted(&mut state, &ctx);
+        let text = painted(&mut state, &ctx);
+        for want in ["回滚到上一版", ".failed", "取消", "回滚并重启"] {
+            assert!(text.contains(want), "回滚确认框缺「{want}」：\n{text}");
+        }
+    }
+}
