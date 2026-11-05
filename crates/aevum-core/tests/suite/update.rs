@@ -14,8 +14,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use aevum_core::update::{
-    Release, ReleaseAsset, check_release, check_remote, download_verified, fetch_with,
-    install_script, is_newer, parse_release, parse_version, pick_asset, sha256_of, verify,
+    Release, ReleaseAsset, check_install_dir, check_release, check_remote, download_verified,
+    expand_exe_with, fetch_with, install_script, is_newer, parse_release, parse_version,
+    pick_asset, rollback_script, sha256_of, verify,
 };
 
 /// 固定载荷与它的 SHA-256（用 Python 的 `hashlib` 独立算出，不是拿被测实现自己算的）。
@@ -387,8 +388,20 @@ fn install_script_has_five_steps_and_quotes_spaces() {
             < pos(r#"start "" "#)
     );
 
-    // 清理与自删：`(goto)` 是让 cmd 释放脚本句柄的老写法，缺了它脚本永远删不掉自己。
-    assert!(script.contains(r#"del /F /Q "C:\Program Files\Aevum Studio\aevum.exe.old""#));
+    // 备份**不删**：新版起不来时，回滚脚本要靠这份 `.old` 回到上一版。曾经这里删得很
+    // 干脆，于是「更新完打不开」等于必须重新下载整包。
+    //
+    // The backup is **kept**: when the new build does not start, the rollback script needs
+    // `.old` to go back. It used to be deleted eagerly, so "updated and it will not launch"
+    // meant re-downloading the whole package.
+    assert!(
+        !script.contains(r#"del /F /Q "C:\Program Files\Aevum Studio\aevum.exe.old""#),
+        "备份不能被删掉，否则没有回滚路径\n{script}"
+    );
+    assert!(
+        script.contains(":started"),
+        "启动分支要保留（备份保留不等于跳过启动）"
+    );
     assert!(
         script.contains("(goto) 2>NUL & del /F /Q \"%~f0\""),
         "自删要能让 cmd 先松手"
@@ -508,4 +521,180 @@ fn end_to_end_release_to_script() {
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------- 下载 / 解包 / 回滚
+
+/// 解包判据用的 zip：顶层目录里同时放 `aaa.exe` 与 `aevum.exe`，子目录里放 `ffmpeg.exe`。
+///
+/// 三者都在，才能区分「按名字挑」和「挑第一个 exe」——只放一个的话，随便怎么实现都能绿。
+///
+/// The fixture zip used by the unpack criterion: `aaa.exe` and `aevum.exe` side by side in
+/// the top directory, `ffmpeg.exe` in a subdirectory.
+///
+/// Having all three is what distinguishes "pick by name" from "pick the first exe"; with a
+/// single file any implementation passes.
+fn demo_zip() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/update-demo.zip")
+}
+
+fn no_program(_: &str) -> Option<std::path::PathBuf> {
+    None
+}
+
+/// 真实查找器：只用来定位系统自带组件；找不到就让判据自己红，不静默跳过。
+///
+/// The real locator, used only to find OS-provided components; a miss turns the criterion
+/// red rather than skipping it silently.
+fn real_program(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let exts: &[&str] = &["", ".exe"];
+    for dir in std::env::split_paths(&path) {
+        for ext in exts {
+            let cand = dir.join(format!("{name}{ext}"));
+            if cand.is_file() {
+                return Some(cand);
+            }
+        }
+    }
+    None
+}
+
+/// 没有下载通道时必须**明确报错**，而且不能留下半截文件。
+///
+/// 静默成功是这里最贵的错：上层会以为拿到了一份完整的 zip，然后在解包或校验处报一个
+/// 与真实原因无关的错，用户看到的错误永远指不到「这台机器装不了更新」。
+///
+/// With no download channel the call must **fail loudly** and leave no partial file behind.
+///
+/// Silent success is the expensive bug here: the caller would believe it holds a complete
+/// zip and fail later at unpack or checksum with an unrelated message, so the user never
+/// learns that this machine simply cannot install updates.
+#[test]
+fn download_without_a_channel_fails_and_leaves_no_partial_file() {
+    let dir = std::env::temp_dir().join(format!("aevum-dl-nofail-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("建临时目录");
+    let dest = dir.join("partial.bin");
+    // 先放一份「上次没下完」的文件：调用必须把它清掉，不能接着写。
+    // Seed a leftover partial file: the call must clear it, not append to it.
+    std::fs::write(&dest, b"stale").expect("写残留文件");
+
+    let asset = ReleaseAsset {
+        name: "Aevum-Studio-v9.9.9-windows-x64.zip".to_string(),
+        url: "https://example.invalid/x.zip".to_string(),
+        size: 630,
+    };
+    let mut calls = 0usize;
+    let err = aevum_core::update::download_to_file_with(&asset, &dest, &no_program, &mut |_, _| {
+        calls += 1
+    })
+    .expect_err("没有通道时必须报错");
+    assert!(
+        err.contains("没有可用的下载通道"),
+        "错误要说清是通道问题，而不是别的原因：{err}"
+    );
+    assert!(!dest.exists(), "半截/残留文件必须被清掉");
+    assert_eq!(calls, 0, "通道都不存在时不该假装有进度");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 解包：从 zip 顶层目录里按名字挑出 `aevum.exe`，不挑 `aaa.exe`，也不挑 `tools/ffmpeg.exe`。
+///
+/// Unpack: pick `aevum.exe` by name from the top directory of the zip -- not `aaa.exe`, and
+/// not `tools/ffmpeg.exe`.
+#[test]
+fn expand_picks_the_named_binary_not_the_first_one() {
+    let work = std::env::temp_dir().join(format!("aevum-unpack-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    let exe = expand_exe_with(&demo_zip(), &work, "aevum.exe", &real_program)
+        .expect("系统自带 tar 或 Expand-Archive 时应当能解包");
+    assert_eq!(
+        exe.file_name().map(|n| n.to_string_lossy().into_owned()),
+        Some("aevum.exe".to_string()),
+        "挑错了文件：{}",
+        exe.display()
+    );
+    assert_eq!(
+        std::fs::read(&exe).expect("解出的文件要可读"),
+        b"MZ demo-main",
+        "解出的必须是我们放进去的那一份"
+    );
+    // 目录要先清空：上一版的残留不能被当成「刚解出来的」。
+    // The work dir is cleared first: a leftover from a previous run must not pass as fresh.
+    let stale = work.join("Aevum-Studio-v9.9.9/aevum.exe");
+    std::fs::write(&stale, b"stale").expect("写残留");
+    let again = expand_exe_with(&demo_zip(), &work, "aevum.exe", &real_program).expect("再解一次");
+    assert_eq!(std::fs::read(&again).expect("可读"), b"MZ demo-main");
+
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+/// 解包通道也没有时必须报错，而不是返回一个不存在的路径。
+///
+/// With no unpack channel either, fail instead of returning a path that does not exist.
+#[test]
+fn expand_without_a_channel_fails() {
+    let work = std::env::temp_dir().join(format!("aevum-unpack-none-{}", std::process::id()));
+    let err = expand_exe_with(&demo_zip(), &work, "aevum.exe", &no_program)
+        .expect_err("没有通道时必须报错");
+    assert!(err.contains("无法解包"), "错误要指到解包通道：{err}");
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+/// 回滚脚本：把当前版本挪成 `*.failed`、把 `*.old` 搬回来、再启动；没有备份时明确退出 1。
+///
+/// The rollback script: move the current build to `*.failed`, bring `*.old` back, start it;
+/// exit 1 with a message when there is no backup.
+#[test]
+fn rollback_script_restores_the_backup_and_never_leaves_no_exe() {
+    let target = Path::new(r"C:\Program Files\Aevum Studio\aevum.exe");
+    let script = rollback_script(target);
+    let back = r#""C:\Program Files\Aevum Studio\aevum.exe.old" "C:\Program Files\Aevum Studio\aevum.exe""#;
+    let back_move = format!("move /Y {back}");
+
+    for needle in [
+        r#"if not exist "C:\Program Files\Aevum Studio\aevum.exe.old""#,
+        r#"move /Y "C:\Program Files\Aevum Studio\aevum.exe" "C:\Program Files\Aevum Studio\aevum.exe.failed""#,
+        back_move.as_str(),
+        r#"start "" "C:\Program Files\Aevum Studio\aevum.exe""#,
+        "tasklist /FI \"IMAGENAME eq aevum.exe\"",
+    ] {
+        assert!(script.contains(needle), "回滚脚本缺少：{needle}\n{script}");
+    }
+    // 顺序：先等退出 → 再挪走当前版本 → 再搬回备份 → 最后启动。
+    let pos = |needle: &str| {
+        script
+            .find(needle)
+            .unwrap_or_else(|| panic!("缺少 {needle}"))
+    };
+    assert!(pos(":wait") < pos(".failed"));
+    assert!(pos(".failed") < pos(back));
+    assert!(pos("start \"\"") > pos(back));
+    assert!(script.is_ascii(), "批处理只能含 ASCII");
+    // 所有删除动作都只能指向脚本自己：失败的版本必须留在盘上供排查。
+    // Every deletion must target the script itself: the failed build stays for diagnosis.
+    for line in script.lines().filter(|l| l.contains("del /F /Q")) {
+        assert!(
+            line.contains(r#"del /F /Q "%~f0""#),
+            "除自删之外不许有删除动作：{line}"
+        );
+    }
+}
+
+/// 安装目录里的 `%` 与 `"` 必须被拒绝：它们在批处理里无法安全转义。
+///
+/// `%` and `"` in the install directory must be rejected: they cannot be escaped safely.
+#[test]
+fn unescapable_install_dirs_are_rejected() {
+    assert!(check_install_dir(Path::new(r"C:\Program Files\Aevum Studio\aevum.exe")).is_ok());
+    assert!(check_install_dir(Path::new(r"C:\Users\张三\AppData\Local\aevum.exe")).is_ok());
+    for bad in [r"C:\100%\aevum.exe", r#"C:\a"b\aevum.exe"#] {
+        let err = check_install_dir(Path::new(bad)).expect_err("必须拒绝");
+        assert!(
+            err.contains("无法安全转义"),
+            "{bad} 的拒绝理由要说清：{err}"
+        );
+    }
 }

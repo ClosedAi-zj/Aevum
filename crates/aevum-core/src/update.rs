@@ -153,6 +153,41 @@ pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// 查「最新发布」的地址。写在这里而不是散在界面层：换仓库、换镜像只需要改一处。
+///
+/// The endpoint for "latest release". Kept here rather than in the UI: moving the repo or
+/// pointing at a mirror should be a one-line change.
+pub const API_LATEST: &str = "https://api.github.com/repos/ClosedAi-zj/Aevum/releases/latest";
+
+/// 与 [`pick_asset`] 配套的资产后缀，和 `scripts/package.sh` 打出来的名字一致。
+///
+/// The asset suffix that goes with [`pick_asset`], matching the name `scripts/package.sh`
+/// produces.
+pub const ASSET_SUFFIX: &str = "windows-x64.zip";
+
+/// SHA256SUMS 的文件名（发布资产之一）。
+///
+/// The name of the `SHA256SUMS` release asset.
+pub const SUMS_ASSET: &str = "SHA256SUMS";
+
+/// 实际使用的检查地址：环境变量 `AEVUM_UPDATE_API` 可以整体替换（离线自建镜像、内网
+/// 分发、以及测试）。
+///
+/// 空值与纯空白一律当成没设：设成空字符串就悄悄指到空白页，比直接报错更难查。
+///
+/// The endpoint actually used: `AEVUM_UPDATE_API` replaces it wholesale (self-hosted
+/// mirrors, intranet distribution, and tests).
+///
+/// Empty or whitespace-only counts as unset: silently pointing at a blank page is harder to
+/// diagnose than an outright failure.
+pub fn latest_url() -> String {
+    let key = format!("{}UPDATE_API", crate::brand::ENV_PREFIX);
+    match std::env::var(&key) {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => API_LATEST.to_string(),
+    }
+}
+
 /// 解析 GitHub `/releases/latest` 的 JSON。
 ///
 /// 三层校验，每层都返回**能读懂**的错误而不是 serde 的原始报错：
@@ -768,6 +803,390 @@ pub fn download_verified(
     Ok(bytes)
 }
 
+/// 下载超时（秒）。三条通道共用一个数：`curl --max-time`、PowerShell `-TimeoutSec`、
+/// 以及这里的轮询上限。分开写会出现「命令超时了但轮询还在等」的错位。
+///
+/// Download timeout in seconds, shared by all three channels (`curl --max-time`,
+/// PowerShell `-TimeoutSec`, and the poll loop here). Separate values would let the poll
+/// outlive the command it is watching.
+const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
+
+/// 轮询下载进度的间隔。50 ms 对进度条足够顺滑，又不会把一个核抢走。
+///
+/// Progress poll interval: 50 ms is smooth enough for a bar and cheap enough for a core.
+const PROGRESS_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// 下载到**文件**并回报进度（测试缝）。
+///
+/// 为什么不复用 [`fetch_with`]：那条路把整包读进内存，56 MB 的 zip 会在界面上表现为
+/// 「点了没反应」——中间没有任何可观测的量。这里改成「交给 curl/PowerShell 落盘，
+/// 我们只盯文件大小」，于是进度是**真实字节数**，不是估算出来的动画。
+///
+/// `on_progress(已写字节, 资产声明字节)`：资产没声明大小时第二个参数是 0，调用方应显示
+/// 不确定进度而不是 0%。
+///
+/// 失败与超时都**删掉半截文件**：留着它会让下一次下载从错误的状态开始，也会让
+/// 「文件存在」被误读成「已经下好」。
+///
+/// Download to a **file** while reporting progress (test seam).
+///
+/// Why not reuse [`fetch_with`]: that path reads the whole payload into memory, and a 56 MB
+/// zip then looks like "the click did nothing" -- there is no observable quantity in between.
+/// Here curl/PowerShell writes the file and we watch its size, so the progress is **real
+/// bytes**, not an estimated animation.
+///
+/// `on_progress(written, declared_size)`: the second value is 0 when the asset does not
+/// declare a size, and the caller should show an indeterminate bar rather than 0%.
+///
+/// Failures and timeouts **delete the partial file**: leaving it behind makes the next
+/// attempt start from a wrong state and lets "the file exists" be misread as "already done".
+pub fn download_to_file_with(
+    asset: &ReleaseAsset,
+    dest: &Path,
+    find: &Locator,
+    on_progress: &mut dyn FnMut(u64, u64),
+) -> Result<(), String> {
+    if asset.url.trim().is_empty() {
+        return Err("下载地址是空的".to_string());
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("建不了下载目录（{}）：{e}", parent.display()))?;
+    }
+    // 起始状态必须干净：上一次的半截文件会让进度条从中间开始，还会骗过大小检查。
+    // Start clean: a leftover partial file starts the bar in the middle and fools size checks.
+    let _ = std::fs::remove_file(dest);
+
+    let child = if let Some(curl) = find("curl") {
+        Command::new(&curl)
+            .args(["-fsSL", "--max-time", "300", "-o"])
+            .arg(dest)
+            .arg(&asset.url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("调用 curl 失败（{}）：{e}", curl.display()))?
+    } else if let Some(ps) = find("powershell") {
+        let script = format!(
+            "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -UseBasicParsing \
+             -TimeoutSec 300 -Uri '{}' -OutFile '{}'",
+            asset.url.replace('\'', "''"),
+            dest.display()
+        );
+        Command::new(&ps)
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("调用 PowerShell 失败（{}）：{e}", ps.display()))?
+    } else {
+        return Err(format!(
+            "本机没有可用的下载通道：既没有 curl.exe（Windows 10 1803+ 自带），也没有 powershell。\
+             请手动下载 {} 解压覆盖，或者升级到自带 curl 的系统版本",
+            asset.url
+        ));
+    };
+
+    let mut child = child;
+    let started = std::time::Instant::now();
+    let mut last = 0u64;
+    loop {
+        // 先报一次（可能是 0），让界面立刻从「准备中」变成「下载中 0 / N」。
+        // Report once right away so the UI leaves "preparing" immediately.
+        if let Ok(meta) = std::fs::metadata(dest) {
+            last = meta.len();
+        }
+        on_progress(last, asset.size);
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() {
+                    let n = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+                    if n == 0 {
+                        let _ = std::fs::remove_file(dest);
+                        return Err("下载通道返回了 0 字节".to_string());
+                    }
+                    on_progress(n, asset.size.max(n));
+                    return Ok(());
+                }
+                let err = child
+                    .stderr
+                    .take()
+                    .map(|mut s| {
+                        let mut buf = Vec::new();
+                        let _ = std::io::Read::read_to_end(&mut s, &mut buf);
+                        first_line(&buf)
+                    })
+                    .unwrap_or_else(|| "（没有输出）".to_string());
+                let _ = std::fs::remove_file(dest);
+                return Err(format!(
+                    "下载失败（退出码 {}）：{err}",
+                    status.code().unwrap_or(-1)
+                ));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                let _ = child.kill();
+                let _ = std::fs::remove_file(dest);
+                return Err(format!("等待下载进程失败：{e}"));
+            }
+        }
+        if started.elapsed().as_secs() > DOWNLOAD_TIMEOUT_SECS {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_file(dest);
+            return Err(format!(
+                "下载超过 {} 秒仍未完成，已中止（网络太慢或服务器无响应）",
+                DOWNLOAD_TIMEOUT_SECS
+            ));
+        }
+        std::thread::sleep(PROGRESS_POLL);
+    }
+}
+
+/// 真实下载通道版：[`download_to_file_with`] 的薄壳。
+///
+/// The real-channel version: a thin shell over [`download_to_file_with`].
+pub fn download_to_file(
+    asset: &ReleaseAsset,
+    dest: &Path,
+    on_progress: &mut dyn FnMut(u64, u64),
+) -> Result<(), String> {
+    download_to_file_with(asset, dest, &locate, on_progress)
+}
+
+/// 把一个 zip 里的可执行文件解到 `work` 下，返回它的路径（测试缝）。
+///
+/// 为什么要解包：发布资产是 zip（顶层目录 `Aevum-Studio-v<版本>/`），而替换脚本只认
+/// 一个 exe 路径。中间这一步缺了，更新器就只能「下载成功、然后无事发生」。
+///
+/// 为什么不用 zip crate：更新链是唯一还没被依赖审计覆盖的角落，而 Windows 10 1803+
+/// 自带 `tar.exe`（bsdtar，认 zip），退路是 PowerShell 的 `Expand-Archive`。两者都是
+/// 系统组件，与 [`fetch`] 的取舍一致。
+///
+/// 找 exe 的规则：先找**同名**（安装目录可能改名，但镜像名跟着走），找不到再取第一个
+/// `.exe`；只往下三层，避免万一解出一棵树时把 `tools/` 里的 ffmpeg 当主体。
+///
+/// Extract the executable from a zip into `work` and return its path (test seam).
+///
+/// Why unpack at all: the release asset is a zip (top-level `Aevum-Studio-v<version>/`)
+/// while the replacement script takes a single exe path. Without this step the updater
+/// "downloads successfully and then nothing happens".
+///
+/// Why no zip crate: the update chain is the last corner not covered by the dependency
+/// audit, and Windows 10 1803+ ships `tar.exe` (bsdtar, which reads zip), with PowerShell's
+/// `Expand-Archive` as the fallback -- both OS components, consistent with [`fetch`].
+///
+/// Exe lookup: prefer the **same file name** (the install dir may be renamed, the image name
+/// follows it), else the first `.exe`; three levels deep at most so a full tree cannot make
+/// `tools/ffmpeg.exe` look like the main binary.
+pub fn expand_exe_with(
+    zip: &Path,
+    work: &Path,
+    exe_name: &str,
+    find: &Locator,
+) -> Result<PathBuf, String> {
+    if !zip.is_file() {
+        return Err(format!("压缩包不存在：{}", zip.display()));
+    }
+    // 解包目录先清空：上一版残留的 aevum.exe 会被当成「刚解出来的」。
+    // Clear the work dir first: an aevum.exe left by a previous run would pass as fresh.
+    let _ = std::fs::remove_dir_all(work);
+    std::fs::create_dir_all(work)
+        .map_err(|e| format!("建不了解包目录（{}）：{e}", work.display()))?;
+
+    let mut done = false;
+    if let Some(tar) = find("tar") {
+        let out = Command::new(&tar)
+            .arg("-xf")
+            .arg(zip)
+            .arg("-C")
+            .arg(work)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| format!("调用 tar 失败（{}）：{e}", tar.display()))?;
+        if out.status.success() {
+            done = true;
+        }
+    }
+    if !done
+        && let Some(ps) = find("powershell")
+    {
+        let script = format!(
+            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
+            zip.display().to_string().replace('\'', "''"),
+            work.display().to_string().replace('\'', "''")
+        );
+        let out = Command::new(&ps)
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| format!("调用 PowerShell 解包失败（{}）：{e}", ps.display()))?;
+        if !out.status.success() {
+            return Err(format!(
+                "解包失败（退出码 {}）：{}",
+                out.status.code().unwrap_or(-1),
+                first_line(&out.stderr)
+            ));
+        }
+        done = true;
+    }
+    if !done {
+        return Err("本机既没有 tar.exe 也没有 powershell，无法解包更新".to_string());
+    }
+
+    let found = find_exe(work, exe_name, 3)
+        .ok_or_else(|| format!("压缩包里没有找到 {exe_name}（解包到 {}）", work.display()))?;
+    // 防穿越：解包出来的东西必须真在 work 下，不能是符号链接指到别处。
+    // Anti-traversal: the result must really live under `work`, not be a link out of it.
+    let root = std::fs::canonicalize(work).map_err(|e| format!("解包目录无效：{e}"))?;
+    let real = std::fs::canonicalize(&found).map_err(|e| format!("解出的文件无效：{e}"))?;
+    if !real.starts_with(&root) {
+        return Err(format!("解包结果跑出了临时目录：{}", found.display()));
+    }
+    Ok(found)
+}
+
+/// 真实通道版：[`expand_exe_with`] 的薄壳。
+///
+/// The real-channel version: a thin shell over [`expand_exe_with`].
+pub fn expand_exe(zip: &Path, work: &Path, exe_name: &str) -> Result<PathBuf, String> {
+    expand_exe_with(zip, work, exe_name, &locate)
+}
+
+/// 在 `dir` 往下 `depth` 层里找可执行文件，同名优先。
+///
+/// Find an executable under `dir` down to `depth` levels, preferring the exact name.
+fn find_exe(dir: &Path, exe_name: &str, depth: usize) -> Option<PathBuf> {
+    let mut any: Option<PathBuf> = None;
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if is_dir {
+            if depth > 1 {
+                dirs.push(path);
+            }
+            continue;
+        }
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        let Some(name) = name else { continue };
+        if name.eq_ignore_ascii_case(exe_name) {
+            return Some(path);
+        }
+        if name.to_ascii_lowercase().ends_with(".exe") && any.is_none() {
+            any = Some(path);
+        }
+    }
+    for sub in dirs {
+        if let Some(hit) = find_exe(&sub, exe_name, depth - 1) {
+            // 同名的优先于「随便一个 exe」：子树里可能只有 ffmpeg。
+            // A name match beats "any exe": a subtree may hold nothing but ffmpeg.
+            if hit
+                .file_name()
+                .map(|n| n.to_string_lossy().eq_ignore_ascii_case(exe_name))
+                .unwrap_or(false)
+            {
+                return Some(hit);
+            }
+            any.get_or_insert(hit);
+        }
+    }
+    any
+}
+
+/// 生成「回滚到上一版」的批处理文本（不执行，只生成）。
+///
+/// 前提：[`install_script`] 会**保留** `*.old`，所以上一版永远在原地。这个脚本做的事
+/// 与更新相反——把当前的 exe 改名成 `*.failed`（不删，留着排查），再把 `*.old` 搬回来
+/// 并启动。当前版本起不来时，用户双击它就能回到上一版，不需要重装。
+///
+/// 与更新脚本一样：纯 ASCII、先等进程退出、失败不留下没有 exe 的目录。
+///
+/// Generate the "roll back to the previous version" batch text (generated, never run here).
+///
+/// Precondition: [`install_script`] **keeps** `*.old`, so the previous build is always
+/// there. This script does the opposite of an update -- rename the current exe to
+/// `*.failed` (kept for diagnosis), move `*.old` back, start it. When the current version
+/// refuses to start, double-clicking this file returns to the previous build without a
+/// reinstall.
+///
+/// Same rules as the update script: ASCII only, wait for exit first, never leave a directory
+/// without an exe.
+pub fn rollback_script(target_exe: &Path) -> String {
+    let target = target_exe.display();
+    let old = format!("{target}.old");
+    let failed = format!("{target}.failed");
+    let image = target_exe
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "aevum.exe".to_string());
+
+    format!(
+        "@echo off\r\n\
+         rem Aevum Studio rollback helper. Generated by aevum-core::update; do not edit.\r\n\
+         rem Order: wait for exit -> current aside -> old back -> start.\r\n\
+         setlocal\r\n\
+         \r\n\
+         if not exist \"{old}\" (\r\n\
+         \x20   echo No previous version found: \"{old}\"\r\n\
+         \x20   (goto) 2>NUL & del /F /Q \"%~f0\"\r\n\
+         \x20   exit /b 1\r\n\
+         )\r\n\
+         \r\n\
+         rem 1/4 Wait until the running app has exited.\r\n\
+         :wait\r\n\
+         tasklist /FI \"IMAGENAME eq {image}\" 2>NUL | find /I \"{image}\" >NUL\r\n\
+         if not errorlevel 1 (\r\n\
+         \x20   ping -n 2 127.0.0.1 >NUL\r\n\
+         \x20   goto wait\r\n\
+         )\r\n\
+         \r\n\
+         rem 2/4 Keep the current build aside for diagnosis (do not delete it).\r\n\
+         if exist \"{target}\" move /Y \"{target}\" \"{failed}\" >NUL 2>&1\r\n\
+         \r\n\
+         rem 3/4 Put the previous build back.\r\n\
+         move /Y \"{old}\" \"{target}\" >NUL 2>&1\r\n\
+         if not exist \"{target}\" (\r\n\
+         \x20   if exist \"{failed}\" move /Y \"{failed}\" \"{target}\" >NUL 2>&1\r\n\
+         \x20   (goto) 2>NUL & del /F /Q \"%~f0\"\r\n\
+         \x20   exit /b 1\r\n\
+         )\r\n\
+         \r\n\
+         rem 4/4 Start the restored build, then this script.\r\n\
+         start \"\" \"{target}\"\r\n\
+         (goto) 2>NUL & del /F /Q \"%~f0\"\r\n\
+         exit /b 0\r\n"
+    )
+}
+
+/// 安装目录能不能安全地交给批处理。
+///
+/// `%` 与 `"` 在 CMD 里无法安全转义（`%` 会被当成变量引用），遇到就明确拒绝，而不是
+/// 生成一个必然出错的脚本。
+///
+/// Whether an install directory can be handed to the batch script safely.
+///
+/// `%` and `"` cannot be escaped safely in CMD (`%` starts a variable reference). Reject
+/// them explicitly instead of emitting a script that is guaranteed to misbehave.
+pub fn check_install_dir(target_exe: &Path) -> Result<(), String> {
+    let text = target_exe.display().to_string();
+    if text.contains('%') || text.contains('"') {
+        return Err(format!(
+            "安装目录里含 % 或 \"，批处理无法安全转义，请把程序装到普通目录：{text}"
+        ));
+    }
+    // 非 ASCII 路径（中文用户名）**不拒绝**：引号内的路径由文件系统解释，批处理照样
+    // 搬得动；只有在 echo 出来时才会被 GBK 代码页弄乱，而本脚本不回显路径。
+    //
+    // Non-ASCII paths (a Chinese user name) are **not** rejected: inside quotes the
+    // filesystem interprets them fine and the batch still moves them; only *echoed* text is
+    // mangled by the GBK code page, and this script never echoes a path.
+    Ok(())
+}
+
 /// 生成替换用的 Windows 批处理文本（不执行，只生成）。
 ///
 /// 五步，顺序不能变：
@@ -775,7 +1194,7 @@ pub fn download_verified(
 /// 2. **把旧 exe 改名成 `*.old`** —— 单次 rename 是可回滚的，失败时原文件仍在原处；
 /// 3. **把新 exe 搬到目标位置**，被占用就重试（杀软与索引器会短暂持有句柄）；
 /// 4. **启动新 exe**；
-/// 5. **清理备份与自身**。
+/// 5. **保留备份**（`*.old` 留着，供 [`rollback_script`] 回滚）并清理自身。
 ///
 /// 为什么是 CMD 而不是 PowerShell：这段脚本要在「刚刚退出、可能还没干净」的时刻尽快跑
 /// 起来，CMD 的启动开销是 PowerShell 的十分之一，而它只做 `move` / `start` / `del` 三件
@@ -801,7 +1220,8 @@ pub fn download_verified(
 ///    original is still in place;
 /// 3. **move the new exe into place**, retrying while an antivirus or indexer holds a handle;
 /// 4. **start the new exe**;
-/// 5. **clean up the backup and this script**.
+/// 5. **keep the backup** (`*.old` stays on disk for [`rollback_script`]) and clean up this
+///    script.
 ///
 /// Why CMD and not PowerShell: this runs right after exit, possibly before things settle; CMD
 /// starts about ten times faster than PowerShell and only needs `move` / `start` / `del`. The
@@ -831,7 +1251,7 @@ pub fn install_script(new_exe: &Path, target_exe: &Path) -> String {
     format!(
         "@echo off\r\n\
          rem Aevum Studio update helper. Generated by aevum-core::update; do not edit.\r\n\
-         rem Order: wait for exit -> rename old aside -> move new in -> start -> clean up.\r\n\
+         rem Order: wait for exit -> rename old aside -> move new in -> start -> keep backup.\r\n\
          setlocal\r\n\
          \r\n\
          rem 1/5 Wait until the running app has exited. Windows will not replace a live exe.\r\n\
@@ -859,8 +1279,7 @@ pub fn install_script(new_exe: &Path, target_exe: &Path) -> String {
          rem 4/5 Start the new version.\r\n\
          start \"\" \"{target}\"\r\n\
          \r\n\
-         rem 5/5 Drop the backup, then this script (cmd releases its handle at `goto`).\r\n\
-         del /F /Q \"{old}\" >NUL 2>&1\r\n\
+         rem 5/5 Keep the backup on purpose: rollback.cmd is how a broken build is undone.\r\n\
          (goto) 2>NUL & del /F /Q \"%~f0\"\r\n\
          exit /b 0\r\n\
          \r\n\
