@@ -15,6 +15,50 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.9.2 — 2026-11-05
+
+Feature release: closes the last "installed but unreachable" gap -- the built-in updater
+finally has a way in. Also fixes one gap at the MCP protocol layer.
+
+### Check for updates (new)
+
+- The Help menu now has "Check for updates...". When a new version exists, the item itself
+  becomes "New version vX.Y.Z...".
+- A silent check runs at startup (at most once per 24 hours). A failure never bothers you;
+  it leaves one line of reason in the update window.
+- The update window shows the current version, the latest version and the release notes.
+  The download reports **real byte progress**; once the checksum passes it says
+  "vX.Y.Z is ready, restart to finish installing", and nothing is replaced until you click.
+- Download, verification and unpacking all run in the background, so the interface never
+  freezes. A mid-way failure (offline, bad checksum, an antivirus lock) keeps you where you
+  are and names the reason, instead of closing the app and not installing.
+
+### A failed update can be undone (new)
+
+- An update no longer deletes the old build: `<exe>.old` stays next to the program. While it
+  exists, Help offers "Roll back to the previous version...", which (after confirmation)
+  renames the current build to `.failed` (kept for diagnosis) and starts the previous one.
+  Before this, a build that refused to start meant downloading the whole package again.
+
+### MCP: all 43 tools now warn before they act
+
+- Every tool now declares four hints -- read-only, may overwrite files, repeatable, touches
+  the outside world -- so hosts like Claude and Cursor can tell you before a call whether it
+  will modify anything.
+- Export, merge, XMP writing and queue runs (which overwrite existing files) are marked
+  explicitly; query tools are marked read-only. Criteria check the marking in both
+  directions, so a new tool that forgets to declare itself turns the build red.
+
+### Compatibility
+
+- The four public contracts (project file format, presets and parameter persistence,
+  command-line arguments, MCP tool set) are unchanged. Each `tools/list` entry **gains** an
+  `annotations` field -- additive only; older clients can ignore it.
+- Package layout, installer and uninstall behaviour are unchanged; `%APPDATA%\aevum-studio`
+  is preserved as before.
+
+---
+
 ## v1.9.1 — 2026-11-05
 
 Patch release: fixes from a four-way code review (crashes / freezes / robustness / new

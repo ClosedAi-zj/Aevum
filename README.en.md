@@ -8,7 +8,7 @@ window: **align → composite → crop (with camera motion) → color grade → 
 (speed ramps & motion blur)**. Each step feeds the next automatically; drop a file or
 folder onto the window and it switches to the right module.
 
-> **Current version**: `1.9.1`: core features work and are pinned by numeric golden
+> **Current version**: `1.9.2`: core features work and are pinned by numeric golden
 > tests, and the four compatibility promises under "Versioning" (project format / presets and
 > parameters / command line / MCP tools) take effect from this release. Per-version changes and
 > known limitations live in `docs/发布说明-v1.0.0.en.md` and `CHANGELOG.en.md`.
@@ -185,7 +185,7 @@ two consecutive freezes must be byte-identical.
 ## Versioning
 
 `Cargo.toml` is the single source of truth for the version; the current release is
-`1.9.1`. That is the first stable release; from here every fix or feature bump gets a tag,
+`1.9.2`. That is the first stable release; from here every fix or feature bump gets a tag,
 and there is nothing to migrate from the `0.x` tags.
 
 **Compatibility promises start with `1.0.0`** and hold for the whole 1.x series — the
