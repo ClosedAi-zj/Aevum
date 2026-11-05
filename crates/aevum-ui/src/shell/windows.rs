@@ -1134,8 +1134,7 @@ pub(super) fn update_window(state: &mut AppState, ctx: &Context) {
             //
             // A soft rule under the title area, the same structure as the about and
             // plugin windows.
-            let head =
-                Rect::from_min_size(ui.min_rect().min, Vec2::new(ui.available_width(), 1.0));
+            let head = Rect::from_min_size(ui.min_rect().min, Vec2::new(ui.available_width(), 1.0));
             theme::soft_rule(ui.painter(), head.left(), head.right(), head.top());
             ui.add_space(4.0);
 
@@ -1276,10 +1275,7 @@ pub(super) fn update_window(state: &mut AppState, ctx: &Context) {
                     }
                 }
                 UpdatePhase::Idle => {
-                    let installable = state
-                        .update_check
-                        .as_ref()
-                        .is_some_and(|c| c.installable());
+                    let installable = state.update_check.as_ref().is_some_and(|c| c.installable());
                     if installable {
                         if bar_primary(ui, "下载并安装").clicked() {
                             want_download = true;
@@ -1297,14 +1293,10 @@ pub(super) fn update_window(state: &mut AppState, ctx: &Context) {
     if want_check {
         state.manual_update_check(ctx);
     }
-    if want_download
-        && let Err(e) = state.start_install(ctx)
-    {
+    if want_download && let Err(e) = state.start_install(ctx) {
         state.update_error = Some(e);
     }
-    if want_launch
-        && let Err(e) = state.launch_installer(ctx)
-    {
+    if want_launch && let Err(e) = state.launch_installer(ctx) {
         state.update_error = Some(e);
     }
 }
@@ -1480,10 +1472,7 @@ mod update_window_tests {
         // Never checked when first opened: one line rather than a blank area.
         let _ = painted(&mut state, &ctx);
         let cold = painted(&mut state, &ctx);
-        assert!(
-            cold.contains("还没有检查过"),
-            "首开状态没有说明：\n{cold}"
-        );
+        assert!(cold.contains("还没有检查过"), "首开状态没有说明：\n{cold}");
 
         // 空闲 + 可安装 → 主按钮「下载并安装」。
         //

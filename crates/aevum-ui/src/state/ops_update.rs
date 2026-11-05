@@ -55,7 +55,8 @@
 //! without having installed anything. The actual replacement is only "launch the script,
 //! then exit", which completes instantly when the user clicks and blocks nothing.
 
-use std::path::{Path, PathBuf};use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aevum_core::update;
@@ -182,7 +183,10 @@ fn work_dir() -> Result<PathBuf, String> {
     std::fs::create_dir_all(&dir).map_err(|e| {
         crate::i18n::tr_fmt(
             "建不了更新临时目录（{}）：{}",
-            &[&path_text(&dir), &aevum_core::errmsg::clip_echo(&e.to_string())],
+            &[
+                &path_text(&dir),
+                &aevum_core::errmsg::clip_echo(&e.to_string()),
+            ],
         )
     })?;
     Ok(dir)

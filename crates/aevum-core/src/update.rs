@@ -1010,9 +1010,7 @@ pub fn expand_exe_with(
             done = true;
         }
     }
-    if !done
-        && let Some(ps) = find("powershell")
-    {
+    if !done && let Some(ps) = find("powershell") {
         let script = format!(
             "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
             zip.display().to_string().replace('\'', "''"),
