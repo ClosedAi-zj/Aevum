@@ -33,3 +33,4 @@ mod perf_budget;
 mod preview_budget;
 mod readme_shots;
 mod ui_tokens;
+mod visual_consistency;

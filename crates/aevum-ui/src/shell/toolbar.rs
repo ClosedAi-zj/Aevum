@@ -5,7 +5,6 @@
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::BAR_H;
-use super::MICRO;
 use super::common::group_gap;
 use super::common::in_field;
 use super::common::opt_sep;
@@ -33,7 +32,7 @@ pub(super) fn bar_button(ui: &mut Ui, label: &str) -> Response {
     // 翻译下沉到辅助函数：调用点照常写中文，切到英文时这里统一翻。
     let label = crate::i18n::tr(label);
     ui.add(
-        egui::Button::new(RichText::new(label).size(SIZE_CHROME))
+        egui::Button::new(RichText::new(label).size(SIZE_BODY))
             .min_size(Vec2::new(0.0, BAR_H))
             .corner_radius(radius_control()),
     )
@@ -44,7 +43,7 @@ pub(super) fn bar_primary(ui: &mut Ui, label: &str) -> Response {
     let label = crate::i18n::tr(label);
     let galley = ui
         .painter()
-        .layout_no_wrap(label.to_owned(), font(SIZE_CHROME), on_accent());
+        .layout_no_wrap(label.to_owned(), font(SIZE_BODY), on_accent());
     let size = Vec2::new(galley.size().x + 22.0, BAR_H);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let fill = if resp.dragged() {
@@ -71,7 +70,22 @@ pub(super) fn bar_chip(ui: &mut Ui, label: &str, active: bool) -> Response {
     let label = crate::i18n::tr(label);
     let w = ui
         .painter()
-        .layout_no_wrap(label.to_owned(), font(SIZE_SMALL), text())
+        .layout_no_wrap(label.to_owned(), font(SIZE_LABEL), text())
+        .size()
+        .x
+        + 15.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, BAR_H - 2.0), Sense::hover());
+    theme::paint_chip(ui.painter(), ui, rect, label, active, accent())
+}
+
+/// 与 [`bar_chip`] 同款，但**不走翻译**：给语言自称这类「原文即正确显示」的标签用。
+///
+/// Same look as [`bar_chip`] but **without translation**, for labels whose own spelling is
+/// the correct rendering (language endonyms and the like).
+pub(super) fn bar_chip_verbatim(ui: &mut Ui, label: &str, active: bool) -> Response {
+    let w = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font(SIZE_LABEL), text())
         .size()
         .x
         + 15.0;
@@ -80,30 +94,33 @@ pub(super) fn bar_chip(ui: &mut Ui, label: &str, active: bool) -> Response {
 }
 
 /// 选项栏里的数值输入（对齐 .fld .v）：压掉 DragValue 自带的底框与字色，
-/// 读数走 value 蓝 —— 数值是"读数"，不是按钮，不该长得像按钮。
+/// 读数走 value 蓝 —— 数值是"读数"，不是按钮，不该长得像按钮。字族统一走
+/// `mono()`：同一行里所有数值都是等宽，滑窗 / 百分比 / 帧率一眼能对齐。
+///
+/// Numeric inputs in the options bar (.fld .v): strip DragValue's own frame and
+/// colour so readouts take the value blue -- a number is a readout, not a button. The
+/// font family is pinned to `mono()` so every number on a row is monospace and aligns.
 fn bar_value<R>(ui: &mut Ui, run: impl FnOnce(&mut Ui) -> R) -> R {
-    let old = ui.style().visuals.override_text_color;
+    let old_color = ui.style().visuals.override_text_color;
+    let old_font = ui.style().override_font_id.clone();
     ui.style_mut().visuals.override_text_color = Some(value());
+    ui.style_mut().override_font_id = Some(mono(SIZE_BODY));
     let out = in_field(ui, Color32::TRANSPARENT, Color32::TRANSPARENT, run);
-    ui.style_mut().visuals.override_text_color = old;
+    ui.style_mut().visuals.override_text_color = old_color;
+    ui.style_mut().override_font_id = old_font;
     out
 }
 
 /// 上下文徽标（界面稿 .ctx）：粗体名字 + field 底的小圆角徽标。
-/// 徽标是"发生了什么"的旁注，10px dim；warn 不为空时追加一枚 danger 色的
+/// 徽标是"发生了什么"的旁注，SIZE_LABEL dim；warn 不为空时追加一枚 danger 色的
 /// 计数（缺帧这类既该看见又不该抢戏的信号）。
 fn ctx_seg(ui: &mut Ui, name: &str, note: &str, warn: Option<String>) {
     let name = crate::i18n::tr(name);
     let note = crate::i18n::tr(note);
-    ui.label(
-        RichText::new(name)
-            .size(SIZE_CHROME_LABEL)
-            .color(text())
-            .strong(),
-    );
+    ui.label(RichText::new(name).size(SIZE_LABEL).color(text()).strong());
     ui.add_space(2.0);
     let badge = |ui: &mut Ui, text: String, ink: Color32| {
-        let galley = ui.painter().layout_no_wrap(text, font(MICRO), ink);
+        let galley = ui.painter().layout_no_wrap(text, font(SIZE_LABEL), ink);
         let size = galley.size() + Vec2::new(10.0, 4.0);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
         ui.painter().rect_filled(rect, 3.0, field());
@@ -151,13 +168,13 @@ pub(super) fn doc_tab(
         .unwrap_or_else(|| "未打开序列".to_owned());
     let ink = if has_seq { text() } else { muted() };
     // 名字按可用像素宽度截：右边留着修改点与关闭叉的位置，中文名不再压到叉上。
-    let title = theme::fit_text(p, &name, font(SIZE_CHROME_LABEL), ink, rect.width() - 46.0);
-    let name_g = p.layout_no_wrap(title.clone(), font(SIZE_CHROME_LABEL), ink);
+    let title = theme::fit_text(p, &name, font(SIZE_LABEL), ink, rect.width() - 46.0);
+    let name_g = p.layout_no_wrap(title.clone(), font(SIZE_LABEL), ink);
     p.text(
         Pos2::new(rect.left() + 9.0, rect.center().y),
         Align2::LEFT_CENTER,
         title,
-        font(SIZE_CHROME_LABEL),
+        font(SIZE_LABEL),
         ink,
     );
     if has_seq {
@@ -177,16 +194,21 @@ pub(super) fn doc_tab(
         if cr.hovered() {
             p.rect_filled(close, 3.0, theme::overlay_white(header(), 26));
         }
-        p.text(
-            close.center(),
-            Align2::CENTER_CENTER,
-            "✕",
-            font(MICRO),
-            if cr.hovered() { text() } else { dim() },
+        // 裸「✕」+ dim() 曾经让用户看不出这是什么、点了会怎样（「x 也看不懂」）。
+        // 换成有语义的关闭图标、默认态抬到 muted()、悬停说明动作。
+        //
+        // A bare "✕" in dim() left the user unable to tell what it was or what it would do.
+        // Use a semantic close glyph, lift the default state to muted(), and explain on hover.
+        icons::paint(
+            p,
+            Rect::from_center_size(close.center(), Vec2::splat(11.0)),
+            Glyph::Close,
+            if cr.hovered() { text() } else { muted() },
         );
         if cr.clicked() {
             state.close();
         }
+        cr.on_hover_text(crate::i18n::t!("关闭当前文档"));
     } else if resp.clicked() {
         open_dialog(state, ctx);
     }
@@ -221,7 +243,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         ui.spacing_mut().button_padding = Vec2::new(6.0, 3.0);
         ui.menu_button(
             RichText::new(format!("{}  ▼", crate::i18n::tr(state.tool.cn())))
-                .size(SIZE_CHROME_LABEL)
+                .size(SIZE_LABEL)
                 .color(text()),
             |ui| {
                 menu_style(ui);
@@ -282,7 +304,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             Module::Deflicker => {
                 ui.label(
                     RichText::new(crate::i18n::t!("平滑窗口"))
-                        .size(SIZE_CHROME_LABEL)
+                        .size(SIZE_LABEL)
                         .color(muted()),
                 );
                 let mut changed = bar_value(ui, |ui| {
@@ -296,7 +318,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 });
                 ui.label(
                     RichText::new(crate::i18n::t!("强度"))
-                        .size(SIZE_CHROME_LABEL)
+                        .size(SIZE_LABEL)
                         .color(muted()),
                 );
                 changed |= bar_value(ui, |ui| {
@@ -312,7 +334,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 if ui
                     .checkbox(
                         &mut state.def_multi,
-                        RichText::new(crate::i18n::t!("多遍")).size(SIZE_CHROME_LABEL),
+                        RichText::new(crate::i18n::t!("多遍")).size(SIZE_LABEL),
                     )
                     .changed()
                 {
@@ -321,7 +343,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 if ui
                     .checkbox(
                         &mut state.def_channels,
-                        RichText::new(crate::i18n::t!("分通道")).size(SIZE_CHROME_LABEL),
+                        RichText::new(crate::i18n::t!("分通道")).size(SIZE_LABEL),
                     )
                     .on_hover_text(crate::i18n::t!(
                         "按 R/G/B 分别校正，治彩色闪烁；不勾只补亮度"
@@ -333,7 +355,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 if state.is_single() {
                     ui.label(
                         RichText::new(crate::i18n::t!("单张照片没有闪烁可去"))
-                            .size(SIZE_CHROME_LABEL)
+                            .size(SIZE_LABEL)
                             .color(dim()),
                     );
                 } else if bar_button(ui, "重新分析").clicked() {
@@ -353,7 +375,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     // 交给 `tr_preset` 认前缀再翻。
                     .selected_text(
                         RichText::new(crate::i18n::tr_preset(&current))
-                            .size(SIZE_CHROME_LABEL)
+                            .size(SIZE_LABEL)
                             .color(text()),
                     )
                     .width(118.0)
@@ -382,7 +404,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 if let Some(note) = &state.auto_note {
                     ui.label(
                         RichText::new(theme::ellipsis(note, 30))
-                            .size(SIZE_CHROME_LABEL)
+                            .size(SIZE_LABEL)
                             .color(accent()),
                     );
                 }
@@ -407,15 +429,15 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 group_gap(ui);
                 ui.checkbox(
                     &mut state.grid,
-                    RichText::new(crate::i18n::t!("网格")).size(SIZE_CHROME_LABEL),
+                    RichText::new(crate::i18n::t!("网格")).size(SIZE_LABEL),
                 );
                 ui.checkbox(
                     &mut state.cross,
-                    RichText::new(crate::i18n::t!("十字")).size(SIZE_CHROME_LABEL),
+                    RichText::new(crate::i18n::t!("十字")).size(SIZE_LABEL),
                 );
                 ui.checkbox(
                     &mut state.split,
-                    RichText::new(crate::i18n::t!("对比")).size(SIZE_CHROME_LABEL),
+                    RichText::new(crate::i18n::t!("对比")).size(SIZE_LABEL),
                 );
             }
             Module::Render => {
@@ -432,7 +454,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 group_gap(ui);
                 ui.label(
                     RichText::new(crate::i18n::t!("帧率"))
-                        .size(SIZE_CHROME_LABEL)
+                        .size(SIZE_LABEL)
                         .color(muted()),
                 );
                 bar_value(ui, |ui| {
@@ -448,7 +470,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 egui::ComboBox::from_id_salt("codec-opt")
                     .selected_text(
                         RichText::new(state.codec.clone())
-                            .size(SIZE_CHROME_LABEL)
+                            .size(SIZE_LABEL)
                             .color(text()),
                     )
                     .width(84.0)
@@ -475,7 +497,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("音频");
                         ui.label(
                             RichText::new(theme::ellipsis(name, 24))
-                                .size(SIZE_CHROME_LABEL)
+                                .size(SIZE_LABEL)
                                 .color(text()),
                         )
                         .on_hover_text(path.display().to_string());
@@ -491,7 +513,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     None => {
                         ui.label(
                             RichText::new(crate::i18n::t!("未选择配乐"))
-                                .size(SIZE_CHROME_LABEL)
+                                .size(SIZE_LABEL)
                                 .color(dim()),
                         );
                     }
@@ -507,7 +529,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 let n = state.frame_count();
                 ui.label(
                     RichText::new(crate::i18n::tr_fmt("{} 帧待合成", &[&n]))
-                        .size(SIZE_CHROME_LABEL)
+                        .size(SIZE_LABEL)
                         .color(dim()),
                 );
             }
@@ -530,8 +552,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             ui.spacing_mut().button_padding = Vec2::new(9.0, 4.0);
             ui.menu_button(
                 RichText::new(format!("{:.0}%  ▼", state.zoom * state.fit_scale * 100.0))
-                    .size(SIZE_CHROME_LABEL)
-                    .monospace(),
+                    .font(mono(SIZE_LABEL)),
                 |ui| {
                     menu_style(ui);
                     if menu_item(ui, "适应窗口", "Ctrl+0") {
@@ -794,7 +815,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
             }
             let resp = ui
                 .add(
-                    egui::Label::new(RichText::new(text).size(SIZE_SMALL).color(warn()))
+                    egui::Label::new(RichText::new(text).size(SIZE_LABEL).color(warn()))
                         .selectable(false)
                         .sense(Sense::click()),
                 )
@@ -803,7 +824,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
             if resp.clicked() {
                 state.notices.remove(0);
             }
-            ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
+            ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
         }
         if plugin_run {
             let (done, total) = state.plugin_progress;
@@ -814,19 +835,18 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                 .unwrap_or_default();
             ui.label(
                 RichText::new(format!("{name} ({done}/{total})"))
-                    .size(SIZE_SMALL)
-                    .monospace()
+                    .font(mono(SIZE_LABEL))
                     .color(accent()),
             );
             if ui
                 .add(egui::Button::new(
-                    RichText::new(crate::i18n::t!("✕ 取消")).size(SIZE_SMALL),
+                    RichText::new(crate::i18n::t!("✕ 取消")).size(SIZE_LABEL),
                 ))
                 .clicked()
             {
                 state.plugin_cancel();
             }
-            ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
+            ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
         } else if let Some((what, done, total, stage)) = prog {
             let pct = if total > 0 {
                 done as f32 * 100.0 / total as f32
@@ -855,38 +875,31 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                     crate::i18n::tr_fmt("正在{}… ({}/{})", &[&crate::i18n::tr(what), &done, &total])
                 }
             };
-            ui.label(
-                RichText::new(line)
-                    .size(SIZE_SMALL)
-                    .monospace()
-                    .color(accent()),
-            );
+            ui.label(RichText::new(line).font(mono(SIZE_LABEL)).color(accent()));
             // 剩余时间只用「当前显示的这个任务」的历史采样，换了任务或进度回退
             // （新任务从 0 起）就重新开表，免得把上一轮的速率借给下一轮。
             //
             // ETA uses only this task's samples; a task change or a reset to 0 starts a
             // fresh table so one run's rate never leaks into the next.
             if let Some(secs) = state.eta_secs(what, done, total) {
-                ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
+                ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
                 ui.label(
                     RichText::new(crate::i18n::tr_fmt("约剩 {}s", &[&secs]))
-                        .size(SIZE_SMALL)
-                        .monospace()
+                        .font(mono(SIZE_LABEL))
                         .color(muted()),
                 );
             }
             // 续跑跳过的那几帧由导出线程数完写进原子量，所以这一格是晚一拍才出现的。
             let skipped = state.export_skipped();
             if skipped > 0 {
-                ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
+                ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
                 ui.label(
                     RichText::new(crate::i18n::tr_fmt("续跑跳过 {}", &[&skipped]))
-                        .size(SIZE_SMALL)
-                        .monospace()
+                        .font(mono(SIZE_LABEL))
                         .color(muted()),
                 );
             }
-            ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
+            ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
         }
         // 文件名打头、加粗：状态栏第一格回答的是"这是哪个文件"，
         // 缩放这种随时会变的数放到最右，别占着最贵的位置。
@@ -895,18 +908,26 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
             .as_ref()
             .map(|s| s.display_name())
             .unwrap_or_else(|| "未打开序列".to_owned());
-        ui.label(RichText::new(name).size(SIZE_SMALL).color(text()).strong());
-        ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
+        ui.label(RichText::new(name).size(SIZE_LABEL).color(text()).strong());
+        ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
+        // 「画幅」标签把 4000 × 6000 框成尺寸读数：× 是乘号，不是关闭叉。段间用中点
+        // 加一个 spacing token 的间隔，和错误条的清除控件拉开距离。
+        //
+        // The "Frame size" label frames 4000 × 6000 as a dimension: × is a multiplication
+        // sign, not a close cross. A middle dot plus one spacing token parts the segments
+        // and keeps them away from the error bar's dismiss control.
+        ui.label(
+            RichText::new(crate::i18n::t!("画幅"))
+                .size(SIZE_LABEL)
+                .color(dim()),
+        );
+        ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
+        ui.add_space(ui.spacing().item_spacing.x);
         let res = state
             .resolution
             .map(|(w, h)| format!("{w} × {h}"))
             .unwrap_or_else(|| "—".to_owned());
-        ui.label(
-            RichText::new(res)
-                .size(SIZE_SMALL)
-                .monospace()
-                .color(muted()),
-        );
+        ui.label(RichText::new(res).font(mono(SIZE_LABEL)).color(muted()));
         let n = state.frame_count();
         if n > 0 {
             ui.label(
@@ -914,33 +935,32 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                     "帧 {} / {}",
                     &[&format!("{:04}", state.selected + 1), &format!("{:04}", n)],
                 ))
-                .size(SIZE_SMALL)
-                .monospace()
+                .font(mono(SIZE_LABEL))
                 .color(dim()),
             );
             let r = state.selected_rating();
             if r > 0 {
                 ui.label(
                     RichText::new("★".repeat(r as usize))
-                        .size(SIZE_SMALL)
+                        .size(SIZE_LABEL)
                         .color(star()),
                 );
             }
         }
         // 错误条是顶层失败唯一的常驻出口。一段长文本挤在状态栏里必然被截断，所以
-        // 悬停给全文、点一下（或点 ×）清掉这一条；打开新序列时仍由 `open_paths`
-        // 统一清空，那里不改。
+        // 悬停给全文、点一下（或点「清除」按钮）清掉这一条；打开新序列时仍由
+        // `open_paths` 统一清空，那里不改。
         //
         // The status-bar error is the only persistent home for a top-level failure. Long
         // text is necessarily truncated here, so hovering shows it in full and clicking
-        // either the text or the × dismisses it. Opening a new sequence still clears it
-        // wholesale in `open_paths`.
+        // either the text or the "Clear" button dismisses it. Opening a new sequence still
+        // clears it wholesale in `open_paths`.
         if let Some(err) = state.error.clone() {
             let resp = ui
                 .add(
                     egui::Label::new(
                         RichText::new(theme::ellipsis(&err, 52))
-                            .size(SIZE_SMALL)
+                            .size(SIZE_LABEL)
                             .color(danger()),
                     )
                     .selectable(false)
@@ -950,9 +970,15 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
             if resp.clicked() {
                 state.error = None;
             }
+            // 清除按钮带文字，不用孤立的 × —— 它和画幅读数的乘号太像了。
+            //
+            // The clear button carries text instead of a lone ×, which reads too much
+            // like the frame-size multiplication sign.
             let clear = ui
                 .add(egui::Button::new(
-                    RichText::new("×").size(SIZE_SMALL).color(danger()),
+                    RichText::new(crate::i18n::t!("清除"))
+                        .size(SIZE_LABEL)
+                        .color(danger()),
                 ))
                 .on_hover_text(crate::i18n::t!("清除这条错误"));
             if clear.clicked() {
@@ -961,7 +987,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
         } else {
             ui.label(
                 RichText::new(theme::ellipsis(&state.status, 64))
-                    .size(SIZE_SMALL)
+                    .size(SIZE_LABEL)
                     .color(dim()),
             );
         }
@@ -970,7 +996,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
         if state.error.is_none()
             && let Some(sidecar) = state.sidecar_hint.clone()
         {
-            ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
+            ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
             let name = sidecar
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -980,7 +1006,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                     "应用边车 {}",
                     &[&theme::ellipsis(&name, 28)],
                 ))
-                .size(SIZE_SMALL),
+                .size(SIZE_LABEL),
             ));
             if apply.clicked() {
                 state.apply_sidecar_hint();
@@ -998,21 +1024,20 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                 platform::Os::Mac => "macOS · SF Pro Text",
                 platform::Os::Win => "Windows 11 · Segoe UI Variable",
             };
-            ui.label(RichText::new(platform_label).size(SIZE_SMALL).color(dim()));
+            ui.label(RichText::new(platform_label).size(SIZE_LABEL).color(dim()));
             ui.label(
                 RichText::new(format!("{:.0}%", state.zoom * state.fit_scale * 100.0))
-                    .size(SIZE_SMALL)
-                    .monospace()
+                    .font(mono(SIZE_LABEL))
                     .color(text()),
             );
             ui.label(
                 RichText::new(crate::i18n::t!("sRGB · 16 bit 管线"))
-                    .size(SIZE_SMALL)
+                    .size(SIZE_LABEL)
                     .color(dim()),
             );
             ui.label(
                 RichText::new(crate::i18n::t!("引擎就绪"))
-                    .size(SIZE_SMALL)
+                    .size(SIZE_LABEL)
                     .color(dim()),
             );
             // 一枚 6px 绿灯 = 引擎线程还活着；出错时变红。状态栏里唯一值得上颜色的东西。

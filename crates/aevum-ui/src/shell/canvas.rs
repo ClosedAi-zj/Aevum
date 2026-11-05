@@ -27,7 +27,7 @@ use aevum_core::align::CropRect;
 use aevum_core::crop;
 use egui::{
     Align2, Color32, CursorIcon, PointerButton, Pos2, Rect, Response, Sense, Shape, Stroke,
-    StrokeKind, Ui, Vec2,
+    StrokeKind, TextureHandle, Ui, Vec2,
 };
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
@@ -129,38 +129,25 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         return;
     }
 
-    let (tex, orig, size) = if state.playing {
-        match state.thumb(state.selected) {
-            Some(t) => (Some(t.texture.clone()), None, t.size),
-            None => (None, None, [0, 0]),
-        }
-    } else {
-        (
-            // 有插件结果就先显示它：那正是用户按下"应用"后想看到的东西。
-            state
-                .plugin_result
-                .clone()
-                .or_else(|| state.texture.clone()),
-            if state.split {
-                state.texture_orig.clone()
-            } else {
-                None
-            },
-            state.preview_size,
-        )
-    };
+    let (tex, orig, size, fast_preview) = texture_choice(state);
 
     let (iw, ih) = if size[0] > 0 {
         (size[0] as f32, size[1] as f32)
     } else {
         (16.0, 9.0)
     };
-    let avail = content.shrink(26.0);
+    let avail = content.shrink(CANVAS_PAD);
     let fit = (avail.width() / iw).min(avail.height() / ih).max(0.01);
     state.fit_scale = fit;
     let scale = fit * state.zoom;
     let shown = Vec2::new(iw, ih) * scale;
-    let center = content.center() + state.pan;
+    // 收口 pan：滚轮锚点 / 中键拖动 / Zoom 点击 / 此处使用四个写入点，统一在下一帧归位。
+    //
+    // Collect pan: the wheel anchor, middle drag, zoom tap and this use are the four write
+    // sites; all of them are normalised here on the next frame.
+    let pan = clamp_pan(shown, avail, state.pan);
+    state.pan = pan;
+    let center = content.center() + pan;
     let img = Rect::from_center_size(center, shown);
 
     let resp = ui.interact(
@@ -330,7 +317,13 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
 
     match &tex {
         Some(t) => {
-            p.image(t.id(), img, UV, Color32::WHITE);
+            // 图像裁到内容区：放大后画布外的像素不画，避免上边缘顶到工具条 / 标尺。
+            //
+            // Clip the image to the content rect: zoomed-in pixels outside the canvas are
+            // not drawn, so the image never pushes up into the toolbar / rulers.
+            p.clone()
+                .with_clip_rect(content)
+                .image(t.id(), img, UV, Color32::WHITE);
             if let Some(o) = &orig {
                 // 分割线位置跟着 `split_pos`（0..1）走，按住手柄左右拉；LR 的
                 // 前后对比就是这一种——不是钉死在中间的一条死线。
@@ -426,6 +419,23 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         }
     }
 
+    // 快速预览标识：播放中标出当前是较大尺寸代理，非全质量显影预览。
+    //
+    // Fast-preview badge: during playback, mark that this is the larger proxy rather than
+    // the full-quality developed preview.
+    if fast_preview {
+        // 徽标也裁到内容区：放大后 `img` 可能越界，徽标不该压到工具条上。
+        //
+        // Clip the badge to the content rect too: once zoomed in `img` can overflow, and the
+        // badge must not sit on top of the toolbar.
+        chip_label(
+            &p.clone().with_clip_rect(content),
+            Pos2::new(img.left() + 10.0, img.top() + 10.0),
+            crate::i18n::t!("快速预览"),
+            Align2::LEFT_TOP,
+        );
+    }
+
     if state.crop_editing() {
         crop_overlay(state, ui, &p, img, &resp);
     } else if state.motion_editing() {
@@ -506,6 +516,71 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     if state.rulers {
         draw_rulers(ui, body, content, Some(img), scale, hover);
     }
+}
+
+/// 把平移量收口到「图像不越出内容区」的范围：图像比可视区小则强制居中（偏差 0px），
+/// 否则每轴 clamp 到 ±(图像 - 可视区)/2。四个写 pan 的入口统一在下一帧被这里收口。
+///
+/// Clamp the pan so the image never slides out of the content rect: when the image is
+/// smaller than the viewport it is pinned to the centre (zero geometric offset), otherwise
+/// each axis is clamped to ±(shown - avail)/2. All four pan writes are collected here on
+/// the next frame.
+fn clamp_pan(shown: Vec2, avail: Rect, pan: Vec2) -> Vec2 {
+    let axis = |s: f32, a: f32, p: f32| {
+        if s <= a {
+            0.0
+        } else {
+            p.clamp(-(s - a) / 2.0, (s - a) / 2.0)
+        }
+    };
+    Vec2::new(
+        axis(shown.x, avail.width(), pan.x),
+        axis(shown.y, avail.height(), pan.y),
+    )
+}
+
+/// 选择本帧要画的纹理：仅在播放中用较大尺寸代理，其余一律用全质量已显影预览（旧纹理
+/// 一直留着，新预览渲染完成才替换，天然无空窗）。返回 (主纹理, 分屏原图, 尺寸, 是否快速预览)。
+///
+/// Pick the texture for this frame: use the larger proxy only during playback, otherwise
+/// always the full-quality developed preview (the old texture stays until the new preview
+/// finishes, so there is no blank frame). Returns (main, split original, size, is_fast_preview).
+fn texture_choice(
+    state: &AppState,
+) -> (Option<TextureHandle>, Option<TextureHandle>, [u32; 2], bool) {
+    if state.playing {
+        // 播放中：代理命中就用代理，冷启动没代理则退回缩略图，保证不 blank。
+        //
+        // During playback: use the proxy when present, else fall back to the thumbnail on a
+        // cold start so the frame never blanks.
+        let (tex, size) = match state.proxies.get(&state.selected) {
+            Some(t) => (Some(t.texture.clone()), t.size),
+            None => match state.thumb(state.selected) {
+                Some(t) => (Some(t.texture.clone()), t.size),
+                None => (None, [0, 0]),
+            },
+        };
+        return (tex, None, size, true);
+    }
+    // 非播放：一律全质量（保持原行为）。不做 preview_dirty 判断——那字段平时就为真，
+    // 一改参数就切代理反而更糊；旧的全质量纹理留到新预览渲染完成，天然没有空窗。
+    //
+    // Not playing: always full quality (unchanged behaviour). The preview_dirty flag is true
+    // in normal use, so switching to a proxy on it would only blur the canvas; the old
+    // full-quality texture stays until the new preview finishes, so there is no blank frame.
+    (
+        state
+            .plugin_result
+            .clone()
+            .or_else(|| state.texture.clone()),
+        if state.split {
+            state.texture_orig.clone()
+        } else {
+            None
+        },
+        state.preview_size,
+        false,
+    )
 }
 
 /// 透视四角：画出四边形与四个把手，拖动即改参数。

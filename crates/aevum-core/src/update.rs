@@ -72,9 +72,10 @@ pub struct Release {
     ///
     /// Release title (may be empty).
     pub name: String,
-    /// 发布说明正文，给界面直接显示。
+    /// 发布说明正文，由 UI 层轻量渲染；未识别语法按纯文本逐字保留。
     ///
-    /// Release notes body, shown verbatim by the UI.
+    /// The release notes body, lightly rendered in the UI; unrecognised syntax is kept
+    /// verbatim as plain text.
     pub body: String,
     /// 资产列表，解析时保证非空。
     ///

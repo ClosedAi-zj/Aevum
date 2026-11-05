@@ -70,9 +70,28 @@ pub const PREVIEW_SIDE: u32 = 1600;
 pub const SKETCH_SIDE: u32 = 800;
 pub const THUMB_SIDE: u32 = 128;
 pub const PLAY_FPS: f32 = 24.0;
-/// 播放时提前取回多少帧的缩略图。按 24fps 算是两秒的画面，够盖住一次机身预览
-/// 解码加纹理上传的往返；再长就只是把内存花在还没播到的帧上。
-const PLAY_THUMB_AHEAD: usize = 48;
+
+/// 播放代理贴图的长边：比胶片条的 [`THUMB_SIDE`]（128px）大一档，仍远小于全量预览
+/// （[`PREVIEW_SIDE`]）。播放态画布吃这一档，暂停后自动回全质量。
+///
+/// 代理**仍走机身内嵌原片、不经显影链**——只放大尺寸，不改显影路径；它和缩略图
+/// 是同一份「未显影」数据，只是解码边长不同（`metrics::thumbnail` 的缓存键已含
+/// max_side，换尺寸会自动生成另一份缓存）。
+///
+/// Long side of the playback proxy texture: one notch above the filmstrip's
+/// [`THUMB_SIDE`] (128px) and still far below the full preview ([`PREVIEW_SIDE`]). The
+/// canvas uses this during playback and returns to full quality on pause.
+///
+/// The proxy **still comes from the camera-embedded original and never enters the develop
+/// chain** -- only the size grows, the pipeline is unchanged; it is the same "undeveloped"
+/// data as the thumbnail, decoded at a different edge length (the cache key of
+/// `metrics::thumbnail` already includes max_side, so another size is cached separately).
+pub const PROXY_SIDE: u32 = 640;
+/// 播放时提前取回多少帧的代理。代理解码比缩略图贵，故只预取一秒的画面（24fps）。
+///
+/// How many frames of proxies to prefetch during playback. Proxy decode costs more than a
+/// thumbnail, so only one second of footage is prefetched (24fps).
+pub const PLAY_PROXY_AHEAD: usize = 24;
 /// 色标序号对应的名字：0 是没打，1…4 跟 `shell::label_color` 同序。
 ///
 /// Names for the colour label indices: 0 means unlabelled, 1..4 follow the same order
@@ -782,6 +801,18 @@ struct ThumbMsg {
     size: [u32; 2],
 }
 
+/// 播放代理回包：形状与 [`ThumbMsg`] 一致，但走自己的消息与纹理命名，绝不与 128px
+/// 缩略图共用 `thumb.{i}` 纹理槽（否则两种尺寸会互相 `load_texture` 覆盖）。
+///
+/// Playback-proxy reply: same shape as [`ThumbMsg`], but it travels on its own message and
+/// its own texture name, never sharing the `thumb.{i}` slot with the 128px thumbnail (else
+/// the two sizes would overwrite each other via `load_texture`).
+struct ProxyMsg {
+    index: usize,
+    image: ColorImage,
+    size: [u32; 2],
+}
+
 /// 图库缩略图回包：键是文件路径，与序列缩略图的帧号键分开。
 struct LibThumbMsg {
     path: PathBuf,
@@ -960,6 +991,11 @@ enum Msg {
     Loaded(Box<Loaded>),
     Preview(Box<PreviewMsg>),
     Thumbs(Vec<ThumbMsg>),
+    /// 播放代理回包（[`PROXY_SIDE`] 长边），与胶片条缩略图分开落账。
+    ///
+    /// Playback-proxy reply ([`PROXY_SIDE`] long edge), recorded separately from the
+    /// filmstrip thumbnails.
+    Proxies(Vec<ProxyMsg>),
     LibThumbs(Vec<LibThumbMsg>),
     Saved(String),
     /// 预览解码失败。**不碰 `export_busy`**：预览可以随时重算，导出是独占的长任务，
@@ -1402,6 +1438,40 @@ pub struct AppState {
 
     pub thumbs: HashMap<usize, Thumb>,
     thumb_pending: HashSet<usize>,
+    /// 播放用的较大尺寸代理纹理（纯内存，不落盘、不进 Snapshot）。播放态画布吃这一档，
+    /// 暂停后回全质量；纹理名用 `proxy.{i}`，与 128px 的 `thumb.{i}` 分开。
+    ///
+    /// Larger proxy textures used during playback (memory only, never persisted, never in
+    /// the Snapshot). The canvas uses them while playing and returns to full quality on
+    /// pause; texture names are `proxy.{i}`, distinct from the 128px `thumb.{i}`.
+    pub proxies: HashMap<usize, Thumb>,
+    /// 正在后台取代理的帧号，避免重复排队。
+    ///
+    /// Frames whose proxy is being fetched, so we do not queue twice.
+    pub proxy_pending: HashSet<usize>,
+    /// 当前裁剪拖动的世代号（纯内存）。`crop_begin` 递增置位、`crop_end` 清零；
+    /// 历史合并据此把「同一次拖动内即使手停很久」的连续改动并成一步，详见
+    /// [`crate::history`]。0 = 不在拖动中。
+    ///
+    /// The current crop-drag epoch (memory only). `crop_begin` increments and sets it,
+    /// `crop_end` clears it; the history merge uses it so that all changes inside one drag
+    /// share a single step no matter how long the hand pauses -- see [`crate::history`].
+    /// 0 = not dragging.
+    pub drag_epoch: u64,
+    /// 胶片条星级筛选下限（纯内存，不落盘、不进 Snapshot）：0 = 不过滤，1..=5 = 只显示
+    /// 该星级及以上的帧。供胶片条使用。
+    ///
+    /// Filmstrip minimum-star filter (memory only, never persisted, never in the Snapshot):
+    /// 0 = no filter, 1..=5 = show only frames at this rating or above. Consumed by the
+    /// filmstrip.
+    pub film_filter_stars: u8,
+    /// 插件运行时的输入范围（纯内存，不落盘、不进 Snapshot）：0 = 当前窗口，1 = 文件，
+    /// 2 = 文件夹。默认 0，供插件面板读取。
+    ///
+    /// Plugin input scope while running (memory only, never persisted, never in the
+    /// Snapshot): 0 = current window, 1 = file, 2 = folder. Defaults to 0; read by the
+    /// plugin panel.
+    pub plugin_input_scope: u8,
     pub scroll_to_selected: bool,
 
     pub ratings: HashMap<usize, u8>,

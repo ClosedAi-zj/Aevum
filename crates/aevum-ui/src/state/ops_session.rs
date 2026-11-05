@@ -485,6 +485,11 @@ impl AppState {
             bypassed: BTreeSet::new(),
             thumbs: HashMap::new(),
             thumb_pending: HashSet::new(),
+            proxies: HashMap::new(),
+            proxy_pending: HashSet::new(),
+            drag_epoch: 0,
+            film_filter_stars: 0,
+            plugin_input_scope: 0,
             scroll_to_selected: false,
             ratings: HashMap::new(),
             flags: HashMap::new(),
@@ -1139,6 +1144,15 @@ impl AppState {
         self.preview_inflight = false;
         self.thumbs.clear();
         self.thumb_pending.clear();
+        // 播放代理与缩略图同属「这一份序列的衍生物」，换序列一并作废；
+        // 拖动世代号也归零，免得上一次拖动的 epoch 漏进新序列的历史合并。
+        //
+        // The playback proxies are derivatives of this sequence just like the thumbnails,
+        // so clear them on switch; the drag epoch resets too, so the previous drag's epoch
+        // cannot leak into the new sequence's history merge.
+        self.proxies.clear();
+        self.proxy_pending.clear();
+        self.drag_epoch = 0;
         // 四类缓存跟着会话走：换序列/关图整体清空（指纹自校验之外的保守兜底）。
         self.mask_geo_cache = Default::default();
         self.curve_lut_cache = None;
@@ -1306,7 +1320,13 @@ impl AppState {
     }
 
     pub fn toggle_play(&mut self) {
-        if self.frame_count() == 0 {
+        // 少于两帧不播：单帧「播放」只会原地刷新同一张图，纯属费电；`< 2` 同时挡住
+        // 命令与空格键绕过界面禁用态的那条路。
+        //
+        // Never play with fewer than two frames: playing a single frame only refreshes the
+        // same image in place and wastes power; `< 2` also blocks the command and the
+        // space bar from bypassing the UI's disabled state.
+        if self.frame_count() < 2 {
             return;
         }
         self.playing = !self.playing;
@@ -1364,11 +1384,20 @@ impl AppState {
                     self.selected = next;
                     self.scroll_to_selected = true;
                     self.preview_dirty = true;
-                    // 播放时画布直接吃 128px 缩略图：提前把前面 48 帧取回来，
-                    // 否则指针跑到哪儿才现解到哪儿，画面就是一串空位闪。
-                    // 只在上一批落地之后再要下一批，一次一批而不是一帧一个线程。
-                    if self.thumb_pending.is_empty() {
-                        self.ensure_thumbs(ctx, next, next + PLAY_THUMB_AHEAD);
+                    // 播放时画布吃 640px 代理（[`PROXY_SIDE`]，仍走机身内嵌原片、未
+                    // 显影）：提前把前面 24 帧取回来，否则指针跑到哪儿才现解到哪儿，
+                    // 画面就是一串空位闪。暂停后 `toggle_play` 会置 `preview_dirty`，
+                    // 画布自动回全质量。只在上一批落地之后再要下一批，一次一批而不是
+                    // 一帧一个线程。
+                    //
+                    // During playback the canvas uses the 640px proxy ([`PROXY_SIDE`],
+                    // still the camera-embedded original, not developed): prefetch the next
+                    // 24 frames, or the picture shows blank slots wherever the playhead has
+                    // not decoded yet. On pause `toggle_play` sets `preview_dirty`, so the
+                    // canvas returns to full quality. Only the next batch is requested after
+                    // the previous one lands -- one batch at a time, not one thread per frame.
+                    if self.proxy_pending.is_empty() {
+                        self.ensure_proxies(ctx, next, next + PLAY_PROXY_AHEAD);
                     }
                 }
                 ctx.request_repaint_after(Duration::from_secs_f32(dt * 0.5));
@@ -1502,6 +1531,29 @@ impl AppState {
                             TextureOptions::LINEAR,
                         );
                         self.thumbs.insert(
+                            t.index,
+                            Thumb {
+                                texture: tex,
+                                size: t.size,
+                            },
+                        );
+                    }
+                }
+                Msg::Proxies(items) => {
+                    for t in items {
+                        self.proxy_pending.remove(&t.index);
+                        // 纹理名必须与 128px 缩略图分开：`proxy.{i}` ≠ `thumb.{i}`，
+                        // 否则两种尺寸会互相 load_texture 覆盖同一个槽。
+                        //
+                        // The texture name must differ from the 128px thumbnail:
+                        // `proxy.{i}` ≠ `thumb.{i}`, otherwise the two sizes would
+                        // overwrite the same slot through `load_texture`.
+                        let tex = ctx.load_texture(
+                            format!("proxy.{}", t.index),
+                            t.image,
+                            TextureOptions::LINEAR,
+                        );
+                        self.proxies.insert(
                             t.index,
                             Thumb {
                                 texture: tex,

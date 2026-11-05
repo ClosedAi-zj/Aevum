@@ -573,3 +573,127 @@ fn motion_picking_and_crop_never_share_the_mouse() {
     state.set_motion_picking(false);
     assert!(state.preview_dirty);
 }
+
+/// 播放至少需要两帧：0 帧与 1 帧都不许开播；2 帧能开、再调能停。这条同时挡住命令
+/// 与空格键绕过界面禁用态（[`AppState::toggle_play`] 自己判 `frame_count() < 2`）。
+///
+/// Playback needs at least two frames: neither 0 nor 1 frame may start it; 2 frames can
+/// start and a second call stops it. This also blocks the command and space bar from
+/// bypassing the UI's disabled state (`toggle_play` itself checks `frame_count() < 2`).
+#[test]
+fn toggle_play_requires_at_least_two_frames() {
+    use aevum_core::sequence::Frame;
+    let ctx = Context::default();
+    let mut state = AppState::new();
+
+    // 0 帧：点了也不播。
+    assert_eq!(state.frame_count(), 0);
+    state.toggle_play();
+    assert!(!state.playing, "0 帧不该开始播放");
+
+    // 1 帧：同样不播。
+    state.seq = Some(Sequence {
+        root: PathBuf::new(),
+        frames: vec![Frame {
+            index: 0,
+            name: "f000.png".to_owned(),
+            path: PathBuf::from("f000.png"),
+        }],
+    });
+    assert_eq!(state.frame_count(), 1);
+    state.toggle_play();
+    assert!(!state.playing, "单帧不该开始播放");
+
+    // 1 帧时 tick 不推进帧、也不无意义置脏。
+    let before = state.selected;
+    state.preview_dirty = false;
+    state.tick(&ctx);
+    assert_eq!(state.selected, before, "1 帧时 tick 不该推进帧");
+    assert!(!state.preview_dirty, "1 帧时 tick 不该无意义置脏");
+
+    // 2 帧：可以播，第二次调用暂停。
+    state.seq.as_mut().expect("已设序列").frames.push(Frame {
+        index: 1,
+        name: "f001.png".to_owned(),
+        path: PathBuf::from("f001.png"),
+    });
+    assert_eq!(state.frame_count(), 2);
+    state.toggle_play();
+    assert!(state.playing, "2 帧应能播放");
+    state.preview_dirty = false;
+    state.toggle_play();
+    assert!(!state.playing, "再调一次应暂停");
+    assert!(state.preview_dirty, "暂停要置 preview_dirty，回全质量");
+}
+
+/// 播放态用 640px 代理、暂停回全质量（只测 state 侧流转；画布取哪张纹理由 canvas 侧
+/// 的 `texture_choice` 决定，这里不依赖它）。
+///
+/// Playback uses the 640px proxy and returns to full quality on pause (state-side flow
+/// only; which texture the canvas picks is decided by `texture_choice` on the canvas side,
+/// which this test does not depend on).
+#[test]
+fn playback_uses_proxy_and_restores_full_on_pause() {
+    use aevum_core::sequence::Frame;
+    let ctx = Context::default();
+    let mut state = AppState::new();
+    state.seq = Some(Sequence {
+        root: PathBuf::new(),
+        frames: (0..2)
+            .map(|i| Frame {
+                index: i,
+                name: format!("f{i:03}.png"),
+                path: PathBuf::from(format!("f{i:03}.png")),
+            })
+            .collect(),
+    });
+    state.resolution = Some((4000, 6000));
+
+    // 塞一张代理（纹理用 headless ctx 造一张小图即可，测试只看状态流转）。
+    let img = ColorImage::from_rgba_unmultiplied([2, 2], &[16u8; 16]);
+    let tex = ctx.load_texture("proxy.0", img, TextureOptions::LINEAR);
+    state.proxies.insert(
+        0,
+        Thumb {
+            texture: tex,
+            size: [2, 2],
+        },
+    );
+    assert!(state.proxies.contains_key(&0), "代理已就位");
+
+    // 开播：进入播放态，当前帧有代理可用。
+    state.toggle_play();
+    assert!(state.playing, "2 帧 + 代理应能开播");
+    assert!(
+        state.proxies.contains_key(&state.selected),
+        "播放帧应有代理可用"
+    );
+
+    // 暂停：置 preview_dirty，触发画布回全质量。
+    state.preview_dirty = false;
+    state.toggle_play();
+    assert!(!state.playing, "再调暂停");
+    assert!(state.preview_dirty, "暂停要置 preview_dirty 以回全质量");
+
+    // 模拟一次全量预览回包落地：贴图与尺寸更新、不再欠全量。
+    state.preview_inflight = true;
+    state.preview_owes_full = true;
+    let stamp = state.preview_stamp;
+    let graded = ColorImage::from_rgba_unmultiplied([3, 2], &[0u8; 24]);
+    state
+        .tx
+        .send(Msg::Preview(Box::new(PreviewMsg {
+            stamp,
+            sketch: false,
+            graded,
+            original: None,
+            size: [3, 2],
+            hist: [[0u32; 256]; 3],
+        })))
+        .expect("发送预览回包");
+    state.poll(&ctx);
+    assert!(!state.preview_inflight, "回包落地后不再在飞");
+    assert_eq!(state.preview_size, [3, 2], "全量尺寸已更新");
+    assert!(!state.preview_owes_full, "全量已回，不再欠一张");
+    assert!(state.texture.is_some(), "全量纹理已上传");
+}

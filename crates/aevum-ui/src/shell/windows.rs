@@ -10,6 +10,8 @@ use super::library::group_title;
 use super::menu::menu_item;
 use super::menu::menu_style;
 use super::toolbar::bar_button;
+use super::toolbar::bar_chip;
+use super::toolbar::bar_chip_verbatim;
 use super::toolbar::bar_primary;
 use crate::icons::{self, Glyph};
 use crate::layout::StatusSlot;
@@ -167,21 +169,50 @@ pub(super) fn plugin_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .color(dim()),
         );
     }
+    // 输入范围：这一组插件作用在什么对象上。默认「当前窗口」，会话内保持。
+    // 内置动作（HDR 合并 / 全景 / 镜头校正）只吃当前序列，选文件或文件夹时置灰并说明；
+    // 第三方插件三档都放开，由 MCP 侧按范围取帧。
+    //
+    // Input scope: what this plugin run applies to. Defaults to the current window and is
+    // kept for the session. Built-in actions (HDR merge / panorama / lens correction) only
+    // take the current sequence, so they grey out with an explanation for file/folder;
+    // third-party plugins allow all three scopes and let the MCP side gather frames.
+    if !rows.is_empty() {
+        menu_section(ui, "输入范围");
+        ui.horizontal_wrapped(|ui| {
+            for (value, label) in [(0u8, "当前窗口"), (1, "文件"), (2, "文件夹")] {
+                if bar_chip(ui, label, state.plugin_input_scope == value).clicked() {
+                    state.plugin_input_scope = value;
+                }
+            }
+        });
+    }
+
     let mut open_market = false;
     let mut fire: Option<(String, String)> = None;
     for (title, items) in &rows {
         menu_section(ui, title);
         for r in items {
-            let resp = ui.add(
+            // 内置动作只支持「当前窗口」：换了范围就禁用，并把原因挂在悬停里，
+            // 而不是让用户点下去才发现没反应（设计文档 §7 红线 1：不做假控件）。
+            //
+            // Built-in actions only support the current window: disable them for other
+            // scopes and explain on hover, instead of letting the click silently do nothing
+            // (design spec section 7, red line 1: no fake controls).
+            let scope_ok = builtin_action(&r.id).is_none() || state.plugin_input_scope == 0;
+            let resp = ui.add_enabled(
+                scope_ok,
                 egui::Button::new(RichText::new(&r.label).size(SIZE_BODY))
                     .shortcut_text(RichText::new(&r.tag).size(SIZE_SMALL).color(dim())),
             );
-            let resp = if r.desc.is_empty() {
+            let resp = if !scope_ok {
+                resp.on_disabled_hover_text(crate::i18n::t!("该插件不支持此输入范围"))
+            } else if r.desc.is_empty() {
                 resp
             } else {
                 resp.on_hover_text(&r.desc)
             };
-            if resp.clicked() {
+            if resp.clicked() && scope_ok {
                 fire = Some((r.id.clone(), r.label.clone()));
             }
         }
@@ -322,7 +353,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                         ui.add_space(8.0);
                         ui.label(
                             RichText::new(crate::i18n::t!("来自 %APPDATA%\naevum-studio\\plugins"))
-                                .size(10.0)
+                                .size(SIZE_SMALL)
                                 .color(dim()),
                         );
                         if ui
@@ -417,12 +448,12 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                                                 }
                                                 ui.label(
                                                     RichText::new(meta.source.cn())
-                                                        .size(10.0)
+                                                        .size(SIZE_SMALL)
                                                         .color(dim()),
                                                 );
                                                 ui.label(
                                                     RichText::new(meta.kind.cn())
-                                                        .size(10.0)
+                                                        .size(SIZE_SMALL)
                                                         .color(dim()),
                                                 );
                                             },
@@ -456,7 +487,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                                                     .map(|d| d.display().to_string())
                                                     .unwrap_or_default()
                                             ))
-                                            .size(10.0)
+                                            .size(SIZE_SMALL)
                                             .color(dim()),
                                         );
                                     }
@@ -492,7 +523,19 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
 fn look_section(ui: &mut Ui, title: &str) {
     let title = crate::i18n::tr(title);
     ui.add_space(6.0);
-    ui.label(RichText::new(title).size(SIZE_SMALL).color(muted()));
+    // 分组之间画一道看得见的分隔：此前只有一行小灰字、没有线，用户反馈「分割不明显」。
+    // soft_sep 走 theme::soft_rule（divider 已提亮一档），左右各缩进 12px。
+    //
+    // Draw a visible separator between groups: there used to be only a small grey label and
+    // no line, which the user reported as "the division is not obvious". soft_sep routes
+    // through theme::soft_rule (divider lifted one step) with a 12 px inset on both sides.
+    soft_sep(ui);
+    ui.add_space(4.0);
+    // 标题用 SIZE_LABEL + text()：分组名是这一屏的结构信息，不该是最淡的一档。
+    //
+    // Titles use SIZE_LABEL + text(): a group name is structural information on this screen
+    // and should not be the faintest step on it.
+    ui.label(RichText::new(title).size(SIZE_LABEL).color(text()));
 }
 
 /// 一行「标签 + 若干互斥选项」。
@@ -513,10 +556,13 @@ fn look_row<T: PartialEq + Copy>(
             egui::Label::new(RichText::new(label).size(SIZE_LABEL).color(dim())),
         );
         for (value, text) in items {
-            if ui
-                .selectable_label(current == *value, crate::i18n::tr(text))
-                .clicked()
-            {
+            // selectable_label 的选中态是整块实心强调色，一屏七个控件会铺出一片蓝。
+            // 改用 bar_chip：选中走「描边 + 低饱和底」，强调色只描一圈边。
+            //
+            // selectable_label fills the whole chip with the accent, so seven controls paint
+            // a slab of blue. bar_chip keeps the accent to a stroke plus a low-saturation
+            // fill.
+            if bar_chip(ui, text, current == *value).clicked() {
                 set(*value);
             }
         }
@@ -570,11 +616,27 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                 for p in crate::i18n::LangPref::all() {
                     // 「跟随系统」是唯一需要翻译的一项；其余用各自语言自己的写法，
                     // 不翻 —— 只会英文的人要能认出那一项。
-                    let name = match p {
-                        crate::i18n::LangPref::System => crate::i18n::t!("跟随系统"),
-                        crate::i18n::LangPref::Fixed(l) => l.label(),
+                    //
+                    // 语言自称必须绕开 tr()：那是「这个语言怎么称呼自己」，不是界面文案。
+                    // 走 tr() 会被 i18n 覆盖率判据记成缺译（英文界面上「中文」本就该是汉字）。
+                    //
+                    // "跟随系统" is the only translated entry; the rest use each language's own
+                    // endonym so an English-only reader can still find it.
+                    //
+                    // Endonyms must bypass tr(): they name the language itself, not UI copy.
+                    // Routing them through tr() is recorded as a missing translation, because
+                    // "中文" is meant to stay in Han characters even in English mode.
+                    let system_label = crate::i18n::t!("跟随系统");
+                    let (name, translate): (&str, bool) = match p {
+                        crate::i18n::LangPref::System => (system_label, true),
+                        crate::i18n::LangPref::Fixed(l) => (l.label(), false),
                     };
-                    if ui.selectable_label(state.lang == p, name).clicked() && state.lang != p {
+                    let hit = if translate {
+                        bar_chip(ui, name, state.lang == p).clicked()
+                    } else {
+                        bar_chip_verbatim(ui, name, state.lang == p).clicked()
+                    };
+                    if hit && state.lang != p {
                         state.lang = p;
                         // 立即生效：之后的绘制就走新语言。落盘交给帧末那条统一路径
                         // （见函数末尾），这里不自己写文件。
@@ -771,7 +833,7 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                 }
                 ui.label(
                     RichText::new(crate::i18n::t!("改动即时生效并记住"))
-                        .size(10.0)
+                        .size(SIZE_SMALL)
                         .color(dim()),
                 );
             });
@@ -920,9 +982,12 @@ pub(super) fn presets_window(state: &mut AppState, ctx: &Context) {
                                             ui.painter(),
                                             x_rect.shrink(5.0),
                                             Glyph::Close,
-                                            if xr.hovered() { danger() } else { dim() },
+                                            if xr.hovered() { danger() } else { muted() },
                                         );
                                     }
+                                    let xr_hint =
+                                        xr.clone().on_hover_text(crate::i18n::t!("删除快照"));
+                                    let _ = &xr_hint;
                                     if row.clicked() {
                                         want_snap = Some(i);
                                     } else if xr.clicked() {
@@ -1009,7 +1074,7 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
         .show(ctx, |ui| {
             ui.label(
                 RichText::new(aevum_core::brand::TITLE)
-                    .size(15.0)
+                    .size(SIZE_HEADING)
                     .color(text())
                     .strong(),
             );
@@ -1180,11 +1245,18 @@ pub(super) fn update_window(state: &mut AppState, ctx: &Context) {
                     .max_height(cap)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(&state.update_body)
-                                .size(SIZE_SMALL)
-                                .color(muted()),
-                        );
+                        // Release 正文是 GitHub 上的 Markdown：`## 下载`、`###`、反引号、
+                        // 加粗原本被逐字塞进一个 label，用户看到的是源码。这里做轻量渲染，
+                        // 只认标题 / 列表 / 加粗 / 行内代码 / 链接；超出闭集的行原样保留。
+                        //
+                        // The release body is GitHub Markdown: `## Download`, `###`, backticks
+                        // and bold used to show up verbatim in a single label. Render it
+                        // lightly here -- headings, lists, bold, inline code, links -- and keep
+                        // anything outside that closed set verbatim.
+                        for line in crate::shell::markdown::parse_release_notes(&state.update_body)
+                        {
+                            render_note_line(ui, &line);
+                        }
                     });
             }
 
@@ -1377,6 +1449,244 @@ pub(super) fn rollback_window(state: &mut AppState, ctx: &Context) {
             state.error = Some(e);
         }
     }
+}
+
+/// 画一行发布说明：标题、列表、正文三种形态，全部走 theme token。
+///
+/// Draw one release-note line: heading, list item or body, all through theme tokens.
+fn render_note_line(ui: &mut Ui, line: &crate::shell::markdown::NoteLine) {
+    use crate::shell::markdown::NoteLine;
+    match line {
+        NoteLine::Heading(2, text) => {
+            ui.add_space(4.0);
+            ui.label(RichText::new(text).font(font(SIZE_HEADING)).color(accent()));
+        }
+        NoteLine::Heading(_, heading) => {
+            ui.add_space(2.0);
+            ui.label(RichText::new(heading).font(font(SIZE_LABEL)).color(text()));
+        }
+        NoteLine::Bullet(spans) => {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("·").size(SIZE_SMALL).color(muted()));
+                for span in spans {
+                    render_note_span(ui, span);
+                }
+            });
+        }
+        NoteLine::Body(spans) => {
+            ui.horizontal_wrapped(|ui| {
+                for span in spans {
+                    render_note_span(ui, span);
+                }
+            });
+        }
+        NoteLine::Blank => {
+            ui.add_space(4.0);
+        }
+    }
+}
+
+/// 画一个行内片段：普通文字、加粗、行内代码、链接。
+///
+/// Draw one inline run: plain text, bold, inline code or link.
+fn render_note_span(ui: &mut Ui, span: &crate::shell::markdown::Span) {
+    use crate::shell::markdown::Span;
+    match span {
+        Span::Text(s) => {
+            ui.label(RichText::new(s).size(SIZE_SMALL).color(muted()));
+        }
+        Span::Bold(s) => {
+            ui.label(RichText::new(s).size(SIZE_SMALL).color(text()).strong());
+        }
+        Span::Code(s) => {
+            ui.label(
+                RichText::new(s)
+                    .font(mono(SIZE_SMALL))
+                    .color(value())
+                    .background_color(field_hover()),
+            );
+        }
+        Span::Link { text: label, url } => {
+            ui.label(
+                RichText::new(label)
+                    .size(SIZE_SMALL)
+                    .color(accent())
+                    .underline(),
+            )
+            .on_hover_text(url.as_str());
+        }
+    }
+}
+
+/// 一次导出确认所携带的参数。
+///
+/// 字段全是简单类型（`String` / `u8`），宿主不必认识 `StillFormat` 之类的 core
+/// 枚举；集成方按 `format_depth` 的稳定拼写再映射回具体容器。
+///
+/// The parameters carried by one export confirmation.
+///
+/// Every field is a simple type (`String` / `u8`), so the host does not need to know
+/// core enums such as `StillFormat`; the integrator maps `format_depth`'s stable
+/// spelling back to a concrete container.
+#[derive(Debug, Clone)]
+pub struct ExportChoice {
+    /// 导出范围：`all`（整个序列）/ `selected`（选中帧）/ `current`（当前帧）。
+    ///
+    /// Export scope: `all` (whole sequence) / `selected` (checked frames) / `current`.
+    pub scope: String,
+    /// 目标目录（绝对路径字符串）。
+    ///
+    /// Destination directory as an absolute path string.
+    pub out_dir: String,
+    /// 格式与位深的稳定拼写，取值同 `StillFormat::key`。
+    ///
+    /// Stable spelling of format and bit depth, same values as `StillFormat::key`.
+    pub format_depth: String,
+    /// 同名覆盖策略：0 = 询问 / 1 = 覆盖 / 2 = 跳过 / 3 = 改名。
+    ///
+    /// Same-name policy: 0 = ask / 1 = overwrite / 2 = skip / 3 = rename.
+    pub overwrite: u8,
+}
+
+/// 从当前导出参数推出表单的初始值（读不到的项用中性默认，不 unwrap）。
+///
+/// Derive the form's initial values from the current export settings (neutral defaults
+/// where a value cannot be read; never unwrap).
+fn default_export_choice(state: &AppState) -> ExportChoice {
+    ExportChoice {
+        scope: "all".to_owned(),
+        out_dir: state.render_out_dir.display().to_string(),
+        format_depth: state.render_format.key().to_owned(),
+        overwrite: if state.render_resume { 2 } else { 0 },
+    }
+}
+
+/// 导出参数确认框：确认后返回参数，取消返回 `None`（不产生任何文件）。
+///
+/// 第二个返回值是「已经关闭」：`(None, false)` 表示用户还在表单里改，
+/// `(None, true)` 是取消，`(Some(_), true)` 是确认。调用方靠它清掉挂载标记，
+/// 否则弹窗关不掉。
+///
+/// Export-parameter confirmation: returns the parameters on confirm, `None` on cancel
+/// (no file is produced).
+///
+/// The second return value means "closed": `(None, false)` = still editing,
+/// `(None, true)` = cancelled, `(Some(_), true)` = confirmed. The caller uses it to clear
+/// the mount flag, otherwise the modal never closes.
+pub fn confirm_export_modal(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+) -> (Option<ExportChoice>, bool) {
+    let form_id = egui::Id::unique("aevum-export-confirm-form");
+    let mut form = match ui.ctx().data_mut(|d| d.get_temp::<ExportChoice>(form_id)) {
+        Some(saved) => saved,
+        None => default_export_choice(state),
+    };
+
+    let mut cancel = false;
+    let mut go = false;
+    let modal = egui::Modal::new(egui::Id::unique("aevum-export-confirm")).show(ui.ctx(), |ui| {
+        ui.set_width(430.0);
+        ui.label(
+            RichText::new(crate::i18n::t!("导出参数"))
+                .font(font(SIZE_BODY))
+                .color(text()),
+        );
+        ui.add_space(8.0);
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(crate::i18n::t!("导出范围"))
+                    .font(font(SIZE_LABEL))
+                    .color(text()),
+            );
+            for (value, label) in [
+                ("all", "整个序列"),
+                ("selected", "选中帧"),
+                ("current", "当前帧"),
+            ] {
+                if bar_chip(ui, label, form.scope == value).clicked() {
+                    form.scope = value.to_owned();
+                }
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(crate::i18n::t!("目标目录"))
+                    .font(font(SIZE_LABEL))
+                    .color(text()),
+            );
+            if bar_button(ui, crate::i18n::t!("选择…")).clicked()
+                && let Some(dir) = rfd::FileDialog::new().pick_folder()
+            {
+                form.out_dir = dir.display().to_string();
+            }
+        });
+        ui.add(
+            egui::Label::new(
+                RichText::new(&form.out_dir)
+                    .font(font(SIZE_SMALL))
+                    .color(muted()),
+            )
+            .truncate(),
+        );
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(crate::i18n::t!("格式与位深"))
+                    .font(font(SIZE_LABEL))
+                    .color(text()),
+            );
+            for f in aevum_core::export::StillFormat::ALL {
+                if bar_chip(ui, f.cn(), form.format_depth == f.key()).clicked() {
+                    form.format_depth = f.key().to_owned();
+                }
+            }
+        });
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(crate::i18n::t!("同名覆盖"))
+                    .font(font(SIZE_LABEL))
+                    .color(text()),
+            );
+            for (value, label) in [(0u8, "询问"), (1, "覆盖"), (2, "跳过"), (3, "改名")] {
+                if bar_chip(ui, label, form.overwrite == value).clicked() {
+                    form.overwrite = value;
+                }
+            }
+        });
+
+        ui.add_space(10.0);
+        soft_sep(ui);
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if bar_button(ui, crate::i18n::t!("取消")).clicked() {
+                cancel = true;
+            }
+            if bar_primary(ui, crate::i18n::t!("开始导出")).clicked() {
+                go = true;
+            }
+        });
+    });
+
+    // Esc 与点背景都算取消。
+    //
+    // Escape and a backdrop click both cancel.
+    if modal.should_close() {
+        cancel = true;
+    }
+    if cancel {
+        ui.ctx().data_mut(|d| d.remove::<ExportChoice>(form_id));
+        return (None, true);
+    }
+    if go {
+        ui.ctx().data_mut(|d| d.remove::<ExportChoice>(form_id));
+        return (Some(form), true);
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(form_id, form));
+    (None, false)
 }
 
 #[cfg(test)]

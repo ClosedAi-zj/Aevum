@@ -203,6 +203,13 @@ pub struct Step {
     /// Index of the UI frame that produced this step; commands and external sources use
     /// -1, so they never merge with the previous frame.
     pub frame: i64,
+    /// 产生这步时正在进行的裁剪拖动序号（[`History::drag_epoch`] 的快照）；0 = 不在
+    /// 拖动中。合并时「同一次拖动」只认这个序号，不看帧距——手停多久都算一步。
+    ///
+    /// The crop-drag serial ([`History::drag_epoch`]) active when this step was produced;
+    /// 0 = not dragging. Merging treats "the same drag" by this serial alone, never by the
+    /// frame distance -- however long the hand pauses, it stays one step.
+    pub drag_epoch: u64,
     /// false = 这步的效果已经落在盘上（导出、对齐、存工程），撤销只回参数，产物不删。
     ///
     /// false = the effect of this step has already landed on disk (export, alignment,
@@ -249,6 +256,16 @@ pub struct History {
     cursor: usize,
     frame: i64,
     limit: usize,
+    /// 当前（或最近一次）裁剪拖动的序号：单调递增、从不归零，`crop_begin` 时由
+    /// [`History::begin_drag`] 推进。它只用来认「是不是同一次拖动」，不承担「现在
+    /// 是否在拖」的语义（那个由 `AppState::drag_epoch` 表示，`crop_end` 归零）。
+    /// 0 = 这一次会话里还没拖过。
+    ///
+    /// Serial of the current (or most recent) crop drag: monotonic, never zeroed, advanced
+    /// by [`History::begin_drag`] on `crop_begin`. It only answers "is this the same drag";
+    /// it does not carry "am I dragging now" (that is `AppState::drag_epoch`, zeroed by
+    /// `crop_end`). 0 = no drag yet in this session.
+    drag_epoch: u64,
 }
 
 impl Default for History {
@@ -264,6 +281,7 @@ impl History {
             cursor: 0,
             frame: 0,
             limit: HISTORY_LIMIT,
+            drag_epoch: 0,
         }
     }
 
@@ -288,6 +306,7 @@ impl History {
             cat: "",
             cat_merge: false,
             frame: -1,
+            drag_epoch: 0,
             revertible: true,
             snap,
         }];
@@ -301,6 +320,26 @@ impl History {
     /// frames can merge into one step.
     pub fn begin_frame(&mut self) {
         self.frame += 1;
+    }
+
+    /// 开始一次裁剪拖动：推进拖动序号并返回它。`crop_begin` 调一次，此后这次拖动里
+    /// 的所有落账都带着同一个序号，[`History::push_with`] 据此把它们并成一步（哪怕
+    /// 中间手停了半秒以上）。下一次 `crop_begin` 再推进，天然划出新的边界。
+    ///
+    /// 序号单调递增、永不归零：这样「同序号 = 同一次拖动」恒成立，`crop_end` 也无需
+    /// 改动它——收尾那一帧的回声仍能与拖动步合并。
+    ///
+    /// Start a crop drag: advance the drag serial and return it. `crop_begin` calls this
+    /// once, and every step recorded during the drag carries the same serial, so
+    /// [`History::push_with`] folds them into one step (even if the hand paused for over
+    /// half a second). The next `crop_begin` advances it again, which is the new boundary.
+    ///
+    /// The serial is monotonic and never zeroed, so "same serial = same drag" always holds
+    /// and `crop_end` need not touch it -- the closing echo in that frame can still merge
+    /// into the drag's step.
+    pub fn begin_drag(&mut self) -> u64 {
+        self.drag_epoch = self.drag_epoch.wrapping_add(1);
+        self.drag_epoch
     }
 
     pub fn steps(&self) -> &[Step] {
@@ -386,14 +425,35 @@ impl History {
         // 这一步改的是哪一类：与光标处的状态比，第一个不同的字段名。
         // 只在确有差异时才走到这里（`dirty` 已挡住无改动），所以类名必然非空。
         let cat = Self::hint_between(&self.steps[self.cursor].snap, &snap);
+        // 本帧生效的拖动序号：读一次存本地，既避免在可变借用 `tip` 期间再读字段，
+        // 也让合并判据与写入用的是同一个值。
+        //
+        // The drag serial in effect this frame: read once into a local, so the merge test
+        // and the write below use one value and we never re-read the field while `tip` is
+        // mutably borrowed.
+        let epoch_now = self.drag_epoch;
         let tip = &self.steps[self.cursor];
+        // 合并边界：裁剪拖动按「拖动序号」认——同一次拖动里停多久都并成一步；其余
+        // 控件仍按帧距容差兜底。这是 v1.0.1 裁剪历史刷屏的根治：一次拖动恒为一步，
+        // 与中途停顿无关。
+        //
+        // Merge boundary: crop drags merge by the drag serial -- changes inside one drag
+        // always collapse no matter how long the hand pauses; other controls keep the
+        // frame-distance tolerance fallback. This is the root fix for the v1.0.1
+        // crop-history spam: one drag is always one step, independent of pauses.
+        let crop_involved = key == "crop-drag" || tip.key == "crop-drag";
+        let within = if crop_involved {
+            epoch_now != 0 && epoch_now == tip.drag_epoch
+        } else {
+            frame - tip.frame <= MERGE_FRAME_TOLERANCE
+        };
         let merge = revertible
             && !key.is_empty()
             && self.cursor + 1 == self.steps.len()
             && frame > 0
             && tip.revertible
             && tip.frame >= 0
-            && frame - tip.frame <= MERGE_FRAME_TOLERANCE
+            && within
             && (
                 // 同一个控件登记的连续改动：认键（两个不同滑杆挨得再近也不并）。
                 tip.key == key
@@ -410,6 +470,7 @@ impl History {
             tip.frame = frame;
             tip.cat = cat;
             tip.cat_merge = tip.cat_merge && cat_merge;
+            tip.drag_epoch = epoch_now;
             return;
         }
         self.steps.truncate(self.cursor + 1);
@@ -419,6 +480,7 @@ impl History {
             cat,
             cat_merge,
             frame,
+            drag_epoch: epoch_now,
             revertible,
             snap,
         });

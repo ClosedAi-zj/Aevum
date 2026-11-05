@@ -425,6 +425,59 @@ impl AppState {
         });
     }
 
+    /// 播放代理的按需生成：与 [`AppState::ensure_thumbs`] 同构，但按 [`PROXY_SIDE`]
+    /// 解码、走 [`Msg::Proxies`]、落进 `proxies`。代理仍走机身内嵌原片、不经显影链，
+    /// 只是边长更大——播放态画布据此比 128px 缩略图清晰，暂停后回全质量。
+    ///
+    /// `lo..hi` 是要预取的帧区间（已按播放头夹过）；一次最多 24 张，上一批没落地
+    /// 之前不重复排队。
+    ///
+    /// On-demand playback proxies: the same shape as [`AppState::ensure_thumbs`], but
+    /// decoded at [`PROXY_SIDE`], delivered via [`Msg::Proxies`], and stored in `proxies`.
+    /// The proxy still comes from the camera-embedded original and never enters the develop
+    /// chain -- only its edge is larger, so the canvas looks sharper than the 128px
+    /// thumbnail during playback and returns to full quality on pause.
+    ///
+    /// `lo..hi` is the frame range to prefetch (already clamped to the playhead); at most 24
+    /// at a time, and no re-queueing until the previous batch lands.
+    pub fn ensure_proxies(&mut self, ctx: &Context, lo: usize, hi: usize) {
+        if self.headless {
+            return;
+        }
+        let Some(seq) = &self.seq else { return };
+        let missing: Vec<(usize, PathBuf)> = (lo..hi.min(seq.len()))
+            .filter(|i| !self.proxies.contains_key(i) && !self.proxy_pending.contains(i))
+            .take(24)
+            .map(|i| (i, seq.frames[i].path.clone()))
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        for (i, _) in &missing {
+            self.proxy_pending.insert(*i);
+        }
+        let tx = self.tx.clone();
+        let ctx2 = ctx.clone();
+        thread::spawn(move || {
+            let out: Vec<ProxyMsg> = thumb_pool().install(|| {
+                missing
+                    .into_par_iter()
+                    .filter_map(|(index, path)| {
+                        let img = metrics::thumbnail(&path, PROXY_SIDE).ok()?;
+                        let size = [img.width(), img.height()];
+                        let image = ColorImage::from_rgba_unmultiplied(
+                            [size[0] as usize, size[1] as usize],
+                            img.as_raw(),
+                        );
+                        Some(ProxyMsg { index, image, size })
+                    })
+                    .collect()
+            });
+            let _ = tx.send(Msg::Proxies(out));
+            ctx2.request_repaint();
+        });
+    }
+
     pub fn thumb(&self, i: usize) -> Option<&Thumb> {
         self.thumbs.get(&i)
     }

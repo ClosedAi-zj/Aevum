@@ -199,7 +199,7 @@ fn lib_filter_bar(
             let on = state.lib_filter.stars >= s;
             let resp = ui
                 .add(
-                    egui::Button::new(egui::RichText::new("★").size(11.0).color(if on {
+                    egui::Button::new(egui::RichText::new("★").size(SIZE_SMALL).color(if on {
                         star()
                     } else {
                         dim()
@@ -258,7 +258,7 @@ fn lib_filter_bar(
             } else {
                 active.clone()
             };
-            ui.menu_button(egui::RichText::new(label).size(11.0), |ui| {
+            ui.menu_button(egui::RichText::new(label).size(SIZE_SMALL), |ui| {
                 if ui.button(crate::i18n::t!("全部")).clicked() {
                     state.lib_filter.keyword.clear();
                     ui.close();
@@ -414,7 +414,7 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
                     "已选 {} 张",
                     &[&state.lib_checked.len()],
                 ))
-                .size(11.0)
+                .size(SIZE_SMALL)
                 .color(accent()),
             );
             for i in 0..state.lib_cols.len() {
@@ -469,7 +469,7 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
         egui::RichText::new(crate::i18n::t!(
             "单击选中；Ctrl 加选、Shift 连选；0~5 评星、P/X 旗标、6~9 色标；右键集合、关键词与堆叠"
         ))
-        .size(11.0)
+        .size(SIZE_SMALL)
         .color(dim()),
     );
     const ROW_H: f32 = 72.0;
@@ -592,7 +592,7 @@ fn lib_row_menu(
         if addable.is_empty() {
             ui.label(
                 egui::RichText::new(crate::i18n::t!("没有可快速添加的词；用面板里的输入框"))
-                    .size(10.0)
+                    .size(SIZE_SMALL)
                     .weak(),
             );
         }
@@ -676,7 +676,7 @@ fn lib_row_menu(
         } else {
             ui.label(
                 egui::RichText::new(crate::i18n::t!("勾住两张以上才能并叠"))
-                    .size(10.0)
+                    .size(SIZE_SMALL)
                     .weak(),
             );
         }
@@ -962,7 +962,7 @@ fn library_row(
                         state.lib_stack_open.remove(&(root, s));
                     }
                 }
-                ui.add(egui::Label::new(egui::RichText::new(&f.name).size(12.0)).truncate());
+                ui.add(egui::Label::new(egui::RichText::new(&f.name).size(SIZE_LABEL)).truncate());
             });
             ui.horizontal(|ui| {
                 for s in 1..=5u8 {
@@ -1054,8 +1054,10 @@ fn library_row(
                         .collect::<Vec<_>>()
                         .join(" ");
                     ui.add(
-                        egui::Label::new(egui::RichText::new(text).size(10.0).color(accent()))
-                            .truncate(),
+                        egui::Label::new(
+                            egui::RichText::new(text).size(SIZE_SMALL).color(accent()),
+                        )
+                        .truncate(),
                     )
                     .on_hover_text(crate::i18n::t!("右键「关键词」加词或去词；筛选条按词收窄"));
                 }

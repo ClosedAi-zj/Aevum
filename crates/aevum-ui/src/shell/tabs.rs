@@ -428,7 +428,7 @@ pub(super) fn keys_tab(state: &mut AppState, ui: &mut Ui) {
                 p,
                 xr.shrink(4.0),
                 Glyph::Close,
-                if x_resp.hovered() { danger() } else { dim() },
+                if x_resp.hovered() { danger() } else { muted() },
             );
             if resp.clicked() {
                 state.goto_keyframe(i);

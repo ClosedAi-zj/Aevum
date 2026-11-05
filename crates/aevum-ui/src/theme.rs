@@ -426,7 +426,15 @@ impl Palette {
             field_hover: n(l.field_hover),
             border: with_alpha(ink, alpha(20, 34)),
             border_strong: with_alpha(ink, alpha(46, 60)),
-            divider: with_alpha(ink, alpha(26, 34)),
+            // 分隔线提亮一档：分组分隔、曲线网格主次线、标尺刻度都走这一档，
+            // 原来约 10%（深）/ 13%（浅）白太淡、读不出分组，抬到约 15% / 19%。
+            // 只动 divider，不动 border / border_strong，避免按钮描边与强边框跟着变亮。
+            //
+            // Dividers lifted one step: group separators, curve-grid lines and ruler ticks
+            // all share this step; the old ~10% (dark) / ~13% (light) white was too faint
+            // to read groups, now ~15% / ~19%. Only divider changes — border and
+            // border_strong stay put so button strokes and strong outlines do not brighten.
+            divider: with_alpha(ink, alpha(38, 48)),
             text,
             muted: n(l.muted),
             dim: n(l.dim),
@@ -803,6 +811,11 @@ pub fn kv_h() -> f32 {
 /// Canvas top bar (cv-toolbar): document tabs + size readout + right-hand context, 28
 /// px.
 pub const CV_TOOLBAR_H: f32 = 28.0;
+/// 画布内容区四周留白：图像适配窗口时的内缩量，`clamp_pan` 也以它为可视边界。
+///
+/// Canvas content padding: the inset used when fitting the image to the window, and the
+/// viewport boundary `clamp_pan` clamps against once the view is zoomed in.
+pub const CANVAS_PAD: f32 = 26.0;
 /// 胶片条头部行：标题 + 右端筛选说明，26px。
 ///
 /// Filmstrip header row: title plus a filter note on the right, 26 px.
@@ -1198,10 +1211,12 @@ pub fn paint_chip(
     resp
 }
 
-/// 1px 发丝分隔线：颜色由调用方给（BORDER/DIVIDER 已是白 8–10% alpha）。
+/// 1px 发丝分隔线：颜色由调用方给。DIVIDER 这一档已提亮一档（约 15% 白），
+/// 于是走 divider 的分组分隔有一道看得见的线；线宽仍是 1px 发丝，不描边。
 ///
-/// 1 px hairline separator: the caller supplies the colour (`BORDER`/`DIVIDER` are
-/// already white at 8-10% alpha).
+/// 1 px hairline separator: the caller supplies the colour. The `DIVIDER` step is lifted
+/// one step (about 15% white), so group separators that use divider get a visible line;
+/// the stroke stays a 1 px hairline, never an outline.
 pub fn rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32) {
     painter.line_segment(
         [
@@ -1212,28 +1227,25 @@ pub fn rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32) {
     );
 }
 
-/// 浮窗与侧栏分节的「软分割线」：左右各缩进 12px、颜色再压暗一档。
+/// 浮窗与侧栏分节的「软分割线」：左右各缩进 12px、沿用提亮后的 divider 且不再二次压暗。
 ///
-/// 通栏 1px 线读作「把两块切开」，缩进的浅线读作「这是两节」——分割样式
+/// 通栏 1px 线读作「把两块切开」，缩进的线读作「这是两节」——分割样式
 /// 重设计的落点就在这个语义差上。两侧留白让线不顶到边框，视觉上短一截，
-/// 恰好和分节标题的左缘缩进（12px）对齐。
+/// 恰好和分节标题的左缘缩进（12px）对齐。颜色由 divider 提亮一档而来，
+/// 分节之间因此有一道看得见的分隔，不再是淡到读不出的发丝线。
 ///
 /// The "soft divider" between floating windows and right-column sections: inset 12 px on
-/// each side, one step darker.
+/// each side, using the lifted divider with no second dimming pass.
 ///
-/// A full-width 1 px line reads as "cut these two apart", while an inset faint line reads as
+/// A full-width 1 px line reads as "cut these two apart", while an inset line reads as
 /// "these are two sections" — that semantic difference is exactly what the divider redesign
 /// hangs on. The inset keeps the line off the frames, making it visually shorter and lining
-/// it up with the 12 px left inset of section headings.
+/// it up with the 12 px left inset of section headings. The colour comes from divider
+/// lifted one step, so adjacent sections get a visible separator instead of a hairline too
+/// faint to read.
 pub fn soft_rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32) {
     const INSET: f32 = 12.0;
-    rule(
-        painter,
-        x0 + INSET,
-        x1 - INSET,
-        y,
-        divider().gamma_multiply(0.7),
-    );
+    rule(painter, x0 + INSET, x1 - INSET, y, divider());
 }
 
 /// Lightroom 的数值写法：有符号量带正号，零显示占位。

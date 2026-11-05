@@ -595,7 +595,7 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
             p,
             del.shrink(5.0),
             Glyph::Close,
-            if dr.hovered() { text() } else { dim() },
+            if dr.hovered() { text() } else { muted() },
         );
         if dr.clicked() {
             remove = Some(i);

@@ -28,58 +28,236 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     p.rect_filled(hd, 0, header());
     theme::rule(&p, hd.left(), hd.right(), hd.bottom(), divider());
 
+    let cy = hd.center().y;
     let n = state.frame_count();
+    let title_text = if n > 0 {
+        crate::i18n::tr_fmt("胶片条 · {} 帧 · 已评级 {}", &[&n, &state.rated_count()])
+    } else {
+        crate::i18n::tr("胶片条 · 无序列").to_owned()
+    };
+    // 标题先量宽：收起按钮要钉在它右边，跟着文字长短走。
+    //
+    // Measure the title first: the collapse button is pinned right after it and follows
+    // whatever width the text needs.
+    let title_g = p.layout_no_wrap(title_text.clone(), font(SIZE_SMALL), dim());
     p.text(
-        Pos2::new(hd.left() + 10.0, hd.center().y),
+        Pos2::new(hd.left() + 10.0, cy),
         Align2::LEFT_CENTER,
-        if n > 0 {
-            crate::i18n::tr_fmt("胶片条 · {} 帧 · 已评级 {}", &[&n, &state.rated_count()])
-        } else {
-            crate::i18n::tr("胶片条 · 无序列").to_owned()
-        },
+        title_text,
         font(SIZE_SMALL),
         dim(),
     );
 
-    // 右端两枚开关降为 ghost：透明底、dim 字，悬停才抬起 —— 头部行是说明，
-    // 不是按钮排。胶片那枚带旋转箭头（Lightroom 口径）：▼ 收起 / ▸ 展开，
-    // 点击收起的只是缩略图条，这行 26px 头部留着，展开的入口永远在场。
-    let chip_x = hd.right() - 10.0 - 60.0;
+    // 收起入口做成**真按钮**，紧跟标题钉在头部左端：112 × 24，有填充底色与描边，
+    // Chevron 与文案随 show_film 切换，静置走 text()、悬停抬起。
+    //
+    // 之前它是右端一枚「降为 ghost」的淡灰小字（透明底 + dim + 悬停才抬起），
+    // 用户三轮反馈「这里应该有个按钮直接把预览图收起」——功能在、但看不见，
+    // 等于没有。现在按控制件规范做成一眼能认、能点的按钮。
+    //
+    // The collapse entry is a **real button** pinned to the left of the header right after
+    // the title: 112 x 24, filled and stroked, with the chevron and label driven by
+    // show_film, text() at rest and lifting on hover.
+    //
+    // It used to be a dim ghost chip at the far right (transparent, dim text, only lifting
+    // on hover). The user asked three times for "a button that collapses the preview" --
+    // the feature existed but was invisible, which is the same as not having it.
+    let curve_w = 40.0;
+    let btn_w = 112.0;
+    let btn_h = 24.0;
+    // 右边界保护：序号到四位、或窗口变窄时，按钮不许压到右端的「曲线」开关。
+    //
+    // Right-edge guard: with a four-digit count or a narrow window the button must not
+    // run into the "Curve" toggle at the right end.
+    let max_left = hd.right() - 10.0 - curve_w - 8.0 - btn_w;
+    let btn_left = (hd.left() + 10.0 + title_g.size().x + 12.0).min(max_left);
     let film_rect = Rect::from_min_size(
-        Pos2::new(chip_x, hd.center().y - 9.0),
-        Vec2::new(60.0, 18.0),
+        Pos2::new(btn_left, cy - btn_h * 0.5),
+        Vec2::new(btn_w, btn_h),
     );
     let film_resp = ui.interact(film_rect, ui.make_persistent_id("tl-film"), Sense::click());
-    if film_resp.hovered() {
-        p.rect_filled(film_rect, radius_control(), elev());
-    }
+    p.rect_filled(
+        film_rect,
+        radius_control(),
+        if film_resp.hovered() {
+            elev_hover()
+        } else {
+            elev()
+        },
+    );
+    // 描边默认 border_strong、悬停才用 accent：设计文档 §5.2 要求强调色占比 ≤ 2%，
+    // 常驻的 accent 描边会和「当前选中」抢语义。
+    //
+    // Stroke is border_strong by default and accent on hover: the design spec caps the
+    // accent at 2% of pixels, and a permanent accent outline would compete with "selected".
+    p.rect_stroke(
+        film_rect,
+        radius_control(),
+        Stroke::new(
+            1.0,
+            if film_resp.hovered() {
+                accent()
+            } else {
+                border_strong()
+            },
+        ),
+        StrokeKind::Inside,
+    );
     icons::paint(
         &p,
-        Rect::from_center_size(
-            Pos2::new(film_rect.left() + 10.0, film_rect.center().y),
-            Vec2::splat(10.0),
-        ),
+        Rect::from_center_size(Pos2::new(film_rect.left() + 16.0, cy), Vec2::splat(13.0)),
         if state.show_film {
             Glyph::ChevronDown
         } else {
             Glyph::ChevronRight
         },
-        if film_resp.hovered() { text() } else { dim() },
+        text(),
     );
     p.text(
-        Pos2::new(film_rect.left() + 20.0, film_rect.center().y),
+        Pos2::new(film_rect.left() + 28.0, cy),
         Align2::LEFT_CENTER,
-        crate::i18n::tr("胶片"),
+        if state.show_film {
+            crate::i18n::t!("收起预览")
+        } else {
+            crate::i18n::t!("展开预览")
+        },
         font(SIZE_SMALL),
-        if state.show_film { text() } else { dim() },
+        text(),
     );
     if film_resp.clicked() {
         state.show_film = !state.show_film;
     }
     film_resp.on_hover_text(crate::i18n::t!("收起 / 展开底部预览栏"));
+
+    // 缩略图与主图曝光不同的说明：缩略图走机身内嵌原片（未显影），主画布已显影，
+    // 两者亮度天然有差。写在这里是为了止住「是不是有 bug」的疑问，而不是改渲染链。
+    //
+    // Note on thumbnail exposure: thumbnails use the camera-embedded original (undeveloped)
+    // while the canvas shows the developed preview, so their brightness differs by design.
+    // This explains it instead of changing the render path.
+    let note_text = crate::i18n::t!("缩略图为未显影原片，与主画布曝光不同");
+    let note_left = film_rect.right() + 12.0;
+    if note_left < hd.right() - curve_w - 16.0 {
+        p.text(
+            Pos2::new(note_left, cy),
+            Align2::LEFT_CENTER,
+            note_text,
+            font(SIZE_SMALL),
+            muted(),
+        );
+    }
+
+    // 星级筛选：≥N 星才显示，N=0 表示不过滤。只在显示层收窄，不动真实帧序。
+    //
+    // Star filter: show frames rated at least N; N = 0 means no filter. It narrows the
+    // display only and never reorders the real sequence.
+    let right_cursor = hd.right() - 10.0 - curve_w - 10.0;
+    {
+        let clear_text = crate::i18n::t!("清除筛选");
+        let label_text = crate::i18n::t!("星级筛选");
+        let count_text = crate::i18n::tr_fmt(
+            "已筛选 {} / {} 帧",
+            &[
+                &state.seq.as_ref().map_or(0usize, |q| {
+                    (0..q.len())
+                        .filter(|i| {
+                            state.film_filter_stars == 0
+                                || state.rating_at(*i) >= state.film_filter_stars
+                        })
+                        .count()
+                }),
+                &n,
+            ],
+        );
+        let clear_g = p.layout_no_wrap(clear_text.to_owned(), font(SIZE_SMALL), muted());
+        let count_g = p.layout_no_wrap(count_text.clone(), mono(SIZE_SMALL), dim());
+        let label_g = p.layout_no_wrap(label_text.to_owned(), font(SIZE_SMALL), muted());
+        let star_w = 5.0 * 15.0;
+        let group_w =
+            label_g.size().x + 8.0 + star_w + 8.0 + clear_g.size().x + 8.0 + count_g.size().x;
+        let group_left = right_cursor - group_w;
+        // 窄窗整组收起：宁可看不见筛选器，也不让它压住标题与说明。
+        //
+        // Collapse the whole group in a narrow window: better invisible than overlapping
+        // the title and the note.
+        if group_left > film_rect.right() + 220.0 {
+            p.text(
+                Pos2::new(group_left, cy),
+                Align2::LEFT_CENTER,
+                label_text,
+                font(SIZE_SMALL),
+                muted(),
+            );
+            let mut sx = group_left + label_g.size().x + 8.0;
+            for level in 1..=5u8 {
+                let r = Rect::from_center_size(Pos2::new(sx + 7.0, cy), Vec2::splat(15.0));
+                let resp = ui.interact(
+                    r,
+                    ui.make_persistent_id(("film-star-filter", level)),
+                    Sense::click(),
+                );
+                let on = state.film_filter_stars >= level;
+                icons::paint(
+                    &p,
+                    r.shrink(2.0),
+                    if on { Glyph::Star } else { Glyph::StarEmpty },
+                    if on {
+                        star()
+                    } else if resp.hovered() {
+                        text()
+                    } else {
+                        muted()
+                    },
+                );
+                if resp.clicked() {
+                    state.film_filter_stars = if state.film_filter_stars == level {
+                        0
+                    } else {
+                        level
+                    };
+                }
+                sx += 15.0;
+            }
+            let clear_rect = Rect::from_min_size(
+                Pos2::new(sx + 8.0, cy - 9.0),
+                Vec2::new(clear_g.size().x + 8.0, 18.0),
+            );
+            let clear_resp = ui.interact(
+                clear_rect,
+                ui.make_persistent_id("film-star-clear"),
+                Sense::click(),
+            );
+            p.text(
+                Pos2::new(clear_rect.left() + 4.0, cy),
+                Align2::LEFT_CENTER,
+                clear_text,
+                font(SIZE_SMALL),
+                if clear_resp.hovered() {
+                    text()
+                } else {
+                    muted()
+                },
+            );
+            if clear_resp.clicked() {
+                state.film_filter_stars = 0;
+            }
+            p.text(
+                Pos2::new(clear_rect.right() + 8.0, cy),
+                Align2::LEFT_CENTER,
+                count_text,
+                mono(SIZE_SMALL),
+                dim(),
+            );
+        }
+    }
+
+    // 右端「曲线」开关：锚在头部右缘，不随左端的收起按钮移动。
+    //
+    // The right-hand "Curve" toggle: anchored to the header's right edge, it does not
+    // follow the collapse button to the left.
     let curve_rect = Rect::from_min_size(
-        Pos2::new(film_rect.left() - 44.0, hd.center().y - 9.0),
-        Vec2::new(40.0, 18.0),
+        Pos2::new(hd.right() - 10.0 - curve_w, cy - 9.0),
+        Vec2::new(curve_w, 18.0),
     );
     let curve_resp = ui.interact(
         curve_rect,
@@ -406,6 +584,17 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
 
                     let p = ui.painter();
                     for i in lo..hi {
+                        // 星级筛选只决定「画不画」，不改真实帧序：i 仍是序列里的真帧号，
+                        // 所以播放范围、导出范围、缩略图预热都还是原来的语义。
+                        //
+                        // The star filter only decides whether a cell is drawn; `i` stays the
+                        // real sequence index, so playback, export and thumbnail warm-up keep
+                        // their original meaning.
+                        if state.film_filter_stars > 0
+                            && state.rating_at(i) < state.film_filter_stars
+                        {
+                            continue;
+                        }
                         let cell = Rect::from_min_size(
                             Pos2::new(strip.left() + i as f32 * cell_w + 1.0, strip.top()),
                             Vec2::new(cell_w - 2.0, h),
@@ -606,33 +795,59 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     p.rect_stroke(rect, 0, Stroke::new(1.0, border()), StrokeKind::Inside);
     let cy = rect.center().y;
     let mut idx = 0usize;
-    let mut mini = |ui: &mut Ui, glyph: Glyph, active: bool, tint: Color32| -> bool {
-        let r = Rect::from_center_size(
-            Pos2::new(rect.left() + 16.0 + idx as f32 * 26.0, cy),
-            Vec2::splat(22.0),
-        );
-        let resp = ui.interact(r, ui.make_persistent_id(("transport", idx)), Sense::click());
-        idx += 1;
-        if resp.hovered() {
-            p.rect_filled(r, radius_control(), elev());
-        }
-        icons::paint(
-            &p,
-            r.shrink(5.0),
-            glyph,
-            if active {
-                tint
-            } else if resp.hovered() {
-                text()
-            } else {
-                muted()
-            },
-        );
-        resp.clicked()
-    };
+    // `enabled` 为假时只挂 hover 感：不可点、图标压到 dim、并说明为什么。
+    // 播放按钮在单帧序列上就是这种状态——点了画面不动，用户会以为坏了。
+    //
+    // With `enabled` false the control only senses hover: not clickable, icon dimmed, and
+    // a hover hint explains why. That is the play button on a one-frame sequence -- pressing
+    // it used to do nothing and read as a bug.
+    let mut mini =
+        |ui: &mut Ui, glyph: Glyph, active: bool, tint: Color32, enabled: bool| -> bool {
+            let r = Rect::from_center_size(
+                Pos2::new(rect.left() + 16.0 + idx as f32 * 26.0, cy),
+                Vec2::splat(22.0),
+            );
+            let resp = ui.interact(
+                r,
+                ui.make_persistent_id(("transport", idx)),
+                if enabled {
+                    Sense::click()
+                } else {
+                    Sense::hover()
+                },
+            );
+            idx += 1;
+            if enabled && resp.hovered() {
+                p.rect_filled(r, radius_control(), elev());
+            }
+            icons::paint(
+                &p,
+                r.shrink(5.0),
+                glyph,
+                if !enabled {
+                    dim()
+                } else if active {
+                    tint
+                } else if resp.hovered() {
+                    text()
+                } else {
+                    muted()
+                },
+            );
+            let clicked = resp.clicked();
+            if !enabled {
+                resp.on_hover_text(crate::i18n::t!("至少需要两帧才能播放"));
+            }
+            clicked && enabled
+        };
 
     let has = state.frame_count() > 0;
-    if mini(ui, Glyph::Prev, false, text()) && has {
+    // 播放至少要两帧：一帧的「播放」既不动、又会把画面切成代理，纯属误导。
+    //
+    // Playback needs at least two frames: "playing" a single frame neither moves nor means
+    // anything, and it used to swap the canvas to a proxy for no reason.
+    let can_play = state.frame_count() >= 2;
+    if mini(ui, Glyph::Prev, false, text(), has) {
         state.step(-1);
     }
     if mini(
@@ -644,11 +859,11 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         },
         state.playing,
         accent(),
-    ) && has
-    {
+        can_play,
+    ) {
         state.toggle_play();
     }
-    if mini(ui, Glyph::Next, false, text()) && has {
+    if mini(ui, Glyph::Next, false, text(), has) {
         state.step(1);
     }
 

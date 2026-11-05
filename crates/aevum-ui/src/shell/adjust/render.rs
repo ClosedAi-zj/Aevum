@@ -848,7 +848,11 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         );
         if resp.clicked() {
             state.export_copy = None;
-            state.run_export(&ctx);
+            // 先弹参数确认，用户在弹窗里点「开始导出」才真正写文件；取消不产生任何文件。
+            //
+            // Show the parameter confirmation first; the actual write happens only after the
+            // user presses "Start export" in the modal. Cancel produces no file.
+            ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aevum-export-pending"), 1u8));
         }
         if busy {
             if let Some((done, total, stage)) = state.export_progress() {
@@ -909,7 +913,7 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             )
             .clicked()
         {
-            state.export_current(&ctx);
+            ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aevum-export-pending"), 2u8));
         }
     }
     if group_header(ui, state, "render-queue", "队列", false) {
@@ -1150,7 +1154,7 @@ fn queue_table(state: &mut AppState, ui: &mut Ui, busy: bool) {
                         Align2::CENTER_CENTER,
                         "×",
                         font(SIZE_BODY),
-                        if del.hovered() { danger() } else { dim() },
+                        if del.hovered() { danger() } else { muted() },
                     );
                     if del.clicked() {
                         remove = Some(index);

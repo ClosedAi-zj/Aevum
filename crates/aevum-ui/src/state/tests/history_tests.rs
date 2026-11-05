@@ -145,7 +145,14 @@ fn drag_merge_tolerates_a_few_idle_frames() {
         "合并步的文案跟最后状态走"
     );
 
-    // 超过容差（31 帧）再拖：这才是一次新的编辑，开新步。
+    // 停 31 帧（远超旧的 30 帧容差）后接着拖：仍处在**同一次 crop_drag 生命周期**
+    // 里（没有 crop_end），按拖动序号必并、不开新步——这正是用户实测「手一停就多
+    // 一条」的根治：停多久都只 1 条。
+    //
+    // Idle for 31 frames (well past the old 30-frame tolerance) then drag again: still
+    // inside **the same crop-drag lifecycle** (no crop_end), so the drag serial forces a
+    // merge and no new step opens -- the root fix for the user-reported "each pause adds a
+    // row": however long the pause, it stays one step.
     for _ in 0..(crate::history::MERGE_FRAME_TOLERANCE as usize) {
         state.history.begin_frame();
         state.history_commit();
@@ -155,9 +162,228 @@ fn drag_merge_tolerates_a_few_idle_frames() {
     state.history_commit();
     assert_eq!(
         state.history.steps().len(),
-        after_first + 1,
-        "隔了半秒以上，算新的一步"
+        after_first,
+        "同一 crop_drag 生命周期内即使停 31 帧也不开新步"
     );
+
+    // 真正换一次拖动：crop_end 之后再 crop_begin、再拖，才开新步。
+    //
+    // A genuinely new drag: only after crop_end plus a fresh crop_begin does a new step
+    // open.
+    state.history.begin_frame();
+    state.crop_end();
+    state.history_commit();
+    state.history.begin_frame();
+    state.crop_begin([0.0, 0.0], crop::Hit::Outside);
+    state.crop_drag_to([15.0, 15.0]);
+    state.history_commit();
+    assert_eq!(
+        state.history.steps().len(),
+        after_first + 1,
+        "crop_end 之后再拖，才算新的一步"
+    );
+}
+
+/// 一次裁剪拖动必须净增恰好一步：拖动的中间帧一帧都不许新增历史步，松手也不许
+/// 额外增步。这条直接钉死用户实测的「裁剪 4000 × 6000」逐帧刷屏。
+///
+/// One crop drag must add exactly one step: no intermediate drag frame may add a step,
+/// and the release must not add one either. This pins down the user-reported per-frame
+/// "crop 4000 x 6000" spam.
+#[test]
+fn crop_drag_adds_exactly_one_step_and_zero_per_intermediate_frame() {
+    let mut state = AppState::new();
+    // 用户截图那台机器：4000 × 6000 竖幅。
+    state.resolution = Some((4000, 6000));
+    let base = state.history.steps().len();
+
+    state.history.begin_frame();
+    state.crop_begin([100.0, 100.0], crop::Hit::Outside);
+    state.history_commit();
+    assert_eq!(
+        state.history.steps().len(),
+        base,
+        "按下本身不是编辑，不产生历史步"
+    );
+
+    // 真实拖动 60 帧，每帧换一个对角点（始终不是整幅）：第一步落下那一步，
+    // 其余每一帧的步数都必须与上一帧相同。
+    let mut prev = base;
+    for k in 0..60u32 {
+        state.history.begin_frame();
+        let x = 200.0 + f64::from(k) * 30.0;
+        let y = 300.0 + f64::from(k) * 20.0;
+        state.crop_drag_to([x, y]);
+        state.history_commit();
+        let now = state.history.steps().len();
+        if k == 0 {
+            assert_eq!(now, base + 1, "第一帧拖动落下整次拖动的那一步");
+        } else {
+            assert_eq!(now, prev, "拖动中间帧不该新增历史步（第 {k} 帧）");
+        }
+        prev = now;
+    }
+    assert_eq!(
+        state.history.steps().len(),
+        base + 1,
+        "整次拖动净增恰好 1 步"
+    );
+
+    // 松手：坐标不是整幅，crop_end 不改状态、不注记，也不新增步。
+    state.history.begin_frame();
+    state.crop_end();
+    state.history_commit();
+    assert_eq!(state.history.steps().len(), base + 1, "松手不额外增加步数");
+
+    // 最后一步的文案是最终尺寸、键是 crop-drag。
+    let last = state.history.steps().last().expect("至少一步");
+    let u = state.user_crop.expect("拖动后应留下手动框");
+    assert_eq!(last.key, "crop-drag", "最后一步用拖动键");
+    assert_eq!(
+        last.label,
+        crate::i18n::tr_fmt("裁剪 {} × {}", &[&u.w, &u.h]),
+        "最后一步文案跟最终尺寸走"
+    );
+}
+
+/// 诊断用例（不锁死现状，只打印）：复现用户截图「91–100 全是裁剪 4000 × 6000」。
+/// 五个场景各自新建一份状态独立跑，逐帧记录 (frame, 步数, 末条文案, 末条键, 光标)；
+/// 只有场景 A 断言净增 1，其余仅打印，供判断成因。
+///
+/// Diagnostic case (does not lock current behaviour, prints only): reproduce the user's
+/// screenshot where rows 91-100 are all "crop 4000 x 6000". Five scenarios each run on a
+/// fresh state and log (frame, step count, last label, last key, cursor) per frame; only
+/// scenario A asserts a net +1, the rest just print, to help pin the cause.
+#[test]
+fn diagnose_crop_history_spam_reproduction() {
+    let ctx = Context::default();
+
+    fn dump(tag: &str, frame: i64, state: &AppState) {
+        let last = state.history.steps().last();
+        println!(
+            "[{tag}] frame={frame} steps={} last.label={:?} last.key={:?} cursor={}",
+            state.history.steps().len(),
+            last.map(|s| s.label.as_str()).unwrap_or(""),
+            last.map(|s| s.key.as_str()).unwrap_or(""),
+            state.history.cursor(),
+        );
+    }
+
+    // A：连续拖 60 帧，每帧不同坐标（期望净增 1）。
+    {
+        let mut state = AppState::new();
+        state.resolution = Some((4000, 6000));
+        let base = state.history.steps().len();
+        state.history.begin_frame();
+        state.crop_begin([100.0, 100.0], crop::Hit::Outside);
+        state.history_commit();
+        for k in 0..60u32 {
+            state.history.begin_frame();
+            state.crop_drag_to([200.0 + f64::from(k) * 30.0, 300.0 + f64::from(k) * 20.0]);
+            state.history_commit();
+            dump("A", k as i64, &state);
+        }
+        assert_eq!(
+            state.history.steps().len(),
+            base + 1,
+            "A：连续拖 60 帧应只净增 1 步"
+        );
+    }
+
+    // B：慢速拖，每 10 帧插 31 帧无操作帧（模拟手停半秒）。
+    {
+        let mut state = AppState::new();
+        state.resolution = Some((4000, 6000));
+        let base = state.history.steps().len();
+        state.history.begin_frame();
+        state.crop_begin([100.0, 100.0], crop::Hit::Outside);
+        state.history_commit();
+        let mut f = 0i64;
+        for seg in 0..6u32 {
+            for sub in 0..10u32 {
+                state.history.begin_frame();
+                state.crop_drag_to([
+                    200.0 + f64::from(seg * 10 + sub) * 20.0,
+                    300.0 + f64::from(seg * 10 + sub) * 15.0,
+                ]);
+                state.history_commit();
+                dump("B", f, &state);
+                f += 1;
+            }
+            for _ in 0..31 {
+                state.history.begin_frame();
+                state.history_commit();
+                dump("B", f, &state);
+                f += 1;
+            }
+        }
+        println!("[B] 净增 = {}", state.history.steps().len() - base);
+    }
+
+    // C：每 5 帧 crop_end() + crop_begin()（反复松手）。
+    {
+        let mut state = AppState::new();
+        state.resolution = Some((4000, 6000));
+        let base = state.history.steps().len();
+        for seg in 0..6u32 {
+            state.history.begin_frame();
+            state.crop_begin([100.0, 100.0], crop::Hit::Outside);
+            state.history_commit();
+            for sub in 0..5u32 {
+                state.history.begin_frame();
+                state.crop_drag_to([
+                    200.0 + f64::from(seg * 5 + sub) * 20.0,
+                    300.0 + f64::from(seg * 5 + sub) * 15.0,
+                ]);
+                state.history_commit();
+                dump("C", i64::from(seg * 5 + sub), &state);
+            }
+            state.history.begin_frame();
+            state.crop_end();
+            state.history_commit();
+            dump("C", i64::from(seg * 5 + 5), &state);
+        }
+        println!("[C] 净增 = {}", state.history.steps().len() - base);
+    }
+
+    // D：同帧 note("other", ...) 覆盖拖动登记。
+    {
+        let mut state = AppState::new();
+        state.resolution = Some((4000, 6000));
+        let base = state.history.steps().len();
+        state.history.begin_frame();
+        state.crop_begin([100.0, 100.0], crop::Hit::Outside);
+        state.history_commit();
+        for k in 0..10u32 {
+            state.history.begin_frame();
+            state.crop_drag_to([200.0 + f64::from(k) * 20.0, 300.0 + f64::from(k) * 15.0]);
+            // 同一个帧里再登记一次别的键，覆盖掉 "crop-drag"。
+            history::note("other", "other-control");
+            state.history_commit();
+            dump("D", i64::from(k), &state);
+        }
+        println!("[D] 净增 = {}", state.history.steps().len() - base);
+    }
+
+    // E：拖动中夹一条 run_ui_command("crop.set")。
+    {
+        let mut state = AppState::new();
+        state.resolution = Some((4000, 6000));
+        let base = state.history.steps().len();
+        state.history.begin_frame();
+        state.crop_begin([100.0, 100.0], crop::Hit::Outside);
+        state.history_commit();
+        for k in 0..10u32 {
+            state.history.begin_frame();
+            state.crop_drag_to([200.0 + f64::from(k) * 20.0, 300.0 + f64::from(k) * 15.0]);
+            if k == 5 {
+                let _ = state.run_ui_command(&ctx, "crop.set", &json!({"aspect": "1:1"}));
+            }
+            state.history_commit();
+            dump("E", i64::from(k), &state);
+        }
+        println!("[E] 净增 = {}", state.history.steps().len() - base);
+    }
 }
 
 #[test]

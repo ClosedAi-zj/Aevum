@@ -310,7 +310,7 @@ pub(super) fn group_header(
         } else {
             Glyph::ChevronRight
         },
-        if resp.hovered() { text() } else { dim() },
+        if resp.hovered() { text() } else { muted() },
     );
     // 字号比正文大一档 + 真粗体（700 子集字族）：ACR 的分区标题是 semibold，
     // 只靠字号和颜色堆不出这层「这是标题」的体格差。
@@ -437,11 +437,12 @@ pub(super) fn group_header(
             p,
             rr.shrink(4.0),
             Glyph::Reset,
-            if rresp.hovered() { text() } else { dim() },
+            if rresp.hovered() { text() } else { muted() },
         );
         if rresp.clicked() {
             reset_group(state, key);
         }
+        rresp.on_hover_text(crate::i18n::t!("重置这一分组"));
     }
     if resp.clicked() {
         if state.collapsed.contains(key) {
@@ -736,13 +737,11 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         *v = default;
         changed = true;
     }
-    if t.hovered() {
-        let scroll = ui.input(|i| i.smooth_scroll_delta.y) as f64;
-        if scroll.abs() > 0.1 {
-            *v = (*v + scroll * (max - min) / 2000.0).clamp(min, max);
-            changed = true;
-        }
-    }
+    // 滑块不消费滚轮：滚轮留给面板滚动。用户在滚动面板时鼠标划过滑块，
+    // 曾经会静默改掉参数——一次滚动毁掉一组调整。
+    //
+    // Sliders never consume wheel scroll; the wheel belongs to the panel's ScrollArea.
+    // Scrolling a panel used to silently change any slider the pointer crossed.
     if changed {
         resp.mark_changed();
         // 进撤销历史：拖动中每帧都会登记一次，帧号连续的同一控件会被并成一步。

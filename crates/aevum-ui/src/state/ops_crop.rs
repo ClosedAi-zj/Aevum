@@ -128,6 +128,13 @@ impl AppState {
     /// happen in `crop_drag_to`: one drag equals one history step, and clicking the canvas leaves
     /// nothing behind (before v0.3.0 a bare click squeezed out a crop history entry).
     pub fn crop_begin(&mut self, at: [f64; 2], hit: crop::Hit) {
+        // 推进拖动序号：这一次拖动里所有落账都带同一个 epoch，历史据此并成一步，
+        // 与中途停了多少帧无关（根治「裁剪 4000 × 6000」逐帧刷屏）。
+        //
+        // Advance the drag serial: every step recorded in this drag carries the same
+        // epoch, so the history folds them into one step regardless of how many idle
+        // frames pass (the root fix for the per-frame "crop 4000 x 6000" spam).
+        self.drag_epoch = self.history.begin_drag();
         let cur = self.crop_box();
         self.crop_drag = Some(match hit {
             crop::Hit::Corner(handle) | crop::Hit::Edge(handle) => {
@@ -177,6 +184,13 @@ impl AppState {
     /// the default framing and saves a pointless repaint.
     pub fn crop_end(&mut self) {
         self.crop_drag = None;
+        // UI 侧「是否在拖动」归零。（`History` 内部的拖动序号保持单调，好让这一帧
+        // 的收尾回声仍并进拖动那一步——见 `History::begin_drag`。）
+        //
+        // Zero the UI-facing "am I dragging" flag. (The `History`-internal drag serial
+        // stays monotonic so this frame's closing echo can still merge into the drag's
+        // step -- see `History::begin_drag`.)
+        self.drag_epoch = 0;
         let view = self.crop_view();
         if let Some(u) = self.user_crop
             && (u.x, u.y, u.w, u.h) == (view.x, view.y, view.w, view.h)
@@ -212,6 +226,13 @@ impl AppState {
     pub fn crop_reset(&mut self) {
         if self.user_crop.take().is_some() {
             self.crop_drag = None;
+            // 取消裁剪也结束拖动：置 `AppState::drag_epoch` 归零，维持「非 0 即正在拖」
+            // 的读法（历史合并用的是 `History` 内部的单调序号，不受影响）。
+            //
+            // Cancelling the crop also ends the drag: zero `AppState::drag_epoch` so the
+            // "non-zero means dragging" reading holds (the history merge uses the
+            // `History`-internal monotonic serial and is unaffected).
+            self.drag_epoch = 0;
             self.preview_dirty = true;
             history::note("crop-reset", "取消裁剪");
         }
