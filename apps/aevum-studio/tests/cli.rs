@@ -1,4 +1,4 @@
-//! 命令行的对外契约：版本、帮助、以及「不认识的参数」这三条出口。
+//! 命令行的对外契约（版本、帮助、不认识的参数），以及 exe 里那份给 Explorer 看的版本资源。
 //!
 //! # 为什么这里要真的把 exe 跑起来
 //!
@@ -143,4 +143,78 @@ fn a_typo_of_a_real_flag_is_not_treated_as_a_directory() {
     let (code, _, stderr) = run(&["--shot2", "E:/tmp/should-not-be-opened"]);
     assert_eq!(code, Some(2));
     assert!(stderr.contains("--shot2"), "{stderr:?}");
+}
+
+/// 读 exe 版本资源里的一个字段，也就是资源管理器「详细信息」页显示的那一列。
+///
+/// 用 PowerShell 而不是解析 PE：`VersionInfo` 由 Windows 自己解资源段，省掉一个
+/// 只为测试而生的 PE 解析依赖，也没有「自己解析自己、解析错了还绿」的风险。
+/// 输出统一转 UTF-8，否则中文产品名在英文 runner 上会变成乱码。
+///
+/// Read one field of the exe version resource -- the very column Explorer's "Details"
+/// tab shows.
+///
+/// PowerShell rather than a hand-rolled PE parser: Windows itself decodes the resource
+/// section, which avoids a test-only dependency and any chance of a parser that "passes"
+/// because it is wrong in the same way as the code under test. Output is forced to UTF-8
+/// so a Chinese product name survives an English runner.
+fn version_info(field: &str) -> String {
+    let script = format!(
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8; \
+         (Get-Item -LiteralPath '{}').VersionInfo.{field}",
+        exe()
+    );
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .expect("应当能调起 powershell 读版本资源");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+#[test]
+fn the_binary_carries_a_version_resource() {
+    // 没有版本资源时，右键属性「详细信息」整页空白——对一份发给别人用的软件来说，
+    // 这比没有签名更先被看见。
+    // Without a version resource the whole "Details" page is blank, which is what people
+    // notice first -- well before they notice the absence of a signature.
+    let product = version_info("ProductName");
+    assert!(
+        !product.is_empty(),
+        "exe 没有版本资源：属性页「详细信息」会是空白。检查构建时是否找到了 rc.exe"
+    );
+    assert!(
+        product.contains("Aevum"),
+        "产品名应包含品牌名，实际是 {product:?}"
+    );
+    assert!(
+        !version_info("FileDescription").is_empty(),
+        "文件说明不能为空"
+    );
+
+    let file_version = version_info("FileVersion");
+    let pkg = env!("CARGO_PKG_VERSION");
+    assert!(
+        file_version.starts_with(pkg),
+        "文件版本 {file_version:?} 应以包版本 {pkg} 开头——提了版本号却没重编资源段就会这样"
+    );
+}
+
+#[test]
+fn the_resource_product_name_matches_the_brand_constant() {
+    // build 脚本先于依赖库编译，拿不到 brand::TITLE，只能在 build.rs 里再写一份。
+    // 这份判据就是那两处之间的绳子：谁改了名字而没改另一个，这里立刻红。
+    // The build script runs before dependency crates compile and cannot read
+    // brand::TITLE, so build.rs keeps a second copy; this test is the rope between them.
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/build.rs"))
+        .expect("应当能读到 build.rs");
+    let line = src
+        .lines()
+        .find(|line| line.starts_with("const PRODUCT_NAME_CN: &str = "))
+        .expect("build.rs 里应当有 PRODUCT_NAME_CN 常量");
+    let value = line.split('"').nth(1).expect("常量应当带一个字符串字面量");
+    assert_eq!(
+        value,
+        aevum_core::brand::TITLE,
+        "build.rs 的产品名与 brand::TITLE 漂移了：窗口标题与属性页会各显示一个"
+    );
 }
