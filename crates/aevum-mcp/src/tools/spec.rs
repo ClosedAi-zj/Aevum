@@ -13,10 +13,35 @@
 //! change that is not deliberate goes red. The implementations live in the domain modules;
 //! no business logic is allowed here -- keeping the words apart from the deeds is what makes
 //! a name that no longer matches its behaviour visible at a glance.
+//!
+//! # 每个条目都要带 `hints`
+//!
+//! `hints` 直接变成 MCP 的 `annotations`，宿主靠它在**调用前**提示用户「这是只读」还是
+//! 「这会覆盖文件」。判定口径写在 [`crate::Hints`] 的文档里，这里只强调两条容易走偏的：
+//!
+//! - **改内存参数不算破坏性**。`aevum_grade_set` 覆盖的是可撤销的参数，不是用户数据；
+//!   `aevum_xmp_write` 覆盖的是用户指定的、可能被别的序列或别的软件共用的文件——后者
+//!   才是 `DESTRUCTIVE`。分界线是「这个路径是不是本序列自己的账本」。
+//! - **混合 op 的工具取最坏情况**。`aevum_grade_copy` 的 `op=delete` 是删除、
+//!   `aevum_retouch` 的 `op=add` 是追加，都按最危险的那一种标注；宿主宁可多提示一次。
+//!
+//! # Every entry carries `hints`
+//!
+//! `hints` becomes MCP's `annotations`, which is how a host warns the user **before** a
+//! call whether a tool is read-only or overwrites files. The judgement rules live in
+//! [`crate::Hints`]; two easy-to-get-wrong ones are worth repeating:
+//!
+//! - **In-memory parameter changes are not destructive.** `aevum_grade_set` overwrites
+//!   reversible parameters, not user data; `aevum_xmp_write` overwrites a file the user
+//!   named, which another sequence or another app may share -- that is `DESTRUCTIVE`. The
+//!   line is whether the path belongs to this sequence's own bookkeeping.
+//! - **Tools with mixed ops take the worst case.** `aevum_grade_copy` has `op=delete` and
+//!   `aevum_retouch` has `op=add`; both are annotated as the more dangerous of their modes.
+//!   A host would rather warn once too often.
 
 use serde_json::{Value, json};
 
-use crate::Command;
+use crate::{Command, Hints};
 
 fn object(properties: Value, required: &[&str]) -> Value {
     json!({
@@ -64,6 +89,7 @@ pub(super) fn build_commands() -> Vec<Command> {
     vec![
         Command {
             id: "aevum_open_sequence",
+            hints: Hints::WRITE,
             description: "打开一个帧文件夹作为当前序列；已有 .aevum/project.json 时自动恢复参数。",
             input_schema: object(
                 json!({
@@ -74,11 +100,13 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_sequence_info",
+            hints: Hints::READ,
             description: "返回当前序列的根目录、帧数、调色参数、去闪烁设置与最近输出。",
             input_schema: object(json!({}), &[]),
         },
         Command {
             id: "aevum_measure",
+            hints: Hints::WRITE,
             description: "逐帧测光（均值/中值/中心/锐度），返回统计与降采样序列；先复用会话内存与盘上 `<序列根>/.aevum/measures.json`（与 GUI 同一本账），refresh 可强制重算。",
             input_schema: object(
                 json!({
@@ -90,6 +118,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_deflicker_analyze",
+            hints: Hints::WRITE,
             description: "分析曝光闪烁并保存逐帧 EV 补偿；之后预览与导出会自动叠加。channels 为 true 时按 R/G/B 三通道分别校正，压的是彩色闪烁。align_exif 为 true 时先用 EXIF 的 ISO/快门/光圈把相机补偿剥掉（日转夜/圣杯延时），只压真正的测光误差。",
             input_schema: object(
                 json!({
@@ -104,11 +133,13 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_grade_get",
+            hints: Hints::READ,
             description: "读取当前调色参数与预设名。",
             input_schema: object(json!({}), &[]),
         },
         Command {
             id: "aevum_grade_set",
+            hints: Hints::WRITE,
             description: "按字段合并调色参数，例如 {\"exposure\":0.5,\"contrast\":12}；未知字段会报错。",
             input_schema: object(
                 json!({
@@ -123,6 +154,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_grade_preset",
+            hints: Hints::WRITE,
             description: "应用一个内置调色预设（原始、鲜艳风光、落日暖调、冷色电影等）。",
             input_schema: object(
                 json!({
@@ -133,11 +165,13 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_grade_reset",
+            hints: Hints::WRITE,
             description: "把调色参数恢复为默认值（预设「原始」）。",
             input_schema: object(json!({}), &[]),
         },
         Command {
             id: "aevum_grade_copy",
+            hints: Hints::WRITE_APPEND,
             description: "命名调色副本：同一序列多套调色并存。op=list/save/apply/delete/rename（省=list）；save 把当前调色+关键帧存成 name（同名需 overwrite:true），apply 取回当前；导出与队列可按副本名指定用哪一套。",
             input_schema: object(
                 json!({
@@ -151,6 +185,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_keyframe_add",
+            hints: Hints::WRITE,
             description: "在第 frame 帧钉一个关键帧；不传 params 时用当前基准参数，传了则在其上做字段合并。",
             input_schema: object(
                 json!({
@@ -166,6 +201,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_keyframe_remove",
+            hints: Hints::WRITE,
             description: "删除第 frame 帧的关键帧；该帧没有关键帧时返回结构化错误。",
             input_schema: object(
                 json!({
@@ -176,6 +212,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_keyframe_list",
+            hints: Hints::READ,
             description: "列出全部关键帧（帧号与参数）；可选 frame 顺便返回该帧插值后的参数。",
             input_schema: object(
                 json!({
@@ -186,6 +223,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_retouch",
+            hints: Hints::WRITE_APPEND,
             description: "修复画笔与仿制图章的笔触表：op=list/add/undo/clear（省=list）。坐标归一化（x 相对宽、y 相对高，r 与 source 相对长边），因为同一份参数要在预览与导出上落到同一块区域；按落盘顺序依次作用，后一笔看得到前一笔的结果。",
             input_schema: object(
                 json!({
@@ -219,6 +257,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_upright",
+            hints: Hints::WRITE,
             description: "透视校正（梯形）：op=get/set/auto/clear（省=get）。auto 用当前帧估竖直主直线并反推四边形，只修上下透视、不修旋转与畸变，证据不足会明确报错而不是硬猜；校正后四边形之外的一圈被裁掉。",
             input_schema: object(
                 json!({
@@ -237,6 +276,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_render_preview",
+            hints: Hints::WRITE,
             description: "渲染一帧带当前调色、关键帧插值与去闪烁补偿的预览 PNG，返回落盘路径与尺寸。",
             input_schema: object(
                 json!({
@@ -250,6 +290,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_export_stills",
+            hints: Hints::DESTRUCTIVE,
             description: "把整个序列按当前调色、关键帧插值、去闪烁补偿与对齐结果导出为静帧序列（PNG/TIFF/JPEG/WebP/AVIF，批量写，需 confirm）；可选 retime 变速、运动模糊与运镜（Ken Burns）。",
             input_schema: object(
                 json!({
@@ -274,6 +315,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_export_video",
+            hints: Hints::DESTRUCTIVE,
             description: "导出帧序列并用 ffmpeg 编码成 H.264/H.265 视频；自动套用关键帧插值、去闪烁与对齐裁切，可选 retime 变速、运动模糊与运镜（批量写，需 confirm）。",
             input_schema: object(
                 json!({
@@ -311,6 +353,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_hdr_merge",
+            hints: Hints::DESTRUCTIVE,
             description: "把同场景多张不同曝光融成一张静帧（Mertens 曝光融合）；自动套用对齐的统一裁切与逐帧位移，尺寸对不齐会拒绝（批量写，需 confirm）。",
             input_schema: object(
                 json!({
@@ -331,6 +374,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_focus_merge",
+            hints: Hints::DESTRUCTIVE,
             description: "把一组不同对焦距离的帧融成一张全景深（焦点合成：深度图法逐像素取测度最强的帧、无细节区兜底参考帧、过渡带羽化；加权平均法按测度四次方混合）；自动套用对齐的统一裁切与逐帧位移，尺寸对不齐会拒绝（批量写，需 confirm）。",
             input_schema: object(
                 json!({
@@ -358,6 +402,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_pano_merge",
+            hints: Hints::DESTRUCTIVE,
             description: "把相邻几张有重叠的照片拼成一张宽幅全景（特征点匹配 + RANSAC 单应 + 羽化融合）；不套对齐位移，靠特征点自己求几何（批量写，需 confirm）。",
             input_schema: object(
                 json!({
@@ -378,6 +423,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_stack_merge",
+            hints: Hints::DESTRUCTIVE,
             description: "把同机位的一段帧按统计量合成一张：星轨取最亮、降噪取平均、去卫星取中值、杂散光与热噪点做 σ 截尾（批量写，需 confirm）；自动套用对齐的统一裁切与逐帧位移，尺寸对不齐会拒绝。无头会话没有「当前帧」，省 center 就取序列中间那段。",
             input_schema: object(
                 json!({
@@ -401,6 +447,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_timeblend_merge",
+            hints: Hints::DESTRUCTIVE,
             description: "把不同时刻的帧合成为一张：天地合成（天取末帧、地取首帧，可自动推地平线）或时间切片（横向分带，一带一帧、从早到晚铺满整幅），羽化区里的移动物可自动去鬼影（批量写，需 confirm）；自动套用对齐的统一裁切与逐帧位移，帧号升序即时间顺序。无头会话没有「当前帧」，省 start 就从序列中位帧起取一段。",
             input_schema: object(
                 json!({
@@ -428,6 +475,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_cull_evaluate",
+            hints: Hints::READ,
             description: "按四条判据逐帧裁决并给出理由：曝光越界（EV）、与相邻帧的突变、清晰度低于序列中位的比例、读不出来；立即返回。测光与 GUI 同一条路径（512 长边）：先读盘上 `<序列根>/.aevum/measures.json`，没有的帧才解码，测完按同一格式写回。所以 GUI 已经测过的序列，无头这边直接出裁决、不再解一遍图，反之亦然；缓存读写失败会静默退化成现测，不影响裁决。账的键是 `(mtime, 字节数)`：文件内容变了但这两项没变（复制工具保留时间戳覆盖同名文件）时，用 `aevum_measure --refresh` 强制重算再评估。只评估不标记：GUI 侧的 apply（把判废帧标成「排除」）是会话态，无头剔除走 aevum_cull_extract 的 exclude 参数。",
             input_schema: object(
                 json!({
@@ -442,6 +490,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_cull_extract",
+            hints: Hints::WRITE,
             description: "把保留下来的帧复制成一条新序列（剔除成子序列）：路径安全检查先行（不能是源内部、盘根或非空目录），复制保留 mtime、测光缓存一并带走（新序列不用重测）。exclude 给要剔除的帧下标（通常来自 aevum_cull_evaluate 的 indices）；dry_run: true 只报帧数与体积，不写任何东西；非 dry_run 需 confirm。",
             input_schema: object(
                 json!({
@@ -455,16 +504,19 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_project_get",
+            hints: Hints::READ,
             description: "返回当前会话对应的工程内容（含参数、去闪烁设置）与磁盘上的工程路径。",
             input_schema: object(json!({}), &[]),
         },
         Command {
             id: "aevum_project_save",
+            hints: Hints::WRITE,
             description: "把当前参数与去闪烁设置写入 <序列>/.aevum/project.json，保留评级与关键帧。",
             input_schema: object(json!({}), &[]),
         },
         Command {
             id: "aevum_journal_list",
+            hints: Hints::READ,
             description: "读取当前序列的操作日志末尾（只记成功的写操作，一行一条 JSON）。",
             input_schema: object(
                 json!({
@@ -475,6 +527,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_xmp_read",
+            hints: Hints::READ,
             description: "读取一个 XMP 预设/旁车文件，返回可用的调色参数（不自动应用）。",
             input_schema: object(
                 json!({
@@ -485,6 +538,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_xmp_write",
+            hints: Hints::DESTRUCTIVE,
             description: "把当前调色参数写成一个 XMP 文件；覆盖已有文件需 confirm。",
             input_schema: object(
                 json!({
@@ -496,6 +550,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_cube_import",
+            hints: Hints::WRITE,
             description: "把一张外部 .cube 三维 LUT 挂成「外观」（主链之前先套一层查表）；返回格点信息，apply=false 只解析不生效。",
             input_schema: object(
                 json!({
@@ -507,6 +562,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_cube_export",
+            hints: Hints::DESTRUCTIVE,
             description: "把当前调色参数导出成 .cube LUT（只含逐点运算，覆盖已有文件需 confirm）。size 默认 65。",
             input_schema: object(
                 json!({
@@ -519,6 +575,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_align",
+            hints: Hints::WRITE,
             description: "估计每帧相对参考帧的位移并计算统一裁切框；结果存入会话，导出时自动套用。",
             input_schema: object(
                 json!({
@@ -536,21 +593,25 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_align_status",
+            hints: Hints::READ,
             description: "查询后台任务（对齐/测光/导出）的进度、是否运行中、上次对齐报告摘要与最近错误。",
             input_schema: object(json!({}), &[]),
         },
         Command {
             id: "aevum_cancel",
+            hints: Hints::WRITE,
             description: "请求取消正在运行的后台对齐/测光/导出/队列；空闲时也返回成功，可重复调用（幂等）。",
             input_schema: object(json!({}), &[]),
         },
         Command {
             id: "aevum_queue_list",
+            hints: Hints::READ,
             description: "列出批量渲染队列（与 GUI 共用 render_queue.json）；工程参数在渲染时从各自的 .aevum/project.json 读取。",
             input_schema: object(json!({}), &[]),
         },
         Command {
             id: "aevum_queue_add",
+            hints: Hints::WRITE_APPEND,
             description: "把一条序列加入渲染队列；同一目录重复加入等于更新规格并挪到队尾。",
             input_schema: object(
                 json!({
@@ -571,6 +632,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_queue_remove",
+            hints: Hints::WRITE,
             description: "从渲染队列移除一段（只改队列，不动素材）。",
             input_schema: object(
                 json!({
@@ -581,11 +643,13 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_queue_clear",
+            hints: Hints::WRITE,
             description: "清空渲染队列（不删除已渲染的成片）；正在渲染时拒绝。",
             input_schema: object(json!({}), &[]),
         },
         Command {
             id: "aevum_queue_run",
+            hints: Hints::DESTRUCTIVE_APPEND,
             description: "逐段渲染整个队列（批量写，必须 confirm）；默认同步跑完，background=true 时立即返回。",
             input_schema: object(
                 json!({
@@ -597,16 +661,19 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_queue_status",
+            hints: Hints::READ,
             description: "查询队列进度（段数、当前阶段、每段最近结果）与队列文件路径。",
             input_schema: object(json!({}), &[]),
         },
         Command {
             id: "aevum_queue_cancel",
+            hints: Hints::WRITE,
             description: "请求取消正在渲染的队列；已完成的段保留结果，未开始的段保持待渲。",
             input_schema: object(json!({}), &[]),
         },
         Command {
             id: "aevum_sequences_scan",
+            hints: Hints::READ,
             description: "枚举目录下的序列（只看不写）：根目录自己 + 往下 depth 层子目录；同时列出「有图却读不出来」的目录与原因。",
             input_schema: object(
                 json!({
@@ -618,6 +685,7 @@ pub(super) fn build_commands() -> Vec<Command> {
         },
         Command {
             id: "aevum_batch_run",
+            hints: Hints::DESTRUCTIVE_APPEND,
             description: "无人值守批量：扫目录下所有序列 → 入队 → 直接渲染，一次调用返回逐段结果（成功数/失败数/每段原因）。默认先清空队列，append=true 才追加。",
             input_schema: object(
                 json!({

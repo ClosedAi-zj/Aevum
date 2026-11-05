@@ -39,6 +39,101 @@ pub struct Command {
     pub id: &'static str,
     pub description: &'static str,
     pub input_schema: serde_json::Value,
+    pub hints: Hints,
+}
+
+/// MCP `annotations` 里的四个提示位。
+///
+/// 为什么四个都写死、不用 `Option`：规范里四个都是可选的，「没写」和「写了 false」在
+/// 宿主眼里是两种状态——前者意味着「作者没表态」，后者是「作者保证不会」。只有全部
+/// 显式声明，宿主才敢在调用前给用户一句确定的提示。
+///
+/// 本项目的四条口径（`spec.rs` 的每个条目都按这四条判）：
+///
+/// - `read_only`：不写任何文件、也不改当前序列的文档状态，纯查询。
+/// - `destructive`：**可能覆盖或删除磁盘上已存在的用户数据**（源图、成片、工程、XMP、
+///   LUT、队列文件）。只改内存里可撤销的参数**不算**——否则「保存工程」也会弹危险提示。
+/// - `idempotent`：同样的参数再调一次，不会多出东西。
+/// - `open_world`：**本服务器一律 false**。不联网、不访问第三方服务，作用对象只有用户
+///   显式给的本地路径。将来若加联网工具，必须在这里新增预设并逐条审。
+///
+/// The four hint bits of MCP `annotations`.
+///
+/// Why all four are plain `bool` instead of `Option`: every one of them is optional in the
+/// spec, and "absent" versus "present and false" mean different things to a host -- the
+/// former is "the author did not say", the latter is "the author guarantees it". Only a full
+/// declaration lets a host warn the user with confidence.
+///
+/// The four house rules (every entry in `spec.rs` is judged by them):
+///
+/// - `read_only`: writes no file and does not change the open sequence; a pure query.
+/// - `destructive`: **may overwrite or delete user data already on disk** (sources, exports,
+///   projects, XMP, LUTs, the queue file). Reversible in-memory parameter changes do **not**
+///   count, otherwise "save project" would raise a danger prompt.
+/// - `idempotent`: calling again with the same arguments adds nothing.
+/// - `open_world`: **always false for this server**. No network, no third-party services;
+///   the only object is a local path the user supplied. A future networked tool must add a
+///   preset here and be reviewed one by one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hints {
+    pub read_only: bool,
+    pub destructive: bool,
+    pub idempotent: bool,
+    pub open_world: bool,
+}
+
+impl Hints {
+    /// 纯查询：什么都不改。
+    ///
+    /// Pure query: changes nothing.
+    pub const READ: Hints = Hints {
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: false,
+    };
+
+    /// 改内存里的参数或会话状态，可撤销，同参数重复调用结果相同。
+    ///
+    /// Changes parameters or session state in memory; reversible, and the same arguments
+    /// give the same result.
+    pub const WRITE: Hints = Hints {
+        read_only: false,
+        destructive: false,
+        idempotent: true,
+        open_world: false,
+    };
+
+    /// 追加型写入：再调一次会多一条（笔触、队列项、关键帧）。
+    ///
+    /// Append-style write: calling again adds one more (strokes, queue items, keyframes).
+    pub const WRITE_APPEND: Hints = Hints {
+        read_only: false,
+        destructive: false,
+        idempotent: false,
+        open_world: false,
+    };
+
+    /// 会覆盖或删除磁盘上已有的用户数据，但同参数重复调用结果收敛。
+    ///
+    /// May overwrite or delete user data on disk, yet repeating the same call converges.
+    pub const DESTRUCTIVE: Hints = Hints {
+        read_only: false,
+        destructive: true,
+        idempotent: true,
+        open_world: false,
+    };
+
+    /// 会覆盖已有数据，且每调一次都真的再跑一遍（批量渲染、整批重跑）。
+    ///
+    /// Overwrites existing data and genuinely runs again on every call (batch renders,
+    /// full-directory runs).
+    pub const DESTRUCTIVE_APPEND: Hints = Hints {
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: false,
+    };
 }
 
 /// 全部命令。第一次调用时构建，之后复用。

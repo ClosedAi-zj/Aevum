@@ -214,10 +214,19 @@ fn initialize(params: &Value) -> Value {
 /// `crate::tool_list` 直接把它转出去给快照判据用，所以测试冻结的就是线上真正发出去
 /// 的那份字节，而不是测试里另写一遍的投影。
 ///
+/// 四个 `annotations` 位**总是**全部输出（即使取值是 `false`）：MCP 规范把它们定义成
+/// 可选，而「没写」与「写了 false」在宿主眼里是两种意思——前者代表作者没表态，后者是
+/// 作者保证不会。少了这一层，宿主就没法在调用前给用户一句确定的提示。
+///
 /// The **only** place that builds the `tools` array of a `tools/list` response.
 ///
 /// `crate::tool_list` hands it straight to the snapshot criterion, so what the test freezes
 /// is the exact bytes that go out on the wire, not a projection re-written in the test.
+///
+/// All four `annotations` bits are **always** emitted, even when `false`: the MCP spec makes
+/// them optional, and to a host "absent" and "present but false" are different claims -- the
+/// former is "the author did not say", the latter is "the author guarantees it". Without
+/// that, a host cannot warn the user with confidence before a call.
 pub(crate) fn tool_list() -> Vec<Value> {
     commands()
         .iter()
@@ -225,7 +234,13 @@ pub(crate) fn tool_list() -> Vec<Value> {
             json!({
                 "name": command.id,
                 "description": command.description,
-                "inputSchema": command.input_schema
+                "inputSchema": command.input_schema,
+                "annotations": {
+                    "readOnlyHint": command.hints.read_only,
+                    "destructiveHint": command.hints.destructive,
+                    "idempotentHint": command.hints.idempotent,
+                    "openWorldHint": command.hints.open_world,
+                }
             })
         })
         .collect()
