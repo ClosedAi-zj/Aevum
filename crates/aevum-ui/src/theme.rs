@@ -205,9 +205,19 @@ impl Default for Appearance {
         Self {
             theme: ThemeMode::Dark,
             skin: Skin::Graphite,
+            // 默认强调色走专业口径：hsl(210,100%,44.5%) ≈ #0160d8 一档深蓝。
+            // 亮蓝（l=52，#0A84FF）是消费级观感；LightCraft/LR 类校色工具普遍
+            // 压低强调色亮度与面积，避免干扰色彩判断（逆向报告 R10，实测
+            // LightCraft 默认 #0165dd ≈ l 43.5）。取色器仍可调回任意值。
+            //
+            // The default accent follows the pro-convention depth: hsl(210,100 %,44.5 %)
+            // sits at the #0160d8 step. The brighter l=52 (#0A84FF) reads consumer;
+            // colour-grading tools keep the accent dark and quiet so it never competes
+            // with the image (reverse-report R10; LightCraft ships #0165dd at l 43.5).
+            // The picker can still take it anywhere.
             accent_h: 210.0,
             accent_s: 100.0,
-            accent_l: 52.0,
+            accent_l: 44.5,
             radius: 6.0,
             os: crate::platform::OsChoice::Auto,
             density: Density::Standard,
@@ -219,7 +229,7 @@ impl Default for Appearance {
 ///
 /// Accent presets: the seven dots across the panel, one click each.
 pub const ACCENT_PRESETS: [(f32, f32, f32, &str); 7] = [
-    (210.0, 100.0, 52.0, "蓝"),
+    (210.0, 100.0, 44.5, "蓝"),
     (265.0, 86.0, 63.0, "紫"),
     (188.0, 92.0, 46.0, "青"),
     (148.0, 56.0, 44.0, "绿"),
@@ -265,7 +275,17 @@ const DARK: Ladder = Ladder {
     field_hover: 14.6,
     thumb: 5.5,
     text: 87.5,
-    muted: 66.5,
+    // 三级字的节奏向 LightCraft Charcoal 看齐（88.6/73.7/55.7）：MUTED 抬到 71.5，
+    // 与 DIM 拉开 12.5 档（原 7.5 档贴在一起，标签与辅助字读不出层级）。
+    // DIM 不能降——它对 bg(18.2) 的 4.5:1 判据本来就压线（约 4.6），
+    // 抬 MUTED 是唯一同时满足 WCAG 与层级差的移动方向。
+    //
+    // The three text steps follow LightCraft's Charcoal rhythm (88.6/73.7/55.7):
+    // MUTED rises to 71.5, opening a 12.5-step gap to DIM (the old 7.5-step squeeze
+    // read as one level). DIM cannot go lower -- its 4.5:1 ratio against bg(18.2)
+    // already sits at the edge (~4.6), so raising MUTED is the only move that
+    // satisfies both WCAG and the hierarchy gap.
+    muted: 71.5,
     dim: 59.0,
     dir: 1.0,
 };
@@ -1394,7 +1414,16 @@ mod token_tests {
             (p.elev_hover, 0x48484A, "ELEV_HOVER"),
             (p.field, 0x1E1E20, "FIELD"),
             (p.text, 0xDEDEDE, "TEXT"),
-            (p.muted, 0xA8A8AA, "MUTED"),
+            // MUTED 从设计稿 --muted #A8A8AA（66.5）故意抬到 71.5（0xB6B6B8）：
+            // 稿里 MUTED→DIM 只差 7.5 档，标签与辅助字读不出层级——这正是
+            // 「看起来平」的根源之一。向 LightCraft Charcoal 的三级节奏
+            // （88.6/73.7/55.7）看齐后是 87.5/71.5/59。DIM 不动（4.5:1 压线）。
+            //
+            // MUTED deliberately leaves the draft's --muted #A8A8AA (66.5) for 71.5
+            // (0xB6B6B8): the draft's 7.5-step squeeze to DIM read as one level, a
+            // root cause of the "flat" look. Aligned to LightCraft Charcoal's rhythm
+            // (88.6/73.7/55.7) as 87.5/71.5/59. DIM stays put (its 4.5:1 is at the edge).
+            (p.muted, 0xB6B6B8, "MUTED"),
         ];
         for (got, want, name) in cases {
             for i in 0..3 {
