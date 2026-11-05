@@ -15,6 +15,32 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.9.4 — 2026-11-05
+
+Patch release: the app can now tell you which build you have.
+
+### `aevum --version` (new)
+
+- `-V` / `--version` prints one line, `恒晷 · Aevum Studio 1.9.4`, and exits 0. Support threads,
+  scripts and version checks no longer start the app to read the About box.
+- The flag **does not open a window**: it works headless, in CI and inside batch files, and it
+  cannot fail because a window failed to appear.
+- One source for the version number: in the production source of `apps/*` and `crates/*`, any
+  file other than `brand.rs` that spells out the compile-time version macro turns a test red.
+  The command line, the update window's "current version", the MCP `serverInfo`, the plugin
+  manifest and the config sentinel all read the same value; previously five copies existed, and
+  a stale one contradicted the others.
+
+### Also: the command line's three public contracts now have assertions
+
+- `--version` is one line, stdout only, clean exit; `-V` and `--version` are byte-identical; the
+  help text lists it.
+- An unrecognised argument is rejected with exit code 2 and named in the message, so a typo such
+  as `--shot` no longer becomes "the UI opens fine and no screenshot appears". That used to rely
+  on the reviewer's eye; now a test watches it.
+
+---
+
 ## v1.9.3 — 2026-11-05
 
 Patch release: two updater failures that only appear on a real machine. **If your install path
