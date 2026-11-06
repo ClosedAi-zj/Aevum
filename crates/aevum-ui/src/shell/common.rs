@@ -1110,6 +1110,70 @@ pub(super) fn kv(ui: &mut Ui, key: &str, value: impl Into<String>, color: Color3
     kv_with_h(ui, key, value, color, kv_h());
 }
 
+/// 一行「左标签 + 右侧一组互斥选项」。
+///
+/// 成片页此前是五排裸 chip：`视频 / 静帧序列`、`原生 / 4K / 1080p`、
+/// `PNG 8bit / TIFF 16bit`…… 一行都没有标签，用户看不出这一排是在选模式、选分辨率
+/// 还是选位深。PS 与 Camera Raw 的每一行参数都带左标签，这是「像不像专业软件」
+/// 最直接的一条；标签列复用滑块的 76px，换行后与第一枚选项左缘对齐（悬挂缩进）。
+///
+/// One row of "left label + a group of mutually exclusive options".
+///
+/// The render page used to be five bare chip rows with no labels at all: a user could not
+/// tell whether `PNG 8bit / TIFF 16bit` picked a container or a bit depth. Every parameter
+/// row in Photoshop and Camera Raw carries a left label, and that is the most direct
+/// "does this read as a professional tool" signal. The label column reuses the slider's
+/// 76 px, and wrapped options hang under the first option instead of under the label.
+pub(super) fn chip_row(ui: &mut Ui, label: &str, mut chips: impl FnMut(&mut Ui)) {
+    // 与滑块同列：LABEL_W 76、行内缩进 12，两处数字必须一致，否则面板里两种缩进并存。
+    //
+    // Same column as the sliders: 76 px label, 12 px row inset. These two numbers must
+    // match, or the panel ends up with two different indentations.
+    const LABEL_W: f32 = 76.0;
+    let label_text = crate::i18n::tr(label);
+    ui.horizontal_top(|ui| {
+        let (rect, _) =
+            ui.allocate_exact_size(Vec2::new(LABEL_W, super::BAR_H - 2.0), Sense::hover());
+        // 标签按列宽**单行省略号截断**：英文的 `Format and bit depth` 比 76px 列宽，
+        // 旧写法直接画出去，压住第一枚选项 26px（重叠判据在 Lang("en") 下当场点名）。
+        // 完整文案走悬停，中文这一列本来就放得下，看不出变化。
+        //
+        // The label is truncated to a single row with an ellipsis: the English
+        // `Format and bit depth` is wider than the 76 px column, and painting it verbatim
+        // ran 26 px into the first option (the overlap gate named it under Lang("en")).
+        // The full text is on hover; the Chinese labels already fit, so nothing changes
+        // there.
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            label_text.to_owned(),
+            font(SIZE_LABEL),
+            muted(),
+        );
+        job.wrap = egui::text::TextWrapping {
+            max_width: LABEL_W - 6.0,
+            max_rows: 1,
+            break_anywhere: true,
+            overflow_character: Some('…'),
+        };
+        let galley = ui.painter().layout_job(job);
+        ui.painter().galley(
+            Pos2::new(rect.left(), rect.center().y - galley.size().y * 0.5),
+            galley,
+            muted(),
+        );
+        // 选项在「选项列」里横向换行：竖容器定住左缘，里面的 horizontal_wrapped 负责
+        // 同一行排开、满了才换行。少了里面这层，每个 chip 会各占一行（第一版就是这个
+        // 毛病，截图里选项被挤成竖排）。
+        //
+        // Options flow horizontally inside the option column: the vertical container pins
+        // the left edge and the inner horizontal_wrapped lays chips side by side, wrapping
+        // only when full. Without the inner layer each chip took its own row -- that was the
+        // first cut, visible in the screenshot as a vertical stack of chips.
+        ui.vertical(|ui| {
+            ui.horizontal_wrapped(|ui| chips(ui));
+        });
+    });
+}
+
 /// 紧凑键值行：给「一屏要排很多条」的信息列表用（序列页体检结论等）。
 ///
 /// 设计图的 `.kv-row` 是 32px，那是**少量信息行**的规格；序列页有 11 行这类信息，

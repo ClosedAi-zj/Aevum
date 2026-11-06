@@ -336,6 +336,32 @@ fn lib_secondary(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
 
 /// 空态引导：三张卡——导入、快捷键、当前支持格式。
 ///
+/// 空态两块（引导卡 + 分工说明 + 工作流）的纵坐标，两处调用共用一套数字。
+///
+/// 此前 `empty_state` 与 `workflow_section` 各自抄了一遍「(area.height - block_h) * 0.42」
+/// 的居中算式：改一处另一处就错位；更糟的是 `area` 取的是整页矩形，而无序列时它还
+/// 含着底部胶片条的占位带，比可见区域高——居中算式于是把内容整体推到偏下，屏幕
+/// 底部反而空出一大块（截图实测：卡片顶在 41% 处、下方空约 185px）。
+///
+/// 改为贴住顶部的固定顺序，剩余空间留白。Lightroom 的 Library 空态与 Photoshop 的
+/// 无文档界面都是靠上的，悬空居中最容易读成「加载失败 / 页面没做完」。
+///
+/// Vertical positions for the empty state's two blocks (guide cards + division line +
+/// workflow), shared by both call sites.
+///
+/// `empty_state` and `workflow_section` used to duplicate the same
+/// "(area.height - block_h) * 0.42" centring arithmetic -- editing one misaligned the
+/// other -- and worse, `area` is the whole page rect, which with no sequence still
+/// includes the filmstrip band and is taller than the visible area. The centring then
+/// pushed everything low and left a large void at the bottom (measured: cards started at
+/// 41% with ~185 px of dead space below). Content is pinned to the top with the remainder
+/// left empty; Lightroom's empty Library and Photoshop's no-document state both sit high,
+/// and a floating centred block reads as a failed load.
+fn empty_stack_y(area: Rect) -> (f32, f32) {
+    let y0 = area.top() + 20.0;
+    (y0, y0 + 132.0 + 32.0 + 26.0)
+}
+
 /// Empty-state guide: three cards -- import, shortcuts, supported formats.
 fn empty_state(_state: &mut AppState, ui: &mut Ui, area: Rect) {
     let p = ui.painter().clone();
@@ -345,17 +371,10 @@ fn empty_state(_state: &mut AppState, ui: &mut Ui, area: Rect) {
     let card_h = 132.0;
     let total_w = card_w * n as f32 + gap * (n as f32 - 1.0);
     let x0 = area.center().x - total_w * 0.5;
-    // 两区（引导卡 + 工作流）合成一个整体在区域内竖直居中：整页高度 = 引导卡
-    // card_h + 间距 + 工作流（26 标题 + 96 卡），余量上下对半分。
-    // 早先按 8% 顶置，下半页留出一大片死黑，重心整个偏上。
+    // 纵向位置统一由 `empty_stack_y` 给出（引导卡 → 分工说明 → 工作流）。
     //
-    // The two blocks (guide cards + workflow) are centred as one unit: total height =
-    // guide cards + gap + workflow (26 heading + 96 cards), with the remainder split
-    // above and below. The earlier 8% top bias left a dead black lower half and pulled
-    // the whole page's weight to the top.
-    let block_h = card_h + 16.0 + 26.0 + 96.0;
-    let slack = (area.height() - block_h).max(0.0);
-    let y0 = area.top() + (slack * 0.42).max(16.0);
+    // The vertical positions come from `empty_stack_y`.
+    let (y0, _) = empty_stack_y(area);
 
     let cards: [(&str, &str); 3] = [
         (
@@ -557,15 +576,11 @@ fn short_stamp(unix_secs: u64) -> String {
 /// load. This spells out the order, and every step names a module that really exists.
 fn workflow_section(ui: &mut Ui, area: Rect) {
     let p = ui.painter().clone();
-    // 位置由 empty_state 的居中算式给出：引导卡区高度 + 一行分工说明 + 间距。
-    // 与 empty_state 用同一套数字，两块不会互相压。
+    // 与 `empty_state` 共用同一套纵坐标，两块不会互相压。
     //
-    // The position comes from the same centring arithmetic as `empty_state`: guide-card
-    // band + the分工 line + a gap. Sharing the numbers keeps the two blocks off each
-    // other.
-    let block_h = 132.0 + 32.0 + 26.0 + 96.0;
-    let slack = (area.height() - block_h).max(0.0);
-    let top = area.top() + (slack * 0.42).max(16.0) + 132.0 + 32.0 + 26.0;
+    // Shares one set of vertical positions with `empty_state`, so the two blocks cannot
+    // land on top of each other.
+    let (_, top) = empty_stack_y(area);
     if top > area.bottom() - 80.0 {
         return;
     }

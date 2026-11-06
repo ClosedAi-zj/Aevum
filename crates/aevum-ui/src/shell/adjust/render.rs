@@ -111,20 +111,39 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             // characters still overrun the space left of the button on a 372 px panel,
             // and the old form ran the path onto the button. `truncate()` asks egui's
             // layout for the real remaining width.
+            // 只显示文件名，全路径走悬停：面板里挂一条
+            // `C://Users//…//AppData//Roaming//…` 是开发痕迹，用户既读不懂也点不开，
+            // 真正需要全路径的场景（找文件）已经由左边那颗按钮承担。
+            //
+            // Show the file name only and keep the full path on hover: a raw
+            // `C://Users//...//AppData//Roaming//...` in the panel is a developer trace the user
+            // can neither read nor click, and the one case that needs it -- locating the file
+            // -- is already covered by the button on the left.
+            let preset_path = DeliveryTable::path();
+            let preset_name = preset_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| preset_path.display().to_string());
             ui.add(
-                egui::Label::new(
-                    RichText::new(DeliveryTable::path().display().to_string())
-                        .size(SIZE_SMALL)
-                        .color(dim()),
-                )
-                .truncate()
-                .selectable(false),
+                egui::Label::new(RichText::new(preset_name).size(SIZE_SMALL).color(dim()))
+                    .truncate()
+                    .selectable(false),
             )
-            .on_hover_text(crate::i18n::t!("改完重启生效：预设在启动时读一次"));
+            // 一条悬停里给全两件事：文件在哪、改完何时生效。
+            // 拆成两层提示会让后者被覆盖（Response 只保留最后一次）。
+            //
+            // One tooltip carries both facts -- where the file is and when an edit takes
+            // effect -- because two chained hints overwrite each other (a Response keeps
+            // only the last one).
+            .on_hover_text(format!(
+                "{}\n{}",
+                preset_path.display(),
+                crate::i18n::t!("改完重启生效：预设在启动时读一次")
+            ));
         });
     }
     if group_header(ui, state, "render-out", "输出", true) {
-        ui.horizontal_wrapped(|ui| {
+        chip_row(ui, "输出模式", |ui| {
             for (mode, label) in [
                 (OutputMode::Video, "视频"),
                 (OutputMode::Stills, "静帧序列"),
@@ -135,7 +154,7 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             }
         });
         ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
+        chip_row(ui, "分辨率", |ui| {
             for (label, w, h) in [
                 ("原生", 0u32, 0u32),
                 ("4K", 3840, 2160),
@@ -176,7 +195,7 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         } else {
             &StillFormat::ALL
         };
-        ui.horizontal_wrapped(|ui| {
+        chip_row(ui, "格式与位深", |ui| {
             for &format in formats {
                 if bar_chip(ui, format.cn(), state.render_format == format)
                     .on_hover_text(crate::i18n::tr(format.hint()))
@@ -187,7 +206,7 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             }
         });
         ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
+        chip_row(ui, "色彩空间", |ui| {
             for space in ColorSpace::ALL {
                 let picked = bar_chip(ui, space.cn(), state.render_color_space == space)
                     .on_hover_text(crate::i18n::tr(space.hint()))
@@ -205,7 +224,7 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         // nobody presses export and gets an error afterwards.
         {
             ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
+            chip_row(ui, "动态范围", |ui| {
                 for dyn_range in OutputDynamic::ALL {
                     let picked = bar_chip(ui, dyn_range.cn(), state.render_dynamic == dyn_range)
                         .on_hover_text(crate::i18n::tr(dyn_range.hint()))
