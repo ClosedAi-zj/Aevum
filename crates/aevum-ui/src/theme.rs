@@ -6,7 +6,7 @@
 //! - 文字四级 label：白 85% / 60% / 45% / 10% alpha 压平到实际材质色值，
 //!   保证正文级 ≥ 7:1、次要级 ≥ 4.5:1（4K @ 96dpi，正文不许发灰）。
 //! - 强调色为专业深蓝 hsl(210, 100%, 44.5) ≈ #0160D8（取色器可调）；选中行背景
-//!   是同色约 20–25% 的压平值。
+//!   是同色约 15% 的压平值。
 //! - 圆角同心：窗口/浮层 10，常规控件 6；控件靠底色差与圆角分层，不描边。
 //! - 字号字阶：Small 11 / Body·Button 13 / Heading 15（17 档由 FONT_ZOOMS 缩放覆盖）。
 //!
@@ -25,7 +25,7 @@
 //!   96 dpi; body text is not allowed to go grey).
 //! - The accent is a professional deep blue, hsl(210, 100%, 44.5) ~ #0160D8 (tunable
 //!   by the colour picker); a selected row's background is the same hue flattened at
-//!   roughly 20-25%.
+//!   roughly 15%.
 //! - Concentric corner radii: windows and floating layers 10, ordinary controls 6;
 //!   controls are separated by fill difference and radius, never by outlines.
 //! - Type scale: Small 11 / Body and Button 13 / Heading 15 (the 17 step is covered by
