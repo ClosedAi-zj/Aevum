@@ -154,16 +154,71 @@ pub struct ControlSpec {
     pub track: bool,
 }
 
-/// 渐变轨的两端色：直接取主题调色板，别在这里造第二套色值。
+/// 渐变轨的停靠点色标：`(位置 0..1, 颜色)` 的有序表，长度 ≥2。
 ///
-/// The two end colours of a gradient track: taken straight from the theme palette
-/// -- do not build a second set of colour values here.
-pub fn grad_stops(spec: &ControlSpec) -> Option<[egui::Color32; 2]> {
+/// 三色以上才像 PS：色温在 PS / Camera Raw 里是「蓝 → 中性灰 → 黄」，两个端点直接
+/// 对插会在中间拉出一条发绿的过渡，中灰位置反而不中性；色调同理（绿 → 灰 → 品红）。
+/// 所以这里用停靠点表而不是两端色，中间的灰显式写出来。
+///
+/// Gradient track stops: an ordered `(position 0..1, colour)` table of length >= 2.
+///
+/// Three or more stops are what makes it read like PS: temperature there runs
+/// "blue -> neutral grey -> yellow", and interpolating straight between the two ends
+/// drags a green cast through the middle, so the neutral point is not actually neutral.
+/// Tint behaves the same way (green -> grey -> magenta). Hence a stop table with the
+/// grey written out explicitly rather than two end colours.
+pub fn grad_stops(spec: &ControlSpec) -> Option<&'static [(f32, egui::Color32)]> {
     match spec.key {
-        "dev.temperature" => Some([crate::theme::temp_cold(), crate::theme::temp_warm()]),
-        "dev.tint" => Some([crate::theme::tint_green(), crate::theme::tint_magenta()]),
+        "dev.temperature" => Some(&TEMPERATURE_STOPS),
+        "dev.tint" => Some(&TINT_STOPS),
         _ => None,
     }
+}
+
+/// 色温轨：冷蓝 → 中性灰 → 暖黄。中灰取主题的 dim 档，保证中点是真正的「无彩」。
+///
+/// Temperature rail: cold blue -> neutral grey -> warm yellow. The middle grey comes
+/// from the theme's `dim` step so the centre point is genuinely achromatic.
+/// 色值直接写字面量：`theme::temp_cold()` 这类访问器不是 const fn，static 里调不了；
+/// 这四个「材质色不随主题变」的值在 theme.rs 里就是固定 RGB（见那里的注释），
+/// 这里抄同一组数，改动时两处一起改。
+///
+/// The values are written literally: accessors such as `theme::temp_cold()` are not
+/// `const fn` and cannot be called from a `static`. Those four "material colours do not
+/// follow the theme" values are fixed RGB in theme.rs (see the note there), so the same
+/// numbers are repeated here and both places change together.
+static TEMPERATURE_STOPS: [(f32, egui::Color32); 3] = [
+    (0.0, egui::Color32::from_rgb(0x4E, 0x86, 0xC8)),
+    (0.5, egui::Color32::from_rgb(0x8A, 0x8A, 0x8C)),
+    (1.0, egui::Color32::from_rgb(0xD8, 0xA4, 0x55)),
+];
+
+/// 色调轨：绿 → 中性灰 → 品红。
+///
+/// Tint rail: green -> neutral grey -> magenta.
+static TINT_STOPS: [(f32, egui::Color32); 3] = [
+    (0.0, egui::Color32::from_rgb(0x63, 0xB4, 0x6E)),
+    (0.5, egui::Color32::from_rgb(0x8A, 0x8A, 0x8C)),
+    (1.0, egui::Color32::from_rgb(0xB9, 0x66, 0xB0)),
+];
+
+/// 在停靠点表上按位置取色（分段线性插值）。
+///
+/// Sample the stop table at a position (piecewise-linear interpolation).
+pub fn sample_stops(stops: &[(f32, egui::Color32)], t: f32) -> egui::Color32 {
+    let t = t.clamp(0.0, 1.0);
+    if stops.len() < 2 {
+        return stops.first().map(|s| s.1).unwrap_or(egui::Color32::GRAY);
+    }
+    for w in stops.windows(2) {
+        let (p0, c0) = w[0];
+        let (p1, c1) = w[1];
+        if t <= p1 {
+            let d = (p1 - p0).max(1e-6);
+            return crate::widgets::mix(c0, c1, (t - p0) / d);
+        }
+    }
+    stops[stops.len() - 1].1
 }
 
 macro_rules! spec {

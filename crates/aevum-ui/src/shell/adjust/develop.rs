@@ -794,9 +794,20 @@ mod gradient_rail_tests {
     /// 渐变只有 `slider_grad` 会画，调用点哪天退回普通 `slider`，这一组色就整体消失，
     /// 而界面照常能拖——静悄悄的降级只有照色认形状才拦得住。
     fn painted_gradient_slices(grad: bool) -> Vec<Color32> {
-        let stops = [theme::temp_cold(), theme::temp_warm()];
+        // 与 grad_stops 同源的停靠点表：测试要和实现走同一套取色，
+        // 否则「渐变画了几片」数的是测试自己编的颜色。
+        //
+        // A stop table from the same source as `grad_stops`: the test must sample
+        // colours the same way the implementation does, or "how many gradient slices
+        // were painted" counts colours the test invented.
+        static STOPS: [(f32, Color32); 3] = [
+            (0.0, Color32::from_rgb(0x4E, 0x86, 0xC8)),
+            (0.5, Color32::from_rgb(0x8A, 0x8A, 0x8C)),
+            (1.0, Color32::from_rgb(0xD8, 0xA4, 0x55)),
+        ];
+        let stops: &'static [(f32, Color32)] = &STOPS;
         let band: Vec<Color32> = (0..48)
-            .map(|k| widgets::mix(stops[0], stops[1], k as f32 / 48.0))
+            .map(|k| crate::controls::sample_stops(stops, k as f32 / 48.0))
             .collect();
         let ctx = Context::default();
         theme::apply(&ctx, 1.0);

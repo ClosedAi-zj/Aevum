@@ -562,7 +562,7 @@ pub(super) fn slider_grad<K: std::hash::Hash + std::fmt::Debug>(
     default: f64,
     decimals: usize,
     signed: bool,
-    stops: [Color32; 2],
+    stops: &'static [(f32, Color32)],
 ) -> bool {
     slider_row(
         ui,
@@ -591,15 +591,25 @@ pub(super) fn slider_grad<K: std::hash::Hash + std::fmt::Debug>(
 /// semantics -- reverse report §3.3: track style is data, not code): hue runs from the
 /// band colour to its complement, saturation from neutral grey to the band colour,
 /// luminance from black to the band colour.
-pub(super) fn hsl_band_stops(band: usize, kind: HslKind) -> [Color32; 2] {
+pub(super) fn hsl_band_stops(band: usize, kind: HslKind) -> &'static [(f32, Color32)] {
     let h = crate::widgets::BAND_HUES[band.clamp(0, 7)] as f32;
     let band_color = hsl(h, 82.0, 55.0);
-    match kind {
+    // 动态生成的表需要 'static：色相频段只有 8×3=24 种组合，用 Box::leak 换
+    // 'static 是可接受的（进程内最多 24 次分配，之后恒等命中）。
+    //
+    // The generated table needs 'static: there are only 8x3 = 24 hue/kind combinations,
+    // so leaking a box is acceptable (at most 24 allocations per process, thereafter
+    // identical).
+    let table: [(f32, Color32); 2] = match kind {
         // 补色 = 色相转半圈。
-        HslKind::Hue => [band_color, hsl((h + 180.0) % 360.0, 82.0, 55.0)],
-        HslKind::Sat => [hsl(h, 0.0, 55.0), band_color],
-        HslKind::Lum => [hsl(h, 82.0, 4.0), band_color],
-    }
+        HslKind::Hue => [
+            (0.0, band_color),
+            (1.0, hsl((h + 180.0) % 360.0, 82.0, 55.0)),
+        ],
+        HslKind::Sat => [(0.0, hsl(h, 0.0, 55.0)), (1.0, band_color)],
+        HslKind::Lum => [(0.0, hsl(h, 82.0, 4.0)), (1.0, band_color)],
+    };
+    Box::leak(Box::new(table))
 }
 
 /// [`hsl_band_stops`] 的三条轨道种类。
@@ -658,7 +668,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     decimals: usize,
     signed: bool,
     unit: &str,
-    stops: Option<[Color32; 2]>,
+    stops: Option<&'static [(f32, Color32)]>,
     track: bool,
     tip: &str,
 ) -> bool {
@@ -732,8 +742,29 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
                 row_hover(),
             );
         }
+        // 数值框：PS / Camera Raw 口径——实底 + 1px 描边独立成格，不是一个裸数字
+        // 漂在轨道右端。`field()` 是比面板沉一档的凹槽色，`divider()` 勾出边框，
+        // 视线才能把「标签│轨道│数值」三列分开，这也是 PS 调色面板最直观的特征。
+        //
+        // Value box, PS / Camera Raw style: a filled box with a 1px outline of its own
+        // rather than a bare number floating at the rail's right end. `field()` is a
+        // step below the panel, and `divider()` draws the edge, so the eye can separate
+        // "label | rail | value" -- the most recognisable trait of PS's adjustment panel.
+        p.rect_filled(field, radius_control(), theme::field());
+        p.rect_stroke(
+            field,
+            radius_control(),
+            Stroke::new(1.0, divider()),
+            egui::StrokeKind::Inside,
+        );
         if ui.rect_contains_pointer(field) {
-            p.rect_filled(field, radius_control(), field_hover());
+            p.rect_filled(field, radius_control(), theme::field_hover());
+            p.rect_stroke(
+                field,
+                radius_control(),
+                Stroke::new(1.0, border_strong()),
+                egui::StrokeKind::Inside,
+            );
         }
         // 6 字截断：5 字中文在 76px 里刚好排满，再长就让位给轨道，
         // 宁可少两个字，也不让标签爬进推子的地盘。
@@ -867,20 +898,31 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     );
     match stops {
         // egui 没有线性渐变矩形，48 片插值铺过去：3px 高的轨道上看不出接缝，
-        // 形状数量也只多这 48 个，两条色温推子换来的是整组参数的可读性。
-        Some([a, b]) => {
+        // 形状数量也只多这 48 个，几条渐变推子换来的是整组参数的可读性。
+        // 取色走 `controls::sample_stops`：停靠点表支持三色以上（色温 = 蓝→灰→黄），
+        // 两端直接对插会在中间拉出一条发绿的过渡，中灰位置反而不中性。
+        //
+        // egui has no linear-gradient rect, so 48 interpolated slices are laid down:
+        // invisible seams on a 3 px rail, only 48 extra shapes, and a few gradient
+        // faders buy readability across the whole group. Colour comes from
+        // `controls::sample_stops`, whose stop table supports three or more stops
+        // (temperature is blue -> grey -> yellow); interpolating straight between the
+        // two ends drags a green cast through the middle and the neutral point stops
+        // being neutral.
+        Some(table) => {
             const SLICES: f32 = 48.0;
             for k in 0..SLICES as usize {
                 let t0 = k as f32 / SLICES;
+                let t1 = (k as f32 + 1.0) / SLICES;
                 let x0 = rail_left + (rail_right - rail_left) * t0;
-                let x1 = rail_left + (rail_right - rail_left) * (t0 + 1.0 / SLICES);
+                let x1 = rail_left + (rail_right - rail_left) * t1;
                 p.rect_filled(
                     Rect::from_min_max(
                         Pos2::new(x0, rail.top()),
                         Pos2::new(x1 + 0.6, rail.bottom()),
                     ),
                     0,
-                    widgets::mix(a, b, t0),
+                    controls::sample_stops(table, t0),
                 );
             }
         }
@@ -957,33 +999,66 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // dark panel against the design's grey one.
     let vx = tx(rail_pos(*v));
     let knob = Pos2::new(vx, track_y);
-    let r = if t.dragged() {
-        6.5
+    // 三角滑块：PS / Camera Raw 的推子手柄是一个朝上的小三角（▲）骑在轨道上，
+    // 不是圆点。三角的尖顶把「当前值停在哪」指得比圆点更准——圆点遮住轨道本身
+    // 那一小段，读数与位置之间要靠猜；三角只压住底边，轨道与填充都还看得见。
+    //
+    // 尺寸：底宽 9 / 高 10，悬停 11/12，按下 8/9（按下缩小＝陷进轨道）。
+    //
+    // Triangular knob: PS / Camera Raw's fader handle is a small upward triangle (▲)
+    // riding on the rail, not a dot. The apex locates the value more precisely than a
+    // circle, which covers the very stretch of rail you need to read; the triangle only
+    // sits on the bottom edge, so both the rail and its fill stay visible.
+    //
+    // Size: 9 wide by 10 tall, 11x12 on hover, 8x9 pressed (shrinking into the rail).
+    let (hw, hh) = if t.dragged() {
+        (4.0, 9.0)
     } else if t.hovered() {
-        8.0
+        (5.5, 12.0)
     } else {
-        7.0
+        (4.5, 10.0)
     };
-    // 拖到轨道外的影子只给一层薄的，深底上不需要重投影。
-    p.circle_filled(knob + Vec2::new(0.0, 1.0), r, Color32::from_black_alpha(55));
-    p.circle_filled(knob, r, elev_hover());
-    p.circle_stroke(knob, r, Stroke::new(1.0, border_strong()));
-    if t.dragged() {
-        // 按下内阴影：上缘压一道暗弧，读作被按进轨道（对齐 inset 阴影手感）。
-        p.circle_filled(
-            knob - Vec2::new(0.0, r * 0.35),
-            r * 0.62,
-            Color32::from_black_alpha(38),
-        );
-    }
-    if t.dragged() {
-        p.circle_stroke(
-            knob,
-            r + 3.0,
-            Stroke::new(1.5, accent().gamma_multiply(0.7)),
-        );
-    } else if t.hovered() {
-        p.circle_stroke(knob, r + 2.5, Stroke::new(1.0, border_strong()));
+    let apex = Pos2::new(knob.x, knob.y - hh * 0.5 - 1.0);
+    let base_y = apex.y + hh;
+    let tri = vec![
+        apex,
+        Pos2::new(knob.x - hw, base_y),
+        Pos2::new(knob.x + hw, base_y),
+    ];
+    // 先投影再填色：三角比圆点更需要一层暗边，否则贴在浅色渐变轨上会糊掉。
+    //
+    // Shadow first, then fill: a triangle needs the dark edge more than a circle does,
+    // otherwise it blurs into a light gradient rail.
+    let shadow: Vec<Pos2> = tri.iter().map(|q| *q + Vec2::new(0.0, 1.0)).collect();
+    p.add(egui::Shape::convex_polygon(
+        shadow,
+        Color32::from_black_alpha(70),
+        Stroke::NONE,
+    ));
+    p.add(egui::Shape::convex_polygon(
+        tri.clone(),
+        if t.dragged() { accent() } else { text() },
+        Stroke::new(1.0, Color32::from_black_alpha(90)),
+    ));
+    // 悬停时在三角外画一圈描边，指认「这个手柄可抓」；拖动中不画——按下态已经
+    // 用 accent 填色区分出来了，再套一圈只会让 10px 的三角显脏。
+    //
+    // A stroke halo on hover says "this handle is grabbable"; during a drag it is
+    // omitted -- the accent fill already marks the pressed state, and another ring
+    // around a 10 px triangle only muddies it.
+    if t.hovered() && !t.dragged() {
+        let halo: Vec<Pos2> = tri
+            .iter()
+            .map(|q| {
+                let d = (*q - knob).normalized();
+                *q + d * 1.5
+            })
+            .collect();
+        p.add(egui::Shape::convex_polygon(
+            halo,
+            Color32::TRANSPARENT,
+            Stroke::new(1.0, border_strong()),
+        ));
     }
     // 复位点画在最后：这时 *v 已经落定，不会在刚被点回默认的那一帧闪一下。
     if (*v - default).abs() > 1e-9 {
