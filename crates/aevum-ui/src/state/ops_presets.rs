@@ -202,9 +202,18 @@ impl AppState {
                 .map_err(|e| crate::i18n::tr_fmt("创建目录失败：{}", &[&e]))?;
         }
         let out = path.clone();
+        // 命令已经 `Ok` 返回，保存却在回调里发生：失败必须经共享槽回到 `error`，
+        // 再由 `sync_error_dialog` 弹窗。只写控制台等于用户永远不知道截图没存下来。
+        //
+        // The command already returned `Ok` but the save happens in the callback: a failure
+        // must travel through the shared slot into `error` and then into a dialog. Console-only
+        // output means the user never learns the screenshot was not written.
+        let slot = self.async_errors.clone();
         ctx.request_screenshot(move |image| {
-            if let Err(e) = control::save_png(&out, &image) {
-                eprintln!("截图保存失败：{e}");
+            if let Err(e) = control::save_png(&out, &image)
+                && let Ok(mut slot) = slot.lock()
+            {
+                slot.push(crate::i18n::tr_fmt("截图保存失败：{}", &[&e]));
             }
         });
         Ok(json!({

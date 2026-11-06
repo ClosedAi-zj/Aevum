@@ -542,6 +542,7 @@ impl AppState {
             hist: None,
             show_dock: true,
             error_modal: None,
+            async_errors: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             error_seen: None,
             dock_w: crate::theme::DOCK_W,
             // 「预设与快照」浮窗默认关：它悬浮在画布上，开屏即开正好压住主图
@@ -1450,6 +1451,19 @@ impl AppState {
     }
 
     pub fn poll(&mut self, ctx: &Context) {
+        // 先把异步回调攒下的失败抬成 `error`（截图保存这类「命令先 OK、结果晚到」的
+        // 路径），下一帧 `sync_error_dialog` 会把它变成弹窗。
+        //
+        // First promote failures collected by async callbacks (screenshot saving and other
+        // "return early, finish later" paths) into `error`; `sync_error_dialog` turns it into
+        // a dialog on the next frame.
+        if let Ok(mut slot) = self.async_errors.lock()
+            && !slot.is_empty()
+        {
+            let msgs: Vec<String> = slot.drain(..).collect();
+            drop(slot);
+            self.error = Some(msgs.join("\n"));
+        }
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Msg::Loaded(loaded) => {

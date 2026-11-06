@@ -1568,6 +1568,18 @@ pub struct AppState {
     /// dismissed in place), while this is the dialog that must be seen once. A failure may
     /// not slip by in the status bar, and certainly not only in the console.
     pub error_modal: Option<String>,
+    /// 异步回调里的失败（截图保存这类「命令先返回、结果晚到」的路径）。
+    ///
+    /// 命令已经 `Ok` 返回，错误只能在回调线程里产生，那里拿不到 `&mut AppState`。
+    /// 用一个共享槽把消息带回来，`poll()` 每帧取一次并抬成 `error` —— 否则这类失败
+    /// 只会打在控制台上，用户永远看不见。
+    ///
+    /// Failures from async callbacks (screenshot saving and other paths that return first and
+    /// finish later). The command already returned `Ok`; the error can only appear in the
+    /// callback thread, which has no `&mut AppState`. A shared slot carries the message back,
+    /// and `poll()` promotes it to `error` each frame -- otherwise such failures only reach
+    /// the console and the user never sees them.
+    pub async_errors: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     /// 上一帧已展示过的错误内容，用来判断「这一帧是不是新错误」。
     ///
     /// The error text already surfaced last frame, used to tell whether this frame carries a
