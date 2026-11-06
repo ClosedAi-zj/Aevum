@@ -802,6 +802,19 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
                 .max_rect(field.shrink2(Vec2::new(2.0, 0.0)))
                 .layout(Layout::right_to_left(Align::Center)),
             |ui| {
+                // DragValue 内部把数字画成 Small 档的按钮，Small 映射的是 Inter——
+                // 这就是「框里的数字和框外的读数不是一个字体」的根因。override_font_id
+                // 在按钮内部会被其自身样式重置，所以必须改 TextStyle 表：把按钮档
+                // 直接压到 mono。作用域限定在这一个框内，画完由 in_field 还原。
+                //
+                // DragValue paints its number as a Small-styled button, and Small maps to
+                // Inter -- that is exactly why the number inside the box did not match the
+                // readouts outside. `override_font_id` is reset by the button's own style,
+                // so the TextStyle table is the thing to override: press the Button step
+                // down to mono, scoped to this one box and restored by `in_field`.
+                ui.style_mut()
+                    .text_styles
+                    .insert(egui::TextStyle::Button, mono(SIZE_LABEL));
                 ui.add(
                     egui::DragValue::new(v)
                         .range(min..=max)
@@ -966,7 +979,15 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
                         Pos2::new(vx, track_y + rail_h * 0.5),
                     ),
                     rail_h * 0.5,
-                    elev_hover(),
+                    // 填充色 = 读数色（refit-preview `.srow .rail .fill{background:var(--value)}`）：
+                    // 轨道填充与右侧读数同一个颜色来源，扫读时「这条轨对应那个数」
+                    // 靠同色就能对上；elev_hover 灰填与任何读数都无呼应。
+                    //
+                    // Fill colour = the readout colour (refit-preview's
+                    // `.srow .rail .fill{background:var(--value)}`): rail fill and the
+                    // readout on the right share one colour source, so a row's slider and
+                    // its number pair up by hue alone; the old grey fill answered nothing.
+                    value(),
                 );
             }
         }

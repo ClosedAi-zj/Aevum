@@ -112,8 +112,8 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
             }
             egui::Frame::NONE
                 .inner_margin(egui::Margin {
-                    left: 14,
-                    right: 14,
+                    left: 10,
+                    right: 10,
                     top: 10,
                     bottom: 12,
                 })
@@ -191,11 +191,17 @@ fn smooth_twice(vals: &mut [f32], bins: usize) {
 fn histogram(ui: &mut Ui, state: &mut AppState) {
     // 94px：设计图 `.hist-svg{height:94px}`。原 84 让山形比设计图矮一档，
     // 裁切角标与峰值之间的空气也跟着少。
+    // 宽度左右各收 4px：直方图不再顶着 dock 两侧描边，与下方推子行左右缘对齐。
     //
     // 94 px per the design mockup (`.hist-svg{height:94px}`). The old 84 made the
     // mountain shapes one step shorter than the design and squeezed the air between the
-    // clipping wedges and the peaks.
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 94.0), Sense::hover());
+    // clipping wedges and the peaks. The width gives back 4 px on each side so the
+    // histogram lines up with the fader rows below instead of kissing the dock border.
+    let inset = 4.0;
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width() - inset * 2.0, 94.0),
+        Sense::hover(),
+    );
     let p = ui.painter().clone();
     let Some(h) = state.hist else {
         p.text(

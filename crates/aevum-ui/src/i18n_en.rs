@@ -351,6 +351,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("关闭序列", "Close sequence"),
     ("关闭当前文档", "Close this document"),
     ("关闭运镜", "Motion off"),
+    ("关闭这条错误提示", "Dismiss this error"),
     ("内存中保留最近 {} 步，换序列后重新开始。", "Keeps the last {} steps in memory; starts over when you change sequence."),
     ("内容", "Content"),
     ("内容、地点、间隔；换行会折成空格", "Subject, place, interval; line breaks fold into spaces"),

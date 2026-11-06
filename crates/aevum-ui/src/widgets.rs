@@ -258,17 +258,25 @@ pub fn grade_wheel(
             Stroke::NONE,
         ));
     }
-    // 内盘：PS Camera Raw 的读法——白心柔和渐变到边缘色相，饱和度压到六成。
-    // 之前满饱和的彩虹盘三枚并排互相打架，看着又挤又闹；柔和盘才衬得出行
-    // 与行之间的留白。亮度轨仍然改这层底灰的明暗，提亮压暗在盘上看得见。
-    let neutral = 128.0f32 * (1.0 + *lift as f32 / 100.0 * 0.45).clamp(0.45, 1.6);
-    let base = Color32::from_gray(neutral.clamp(1.0, 254.0) as u8);
-    let bands = 6usize;
+    // 内盘：PS Camera Raw 的读法——**深色底**（贴面板灰、随亮度轨明暗），
+    // 色相只从边缘往内淡出：盘面安静，选中的那一份才跳出来。之前的白心
+    // 柔和盘三枚并排一片发亮，互相打架（用户点名"色彩分级不好看"）。
+    // 亮度轨仍然改这层底色的明暗：提亮压暗在盘上看得见。
+    //
+    // Inner disc, PS Camera Raw reading: a **dark** base hugging the panel grey and
+    // shifting with the luminance rail, with hue fading in from the rim only. The old
+    // white-core gradient discs sat side by side as three bright pies fighting each
+    // other (user: "色彩分级不好看"). The luminance rail still changes this base's
+    // brightness, so lifts and pulls stay visible on the disc.
+    let base_l = (0.16 + *lift as f32 / 100.0 * 0.10).clamp(0.06, 0.30);
+    let base = hsl(0.0, 0.0, base_l * 100.0);
+    let bands = 5usize;
     let disc_seg = 36usize;
     for b in 0..bands {
         let r0 = (r_disc * b as f32 / bands as f32).max(1.0);
         let r1 = r_disc * (b + 1) as f32 / bands as f32;
-        let sat = (b + 1) as f32 / bands as f32 * 0.62;
+        // 色相从外缘往内衰减：最外圈 0.55 饱和，中心 0——反向于旧的白心渐变。
+        let sat = (1.0 - b as f32 / bands as f32) * 0.55;
         for k in 0..disc_seg {
             let a0 = k as f64 * tau / disc_seg as f64;
             let a1 = (k + 1) as f64 * tau / disc_seg as f64;

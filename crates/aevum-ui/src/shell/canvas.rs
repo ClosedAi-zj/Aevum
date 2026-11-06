@@ -64,6 +64,53 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     let p = ui.painter().clone();
     let ctx = ui.ctx().clone();
 
+    // 顶层错误横幅：画布顶部正中央一条 danger 底横幅——状态栏 24px 里塞长文本
+    // 必然截断，用户截屏证明他根本没看到（"错误信息放在下面我根本看不到"）。
+    // 放画布顶：视线第一落点，红底白字想忽略都难；点 × 或「清除」关掉，
+    // 状态栏仍保留短摘要（两者读 state.error 同一来源）。
+    //
+    // Top-level error banner, centred at the top of the canvas: a 24 px status bar
+    // truncates long text, and the user's screenshot proves he never saw it. The canvas
+    // top is the first place the eye lands, on a danger fill with white text; clicking
+    // × or "清除" dismisses it. The status bar keeps its short summary -- both read the
+    // same `state.error`.
+    if let Some(err) = state.error.clone() {
+        let g = p.layout_no_wrap(err.to_owned(), font(SIZE_LABEL), on_accent());
+        let pad_x = 12.0;
+        let close_w = 22.0;
+        let w = (g.size().x + pad_x * 2.0 + close_w).min(full.width() * 0.86);
+        let h = 30.0;
+        let bx = full.center().x - w * 0.5;
+        let by = full.top() + 6.0;
+        let bar = Rect::from_min_size(Pos2::new(bx, by), Vec2::new(w, h));
+        p.rect_filled(bar, radius_control(), danger());
+        p.galley(
+            Pos2::new(bar.left() + pad_x, bar.center().y - g.size().y * 0.5),
+            g,
+            on_accent(),
+        );
+        // 关闭按钮：× 字形（悬停提亮），命中区 22px。
+        let cx = Rect::from_center_size(
+            Pos2::new(bar.right() - close_w * 0.5 - 4.0, bar.center().y),
+            Vec2::splat(close_w),
+        );
+        let xresp = ui.interact(cx, ui.scope_id().with("err-banner-close"), Sense::click());
+        p.text(
+            cx.center(),
+            Align2::CENTER_CENTER,
+            "✕",
+            font(SIZE_SMALL),
+            on_accent(),
+        );
+        if xresp.hovered() {
+            p.rect_filled(cx, radius_control(), danger().gamma_multiply(0.78));
+        }
+        if xresp.clicked() {
+            state.error = None;
+        }
+        xresp.on_hover_text(crate::i18n::t!("关闭这条错误提示"));
+    }
+
     // 画布顶栏（cv-toolbar）：28px header 底 + 下缘发丝线，画在 CentralPanel 内部
     // —— 不新增 egui Panel。左端文档页签，中段尺寸读数，右端蒙版数与撤销提示。
     let tb = Rect::from_min_size(full.min, Vec2::new(full.width(), CV_TOOLBAR_H));
