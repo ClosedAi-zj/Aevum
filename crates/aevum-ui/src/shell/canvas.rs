@@ -34,6 +34,21 @@ use egui::{
 // ---------------------------------------------------------------- 画布
 
 pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) {
+    // 整页视图（项目库 / 设置）不画布、不顶栏、不胶片条：它们回答的是「开哪个工程」
+    // 与「程序怎么长」，与当前图像无关。早退省掉整条画布管线的开销，切入这两个模块
+    // 的帧时因此低于显影页（帧时预算判据会覆盖到）。
+    //
+    // Full-page views (Library / Settings) draw no canvas, top bar or filmstrip: they
+    // answer "which project" and "how the app looks", not anything about the current
+    // image. Returning early skips the whole canvas pipeline, so switching into them
+    // costs less than Develop -- and the frame-budget criterion covers them too.
+    if matches!(state.module, Module::Library | Module::Settings) {
+        match state.module {
+            Module::Library => super::library_page::library_page(state, ui),
+            _ => super::settings_page::settings_page(state, ui),
+        }
+        return;
+    }
     // 右边界以「整窗右缘减去右侧面板」为准，再与 egui 给的剩余区取小：
     // 正常帧两者相等；egui 的 Panel 用记忆宽度缩剩余区的那几帧，取小值把画布
     // 拉回真实边界（见 `mod.rs` 里的说明）。
