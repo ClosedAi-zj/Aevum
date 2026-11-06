@@ -41,7 +41,6 @@ mod common;
 mod dialogs;
 mod dock;
 mod library;
-mod library_page;
 mod markdown;
 mod mask;
 mod menu;
@@ -135,13 +134,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .show(root, |ui| status_bar(state, ui));
     }
     // 整页视图（项目库 / 设置）不摆胶片条与走带：它们与「当前序列的帧」无关，
-    // 把 48 格的胶片条压在设置页底下，等于在讲一件这一页没有回答的事。
-    //
-    // Full-page views (Library / Settings) show no filmstrip or transport: they have
-    // nothing to do with the current sequence's frames, and a 48-cell filmstrip under
-    // the settings page talks about something that page never answers.
-    let full_page_view = matches!(state.module, crate::state::Module::Library);
-    if !full_page_view && layout.film.allowed() && state.frame_count() > 0 {
+    if layout.film.allowed() && state.frame_count() > 0 {
         // 面板高度跟内容走：展开=188；收起胶片后只剩头行(26)+4+走带(36)=66，
         // 曲线开着再加 60——「收起」必须真的把面板收矮（用户截图：收起后
         // 122px 空黑仍在，按钮文案变了高度没变）。

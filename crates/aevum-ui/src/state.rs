@@ -120,20 +120,10 @@ pub enum Module {
     /// after Develop: the `ui.module` command and the Alt+digit shortcuts share the
     /// 0-5 index contract, and inserting mid-row would silently move "3=Frame".
     Merge,
-    /// 项目库：所有序列工程的入口页（卡片列表 + 最近打开），对齐 Lightroom Classic
-    /// 的 Library 模块——浏览与挑选发生在**独立模块**里，不是在参数面板的页签里。
-    /// 原 dock 的「图库」页签保持不变（那是当前序列内部的集合/目录视图）。
-    ///
-    /// Library: the entry page for every sequence project (card list plus recent
-    /// opens), mirroring Lightroom Classic's Library module -- browsing and culling
-    /// happen in a **module of their own**, not inside a tab of the parameter panel.
-    /// The existing dock "图库" tab stays as it is (that one views collections and
-    /// folders inside the current sequence).
-    Library,
 }
 
 impl Module {
-    pub const ALL: [Module; 8] = [
+    pub const ALL: [Module; 7] = [
         Module::Sequence,
         Module::Deflicker,
         Module::Develop,
@@ -141,7 +131,6 @@ impl Module {
         Module::Render,
         Module::Audio,
         Module::Merge,
-        Module::Library,
     ];
 
     pub fn cn(self) -> &'static str {
@@ -153,7 +142,6 @@ impl Module {
             Module::Render => "成片",
             Module::Audio => "声音",
             Module::Merge => "合成",
-            Module::Library => "项目库",
         }
     }
 
@@ -166,7 +154,6 @@ impl Module {
             Module::Render => "RENDER",
             Module::Audio => "AUDIO",
             Module::Merge => "MERGE",
-            Module::Library => "LIBRARY",
         }
     }
 
@@ -179,7 +166,6 @@ impl Module {
             Module::Render => Glyph::Render,
             Module::Audio => Glyph::Audio,
             Module::Merge => Glyph::Merge,
-            Module::Library => Glyph::Folder,
         }
     }
 
@@ -206,7 +192,6 @@ impl Module {
             "成片" | "render" | "4" => Some(Module::Render),
             "声音" | "audio" | "5" => Some(Module::Audio),
             "合成" | "merge" | "6" => Some(Module::Merge),
-            "项目库" | "library" | "lib" | "7" => Some(Module::Library),
             _ => None,
         }
     }

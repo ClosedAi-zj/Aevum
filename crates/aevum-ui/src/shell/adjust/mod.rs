@@ -137,36 +137,7 @@ pub(super) fn adjust_tab(state: &mut AppState, ui: &mut Ui) {
         Module::Frame => adjust_frame(state, ui),
         Module::Render => adjust_render(state, ui),
         Module::Audio => adjust_audio(state, ui),
-        // 项目库与设置是整页视图（无参数推子）：右侧 dock 显示对应页自己的面板，
-        // 这里给一句说明，避免右侧空成一块黑。
-        //
-        // Library and Settings are full-page views with no parameter faders: the dock
-        // shows the page's own panel, and this hint keeps the right side from going blank.
-        Module::Library => adjust_page_info(state, ui),
     }
-}
-
-/// 整页视图（项目库 / 设置）的右侧信息栏：不摆推子，只交代「这一页在干什么」。
-///
-/// Right-hand info pane for the full-page views (Library / Settings): no faders, just
-/// what the page is for.
-fn adjust_page_info(state: &mut AppState, ui: &mut Ui) {
-    let (title, hint) = match state.module {
-        Module::Library => (
-            crate::i18n::t!("项目库"),
-            crate::i18n::t!(
-                "所有序列工程的入口。双击卡片切换工程；合集与目录仍在右侧「图库」页签里管理当前序列。"
-            ),
-        ),
-        _ => (
-            crate::i18n::t!("设置"),
-            crate::i18n::t!("外观、密度、快捷键与更新。改动即时生效，落盘在 settings.json。"),
-        ),
-    };
-    ui.add_space(8.0);
-    ui.label(egui::RichText::new(title).size(SIZE_LABEL).color(text()));
-    ui.add_space(6.0);
-    ui.label(egui::RichText::new(hint).size(SIZE_SMALL).color(muted()));
 }
 
 // 各页拆成独立文件：切点落在函数与它自己的 doc 注释之间，一块是连续原文。

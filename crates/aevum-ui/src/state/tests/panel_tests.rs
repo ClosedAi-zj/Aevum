@@ -17,17 +17,13 @@ fn first_screen_keeps_only_the_frequent_groups_open() {
     assert!(closed.contains("curve"));
     assert!(closed.contains("optics"));
     // 每个**有参数分组**的模块都得有展开的组，否则整屏只剩标题条，等于误伤。
-    // 项目库与设置是整页视图，本来就没有参数分组——把它们算进来，这条判据会
-    // 要求「设置页首屏展开一个推子组」，那是无意义的要求。
+    // 每个**带参数分组**的模块首屏都要有一组展开，否则面板只剩一排标题。
+    // （整页视图已随项目库一并移除，不再需要例外分支。）
     //
-    // Every module that **has parameter groups** needs one open on the first screen,
-    // otherwise the panel is nothing but headings. Library and Settings are full-page
-    // views with no parameter groups; including them would demand "the settings page
-    // opens a fader group on first screen", which means nothing.
+    // Every module with parameter groups needs one open on the first screen, otherwise the
+    // panel is nothing but headings. The full-page views were removed along with the
+    // Library module, so no exception branch is needed any more.
     for module in Module::ALL {
-        if matches!(module, Module::Library) {
-            continue;
-        }
         assert!(
             GROUP_SPECS
                 .iter()

@@ -533,14 +533,6 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                         .color(dim()),
                 );
             }
-
-            Module::Library => {
-                ui.label(
-                    RichText::new(crate::i18n::tr_fmt("{} 个工程", &[&state.lib_roots.len()]))
-                        .size(SIZE_LABEL)
-                        .color(muted()),
-                );
-            }
         }
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -933,7 +925,15 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
             .as_ref()
             .map(|s| s.display_name())
             .unwrap_or_else(|| "未打开序列".to_owned());
-        ui.label(RichText::new(name).size(SIZE_LABEL).color(text()).strong());
+        // 状态栏只用两种字：词走比例字、数字走等宽字，同为常规字重。文件名原先
+        // 加粗，等于在这一行里引入第三种字重，紧挨着的「画幅」「帧」立刻显得不是
+        // 一套（用户 2026-11-07 反馈「下面的字体不一样」）。强调交给亮度，不交给字重。
+        //
+        // The status bar uses exactly two faces: proportional for words, monospace for
+        // numbers, both at regular weight. The file name used to be bold, which introduced a
+        // third weight into the row and made the adjacent "画幅" / "帧" look foreign (user
+        // feedback, 2026-11-07). Emphasis comes from brightness, not from weight.
+        ui.label(RichText::new(name).font(font(SIZE_LABEL)).color(text()));
         ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
         // 「画幅」标签把 4000 × 6000 框成尺寸读数：× 是乘号，不是关闭叉。段间用中点
         // 加一个 spacing token 的间隔，和错误条的清除控件拉开距离。
@@ -955,13 +955,21 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
         ui.label(RichText::new(res).font(mono(SIZE_LABEL)).color(muted()));
         let n = state.frame_count();
         if n > 0 {
+            // 「帧」是词、`0001 / 0048` 是数字：分开画，否则等宽字体里的中文走回退
+            // 字形，和旁边的比例字中文不是一套（同一条「字体不一样」）。
+            //
+            // "帧" is a word and `0001 / 0048` is a number: draw them separately, or the
+            // CJK glyph inside a monospace run falls back to a different face than the
+            // proportional CJK next to it -- the same "the fonts do not match" report.
             ui.label(
-                RichText::new(crate::i18n::tr_fmt(
-                    "帧 {} / {}",
-                    &[&format!("{:04}", state.selected + 1), &format!("{:04}", n)],
-                ))
-                .font(mono(SIZE_LABEL))
-                .color(dim()),
+                RichText::new(crate::i18n::t!("帧"))
+                    .font(font(SIZE_LABEL))
+                    .color(dim()),
+            );
+            ui.label(
+                RichText::new(format!("{:04} / {:04}", state.selected + 1, n))
+                    .font(mono(SIZE_LABEL))
+                    .color(dim()),
             );
             let r = state.selected_rating();
             if r > 0 {

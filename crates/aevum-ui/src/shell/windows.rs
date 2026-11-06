@@ -309,6 +309,16 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
         .resizable(true)
         .default_size(Vec2::new(760.0, 520.0))
         .min_size(Vec2::new(620.0, 380.0))
+        // 上界也要给：可缩放窗口的尺寸由 egui 记住，一旦被拉到整屏宽度，下次打开
+        // 还是那条大板子、内容全挤在左上角（用户 2026-11-07 截图）。夹住上界，
+        // 用户仍可自由调小。
+        //
+        // Cap the upper bound too: egui remembers a resizable window's size, so once it has
+        // been stretched to the full width it reopens as that slab with the content pinned
+        // to the top-left corner (user screenshot, 2026-11-07). Capping still leaves full
+        // freedom to shrink.
+        .max_width(820.0)
+        .max_height(680.0)
         .default_pos(pos)
         // 标题栏接管成界面自己的深色：egui 默认标题栏的底与描边跟主界面
         // 不是一套口径（实测亮蓝，用户差评），这里统一成 panel 底 + 底缘
