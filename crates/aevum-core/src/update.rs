@@ -36,6 +36,34 @@
 //! other process is this script. We only generate the text; the caller decides when to run it.
 
 use std::path::{Path, PathBuf};
+
+/// GUI 进程里 spawn 的 curl/powershell/tarp 都是 console 程序：默认会闪一个
+/// 黑色控制台窗（用户实测「cmd 控制台弹出」）。CREATE_NO_WINDOW (0x0800_0000)
+/// 压掉它——只对 Windows 生效，其余平台原样。
+///
+/// curl/powershell/tar spawned from a GUI process are console programs: they flash
+/// a black console window by default (the user-reported "cmd console popup").
+/// CREATE_NO_WINDOW (0x0800_0000) suppresses it -- Windows-only, a no-op elsewhere.
+pub trait NoConsoleWindow {
+    fn no_console_window(&mut self) -> &mut Self;
+}
+
+#[cfg(windows)]
+impl NoConsoleWindow for std::process::Command {
+    fn no_console_window(&mut self) -> &mut Self {
+        // 0x0800_0000 = CREATE_NO_WINDOW
+        use std::os::windows::process::CommandExt;
+        self.creation_flags(0x0800_0000)
+    }
+}
+
+#[cfg(not(windows))]
+impl NoConsoleWindow for std::process::Command {
+    fn no_console_window(&mut self) -> &mut Self {
+        self
+    }
+}
+
 use std::process::Command;
 
 use serde::Deserialize;
@@ -865,6 +893,7 @@ pub fn download_to_file_with(
             .arg(dest)
             .arg(&asset.url)
             .stdin(std::process::Stdio::null())
+            .no_console_window()
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -879,6 +908,7 @@ pub fn download_to_file_with(
         Command::new(&ps)
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .stdin(std::process::Stdio::null())
+            .no_console_window()
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -1006,6 +1036,7 @@ pub fn expand_exe_with(
             .arg("-C")
             .arg(work)
             .stdin(std::process::Stdio::null())
+            .no_console_window()
             .output()
             .map_err(|e| format!("调用 tar 失败（{}）：{e}", tar.display()))?;
         if out.status.success() {
@@ -1021,6 +1052,7 @@ pub fn expand_exe_with(
         let out = Command::new(&ps)
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .stdin(std::process::Stdio::null())
+            .no_console_window()
             .output()
             .map_err(|e| format!("调用 PowerShell 解包失败（{}）：{e}", ps.display()))?;
         if !out.status.success() {

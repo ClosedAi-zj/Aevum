@@ -283,6 +283,13 @@ fn spawn_detached(script: &Path, args: &[&std::ffi::OsStr]) -> Result<(), std::i
     if let Some(dir) = script.parent() {
         cmd.current_dir(dir);
     }
+    // 安装批处理由「正在退出的本进程」拉起：不加 CREATE_NO_WINDOW 会闪一个
+    // 黑色 cmd 窗（用户实测）。CREATE_NO_WINDOW 与 start 组合下脚本窗口照常隐藏。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
     cmd.spawn().map(|_child| ())
 }
 

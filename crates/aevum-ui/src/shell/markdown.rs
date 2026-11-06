@@ -35,6 +35,10 @@ pub(crate) enum NoteLine {
     ///
     /// A blank line.
     Blank,
+    /// 水平线（`---` / `***`）：画一条软分隔线，而不是把三个减号亮给用户。
+    ///
+    /// A horizontal rule (`---` / `***`): painted as a soft rule, not three dashes.
+    Rule,
 }
 
 /// 行内样式片段：正文与列表项共用。
@@ -95,6 +99,49 @@ pub(crate) fn parse_release_notes(src: &str) -> Vec<NoteLine> {
 
         if trimmed.is_empty() {
             out.push(NoteLine::Blank);
+            continue;
+        }
+
+        // 水平线（--- / *** / ___）：渲染成分隔线。放在 falls_back 之前接管，
+        // 否则三个减号被原样亮给用户（用户截图实锤）。
+        //
+        // Horizontal rules (--- / *** / ___): rendered as a rule.接管 before
+        // falls_back, or the three dashes show up verbatim (user screenshot).
+        if trimmed.len() >= 3
+            && trimmed
+                .chars()
+                .all(|c| c == '-' || c == '*' || c == '_' || c == ' ')
+        {
+            out.push(NoteLine::Rule);
+            continue;
+        }
+
+        // Markdown 表格：`| a | b |` 数据行转成「首列 — 其余列」的无序列表，
+        // `| --- | --- |` 分隔行吞掉。轻量渲染不做真表格——发布说明里的表
+        // 只有「资产名 + 说明」两列，列表读法损失最小。
+        //
+        // Markdown tables: data rows `| a | b |` become list items "first — rest";
+        // separator rows `| --- | --- |` are swallowed. Lightweight rendering skips
+        // real tables -- release-note tables are asset-name-plus-note pairs, and a
+        // list reads best.
+        if trimmed.starts_with('|') && trimmed.ends_with('|') {
+            let inner = trimmed[1..trimmed.len() - 1].trim();
+            let cells: Vec<&str> = inner.split('|').map(|c| c.trim()).collect();
+            let is_separator = cells
+                .iter()
+                .all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':' | ' ')));
+            if is_separator {
+                continue;
+            }
+            if cells.len() >= 2 {
+                out.push(NoteLine::Bullet(parse_spans(&format!(
+                    "{} — {}",
+                    cells[0],
+                    cells[1..].join(" · ")
+                ))));
+            } else {
+                out.push(NoteLine::Bullet(parse_spans(cells[0])));
+            }
             continue;
         }
 
@@ -375,9 +422,10 @@ mod tests {
 
     #[test]
     fn out_of_scope_syntax_is_kept_verbatim() {
+        // 表格行曾在此清单里（逐字保留）；2026-11-07 起有专门渲染（用户截图里
+        // `|文件|说明|` 裸露），移到下方独立判据。
         for src in [
             "#### 四级标题",
-            "| a | b |",
             "![图](x.png)",
             "<div>原文</div>",
             "  - 嵌套列表",
@@ -391,6 +439,30 @@ mod tests {
             };
             assert_eq!(joined, src, "超出语法的行必须逐字保留：{src:?}");
         }
+    }
+
+    #[test]
+    fn tables_become_lists_and_separators_vanish() {
+        // 用户截图：`|文件|说明|`、`|---|---|` 原样裸露。新口径：数据行转
+        // 「首列 — 其余」列表，分隔行吞掉，水平线画线。
+        let lines = parse_release_notes(
+            "| 文件 | 说明 |
+| --- | --- |
+| x.zip | 绿色包 |
+---",
+        );
+        assert!(
+            matches!(&lines[0], NoteLine::Bullet(_)),
+            "表头行应转为列表项，实际 {:?}",
+            lines[0]
+        );
+        // 分隔行被吞：第二条直接是数据行。
+        assert!(matches!(&lines[1], NoteLine::Bullet(_)), "{:?}", lines[1]);
+        assert!(
+            matches!(&lines[2], NoteLine::Rule),
+            "水平线应为 Rule，实际 {:?}",
+            lines[2]
+        );
     }
 
     #[test]

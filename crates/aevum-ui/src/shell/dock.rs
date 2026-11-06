@@ -244,7 +244,9 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
                 for (b, &v) in vals.iter().enumerate().take(bins) {
                     let x0 = rect.left() + b as f32 * bar_w;
                     let x1 = x0 + bar_w;
-                    let y_top = rect.bottom() - rect.height() * v;
+                    // 山形封顶在 94%：峰值贴着页签行的「超出」观感（用户截图）——
+                    // 留 6% 空气，山头与 tab 行之间永远有一线呼吸。
+                    let y_top = rect.bottom() - rect.height() * 0.94 * v;
                     let [r, g, bl] = channel_rgb[ch];
                     let i = mesh.vertices.len() as u32;
                     mesh.colored_vertex(
@@ -288,7 +290,9 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
             for (b, &v) in lum_vals.iter().enumerate().take(bins) {
                 let x0 = rect.left() + b as f32 * bar_w;
                 let x1 = x0 + bar_w;
-                let y_top = rect.bottom() - rect.height() * v;
+                // 山形封顶在 94%：峰值贴着页签行的「超出」观感（用户截图）——
+                // 留 6% 空气，山头与 tab 行之间永远有一线呼吸。
+                let y_top = rect.bottom() - rect.height() * 0.94 * v;
                 let i = lum.vertices.len() as u32;
                 lum.colored_vertex(Pos2::new(x0, y_top), Color32::from_white_alpha(140));
                 lum.colored_vertex(Pos2::new(x1, y_top), Color32::from_white_alpha(140));

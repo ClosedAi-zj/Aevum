@@ -1491,6 +1491,13 @@ fn render_note_line(ui: &mut Ui, line: &crate::shell::markdown::NoteLine) {
         NoteLine::Blank => {
             ui.add_space(4.0);
         }
+        NoteLine::Rule => {
+            ui.add_space(3.0);
+            let w = ui.available_width();
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
+            theme::soft_rule(ui.painter(), rect.left(), rect.right(), rect.center().y);
+            ui.add_space(3.0);
+        }
     }
 }
 

@@ -128,15 +128,21 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .show(root, |ui| status_bar(state, ui));
     }
     if layout.film.allowed() && state.frame_count() > 0 {
-        // 无序列不画时间线面板：188px 的空白下巴曾是未打开文件时的第一观感
-        // （用户截图实锤「下面的下巴是干啥的」）。打开序列后自动回来；
-        // 「胶片」竖条开关在无序列时也不该亮着——见 dock_strip 的 items。
+        // 面板高度跟内容走：展开=188；收起胶片后只剩头行(26)+4+走带(36)=66，
+        // 曲线开着再加 60——「收起」必须真的把面板收矮（用户截图：收起后
+        // 122px 空黑仍在，按钮文案变了高度没变）。
         //
-        // Do not draw the timeline panel with no sequence: a 188 px blank chin was
-        // the first thing seen before opening any files (user screenshot: "what is
-        // this chin for"). It returns as soon as a sequence opens.
+        // The panel height follows the content: expanded = 188; with the filmstrip
+        // collapsed only header (26) + 4 + transport (36) = 66 remain, plus 60 when
+        // the curve is open -- "collapse" must actually shrink the panel (user
+        // screenshot: the label flipped but 122 px of black stayed).
+        let tl_h = match (state.show_film, state.show_curves) {
+            (true, _) => TIMELINE_H,
+            (false, true) => 26.0 + 4.0 + 60.0 + 36.0,
+            (false, false) => 66.0,
+        };
         egui::Panel::bottom("timeline")
-            .exact_size(TIMELINE_H)
+            .exact_size(tl_h)
             .frame(egui::Frame::NONE.fill(surround()))
             .show(root, |ui| timeline(state, ui, &ctx));
     }

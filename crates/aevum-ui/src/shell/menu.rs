@@ -474,22 +474,49 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
 }
 
 pub(super) fn menu_style(ui: &mut Ui) {
+    // PS 式菜单选中态（用户点名参照）：hover/选中都是**强调色实底 + 白字**，
+    // 与中性灰底的对比一步拉满——旧版 hover 只抬 6% 灰，浅色主题下几乎看不见
+    // （用户截图「选择效果与底色不反差」）。Adobe 自己的文档写明：蓝底高反差
+    // 是刻意设计，中性界面上最醒目、又不干扰照片色彩判断。
     let w = &mut ui.style_mut().visuals.widgets;
     w.inactive.weak_bg_fill = Color32::TRANSPARENT;
     w.inactive.bg_stroke = Stroke::NONE;
     w.inactive.fg_stroke = Stroke::new(1.0, text());
-    w.hovered.weak_bg_fill = elev_hover();
+    w.hovered.weak_bg_fill = accent();
+    w.hovered.bg_fill = accent();
     w.hovered.bg_stroke = Stroke::NONE;
-    w.active.weak_bg_fill = selected();
+    w.hovered.fg_stroke = Stroke::new(1.0, on_accent());
+    w.active.weak_bg_fill = accent_hover();
+    w.active.bg_fill = accent_hover();
+    w.active.bg_stroke = Stroke::NONE;
+    w.active.fg_stroke = Stroke::new(1.0, on_accent());
     ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
     ui.spacing_mut().item_spacing.y = 1.0;
 }
 
 pub(super) fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
+    menu_item_enabled(ui, label, shortcut, true)
+}
+
+/// 菜单项统一走这里：**字号恒 SIZE_BODY**、快捷键恒 65% 白——hover 蓝底与
+/// 暗底两种状态下都可读（dim() 在蓝底上不可读）。旧版禁用项走 add_enabled
+/// 裸按钮、没设字号，落到 egui 默认——用户截图里菜单字号/字重不一的根因。
+///
+/// Every menu item funnels through here: label size is fixed at SIZE_BODY and the
+/// shortcut at 65% white, readable on both the hover-blue fill and the dark rest
+/// state (dim() disappears on blue). Disabled items used to go through bare
+/// add_enabled buttons with no size, falling to egui's default -- the root cause of
+/// the mixed type sizes in the user's screenshot.
+pub(super) fn menu_item_enabled(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool) -> bool {
     let label = crate::i18n::tr(label);
-    ui.add(
-        egui::Button::new(RichText::new(label).size(SIZE_BODY))
-            .shortcut_text(RichText::new(shortcut).size(SIZE_SMALL).color(dim())),
+    let shortcut_color = Color32::from_white_alpha(166);
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(RichText::new(label).size(SIZE_BODY)).shortcut_text(
+            RichText::new(shortcut)
+                .size(SIZE_SMALL)
+                .color(shortcut_color),
+        ),
     )
     .clicked()
 }
@@ -510,20 +537,11 @@ fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     ui.separator();
     let has_seq = state.seq.is_some();
-    if ui
-        .add_enabled(
-            has_seq,
-            egui::Button::new(crate::i18n::t!("保存工程")).shortcut_text("Ctrl+S"),
-        )
-        .clicked()
-    {
+    if menu_item_enabled(ui, "保存工程", "Ctrl+S", has_seq) {
         state.save_project();
         ui.close();
     }
-    if ui
-        .add_enabled(has_seq, egui::Button::new(crate::i18n::t!("重新载入工程")))
-        .clicked()
-    {
+    if menu_item_enabled(ui, "重新载入工程", "", has_seq) {
         if let Some(root) = state.seq.as_ref().map(|s| s.root.clone()) {
             state.load_project(&root);
         }
@@ -539,21 +557,12 @@ fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         ui.close();
     }
     ui.separator();
-    if ui
-        .add_enabled(
-            has_seq,
-            egui::Button::new(crate::i18n::t!("导出当前帧…")).shortcut_text("Ctrl+E"),
-        )
-        .clicked()
-    {
+    if menu_item_enabled(ui, "导出当前帧…", "Ctrl+E", has_seq) {
         state.export_current(ctx);
         ui.close();
     }
     ui.separator();
-    if ui
-        .add_enabled(has_seq, egui::Button::new(crate::i18n::t!("关闭序列")))
-        .clicked()
-    {
+    if menu_item_enabled(ui, "关闭序列", "", has_seq) {
         state.close();
         ui.close();
     }
@@ -568,23 +577,11 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // 撤销/重做走命令注册表，和快捷键、历史面板、MCP 同一个入口。
     let undo = state.history.can_undo();
     let redo = state.history.can_redo();
-    if ui
-        .add_enabled(
-            undo,
-            egui::Button::new(crate::i18n::t!("撤销")).shortcut_text("Ctrl+Z"),
-        )
-        .clicked()
-    {
+    if menu_item_enabled(ui, "撤销", "Ctrl+Z", undo) {
         run_history_command(state, ctx, "history.undo", &serde_json::json!({}));
         ui.close();
     }
-    if ui
-        .add_enabled(
-            redo,
-            egui::Button::new(crate::i18n::t!("重做")).shortcut_text("Ctrl+Shift+Z"),
-        )
-        .clicked()
-    {
+    if menu_item_enabled(ui, "重做", "Ctrl+Shift+Z", redo) {
         run_history_command(state, ctx, "history.redo", &serde_json::json!({}));
         ui.close();
     }
@@ -610,13 +607,7 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     ui.separator();
     let has_seq = state.seq.is_some();
-    if ui
-        .add_enabled(
-            has_seq,
-            egui::Button::new(crate::i18n::t!("导出当前帧…")).shortcut_text("Ctrl+E"),
-        )
-        .clicked()
-    {
+    if menu_item_enabled(ui, "导出当前帧…", "Ctrl+E", has_seq) {
         state.export_current(ctx);
         ui.close();
     }
