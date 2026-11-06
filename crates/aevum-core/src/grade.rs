@@ -271,6 +271,35 @@ pub struct GradeParams {
     /// bottom-left); `None` means no correction. The unit square is equivalent to `None` — both
     /// mean "the frame does not move".
     pub upright: Option<crate::perspective::Quad>,
+
+    /// 照片风格（Profile 层，0=标准=不动作）：在所有滑块之下的整幅渲染基调，
+    /// 与 LR 的 Profile / 相机照片风格同构——换风格不改任何滑块值，也不计入
+    /// 「N 项调整」徽标。取值见 [`crate::style::COUNT`]，1..COUNT 逐个风格。
+    ///
+    /// 旧工程 JSON 缺字段由容器级 `#[serde(default)]` 兜底为 0（标准），
+    /// 金标 case 全部落在 0 上逐位不变。
+    ///
+    /// Photo style (the Profile layer, 0 = Standard = no-op): the whole-frame rendering
+    /// basis beneath every slider, isomorphic to LR's Profile / in-camera picture styles
+    /// -- switching styles touches no slider value and never counts into the "N adjusted"
+    /// badge. See [`crate::style::COUNT`]; 1..COUNT are the individual styles.
+    /// Old project JSON lacking the field defaults to 0 (Standard) via the container-level
+    /// `#[serde(default)]`, so every golden case stays bit-identical at 0.
+    pub style: u8,
+
+    /// 传感器基准色调（RAW 默认渲染基调）：把显示编码后的传感器数据再过一道
+    /// 中间调提升 + 轻度 S 对比——LR 的 Adobe Color 默认 Profile 干的就是这件事，
+    /// 没有它，复位后的 RAW 就是「发灰」的线性观感（用户实测反馈）。只在
+    /// `dcp_profile` 为空时参与渲染（DCP 自带色调，叠上去就是双份）；
+    /// JPEG/PNG 等成品文件的项目永远不置位，金标逐位不变。
+    ///
+    /// Sensor base tone (the RAW default-rendering basis): display-encoded sensor data
+    /// runs through a midtone lift plus a gentle S contrast -- what LR's Adobe Color
+    /// default profile does; without it a reset RAW reads flat/gray (user-reported).
+    /// It participates only when `dcp_profile` is empty (a DCP carries its own tone;
+    /// stacking would double it). Projects from finished files (JPEG/PNG) never set it,
+    /// so goldens stay bit-identical.
+    pub base_curve: bool,
 }
 
 impl Default for GradeParams {
@@ -364,6 +393,8 @@ impl Default for GradeParams {
             xmp_extra: BTreeMap::new(),
             retouch: Vec::new(),
             upright: None,
+            style: 0,
+            base_curve: false,
         }
     }
 }

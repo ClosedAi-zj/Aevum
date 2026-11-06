@@ -148,6 +148,10 @@ impl AppState {
         let mut fresh = grade::preset(name);
         fresh.retouch = self.params.retouch.clone();
         fresh.upright = self.params.upright;
+        // 风格与基准色调同为渲染基调，与预设的调色取向正交：换预设不换 Profile
+        // （与 LR 一致；用户的照片风格不该被一个 LUT 预设偷偷抹掉）。
+        fresh.style = self.params.style;
+        fresh.base_curve = self.params.base_curve;
         self.params = fresh;
         self.bypassed.clear();
         self.preset = name.to_owned();
@@ -161,7 +165,12 @@ impl AppState {
     }
 
     pub fn reset_params(&mut self) {
+        // 风格与基准色调是「渲染基调」不是滑块参数：复位/换预设都保留
+        // （LR 的 Profile 也不随复位走）。
+        let (style, base) = (self.params.style, self.params.base_curve);
         self.params = GradeParams::default();
+        self.params.style = style;
+        self.params.base_curve = base;
         self.preset = "原始".to_owned();
         self.auto_note = None;
         self.reset_mask_state();

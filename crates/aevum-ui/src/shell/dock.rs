@@ -551,13 +551,17 @@ mod dock_paint_tests {
     }
 
     #[test]
-    fn slider_value_is_flat_grey_at_default_and_accent_once_changed() {
+    fn slider_value_is_flat_grey_at_default_and_text_once_changed() {
+        // 2026-11-07 故意偏离旧口径（accent 蓝）：用户截图里一排蓝读数读作
+        // 一片报错——改动值用正文白、未动值用 value()，蓝色留给交互态。
+        // 改没动过由标签提亮与组头圆点双路指示，不靠读数变蓝。
         assert_eq!(value_color(0.0), value(), "默认值的读数不该抢眼");
         assert_eq!(
             value_color(0.75),
-            accent_hover(),
-            "改过的读数没变蓝，一排推子里看不出哪条动过"
+            text(),
+            "改过的读数应是正文白（蓝读数口径已废）"
         );
+        assert_ne!(value_color(0.0), value_color(0.75), "两种状态必须分得开");
     }
 
     /// 整段说明只许待在 ⓘ 的悬停提示里：正文铺回去，面板又变成一列散文。

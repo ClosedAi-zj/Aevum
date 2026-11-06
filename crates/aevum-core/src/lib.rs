@@ -65,6 +65,7 @@ pub mod retime;
 pub mod retouch;
 pub mod sequence;
 pub mod stack;
+pub mod style;
 pub mod temp_track;
 pub mod timeblend;
 pub mod update;

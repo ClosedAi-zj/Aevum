@@ -365,8 +365,8 @@ pub(super) fn group_header(
     if bypassable {
         let off = state.bypassed.contains(key);
         let er = Rect::from_center_size(
-            Pos2::new(rect.right() - 29.0, rect.center().y),
-            Vec2::splat(16.0),
+            Pos2::new(rect.right() - 30.0, rect.center().y),
+            Vec2::splat(18.0),
         );
         let eresp = ui.interact(
             er,
@@ -378,12 +378,12 @@ pub(super) fn group_header(
         }
         icons::paint(
             p,
-            er.shrink(4.0),
+            er.shrink(4.5),
             Glyph::Eye,
             if eresp.hovered() && !off {
                 text()
             } else {
-                dim()
+                muted()
             },
         );
         if off {
@@ -423,7 +423,7 @@ pub(super) fn group_header(
     if resettable {
         let rr = Rect::from_center_size(
             Pos2::new(rect.right() - 11.0, rect.center().y),
-            Vec2::splat(16.0),
+            Vec2::splat(18.0),
         );
         let rresp = ui.interact(
             rr,
@@ -723,8 +723,9 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     }
 
     let old_text = ui.style().visuals.override_text_color;
-    ui.style_mut().visuals.override_text_color =
-        Some(if changed_now { accent_hover() } else { value() });
+    // 读数颜色与强调色脱钩（用户截图：满屏蓝读数像一片报错）：改动值用正文白，
+    // 未动值用 value()（淡一档）。蓝色留给交互态（悬停/拖动）。
+    ui.style_mut().visuals.override_text_color = Some(if changed_now { text() } else { value() });
     let mut resp = in_field(ui, Color32::TRANSPARENT, Color32::TRANSPARENT, |ui| {
         ui.scope_builder(
             UiBuilder::new()

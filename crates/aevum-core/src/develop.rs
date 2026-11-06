@@ -210,6 +210,26 @@ pub fn render(rgb: &mut [f32], w: usize, h: usize, p: &GradeParams, gain: Ev, op
         }
     }
 
+    // 渲染基调层（基准色调 + 照片风格，均在所有滑块之下，见 style 模块头）：
+    // 基准色调只服务传感器路径（base_curve 且未挂 DCP——DCP 自带色调，叠上是
+    // 双份）；风格是 LR Profile 的同构物，0=标准逐位不动。金标 case 两者皆关，
+    // Python oracle 没有这一步，逐像素比对不受影响。HDR 路径整段跳过：
+    // 两者都会钳到 [0,1]，会吃掉白以上。
+    //
+    // The rendering-basis layer (base tone + photo style, both beneath every slider;
+    // see the style module header): the base tone serves the sensor route only
+    // (base_curve and no DCP -- a DCP carries its own tone and stacking would double
+    // it); a style is isomorphic to an LR Profile with 0 = Standard a bit-exact no-op.
+    // Golden cases run with both off and the Python oracle has no such step, so the
+    // per-pixel comparison is unaffected. The HDR path skips the whole slot: both
+    // clamp to [0,1] and would eat the brightness above white.
+    if !opts.hdr {
+        if p.base_curve && p.dcp_profile.is_empty() {
+            crate::style::base_tone(rgb);
+        }
+        crate::style::apply(rgb, p.style);
+    }
+
     // 外部 .cube 外观：进主链之前先套一层三维查表（放在这里与"外观"改的是
     // 输入而非输出的用法一致）。Python oracle 没有这一步，金标 case 的
     // look_cube 恒为空，所以不影响逐像素比对。

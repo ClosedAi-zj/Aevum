@@ -339,13 +339,36 @@ impl AppState {
             return;
         }
         let Some(seq) = &self.seq else { return };
-        if !seq.paths().iter().any(aevum_core::raw::is_raw_name) {
+        // 传感器路径 = 厂商 RAW 后缀 **或** 命名 DNG：RAW_EXTENSIONS 表故意不含
+        // dng（DNG 走内置专用解析），只查那张表会让 iPhone/相机的 DNG 序列
+        // 拿不到导入默认——用户实测 base_curve 永远没置位的根因。
+        //
+        // The sensor route = vendor RAW suffixes **or** named DNGs: RAW_EXTENSIONS
+        // deliberately omits dng (DNGs go through the built-in parser), so keying on
+        // that table alone meant iPhone/camera DNG sequences never received the import
+        // defaults -- the root cause of base_curve never being set (user-tested).
+        let sensor_any = seq
+            .paths()
+            .iter()
+            .any(|p| aevum_core::raw::is_raw_name(p) || aevum_core::dng::is_named_dng(p));
+        if !sensor_any {
+            return;
+        }
+        // 基准色调每次打开都置位（幂等）：它是 RAW 的渲染基调而非「参数」，
+        // 旧工程（本字段引入前创建的）也该拿到；复位与预设都保留它。
+        // base_curve 在 dcp_profile 非空时自动不参与渲染（style::base_tone 的
+        // 调用条件），无需在这里判断。
+        self.params.base_curve = true;
+        if project::project_path(root).is_file() {
+            // 旧工程：只补基调，锐化/降噪这些「导入默认」仍然只给新工程。
+            self.status = "RAW 序列已套用基准色调（传感器默认渲染基调）".to_owned();
             return;
         }
         self.params.sharp_amount = 40.0;
         self.params.sharp_protect = 20.0;
         self.params.nr_luma = 25.0;
-        self.status = "RAW 序列已套用默认：锐化 40 · 锐化保护 20 · 亮度降噪 25".to_owned();
+        self.status =
+            "RAW 序列已套用默认：基准色调 · 锐化 40 · 锐化保护 20 · 亮度降噪 25".to_owned();
     }
 
     /// 状态栏「应用边车」的一键动作：把检测到的边车当预设导入（整体替换

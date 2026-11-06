@@ -140,7 +140,12 @@ fn every_numeric_field_interpolates() {
 fn bump_numbers(v: &mut Value) {
     match v {
         Value::Object(map) => {
-            for value in map.values_mut() {
+            for (key, value) in map.iter_mut() {
+                // style 是离散风格索引（u8 枚举域），不参与「数值叶子 +10」的
+                // 插值泛化扫描；它的正确性由 style::tests 单独钉住。
+                if key == "style" {
+                    continue;
+                }
                 bump_numbers(value);
             }
         }

@@ -85,8 +85,10 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
         export_xmp_dialog(state);
     }
     if let Some(note_text) = state.auto_note.clone() {
+        // 自动结果说明是「读数」不是「动作」：蓝色是交互色，一整段蓝字会把
+        // 眼睛钉在面板顶部（用户截图实锤三行蓝字压过直方图）。降成 muted 小字。
         ui.add(
-            egui::Label::new(RichText::new(note_text).size(SIZE_SMALL).color(accent()))
+            egui::Label::new(RichText::new(note_text).size(SIZE_SMALL).color(muted()))
                 .wrap()
                 .selectable(false),
         );
@@ -104,6 +106,43 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     // Sliders come from explicit field lists, so display order is decoupled from the
     // table -- the table is the parameter registry, not the page layout.
     if group_header(ui, state, "basic", "基本", true) {
+        // 照片风格（LR 的 Profile 位）：所有滑块之下的渲染基调。换风格不动任何
+        // 参数值，也不进「N 项调整」徽标——它是基调，不是调整。
+        //
+        // Photo style (LR's Profile slot): the rendering basis beneath every slider.
+        // Switching touches no slider value and never enters the "N adjusted" badge --
+        // it is a basis, not an adjustment.
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(crate::i18n::t!("风格"))
+                    .size(SIZE_LABEL)
+                    .color(muted()),
+            );
+            let current = state.params.style;
+            egui::ComboBox::from_id_salt("dev-style")
+                .selected_text(crate::i18n::tr(
+                    aevum_core::style::NAME_KEYS
+                        [current.min(aevum_core::style::COUNT - 1) as usize],
+                ))
+                .width(96.0)
+                .show_ui(ui, |ui| {
+                    for (i, key) in aevum_core::style::NAME_KEYS.iter().enumerate() {
+                        let idx = i as u8;
+                        if ui
+                            .selectable_label(state.params.style == idx, crate::i18n::tr(key))
+                            .clicked()
+                            && state.params.style != idx
+                        {
+                            state.params.style = idx;
+                            state.preview_dirty = true;
+                            history::note(
+                                "style",
+                                crate::i18n::tr_fmt("风格 {}", &[&crate::i18n::tr(key).to_owned()]),
+                            );
+                        }
+                    }
+                });
+        });
         sub_head(ui, crate::i18n::t!("白平衡"));
         for f in [Field::Temperature, Field::Tint] {
             changed |= spec_field(ui, state, f);
