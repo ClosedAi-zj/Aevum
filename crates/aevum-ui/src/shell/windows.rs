@@ -303,12 +303,25 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
         ctx.input(|i| i.viewport_rect()).center() - Vec2::new(380.0, 260.0),
         Vec2::new(760.0, 520.0),
     );
+    // 上界必须按**视口**算，不能只给一个绝对值：窗口尺寸由 egui 记住，换到小屏
+    // 或窗口被缩小时，记忆里那条 1080px 宽的板子会顶出视口右缘，右栏文字被屏幕
+    // 边缘裁掉（用户 2026-11-07 第二轮截图：右栏插件名全被切断）。
+    //
+    // The upper bound must come from the **viewport**, not a fixed number: egui remembers a
+    // resizable window's size, so on a smaller screen (or a smaller app window) the
+    // remembered 1080 px slab runs past the right edge and the list column gets clipped by
+    // the screen edge (user screenshot, second round on 2026-11-07).
+    let vp = ctx.input(|i| i.viewport_rect());
+    let max_w = (vp.width() * 0.92).min(860.0);
+    let max_h = (vp.height() * 0.88).min(700.0);
+    let default_w = 760.0f32.min(max_w);
+    let default_h = 520.0f32.min(max_h);
     let win = egui::Window::new(crate::i18n::t!("插件"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_size(Vec2::new(760.0, 520.0))
-        .min_size(Vec2::new(620.0, 380.0))
+        .default_size(Vec2::new(default_w, default_h))
+        .min_size(Vec2::new(560.0f32.min(max_w), 360.0f32.min(max_h)))
         // 上界也要给：可缩放窗口的尺寸由 egui 记住，一旦被拉到整屏宽度，下次打开
         // 还是那条大板子、内容全挤在左上角（用户 2026-11-07 截图）。夹住上界，
         // 用户仍可自由调小。
@@ -317,8 +330,8 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
         // been stretched to the full width it reopens as that slab with the content pinned
         // to the top-left corner (user screenshot, 2026-11-07). Capping still leaves full
         // freedom to shrink.
-        .max_width(820.0)
-        .max_height(680.0)
+        .max_width(max_w)
+        .max_height(max_h)
         .default_pos(pos)
         // 标题栏接管成界面自己的深色：egui 默认标题栏的底与描边跟主界面
         // 不是一套口径（实测亮蓝，用户差评），这里统一成 panel 底 + 底缘
@@ -386,9 +399,17 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                 );
                 soft_sep(ui);
 
-                // 右栏：搜索 + 列表
+                // 右栏：搜索 + 列表。宽度按「剩余宽度减一点余量」算死：
+                // `available_width()` 在 horizontal 里会含未消费的间距，直接拿去
+                // 分配会让右栏顶出窗口右缘（列表文字被裁）。
+                //
+                // Right column: search + list. Its width is pinned to the remaining space
+                // minus a small margin; `available_width()` inside a horizontal still counts
+                // unspent spacing, and allocating that much pushes the column past the
+                // window's right edge, clipping the list text.
+                let right_w = (ui.available_width() - 10.0).max(180.0);
                 ui.allocate_ui_with_layout(
-                    Vec2::new(ui.available_width(), body_h),
+                    Vec2::new(right_w, body_h),
                     Layout::top_down(Align::Min),
                     |ui| {
                         ui.horizontal(|ui| {
@@ -1594,6 +1615,68 @@ fn render_note_span(ui: &mut Ui, span: &crate::shell::markdown::Span) {
     }
 }
 
+/// 错误弹窗：任何失败都必须「被看见一次」，不能只在状态栏滑过或打进控制台。
+///
+/// 状态栏那行是常驻摘要（可点掉、会被下一条覆盖），弹窗是**阻断式的一次确认**：
+/// 复制得出原文、按 Esc / 点背景 / 点「知道了」才消失。正文可选中，方便把原始
+/// 错误贴给开发者——这一条是「别再静默失败」的落地口径。
+///
+/// Error dialog: every failure must be *seen once*, not merely slip through the status bar
+/// or a console log.
+///
+/// The status-bar line is a persistent, dismissible summary that the next message can
+/// overwrite; the dialog is a blocking single acknowledgement -- copy the text out, and only
+/// Esc / backdrop / "Got it" dismisses it. The body is selectable so the raw error can be
+/// pasted to a developer, which is what "stop failing silently" means in practice.
+pub(super) fn error_dialog(state: &mut AppState, ctx: &egui::Context) {
+    let Some(msg) = state.error_modal.clone() else {
+        return;
+    };
+    let mut close = false;
+    let modal = egui::Modal::new(egui::Id::unique("aevum-error-dialog")).show(ctx, |ui| {
+        ui.set_width(520.0);
+        ui.horizontal(|ui| {
+            // danger 色的小圆点：不用图标字体，也不需要额外资源。
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 10.0), Sense::hover());
+            ui.painter().circle_filled(rect.center(), 3.5, danger());
+            ui.label(
+                RichText::new(crate::i18n::t!("出错了"))
+                    .font(font(SIZE_BODY))
+                    .color(text())
+                    .strong(),
+            );
+        });
+        ui.add_space(6.0);
+        // 正文可选中：用户要能把原始错误整段复制出来贴给开发者，这是「可见」之外
+        // 的第二层要求。
+        //
+        // The body is selectable so the raw error can be copied out and pasted to a
+        // developer -- that is the second requirement beyond merely being visible.
+        ui.add(
+            egui::Label::new(RichText::new(&msg).font(font(SIZE_LABEL)).color(muted()))
+                .wrap()
+                .selectable(true),
+        );
+        ui.add_space(10.0);
+        soft_sep(ui);
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if bar_button(ui, crate::i18n::t!("复制详情")).clicked() {
+                ui.ctx().copy_text(msg.clone());
+            }
+            if bar_primary(ui, crate::i18n::t!("知道了")).clicked() {
+                close = true;
+            }
+        });
+    });
+    if modal.should_close() {
+        close = true;
+    }
+    if close {
+        state.error_modal = None;
+    }
+}
+
 /// 一次导出确认所携带的参数。
 ///
 /// 字段全是简单类型（`String` / `u8`），宿主不必认识 `StillFormat` 之类的 core
@@ -1912,6 +1995,45 @@ mod update_window_tests {
         );
     }
 
+    /// 新错误必须弹窗，且正文与确认按钮真的上屏——这是「不许静默失败」的判据。
+    ///
+    /// 只断言 `error` 被赋值是不够的：那正是用户抱怨的「只写在状态栏 / 只打控制台」。
+    /// 这里跑一帧真实界面，抓绘制出的文字，要求弹窗标题、错误正文、确认按钮三者都在。
+    ///
+    /// A new error must raise a dialog, and its body plus the acknowledge button must
+    /// actually paint. This is the "no silent failures" criterion.
+    ///
+    /// Asserting that `error` was assigned is not enough -- that is exactly the status-line /
+    /// console-only behaviour the user complained about. This runs a real frame and collects
+    /// the painted text, requiring the title, the body and the button to be present.
+    #[test]
+    fn a_new_error_pops_a_dialog_with_its_text() {
+        let ctx = Context::default();
+        theme::apply(&ctx, 1.0);
+        let mut state = AppState::demo();
+        state.install_demo_textures(&ctx);
+        state.error = Some("HDR 合并至少要 2 帧：给 frames 数组，或把 around 调大".to_owned());
+
+        // 两帧：`Area`（Modal 的载体）第一帧只做尺寸测量，第二帧才出形状。
+        // 只跑一帧会「什么都抓不到」，这正是旧回滚判据一直假绿的机制。
+        //
+        // Two frames: an `Area` (what Modal rides on) only measures on the first frame and
+        // emits shapes on the second. A single frame collects nothing -- exactly the
+        // mechanism that kept the old rollback criterion falsely green.
+        let _ = painted(&mut state, &ctx);
+        let text = painted(&mut state, &ctx);
+
+        assert!(
+            state.error_modal.is_some(),
+            "新错误没有被抬成弹窗，只留在状态栏"
+        );
+        assert!(
+            text.contains("HDR 合并至少要 2 帧：给 frames 数组，或把 around 调大"),
+            "弹窗没有把错误正文画出来：\n{text}"
+        );
+        assert!(text.contains("知道了"), "弹窗缺少确认按钮：\n{text}");
+    }
+
     /// 回滚确认框要真的上屏，并且按钮文案在。
     ///
     /// The rollback confirmation must paint, with its buttons' copy present.
@@ -1922,6 +2044,12 @@ mod update_window_tests {
         let mut state = AppState::demo();
         state.install_demo_textures(&ctx);
         state.rollback_confirm = true;
+        // 同上：Area 需要两帧才出形状。此前只跑两帧却漏了断言口径 —— 那四个词
+        // 里「回滚到上一版」在菜单里也有一份，单帧也会「通过」，是假绿。
+        //
+        // Same as above: an Area needs two frames. The old version ran two frames but its
+        // assertions were too loose -- "回滚到上一版" also exists in the menu, so even a
+        // single frame "passed", which was a false green.
         let _ = painted(&mut state, &ctx);
         let text = painted(&mut state, &ctx);
         for want in ["回滚到上一版", ".failed", "取消", "回滚并重启"] {

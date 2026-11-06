@@ -1557,6 +1557,22 @@ pub struct AppState {
     pub history: History,
     pub hist: Option<[[u32; 256]; 3]>,
 
+    /// 错误弹窗的正文。`Some` 时以模态框显示；用户关掉后清空。
+    ///
+    /// 与 `error` 的分工：`error` 是状态栏那一行常驻摘要（可点掉），这里是**必须
+    /// 看见一次**的弹窗。失败不许只在状态栏滑过去，更不许只打控制台。
+    ///
+    /// Body of the error dialog. When `Some`, a modal shows it; closing clears it.
+    ///
+    /// Division of labour with `error`: `error` is the persistent status-bar summary (can be
+    /// dismissed in place), while this is the dialog that must be seen once. A failure may
+    /// not slip by in the status bar, and certainly not only in the console.
+    pub error_modal: Option<String>,
+    /// 上一帧已展示过的错误内容，用来判断「这一帧是不是新错误」。
+    ///
+    /// The error text already surfaced last frame, used to tell whether this frame carries a
+    /// new failure.
+    error_seen: Option<String>,
     pub show_dock: bool,
     /// 右侧调整面板宽度（可拖动）。默认 `theme::DOCK_W`，夹在 300–560 之间。
     ///

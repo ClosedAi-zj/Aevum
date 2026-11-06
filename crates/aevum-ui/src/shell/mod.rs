@@ -22,6 +22,7 @@ use self::toolbar::options_bar;
 use self::toolbar::status_bar;
 use self::toolbar::tool_rail;
 use self::windows::about_window;
+use self::windows::error_dialog;
 use self::windows::look_window;
 use self::windows::market_window;
 use self::windows::presets_window;
@@ -248,6 +249,10 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         .show(&mut centre_ui, |ui| canvas_panel(state, ui, right_inset));
 
     state.history_commit();
+    // 新错误抬成弹窗：四十余处 `state.error = Some(...)` 靠这一处统一兜住。
+    //
+    // Promote new errors to a dialog: one place covers the forty-odd assignment sites.
+    state.sync_error_dialog();
     presets_window(state, &ctx);
     about_window(state, &ctx);
     look_window(state, &ctx);
@@ -261,6 +266,11 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     update_window(state, &ctx);
     rollback_window(state, &ctx);
     export_confirm_window(state, &ctx, full);
+    // 错误弹窗排在最后：它是对「刚才那次操作失败」的确认，必须压住其它浮窗。
+    //
+    // The error dialog draws last: it acknowledges a failed action and must sit above
+    // everything else.
+    error_dialog(state, &ctx);
     window_resize(root, &ctx, full);
 
     state.ensure_preview(&ctx);

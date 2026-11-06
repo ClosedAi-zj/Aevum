@@ -12,6 +12,30 @@
 use super::*;
 
 impl AppState {
+    /// 把「这一帧新出现的错误」抬成弹窗。
+    ///
+    /// 全仓有四十余处 `state.error = Some(...)`（导入、导出、相机/镜头配置、插件、
+    /// 更新器、命令分发……），逐个改成弹窗既易漏又容易回归。这里按内容比对：
+    /// `error` 一旦变化（新错误或换了一条），就抬成模态框，关掉前不会被状态栏的
+    /// 短摘要盖过去。清空弹窗不动 `error`，状态栏那行仍由用户点掉，两条互不干扰。
+    ///
+    /// Promote "an error that appeared this frame" to a dialog.
+    ///
+    /// There are forty-odd `state.error = Some(...)` sites across the crate (import, export,
+    /// camera/lens profiles, plugins, updater, command dispatch...). Editing each into a
+    /// dialog is both easy to miss and easy to regress, so compare by content instead: as
+    /// soon as `error` changes (a new failure, or a different one), it is promoted to a
+    /// modal and stays until dismissed. Clearing the dialog leaves `error` alone -- the
+    /// status-bar line is still dismissed by the user, and the two never fight.
+    pub fn sync_error_dialog(&mut self) {
+        if self.error == self.error_seen {
+            return;
+        }
+        self.error_seen = self.error.clone();
+        if let Some(msg) = self.error.clone() {
+            self.error_modal = Some(msg);
+        }
+    }
     /// 重算剪切遮罩：从最近一次全量预览的 CPU 像素里挑出高光/阴影裁切的
     /// 像素，生成一张与预览同尺寸的 RGBA 遮罩（红=高光、蓝=阴影、其余透明）。
     ///
@@ -517,6 +541,8 @@ impl AppState {
             history: History::new(),
             hist: None,
             show_dock: true,
+            error_modal: None,
+            error_seen: None,
             dock_w: crate::theme::DOCK_W,
             // 「预设与快照」浮窗默认关：它悬浮在画布上，开屏即开正好压住主图
             // （用户 2026-11-06 的模块截图里它都盖着画布左上）。入口仍在工具轨
