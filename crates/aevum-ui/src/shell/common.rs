@@ -718,9 +718,19 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     }
 
     let old_text = ui.style().visuals.override_text_color;
+    let old_font = ui.style().override_font_id.clone();
     // 读数颜色与强调色脱钩（用户截图：满屏蓝读数像一片报错）：改动值用正文白，
     // 未动值用 value()（淡一档）。蓝色留给交互态（悬停/拖动）。
     ui.style_mut().visuals.override_text_color = Some(if changed_now { text() } else { value() });
+    // 读数走等宽（设计稿 B1）：一列推子的小数点必须落在同一条竖线上。`DragValue`
+    // 没有 `.font()`，只能在作用域里压 `override_font_id`，画完立刻还原——与
+    // 选项栏 `bar_value` 同一套写法。
+    //
+    // Readouts use the monospace family (design spec B1): the decimal points of a
+    // column of sliders must share one vertical line. `DragValue` has no `.font()`,
+    // so the font is overridden for this scope only and restored right after --
+    // the same pattern as the options bar's `bar_value`.
+    ui.style_mut().override_font_id = Some(mono(SIZE_LABEL));
     let mut resp = in_field(ui, Color32::TRANSPARENT, Color32::TRANSPARENT, |ui| {
         ui.scope_builder(
             UiBuilder::new()
@@ -741,6 +751,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         .inner
     });
     ui.style_mut().visuals.override_text_color = old_text;
+    ui.style_mut().override_font_id = old_font;
     let mut changed = resp.changed();
 
     let reset_resp = ui.interact(
@@ -841,7 +852,21 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
             }
         }
         None => {
+            // 轨道槽（设计稿 §滑块）：3px 槽 + 1px divider 环。只靠 track 色在深底
+            // 上几乎看不见——用户反馈「线条太细」的真实原因是**对比度**，不是尺寸；
+            // 描一圈边才把「这里可以拖」指出来。
+            //
+            // Track groove (design spec, sliders): a 3px groove with a 1px divider
+            // ring. The track colour alone nearly vanishes on the dark panel -- the
+            // "too thin" feedback was really about contrast, not size; the ring is what
+            // says "this is draggable".
             p.rect_filled(rail, rail_h * 0.5, palette().track);
+            p.rect_stroke(
+                rail,
+                rail_h * 0.5,
+                Stroke::new(1.0, divider()),
+                egui::StrokeKind::Inside,
+            );
             let ax = tx(rail_pos(default));
             let vx = tx(rail_pos(*v));
             if (vx - ax).abs() > 0.5 {
@@ -851,7 +876,13 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
                         Pos2::new(ax.max(vx), track_y + rail_h * 0.5),
                     ),
                     rail_h * 0.5,
-                    accent(),
+                    // 已改量走中性灰（elev_hover），强调色只留给拖动中的 knob 环：
+                    // 一片蓝填充会像「报错/警告」，读数才是主角（设计稿 §滑块）。
+                    //
+                    // The changed span is neutral (elev_hover); accent stays on the
+                    // dragged knob ring only -- a blue fill reads as an error, and the
+                    // readout is the protagonist (design spec, sliders).
+                    elev_hover(),
                 );
             }
         }
@@ -865,19 +896,33 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
             Stroke::new(1.0, divider()),
         );
     }
-    // 推子：macOS 的实心小白圆 + 极淡投影；悬停、拖动各有一档明确的尺寸状态。
+    // 尺寸（设计稿 §滑块）：default 14px / hover 16px / 按下 13px。按下是**缩小**
+    // 而不是放大——光标压上去时圆点陷进轨道，才读得出「按住了」（旧版拖动反而变大，
+    // 方向反了）。
+    //
+    // Sizes (design spec, sliders): 14px default / 16px hover / 13px pressed. Pressing
+    // **shrinks** the knob -- it sinks into the groove under the cursor, which is what
+    // reads as "held" (the old build grew it while dragging, the wrong direction).
     let vx = tx(rail_pos(*v));
     let knob = Pos2::new(vx, track_y);
     let r = if t.dragged() {
         6.5
     } else if t.hovered() {
-        6.0
+        8.0
     } else {
-        5.5
+        7.0
     };
     p.circle_filled(knob + Vec2::new(0.0, 1.0), r, Color32::from_black_alpha(70));
     p.circle_filled(knob, r, Color32::WHITE);
     p.circle_stroke(knob, r, Stroke::new(1.0, INSET_RIM));
+    if t.dragged() {
+        // 按下内阴影：上缘压一道暗弧，读作被按进轨道（对齐 inset 阴影手感）。
+        p.circle_filled(
+            knob - Vec2::new(0.0, r * 0.35),
+            r * 0.62,
+            Color32::from_black_alpha(38),
+        );
+    }
     if t.dragged() {
         p.circle_stroke(
             knob,

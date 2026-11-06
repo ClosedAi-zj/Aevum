@@ -106,6 +106,18 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     }
     ui.add_space(6.0);
 
+    // 动作行（自动/复位/XMP）与参数区之间一道发丝线：动作是「现在做什么」，
+    // 参数是「画面现在是什么」，两者分开才读得出主次（界面设计方案 B2）。
+    //
+    // A hairline between the action row (auto / reset / XMP) and the parameter
+    // groups: actions are "what happens next", parameters are "what the frame is
+    // now"; separating them makes the hierarchy readable (design spec B2).
+    {
+        let w = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(w, 1.0), egui::Sense::hover());
+        theme::soft_rule(ui.painter(), rect.left(), rect.right(), rect.center().y);
+    }
+
     let mut changed = false;
 
     // ── 基本 ────────────────────────────────────────────────────────────

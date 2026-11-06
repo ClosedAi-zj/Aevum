@@ -681,7 +681,24 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                                 } else {
                                     Glyph::StarEmpty
                                 },
-                                if s < rating { star() } else { dim() },
+                                if s < rating {
+                                    // 星级升作主信息（B4）：48 格 × 5 枚黄点曾是整条
+                                    // 胶片条最吵的一层彩色。改用正文白后，「评级」与
+                                    // 「未评级（dim 空星）」的对比反而更清楚，彩色只
+                                    // 留给色标与旗标。
+                                    //
+                                    // Stars become the primary readout (B4): 48 cells x 5
+                                    // yellow fills were the noisiest colour band on the
+                                    // strip. Body white keeps "rated vs not" (dim hollow
+                                    // stars) legible and leaves colour to flags and labels.
+                                    if i == state.selected {
+                                        on_selected()
+                                    } else {
+                                        text()
+                                    }
+                                } else {
+                                    dim()
+                                },
                             );
                         }
                         match state.flag_at(i) {
@@ -705,8 +722,12 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                             ),
                             _ => {}
                         }
-                        // 序号：左下角，白 75% 配黑投影（对齐 .th .num）；
-                        // 先画偏移 1px 的黑影再画白字，缩略图再亮也压得住。
+                        // 序号：左下角，dim 配黑投影（B4 让位给星级）；
+                        // 先画偏移 1px 的黑影再画字，缩略图再亮也压得住。
+                        //
+                        // The frame number sits bottom-left in dim (B4 hands the
+                        // primary readout to the stars); a 1px offset shadow keeps it
+                        // legible over bright thumbnails.
                         let num = format!("{:04}", i + 1);
                         p.text(
                             Pos2::new(cell.left() + 4.0, cell.bottom() - 1.0),
@@ -720,7 +741,11 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                             Align2::LEFT_BOTTOM,
                             num,
                             font(MICRO),
-                            Color32::from_white_alpha(190),
+                            if i == state.selected {
+                                on_selected()
+                            } else {
+                                dim()
+                            },
                         );
 
                         let cell_resp = ui.interact(
@@ -729,12 +754,24 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                             Sense::click(),
                         );
                         if i == state.selected {
-                            // 选中 = 2px 强调色外框（对齐 .th.on），不再用绿框：
-                            // 绿色留给旗标，蓝色才是"你在哪"。
+                            // 选中 = 1px 强调色外框 + 内圈 surround 压边（设计稿 B4）：
+                            // 2px 外框在 48 格上一排读作「一圈蓝条」，1px 描边配一圈
+                            // 压暗既清楚又不抢；绿色留给旗标，蓝色才是"你在哪"。
+                            //
+                            // Selected = 1px accent outline plus an inner surround ring
+                            // (design spec B4): a 2px outline read as a blue band across
+                            // the whole strip; 1px with an inner darkening stays legible
+                            // without shouting. Green is for flags, blue is "where you are".
                             p.rect_stroke(
                                 cell.shrink(1.0),
                                 3.0,
-                                Stroke::new(2.0, accent()),
+                                Stroke::new(1.0, accent()),
+                                StrokeKind::Inside,
+                            );
+                            p.rect_stroke(
+                                cell.shrink(2.0),
+                                2.0,
+                                Stroke::new(1.0, surround()),
                                 StrokeKind::Inside,
                             );
                         } else if cell_resp.hovered() {

@@ -514,7 +514,12 @@ pub(super) fn menu_item_enabled(ui: &mut Ui, label: &str, shortcut: &str, enable
         enabled,
         egui::Button::new(RichText::new(label).size(SIZE_BODY)).shortcut_text(
             RichText::new(shortcut)
-                .size(SIZE_SMALL)
+                // 快捷键列走等宽（PS 编辑菜单的整齐感来源）：Ctrl+Z /
+                // Shift+Ctrl+Z / Alt+Shift+Ctrl+K 右对齐后自成一条视觉锚线。
+                //
+                // Shortcut column uses the monospace family (where PS's Edit menu gets
+                // its tidiness): right-aligned, the column becomes a visual anchor.
+                .font(mono(SIZE_SMALL))
                 .color(shortcut_color),
         ),
     )

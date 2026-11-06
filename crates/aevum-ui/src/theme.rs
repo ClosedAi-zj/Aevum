@@ -5,7 +5,8 @@
 //!   分隔线用白色低 alpha（8–18%）的发丝线，不再像描边。
 //! - 文字四级 label：白 85% / 60% / 45% / 10% alpha 压平到实际材质色值，
 //!   保证正文级 ≥ 7:1、次要级 ≥ 4.5:1（4K @ 96dpi，正文不许发灰）。
-//! - 强调色为 macOS 深色系统蓝 #0A84FF；选中行背景是同色约 20–25% 的压平值。
+//! - 强调色为专业深蓝 hsl(210, 100%, 44.5) ≈ #0160D8（取色器可调）；选中行背景
+//!   是同色约 20–25% 的压平值。
 //! - 圆角同心：窗口/浮层 10，常规控件 6；控件靠底色差与圆角分层，不描边。
 //! - 字号字阶：Small 11 / Body·Button 13 / Heading 15（17 档由 FONT_ZOOMS 缩放覆盖）。
 //!
@@ -22,8 +23,9 @@
 //! - Four text levels: white at 85% / 60% / 45% / 10% alpha flattened onto the actual
 //!   material colour, guaranteeing body text >= 7:1 and secondary text >= 4.5:1 (4K at
 //!   96 dpi; body text is not allowed to go grey).
-//! - The accent is macOS dark system blue #0A84FF; a selected row's background is the
-//!   same hue flattened at roughly 20-25%.
+//! - The accent is a professional deep blue, hsl(210, 100%, 44.5) ~ #0160D8 (tunable
+//!   by the colour picker); a selected row's background is the same hue flattened at
+//!   roughly 20-25%.
 //! - Concentric corner radii: windows and floating layers 10, ordinary controls 6;
 //!   controls are separated by fill difference and radius, never by outlines.
 //! - Type scale: Small 11 / Body and Button 13 / Heading 15 (the 17 step is covered by
@@ -438,7 +440,13 @@ impl Palette {
             elev: n(l.elev),
             elev_hover: n(l.elev_h),
             press: n(l.elev - 3.0 * dir),
-            selected: mix(panel, accent, 0.22),
+            // 选中底 0.15（D2「chrome 退后」）：accent 面积减半，页签下划线与
+            // 描边继续承担「选中」语义，底色只作极淡的落位提示。
+            //
+            // Selected fill at 0.15 (D2 "chrome steps back"): accent area is halved;
+            // the tab underline and strokes keep carrying the selected meaning, and
+            // the fill only hints at where the selection sits.
+            selected: mix(panel, accent, 0.15),
             // 渐变从 selected 衰到贴着 dock 的一档：一条式三表自动成立，
             // 换主色时两端一起动，不会出现左蓝右灰的断裂。
             selected_row_end: mix(n(l.dock), accent, 0.05),
@@ -804,14 +812,14 @@ impl Density {
     pub const ALL: [Density; 3] = [Self::Compact, Self::Standard, Self::Loose];
 }
 
-/// 调整面板推子行高：紧凑 32 / 标准 38 / 宽松 46。
+/// 调整面板推子行高：紧凑 32 / 标准 38 / 宽松 45。
 ///
-/// Slider row height in the adjustment panel: compact 32 / standard 38 / roomy 46.
+/// Slider row height in the adjustment panel: compact 32 / standard 38 / roomy 45.
 pub fn row_h() -> f32 {
     match appearance().density {
         Density::Compact => 32.0,
         Density::Standard => 38.0,
-        Density::Loose => 46.0,
+        Density::Loose => 45.0,
     }
 }
 
@@ -1226,7 +1234,26 @@ pub fn paint_chip(
         egui::Sense::click(),
     );
     // macOS 小胶囊：靠底色差分层，只有选中态保留强调色描边。
-    let (fill, stroke, fg, cr) = if active {
+    // 按下时底色降到 press 档并压一道顶部内阴影——「按进去」的实体感是 PS 手感
+    // 的来源（用户反馈 3），自绘 chip 没有 egui 原生按钮的 active 底色，得自己给。
+    //
+    // macOS-style small chip: layers by fill difference, only the active state keeps
+    // the accent stroke. While pressed the fill drops to the press step and a top
+    // inner shadow is drawn -- the physical "pressed in" feel is what makes PS buttons
+    // feel right (user feedback 3); self-painted chips get none of egui's active fill.
+    let pressed = resp.is_pointer_button_down_on();
+    let (fill, stroke, fg, cr) = if pressed {
+        (
+            press(),
+            if active {
+                Stroke::new(1.0, accent)
+            } else {
+                Stroke::NONE
+            },
+            if active { Color32::WHITE } else { text() },
+            radius_control(),
+        )
+    } else if active {
         (
             selected(),
             Stroke::new(1.0, accent),
@@ -1239,6 +1266,20 @@ pub fn paint_chip(
         (elev(), Stroke::NONE, muted(), radius_control())
     };
     painter.rect_filled(rect, cr, fill);
+    if pressed {
+        // 顶部内阴影：一条 1px 暗线读作「被按下去」的位移（对齐 CSS
+        // `inset 0 1px 2px rgba(0,0,0,.45)` 的手感，不引入真实阴影层）。
+        //
+        // Top inner shadow: a single dark hairline reads as the button sinking in
+        // (the feel of CSS `inset 0 1px 2px rgba(0,0,0,.45)` without a real shadow).
+        painter.line_segment(
+            [
+                egui::Pos2::new(rect.left() + 2.0, rect.top() + 1.0),
+                egui::Pos2::new(rect.right() - 2.0, rect.top() + 1.0),
+            ],
+            Stroke::new(1.0, Color32::from_black_alpha(110)),
+        );
+    }
     if stroke.width > 0.0 {
         painter.rect_stroke(rect, cr, stroke, egui::StrokeKind::Inside);
     }
