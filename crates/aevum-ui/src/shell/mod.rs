@@ -109,9 +109,18 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     }
 
     // 2 工具栏：当前工具 │ 工具参数 │ 上下文 ……… 右侧缩放。
+    // 底色用 dock 而不是 chrome（B0 裁决）：选项栏服务于右侧参数面板，与面板同层
+    // 才读得出「骨架（菜单行/状态栏，header）→ 内容（选项栏/dock，dock）→ 控件
+    // （elev）」三级；chrome 让给工具轨，形成「外框稍亮、内容沉下去」的 ACR 结构。
+    //
+    // The options bar uses `dock` rather than `chrome` (B0 ruling): it serves the
+    // parameter panel on the right, so sitting on the same layer makes the three-level
+    // reading work -- skeleton (menu/status bar, header) -> content (options bar and
+    // dock) -> controls (elev). `chrome` is left to the tool rail, so the outer frame
+    // reads slightly brighter than the content, as in ACR.
     egui::Panel::top("options-bar")
         .exact_size(OPTIONS_H)
-        .frame(egui::Frame::NONE.fill(chrome()).inner_margin(egui::Margin {
+        .frame(egui::Frame::NONE.fill(dock()).inner_margin(egui::Margin {
             left: 8,
             right: 8,
             top: 0,

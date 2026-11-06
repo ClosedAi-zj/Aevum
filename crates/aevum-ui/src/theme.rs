@@ -186,6 +186,13 @@ pub struct Appearance {
     pub accent_h: f32,
     pub accent_s: f32,
     pub accent_l: f32,
+    /// 界面明暗微调：−3…+3，每档 ±2 L，只作用于背景族（面板/栏/控件底），
+    /// 文字三档不动。默认 0；旧 settings.json 缺这一项时读成 0。
+    ///
+    /// Interface brightness trim: -3..+3, two L per step, applied to the background
+    /// family only (panels, bars, control fills); the three text steps never move.
+    /// Defaults to 0, and an older settings.json without the key reads back as 0.
+    pub gray_offset: i8,
     /// 控件圆角。窗口与容器由它派生，不单独给。
     ///
     /// Control corner radius. Windows and containers are derived from it, never set
@@ -220,6 +227,7 @@ impl Default for Appearance {
             accent_h: 210.0,
             accent_s: 100.0,
             accent_l: 44.5,
+            gray_offset: 0,
             radius: 6.0,
             os: crate::platform::OsChoice::Auto,
             density: Density::Standard,
@@ -424,22 +432,32 @@ impl Palette {
         };
         let alpha = |dark: u8, light: u8| if dir > 0.0 { dark } else { light };
 
-        let panel = n(l.panel);
+        // 界面明暗微调（自定义外观，设计稿 §2.3）：`nb` = 带偏移的 `n`，只给背景族用。
+        // 每档 ±2 L，范围 ±3。文字三档（text/muted/dim）仍走 `n` —— 文字一起漂，
+        // 这个滑块就变成对比度旋钮，可读性下限守不住。
+        //
+        // Interface brightness trim (custom appearance, design spec 2.3): `nb` is `n`
+        // with the offset, applied to the background family only. Two L per step, range
+        // +/-3. The three text steps keep using `n`: shifting them too would turn this
+        // slider into a contrast knob and break the readability floor.
+        let off = a.gray_offset as f32 * 2.0;
+        let nb = |lightness: f32| n((lightness + off).clamp(0.0, 100.0));
+        let panel = nb(l.panel);
         let accent = hsl(a.accent_h, a.accent_s, a.accent_l);
         let text = n(l.text);
 
         Self {
-            bg: n(l.bg),
-            chrome: n(l.chrome),
+            bg: nb(l.bg),
+            chrome: nb(l.chrome),
             panel,
-            dock: n(l.dock),
-            header: n(l.header),
-            surround: n(l.surround),
-            canvas: n(l.canvas),
-            rail: n(l.chrome),
-            elev: n(l.elev),
-            elev_hover: n(l.elev_h),
-            press: n(l.elev - 3.0 * dir),
+            dock: nb(l.dock),
+            header: nb(l.header),
+            surround: nb(l.surround),
+            canvas: nb(l.canvas),
+            rail: nb(l.chrome),
+            elev: nb(l.elev),
+            elev_hover: nb(l.elev_h),
+            press: nb(l.elev - 3.0 * dir),
             // 选中底 0.15（D2「chrome 退后」）：accent 面积减半，页签下划线与
             // 描边继续承担「选中」语义，底色只作极淡的落位提示。
             //
@@ -449,9 +467,9 @@ impl Palette {
             selected: mix(panel, accent, 0.15),
             // 渐变从 selected 衰到贴着 dock 的一档：一条式三表自动成立，
             // 换主色时两端一起动，不会出现左蓝右灰的断裂。
-            selected_row_end: mix(n(l.dock), accent, 0.05),
-            field: n(l.field),
-            field_hover: n(l.field_hover),
+            selected_row_end: mix(nb(l.dock), accent, 0.05),
+            field: nb(l.field),
+            field_hover: nb(l.field_hover),
             border: with_alpha(ink, alpha(20, 34)),
             border_strong: with_alpha(ink, alpha(46, 60)),
             // 分隔线提亮一档：分组分隔、曲线网格主次线、标尺刻度都走这一档，
@@ -466,18 +484,21 @@ impl Palette {
             text,
             muted: n(l.muted),
             dim: n(l.dim),
-            // 读数：强调色降饱和 26、加亮 24（浅色主题反向），比纯白少抢一点。
-            value: hsl(
-                a.accent_h,
-                (a.accent_s - 26.0).max(0.0),
-                a.accent_l + 24.0 * dir,
-            ),
+            // 读数保持中性（无彩纪律）：旧版是「强调色降饱和加亮」的淡蓝，一屏十几
+            // 行未改动读数铺下来像一片低饱和报错。灰一档就够读，强调色完整留给
+            // 交互态（悬停 / 拖动 / 选中）。
+            //
+            // Readouts stay neutral (achromatic discipline): the old value was the
+            // accent desaturated and lightened, and a screenful of untouched readouts
+            // read as faint errors. One grey step below muted is enough; accent stays
+            // reserved for interaction (hover / drag / selected).
+            value: n(l.muted - 2.0),
             accent,
             accent_hover: hsl(a.accent_h, a.accent_s, a.accent_l + 10.0),
             accent_dim: mix(panel, accent, 0.17),
             rail_fill: mix(panel, ink, 0.18),
             // 滑轨对齐界面稿 `--track`：抬升面往回收两度，而不是从面板压暗。
-            track: n(l.elev - 2.0 * dir),
+            track: nb(l.elev - 2.0 * dir),
             // 材质色不随主题变：它们表达的是「冷/暖/绿/品红」本身，不是材质。
             temp_cold: Color32::from_rgb(0x4E, 0x86, 0xC8),
             temp_warm: Color32::from_rgb(0xD8, 0xA4, 0x55),
@@ -488,7 +509,7 @@ impl Palette {
             teal: Color32::from_rgb(0x64, 0xD2, 0xFF),
             danger: Color32::from_rgb(0xFF, 0x69, 0x61),
             ok: Color32::from_rgb(0x30, 0xD1, 0x58),
-            thumb_bg: n(l.thumb),
+            thumb_bg: nb(l.thumb),
             on_accent: if luminance(accent) > 0.56 {
                 hsl(a.accent_h, 45.0, 12.0)
             } else {
@@ -1070,8 +1091,16 @@ pub fn apply_style(ctx: &Context, zoom: f32) {
     v.error_fg_color = danger();
     v.weak_text_alpha = 0.8;
     // 选中底跟着主色走：换主色时这一块也要变，不能钉死在系统蓝上。
-    v.selection.bg_fill =
-        Color32::from_rgba_unmultiplied(accent()[0], accent()[1], accent()[2], 64);
+    // 强度与自绘 selected() 对齐（0.15 mix）——原生选中（下拉行、ComboBox、文本
+    // 选择）曾是 accent 25% 的整行亮蓝，在暗色界面里刺眼，也和面板里的选中底
+    // 对不上；统一到同一档之后，「选中」在全应用只有一个长相。
+    //
+    // The selection fill follows the accent, so changing the accent changes it too.
+    // Its strength now matches the self-painted selected() (0.15 mix): native
+    // selection (dropdown rows, combo boxes, text selection) used to be a full-row
+    // bright accent at 25%, harsh on a dark UI and inconsistent with the panel's
+    // selected fill; aligning them gives "selected" one single look app-wide.
+    v.selection.bg_fill = selected();
     v.selection.stroke = Stroke::new(1.0, accent());
     v.striped = false;
     v.slider_trailing_fill = true;
@@ -1449,6 +1478,35 @@ mod token_tests {
                 assert!(l(p.elev) < panel);
             }
         }
+    }
+
+    /// 明暗微调只动背景族，文字三档必须原地不动（自定义外观的语义契约）。
+    ///
+    /// The brightness trim moves the background family only; the three text steps
+    /// must stay put (the semantic contract of the custom-appearance trim).
+    #[test]
+    fn gray_offset_moves_backgrounds_but_never_text() {
+        let mut a = Appearance::default();
+        let base = Palette::of(&a);
+        a.gray_offset = 2;
+        let up = Palette::of(&a);
+        assert!(
+            luminance(up.panel) > luminance(base.panel),
+            "+2 档必须让面板底变亮（背景族没接上 nb）"
+        );
+        assert!(
+            luminance(up.surround) > luminance(base.surround),
+            "+2 档必须让画布外围变亮（背景族没接上 nb）"
+        );
+        assert_eq!(up.text, base.text, "文字档不随明暗微调变化");
+        assert_eq!(up.muted, base.muted, "次要文字不随明暗微调变化");
+        assert_eq!(up.dim, base.dim, "三级文字不随明暗微调变化");
+        a.gray_offset = -2;
+        let down = Palette::of(&a);
+        assert!(
+            luminance(down.panel) < luminance(base.panel),
+            "-2 档必须让面板底变暗"
+        );
     }
 
     /// 默认参数下必须逐通道还原旧的手调令牌（±3）。

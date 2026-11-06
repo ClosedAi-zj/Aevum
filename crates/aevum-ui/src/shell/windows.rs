@@ -708,6 +708,59 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                 }
             });
 
+            // 界面明暗微调（自定义外观）：只偏移背景族，文字三档不动——
+            // 文字跟着漂，这个滑块就变成对比度旋钮（见 theme.rs Palette::of）。
+            //
+            // Interface brightness trim (custom appearance): shifts the background
+            // family only; the three text steps stay put, otherwise this slider would
+            // become a contrast knob (see Palette::of in theme.rs).
+            look_section(ui, "界面明暗微调");
+            let mut off = state.appearance.gray_offset as f32;
+            let resp = ui.add_sized(
+                [200.0, 20.0],
+                egui::Slider::new(&mut off, -3.0..=3.0)
+                    .step_by(1.0)
+                    .show_value(false),
+            );
+            if resp.changed() {
+                state.appearance.gray_offset = off.round() as i8;
+            }
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{:+.0}", state.appearance.gray_offset))
+                        .font(mono(SIZE_LABEL))
+                        .color(if state.appearance.gray_offset == 0 {
+                            dim()
+                        } else {
+                            text()
+                        }),
+                );
+                if state.appearance.gray_offset != 0 {
+                    if bar_chip(ui, "归零", false).clicked() {
+                        state.appearance.gray_offset = 0;
+                    }
+                }
+            });
+            if state.appearance.gray_offset.abs() > 2 {
+                ui.label(
+                    RichText::new(crate::i18n::t!("对比度可能不足，部分文字可读性下降"))
+                        .size(SIZE_SMALL)
+                        .color(warn()),
+                );
+            }
+            // 恢复默认：强调色回专业深蓝、明暗偏移归零（皮肤与主题留在原处，
+            // 那是两套独立偏好，一键重置不该顺手改掉）。
+            //
+            // Reset: accent back to the professional blue and the trim back to zero.
+            // Skin and theme are left alone -- they are independent preferences and a
+            // one-click reset should not quietly change them.
+            if bar_chip(ui, "恢复默认强调色与明暗", false).clicked() {
+                state.appearance.accent_h = 210.0;
+                state.appearance.accent_s = 100.0;
+                state.appearance.accent_l = 44.5;
+                state.appearance.gray_offset = 0;
+            }
+
             look_section(ui, "外壳");
             look_row(
                 ui,

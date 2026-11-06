@@ -683,11 +683,21 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
         let active = state.tool == *t;
         if active {
             p.rect_filled(rect, radius_control(), selected());
-            p.rect_stroke(
-                rect,
-                radius_control(),
-                Stroke::new(1.0, accent()),
-                StrokeKind::Inside,
+            // 激活指示改左缘 2px 竖条（设计稿态）：整圈 accent 描边在 14 枚工具上
+            // 面积过大，竖条只占 2px 宽、把「哪个工具开着」指得同样清楚，也让
+            // accent 的面积留给焦点环与主行动。
+            //
+            // The active marker is a 2 px accent bar on the left edge (design spec):
+            // a full accent outline across 14 tools spends far more area; the bar is
+            // 2 px wide, points just as clearly at the active tool, and leaves accent
+            // for the focus ring and primary actions.
+            p.rect_filled(
+                Rect::from_min_max(
+                    Pos2::new(rect.left() + 1.0, rect.top() + 7.0),
+                    Pos2::new(rect.left() + 3.0, rect.bottom() - 7.0),
+                ),
+                1.0,
+                accent(),
             );
         } else if resp.hovered() {
             p.rect_filled(rect, radius_control(), elev_hover());
