@@ -238,12 +238,13 @@ impl Default for Appearance {
 /// 强调色预设：面板上排七个色点，点一下就是这套数。
 ///
 /// Accent presets: the seven dots across the panel, one click each.
-pub const ACCENT_PRESETS: [(f32, f32, f32, &str); 7] = [
+pub const ACCENT_PRESETS: [(f32, f32, f32, &str); 8] = [
     (210.0, 100.0, 44.5, "蓝"),
     (265.0, 86.0, 63.0, "紫"),
     (188.0, 92.0, 46.0, "青"),
     (148.0, 56.0, 44.0, "绿"),
     (32.0, 94.0, 53.0, "琥珀"),
+    (20.0, 90.0, 48.0, "橙"),
     (345.0, 84.0, 61.0, "玫红"),
     (0.0, 0.0, 60.0, "银"),
 ];

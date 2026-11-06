@@ -684,12 +684,12 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                     let active = (state.appearance.accent_h - h).abs() < 1.0
                         && (state.appearance.accent_s - s).abs() < 2.0
                         && (state.appearance.accent_l - l).abs() < 2.0;
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
                     let c = rect.center();
-                    ui.painter().circle_filled(c, 8.0, col);
+                    ui.painter().circle_filled(c, 9.0, col);
                     if active {
                         ui.painter()
-                            .circle_stroke(c, 10.0, Stroke::new(1.5, text()));
+                            .circle_stroke(c, 11.0, Stroke::new(1.5, text()));
                     }
                     if resp.clicked() {
                         state.appearance.accent_h = h;

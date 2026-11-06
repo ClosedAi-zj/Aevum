@@ -636,14 +636,23 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                         // Translucent black chip pinned top-right, visible with the cell.
                         let chip_g = p.layout_no_wrap(
                             crate::i18n::t!("原片").to_owned(),
-                            font(SIZE_SMALL),
+                            font(MICRO),
                             text(),
                         );
                         let chip_rect = Rect::from_min_size(
-                            Pos2::new(cell.right() - 7.0 - chip_g.size().x, cell.top() + 3.0),
+                            Pos2::new(cell.right() - 6.0 - chip_g.size().x, cell.top() + 3.0),
                             Vec2::new(chip_g.size().x + 4.0, chip_g.size().y + 1.0),
                         );
-                        p.rect_filled(chip_rect, 2.0, Color32::from_black_alpha(160));
+                        // 降噪（B4 收尾）：48 格 × 11px 深底白字曾压过缩略图本身。
+                        // 字号落到 MICRO（9px）、底色 alpha 160→120——每格仍看得见
+                        // 「原片」二字（评审 E2 口径不变），但不再抢图。
+                        //
+                        // Noise trim (B4 close-out): 48 cells of 11 px white-on-black
+                        // chips used to outweigh the thumbnails themselves. The size
+                        // drops to MICRO (9 px) and the fill alpha from 160 to 120 --
+                        // "original" stays visible in every cell (review E2 unchanged)
+                        // without competing with the picture.
+                        p.rect_filled(chip_rect, 2.0, Color32::from_black_alpha(120));
                         p.galley(chip_rect.left_top() + Vec2::new(2.0, 0.5), chip_g, text());
                         let label = state.label_at(i);
                         if label > 0 {
