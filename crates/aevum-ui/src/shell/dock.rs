@@ -299,8 +299,8 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
                 // 留 6% 空气，山头与 tab 行之间永远有一线呼吸。
                 let y_top = rect.bottom() - rect.height() * 0.94 * v;
                 let i = lum.vertices.len() as u32;
-                lum.colored_vertex(Pos2::new(x0, y_top), Color32::from_white_alpha(70));
-                lum.colored_vertex(Pos2::new(x1, y_top), Color32::from_white_alpha(70));
+                lum.colored_vertex(Pos2::new(x0, y_top), Color32::from_white_alpha(40));
+                lum.colored_vertex(Pos2::new(x1, y_top), Color32::from_white_alpha(40));
                 lum.colored_vertex(Pos2::new(x0, rect.bottom()), Color32::from_white_alpha(5));
                 lum.colored_vertex(Pos2::new(x1, rect.bottom()), Color32::from_white_alpha(5));
                 lum.add_triangle(i, i + 1, i + 3);
@@ -494,7 +494,7 @@ mod dock_paint_tests {
             .iter()
             .map(|rgb| Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 0))
             .collect();
-        let (lum_top, lum_base) = (Color32::from_white_alpha(70), Color32::from_white_alpha(5));
+        let (lum_top, lum_base) = (Color32::from_white_alpha(40), Color32::from_white_alpha(5));
         let mut channel_meshes = [0usize; 3];
         let mut lum_mesh = 0usize;
         let mut solid_bars = 0usize;

@@ -1300,7 +1300,14 @@ pub fn paint_chip(
     } else if resp.hovered() {
         (elev_hover(), Stroke::NONE, text(), radius_control())
     } else {
-        (elev(), Stroke::NONE, muted(), radius_control())
+        // 默认态也给一圈 1px border（设计稿 chip 有描边）：无框的色块在深色面板上
+        // 读作「一片底色」，不像可按的控件。
+        (
+            elev(),
+            Stroke::new(1.0, border()),
+            muted(),
+            radius_control(),
+        )
     };
     painter.rect_filled(rect, cr, fill);
     if pressed {
