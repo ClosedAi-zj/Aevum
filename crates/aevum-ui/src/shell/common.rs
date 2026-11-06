@@ -545,6 +545,73 @@ pub(super) fn slider<K: std::hash::Hash + std::fmt::Debug>(
     )
 }
 
+/// 带渐变轨道的推子：轨道两端色由调用方给定（HSL 频段这类「轨道即含义」
+/// 的参数）。其余行为与 [`slider`] 完全一致。
+///
+/// A fader with a gradient rail: the caller supplies the two end colours for
+/// parameters whose *track carries meaning* (HSL bands). Behaviour is otherwise
+/// identical to [`slider`].
+#[allow(clippy::too_many_arguments)]
+pub(super) fn slider_grad<K: std::hash::Hash + std::fmt::Debug>(
+    ui: &mut Ui,
+    key: K,
+    label: &str,
+    v: &mut f64,
+    min: f64,
+    max: f64,
+    default: f64,
+    decimals: usize,
+    signed: bool,
+    stops: [Color32; 2],
+) -> bool {
+    slider_row(
+        ui,
+        key,
+        label,
+        v,
+        min,
+        max,
+        default,
+        decimals,
+        signed,
+        "",
+        Some(stops),
+        false,
+        "",
+    )
+}
+
+/// HSL 频段的轨道渐变（对齐 LightCraft `Track::Hue/Sat/Lum` 的语义，
+/// 逆向报告 §3.3：轨道样式是数据不是代码）：
+/// - 色相：频段色 → 补色——往左往右各偏向哪个色相，一眼可读；
+/// - 饱和度：中性灰 → 频段色（拉正 = 更艳）；
+/// - 明亮度：黑 → 频段色（拉正 = 该频段提亮）。
+///
+/// Rail gradients for one HSL band (mirroring LightCraft's `Track::Hue/Sat/Lum`
+/// semantics -- reverse report §3.3: track style is data, not code): hue runs from the
+/// band colour to its complement, saturation from neutral grey to the band colour,
+/// luminance from black to the band colour.
+pub(super) fn hsl_band_stops(band: usize, kind: HslKind) -> [Color32; 2] {
+    let h = crate::widgets::BAND_HUES[band.clamp(0, 7)] as f32;
+    let band_color = hsl(h, 82.0, 55.0);
+    match kind {
+        // 补色 = 色相转半圈。
+        HslKind::Hue => [band_color, hsl((h + 180.0) % 360.0, 82.0, 55.0)],
+        HslKind::Sat => [hsl(h, 0.0, 55.0), band_color],
+        HslKind::Lum => [hsl(h, 82.0, 4.0), band_color],
+    }
+}
+
+/// [`hsl_band_stops`] 的三条轨道种类。
+///
+/// The three rail kinds of an HSL band.
+#[derive(Clone, Copy)]
+pub(super) enum HslKind {
+    Hue,
+    Sat,
+    Lum,
+}
+
 #[allow(clippy::too_many_arguments)]
 /// 按规格表渲染一条推子。标签/范围/默认/精度/单位/渐变全部来自
 /// `controls::SPECS`——加参数只登记表，不再在面板里摊九个实参。

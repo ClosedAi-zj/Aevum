@@ -651,8 +651,38 @@ fn jpeg_stream_complete(bytes: &[u8]) -> bool {
 /// Decode and scale proportionally so the long side does not exceed `max_side`, returning sRGB
 /// pixels for canvas preview.
 pub fn decode_rgb(path: impl AsRef<Path>, max_side: u32) -> Result<image::RgbImage, MetricsError> {
-    let img = decode(path)?;
+    let (img, origin) = decode_with_origin(path)?;
+    // 传感器源（DngBuiltin / RawBackend）在此做 sRGB 显示编码后再缩 8 位：
+    // 这是画布预览/测光/缩略图走的口子，与 `decode_rgb_f32_with_origin` 的全量口
+    // 同一约定（「复位变黑」修复）。成品文件（Image）不动。编码在缩放前做，
+    // 8 位量化才落在编码域的正确台阶上。
+    //
+    // Sensor sources (DngBuiltin / RawBackend) get sRGB display encoding before the
+    // 8-bit scale: this is the canvas-preview/metering/thumbnail exit and it follows
+    // the same convention as the full-size exit (`decode_rgb_f32_with_origin`, the
+    // "reset goes black" fix). Finished files (Image) are untouched. Encoding before
+    // scaling puts the 8-bit quantisation on the right encoded-domain steps.
+    let img = if !matches!(origin, PixelOrigin::Image) {
+        let mut rgb16 = img.to_rgb16();
+        for p in rgb16.pixels_mut() {
+            for c in &mut p.0 {
+                *c = enc16(*c);
+            }
+        }
+        image::DynamicImage::ImageRgb16(rgb16)
+    } else {
+        img
+    };
     Ok(fit_long_side(&img.to_rgb8(), max_side))
+}
+
+/// 16 位线性 → 16 位 sRGB 编码（`enc` 的 u16 版，256 级台阶对齐表法）。
+///
+/// 16-bit linear to 16-bit sRGB (the u16 twin of [`enc`], table-exact at 256 levels).
+fn enc16(v: u16) -> u16 {
+    let lin = v as f32 / 65535.0;
+    let s = enc(lin, true);
+    (s * 65535.0).round().clamp(0.0, 65535.0) as u16
 }
 
 /// 按源位深解码成 sRGB f32 `[0,1]`，返回（像素、宽、高、源是否高于 8bit）。
@@ -689,6 +719,22 @@ pub fn decode_rgb_f32_with_origin(
     let (img, origin) = decode_with_origin(path)?;
     let (w, h) = (img.width(), img.height());
     let mut rgb = Vec::with_capacity(w as usize * h as usize * 3);
+    // 传感器路径（内置 DNG / RAW 后端）出口做 sRGB 显示编码：显影主链假设输入
+    // 已在编码域（JPEG/PNG 天生如此），线性传感器数据直接进链，中间调被压暗
+    // 整整一个 gamma——用户实测「复位后图片立马变黑」的根因（JPEG 序列没事、
+    // RAW 一复位就黑）。编码放在唯一解码口，预览/测光/对齐/导出四条消费线
+    // 一次对齐；`PixelOrigin::Image`（成品文件）保持逐位不动。
+    // 与 LR/Camera Raw 的「默认基准显示变换」同构。
+    //
+    // Sensor-route exits (built-in DNG / RAW backend) get sRGB display encoding
+    // here: the develop chain assumes encoded-domain input (JPEG/PNG already is),
+    // and feeding linear sensor data darkens midtones by a whole gamma -- the root
+    // cause of the user-reported "reset makes the image go black" (JPEG sequences
+    // were fine, RAW went black). Encoding at the single decode exit aligns all four
+    // consumers (preview / metrics / align / export) at once; `PixelOrigin::Image`
+    // stays bit-identical. Isomorphic to LR/Camera Raw's default base display
+    // transform.
+    let encode = !matches!(origin, PixelOrigin::Image);
     let deep = match img.color() {
         image::ColorType::L16
         | image::ColorType::La16
@@ -696,16 +742,20 @@ pub fn decode_rgb_f32_with_origin(
         | image::ColorType::Rgba16 => {
             for p in img.to_rgb16().pixels() {
                 rgb.extend_from_slice(&[
-                    p.0[0] as f32 / 65535.0,
-                    p.0[1] as f32 / 65535.0,
-                    p.0[2] as f32 / 65535.0,
+                    enc(p.0[0] as f32 / 65535.0, encode),
+                    enc(p.0[1] as f32 / 65535.0, encode),
+                    enc(p.0[2] as f32 / 65535.0, encode),
                 ]);
             }
             true
         }
         image::ColorType::Rgb32F | image::ColorType::Rgba32F => {
             for p in img.to_rgb32f().pixels() {
-                rgb.extend_from_slice(&[p.0[0], p.0[1], p.0[2]]);
+                rgb.extend_from_slice(&[
+                    enc(p.0[0], encode),
+                    enc(p.0[1], encode),
+                    enc(p.0[2], encode),
+                ]);
             }
             true
         }
@@ -721,6 +771,23 @@ pub fn decode_rgb_f32_with_origin(
         }
     };
     Ok((rgb, w, h, deep, origin))
+}
+
+/// 传感器数据的 sRGB 显示编码（IEC 61966-2-1，含 0.04045 线性段）。
+/// `encode=false` 时逐位透传——成品文件（PixelOrigin::Image）不许动。
+///
+/// sRGB display encoding for sensor data (IEC 61966-2-1, with the 0.04045 linear
+/// segment). `encode=false` is a bit-transparent pass-through: finished files
+/// (`PixelOrigin::Image`) must not be touched.
+fn enc(v: f32, encode: bool) -> f32 {
+    if !encode {
+        return v;
+    }
+    if v <= 0.003_130_8 {
+        v * 12.92
+    } else {
+        1.055 * v.powf(1.0 / 2.4) - 0.055
+    }
 }
 
 pub fn decode_for_grade(
@@ -844,7 +911,18 @@ pub fn decode_preview_sketch(
         let full = fit_dims(fw as usize, fh as usize, full_side);
         let small = fit_long_side(&img.to_rgb8(), sketch_side);
         let (w, h) = (small.width() as usize, small.height() as usize);
-        let pixels = small.as_raw().iter().map(|v| *v as f32 / 255.0).collect();
+        // 与全量口同一约定：传感器数据在出口做 sRGB 显示编码（见
+        // decode_rgb_f32_with_origin 的注释），草图与全量必须同域，否则
+        // 开图那一帧会「草图亮、全量暗」跳一下。
+        //
+        // Same convention as the full-size exit: sensor data is sRGB-display-encoded
+        // here (see decode_rgb_f32_with_origin); sketch and full preview must share the
+        // domain or the first frame would jump bright-sketch to dark-full.
+        let pixels = small
+            .as_raw()
+            .iter()
+            .map(|&v| enc(v as f32 / 255.0, true))
+            .collect();
         return Ok(SketchSource {
             rgb: pixels,
             w,
@@ -1142,6 +1220,27 @@ pub fn measure_many(paths: &[PathBuf], long_side: u32) -> MeasurePass {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sensor_decode_exits_display_encoded_and_images_pass_through() {
+        // 「复位后变黑」的根因钉在这里：显影链吃编码域输入，传感器数据出口
+        // 必须做 sRGB 显示编码；成品文件（PixelOrigin::Image）逐位不动。
+        // Pinned root cause of "reset goes black": the develop chain takes
+        // encoded-domain input, so sensor exits must display-encode; finished
+        // files pass through bit-identically.
+        // 18% 中灰线性值编码后应 ≈ 0.461（sRGB 定义，±0.002）。
+        let mid = super::enc(0.18, true);
+        assert!(
+            (mid - 0.461).abs() < 0.002,
+            "18% 灰编码后 {mid}，sRGB 定义值 0.461"
+        );
+        // 线性段两端与纯黑。
+        assert!((super::enc(0.0025, true) - 0.0025 * 12.92).abs() < 1e-6);
+        assert!(super::enc(0.0, true).abs() < 1e-9);
+        assert!((super::enc(1.0, true) - 1.0).abs() < 1e-6);
+        // 透传：encode=false 一位不动。
+        assert!((super::enc(0.18, false) - 0.18).abs() < 1e-9);
+    }
 
     #[test]
     fn area_weights_sum_to_one() {

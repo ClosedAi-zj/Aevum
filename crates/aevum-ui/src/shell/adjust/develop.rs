@@ -468,7 +468,7 @@ fn hsl_body(state: &mut AppState, ui: &mut Ui) -> bool {
         widgets::BAND_HUES[band]
     );
     ui.label(RichText::new(title).size(SIZE_SMALL).color(muted()));
-    changed |= slider(
+    changed |= slider_grad(
         ui,
         ("hsl-h", band),
         "色相",
@@ -478,8 +478,9 @@ fn hsl_body(state: &mut AppState, ui: &mut Ui) -> bool {
         0.0,
         0,
         true,
+        hsl_band_stops(band, HslKind::Hue),
     );
-    changed |= slider(
+    changed |= slider_grad(
         ui,
         ("hsl-s", band),
         "饱和度",
@@ -489,8 +490,9 @@ fn hsl_body(state: &mut AppState, ui: &mut Ui) -> bool {
         0.0,
         0,
         true,
+        hsl_band_stops(band, HslKind::Sat),
     );
-    changed |= slider(
+    changed |= slider_grad(
         ui,
         ("hsl-l", band),
         "明亮度",
@@ -500,6 +502,7 @@ fn hsl_body(state: &mut AppState, ui: &mut Ui) -> bool {
         0.0,
         0,
         true,
+        hsl_band_stops(band, HslKind::Lum),
     );
     changed
 }

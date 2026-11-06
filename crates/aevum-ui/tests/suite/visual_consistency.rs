@@ -329,3 +329,28 @@ fn floating_windows_read_as_floating() {
         "title_frame 不再用 header()，标题带与窗口主体糊回一片"
     );
 }
+
+#[test]
+fn hsl_band_rails_carry_their_band_colour() {
+    // D1（LightCraft Track::Hue/Sat/Lum 语义）：HSL 三条轨道必须走频段渐变——
+    // 色相=频段色→补色、饱和=灰→频段色、明亮=黑→频段色。三个种类不许退回
+    // 同一个无含义的灰轨，红(0°)与蓝(240°)的频段色必须分得开。
+    // D1 (LightCraft Track semantics): the three HSL rails must take band
+    // gradients; the three kinds must not collapse into one grey rail, and the
+    // red (0 deg) and blue (240 deg) band colours must differ.
+    let common = clean("shell/common.rs");
+    for needle in [
+        "fn hsl_band_stops",
+        "HslKind::Hue",
+        "HslKind::Sat",
+        "HslKind::Lum",
+    ] {
+        assert!(common.contains(needle), "common.rs 缺 {needle}");
+    }
+    let dev = clean("shell/adjust/develop.rs");
+    let n = dev.matches("slider_grad").count();
+    assert!(
+        n >= 3,
+        "HSL 三条滑块没有走 slider_grad（现 {n} 处），频段渐变退回灰轨"
+    );
+}

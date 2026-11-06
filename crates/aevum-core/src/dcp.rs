@@ -339,6 +339,29 @@ pub fn decode(path: &Path, profile_path: &Path) -> Result<(Vec<f32>, u32, u32, b
     // route, not the file suffix: the same `.dng` may be handled by the built-in parser
     // (single-channel CFA) or fall through to the backend (three-channel LinearRaw), and the suffix
     // cannot tell them apart.
+    //
+    // 2026-11-07：`decode_rgb_f32_with_origin` 的传感器出口现在做 sRGB 显示编码
+    // （普通无配置路径的「复位变黑」修复）。DCP 的矩阵/色调曲线数学吃**线性**输入、
+    // 自己在出口 `lin_to_srgb`——入口先把那层编码撤销（srgb_decode），数学原样，
+    // 输出域不变。
+    //
+    // 2026-11-07: the sensor exit of `decode_rgb_f32_with_origin` now display-encodes
+    // to sRGB (the "reset goes black" fix for the plain, profile-less path). DCP's
+    // matrix / tone-curve math takes **linear** input and encodes at its own exit via
+    // `lin_to_srgb` -- undo the encoding here (srgb_decode) so the math and the output
+    // domain stay exactly as before.
+    if origin != crate::metrics::PixelOrigin::Image {
+        rgb.par_chunks_exact_mut(3).for_each(|px| {
+            for v in px.iter_mut() {
+                let c = f64::from(*v);
+                *v = if c <= 0.04045 {
+                    (c / 12.92) as f32
+                } else {
+                    (f64::powf((c + 0.055) / 1.055, 2.4)) as f32
+                };
+            }
+        });
+    }
     if origin == crate::metrics::PixelOrigin::DngBuiltin {
         let neutral = neutral
             .ok_or_else(|| "这个 DNG 没有 AsShotNeutral，无法做相机配置白平衡".to_owned())?;

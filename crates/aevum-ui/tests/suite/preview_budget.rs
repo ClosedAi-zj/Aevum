@@ -142,7 +142,13 @@ const JPEG_SAMPLE: &str = "PANA0198.JPG";
 /// 全量预览像素指纹金标：24MP RAW。
 ///
 /// Golden fingerprint of the full preview for the 24MP RAW.
-const GOLDEN_FULL_RAW: u64 = 7566983699783529374;
+// 2026-11-07 传感器出口 sRGB 显示编码（「复位变黑」修复）重量；JPEG 金标
+// 未变（Image 源逐位透传），恰好证明只有传感器路径被改动。
+//
+// Re-measured for the 2026-11-07 sensor-exit sRGB display encoding (the
+// "reset goes black" fix); the JPEG golden is unchanged (Image sources pass
+// through bit-identically), which also proves only the sensor route moved.
+const GOLDEN_FULL_RAW: u64 = 11841204655285921200;
 
 /// 全量预览像素指纹金标：JPEG。
 ///
@@ -201,6 +207,7 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 /// 首屏预算：24MP RAW 清缓存后草图首次 ≤300ms。
 ///
 /// First-screen budget: a 24MP RAW's cold sketch must come in at or under 300ms.
+
 #[test]
 fn preview_sketch_first_screen_within_budget() {
     let _serial = serial();

@@ -127,7 +127,14 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .frame(egui::Frame::NONE.fill(header()))
             .show(root, |ui| status_bar(state, ui));
     }
-    if layout.film.allowed() {
+    if layout.film.allowed() && state.frame_count() > 0 {
+        // 无序列不画时间线面板：188px 的空白下巴曾是未打开文件时的第一观感
+        // （用户截图实锤「下面的下巴是干啥的」）。打开序列后自动回来；
+        // 「胶片」竖条开关在无序列时也不该亮着——见 dock_strip 的 items。
+        //
+        // Do not draw the timeline panel with no sequence: a 188 px blank chin was
+        // the first thing seen before opening any files (user screenshot: "what is
+        // this chin for"). It returns as soon as a sequence opens.
         egui::Panel::bottom("timeline")
             .exact_size(TIMELINE_H)
             .frame(egui::Frame::NONE.fill(surround()))

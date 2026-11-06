@@ -1187,9 +1187,22 @@ fn metrics_decode_routes_raw_names_as_deep_sources() {
     let (rgb, w, h, deep) = aevum_core::metrics::decode_rgb_f32(&path).expect("f32 解码");
     assert_eq!((w, h), (8, 8));
     assert!(deep, "RAW 传感器路径要按高位深源处理");
-    assert_eq!(rgb[0], 1000.0 / 65535.0);
-    assert_eq!(rgb[1], 500.0 / 65535.0);
-    assert_eq!(rgb[2], 200.0 / 65535.0);
+    // 2026-11-07 起传感器出口做 sRGB 显示编码（「复位变黑」根因修复）：
+    // 这里的期望值同步为 encode(sRGB) 后的结果，透传的旧口径已删。
+    //
+    // Since 2026-11-07 the sensor exit display-encodes to sRGB (the "reset goes
+    // black" fix); expectations follow the encoded values, the old linear
+    // pass-through is gone.
+    let enc = |v: f32| {
+        if v <= 0.003_130_8 {
+            v * 12.92
+        } else {
+            1.055 * v.powf(1.0 / 2.4) - 0.055
+        }
+    };
+    assert!((rgb[0] - enc(1000.0 / 65535.0)).abs() < 1e-6);
+    assert!((rgb[1] - enc(500.0 / 65535.0)).abs() < 1e-6);
+    assert!((rgb[2] - enc(200.0 / 65535.0)).abs() < 1e-6);
 
     // 预览兜底的同一口径：仍是 Rgb16，深标志为真，但值只有 8 位精度。
     let preview_file = write_file(

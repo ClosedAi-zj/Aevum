@@ -5,11 +5,14 @@
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::BAR_H;
+use super::common::HslKind;
 use super::common::group_header;
+use super::common::hsl_band_stops;
 use super::common::in_field;
 use super::common::kv;
 use super::common::note;
 use super::common::slider;
+use super::common::slider_grad;
 use super::common::slider_row;
 use super::common::spec_slider;
 use super::dialogs::choose_audio;
