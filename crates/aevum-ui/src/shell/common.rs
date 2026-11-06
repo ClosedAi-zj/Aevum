@@ -4,7 +4,6 @@
 //! key-value rows (used by adjust / mask / dock).
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
-use super::INSET_RIM;
 use super::MICRO;
 use super::adjust::reset_group;
 use crate::controls;
@@ -676,7 +675,16 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // the rail, which is visibly longer in the design.
     const LABEL_W: f32 = 76.0;
     const VALUE_W: f32 = 44.0;
-    const RESET_W: f32 = 14.0;
+    // 复位点 5px：设计图 `.slider-row .s-reset{width:5px;height:5px}`。原 14px 是
+    // 一个带内边距的点击靶，比设计稿宽 9px，轨道因此短了一截——实测程序轨道
+    // 188px vs 设计稿约 207px。命中区改用 `ui.interact` 的矩形另行放大，
+    // 不再靠占位宽度换手感。
+    //
+    // 5 px per the design's `.slider-row .s-reset{width:5px;height:5px}`. The old
+    // 14 px padding box was 9 px wider than the design and shortened the rail
+    // accordingly -- measured 188 px against the design's ~207 px. Hit area is widened
+    // through the `ui.interact` rect instead of by reserving layout width.
+    const RESET_W: f32 = 5.0;
     const ROW_PAD: f32 = 12.0;
     let label = crate::i18n::tr(label);
     let tip = crate::i18n::tr(tip);
@@ -686,18 +694,30 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     let hot_row = ui.rect_contains_pointer(rect);
     let changed_now = (*v - default).abs() > 1e-9;
 
-    // 数值框：右端固定 52，右对齐 —— 一列读数的小数点才会落在同一条竖线上。
+    // 数值框：右端留出复位点位置，读数右对齐 —— 一列读数的小数点才会落在同一条竖线上。
+    // 右侧排布照设计图 DOM 顺序：轨道(flex:1) → 读数(44) → 复位点(5px)，
+    // 复位点**在读数之后**，不占轨道宽度。
     let field = Rect::from_min_size(
-        Pos2::new(rect.right() - VALUE_W, rect.center().y - 10.0),
+        Pos2::new(
+            rect.right() - ROW_PAD - RESET_W - VALUE_W,
+            rect.center().y - 10.0,
+        ),
         Vec2::new(VALUE_W, 20.0),
     );
-    // 复位点夹在轨道与读数之间：偏离默认值才现形，平时把位置让给轨道。
+    // 复位点排在读数右侧：偏离默认值才现形。旧版把它夹在轨道与读数之间，即使参数
+    // 没改动也一直占着 14px，轨道被压短一截——这是并排对照里「轨道比设计稿短」的
+    // 直接原因。
+    //
+    // The restore dot sits to the **right** of the readout, matching the design's DOM
+    // order (track flex:1 → value 44 → reset 5 px). The old version wedged it between
+    // the track and the readout, so it reserved 14 px even on untouched parameters and
+    // the rail came out visibly shorter than the design.
     let reset = Rect::from_center_size(
-        Pos2::new(field.left() - RESET_W * 0.5 - 2.0, rect.center().y),
+        Pos2::new(rect.right() - ROW_PAD - RESET_W * 0.5, rect.center().y),
         Vec2::splat(RESET_W),
     );
     let rail_left = rect.left() + ROW_PAD + LABEL_W + 4.0;
-    let rail_right = (reset.left() - 3.0).max(rail_left + 1.0);
+    let rail_right = (field.left() - 8.0).max(rail_left + 1.0);
     let track_y = rect.center().y;
     {
         let p = ui.painter();
@@ -880,21 +900,30 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
                 Stroke::new(1.0, divider()),
                 egui::StrokeKind::Inside,
             );
-            let ax = tx(rail_pos(default));
             let vx = tx(rail_pos(*v));
-            if (vx - ax).abs() > 0.5 {
+            // 填充口径按设计图 `.slider-track .fill{left:0;…}`：从轨道**左端**铺到
+            // knob，读作一根进度条。旧版是「默认值 → 当前值」的差值段：参数回到默认
+            // 整条填充就消失，稍改一点只剩很短一截，整列看上去全是空轨道——这是并排
+            // 对照时最扎眼的一处差异（设计稿每一行都有一条明确的填充量）。
+            //
+            // 左端填充对「色温 / 色调」这类无默认中点的轨道同样成立：它们本来就是
+            // 从左到右的量程，不是双向偏移量。
+            //
+            // Fill per the design's `.slider-track .fill{left:0;…}`: from the rail's
+            // **left end** to the knob, reading as a progress bar. The old span ran from
+            // the default value to the current one, so a parameter back at its default
+            // showed no fill at all and a small change showed a stub -- the whole column
+            // read as blank tracks. That was the most conspicuous difference in the
+            // side-by-side comparison, where every row in the design shows a clear amount
+            // of fill. Left-anchored fill also suits temperature and tint, whose range
+            // runs left to right rather than around a centre.
+            if vx - rail_left > 0.5 {
                 p.rect_filled(
                     Rect::from_min_max(
-                        Pos2::new(ax.min(vx), track_y - rail_h * 0.5),
-                        Pos2::new(ax.max(vx), track_y + rail_h * 0.5),
+                        Pos2::new(rail_left, track_y - rail_h * 0.5),
+                        Pos2::new(vx, track_y + rail_h * 0.5),
                     ),
                     rail_h * 0.5,
-                    // 已改量走中性灰（elev_hover），强调色只留给拖动中的 knob 环：
-                    // 一片蓝填充会像「报错/警告」，读数才是主角（设计稿 §滑块）。
-                    //
-                    // The changed span is neutral (elev_hover); accent stays on the
-                    // dragged knob ring only -- a blue fill reads as an error, and the
-                    // readout is the protagonist (design spec, sliders).
                     elev_hover(),
                 );
             }
@@ -909,23 +938,36 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
             Stroke::new(1.0, divider()),
         );
     }
-    // 尺寸（设计稿 §滑块）：default 14px / hover 16px / 按下 13px。按下是**缩小**
-    // 而不是放大——光标压上去时圆点陷进轨道，才读得出「按住了」（旧版拖动反而变大，
-    // 方向反了）。
+    // knob 尺寸与配色严格照设计图 `.slider-track .knob`：直径 14px、底色
+    // `elev_hover`、`border_strong` 描边。hover 16 / 按下 13（按下是**缩小**，
+    // 光标压上去时圆点陷进轨道才读得出「按住了」）。
     //
-    // Sizes (design spec, sliders): 16px default / 18px hover / 15px pressed.
+    // 旧版是 16px **纯白**大圆点：深底上一列白点比任何参数内容都抢眼，整列读起来
+    // 像一排按钮而不是推子——这是并排对照时最直接的「不像」来源，不是尺寸差 2px
+    // 的问题，是白点在深色面板上的对比度远高于设计稿的灰点。
+    //
+    // Knob size and colour follow the design's `.slider-track .knob` exactly: 14 px
+    // across, `elev_hover` fill, `border_strong` stroke. Hover is 16, pressed is 13
+    // (pressed **shrinks**, so the dot sinks into the track and reads as held down).
+    //
+    // The old knob was a 16 px **pure white** dot: a column of white dots on a dark
+    // panel out-shouted every piece of parameter content and read as a row of buttons
+    // rather than a fader. That was the most direct source of "this does not look like
+    // the design" -- not the 2 px size difference, but the contrast of a white dot on a
+    // dark panel against the design's grey one.
     let vx = tx(rail_pos(*v));
     let knob = Pos2::new(vx, track_y);
     let r = if t.dragged() {
-        7.5
+        6.5
     } else if t.hovered() {
-        9.0
-    } else {
         8.0
+    } else {
+        7.0
     };
-    p.circle_filled(knob + Vec2::new(0.0, 1.0), r, Color32::from_black_alpha(70));
-    p.circle_filled(knob, r, Color32::WHITE);
-    p.circle_stroke(knob, r, Stroke::new(1.0, INSET_RIM));
+    // 拖到轨道外的影子只给一层薄的，深底上不需要重投影。
+    p.circle_filled(knob + Vec2::new(0.0, 1.0), r, Color32::from_black_alpha(55));
+    p.circle_filled(knob, r, elev_hover());
+    p.circle_stroke(knob, r, Stroke::new(1.0, border_strong()));
     if t.dragged() {
         // 按下内阴影：上缘压一道暗弧，读作被按进轨道（对齐 inset 阴影手感）。
         p.circle_filled(
@@ -946,7 +988,8 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // 复位点画在最后：这时 *v 已经落定，不会在刚被点回默认的那一帧闪一下。
     if (*v - default).abs() > 1e-9 {
         let hot = reset_resp.hovered();
-        p.circle_filled(reset.center(), if hot { 3.6 } else { 2.6 }, accent());
+        // 5px 尺寸下圆点画 2.5/3.2：设计稿复位点本身就是 5x5 的小圆。
+        p.circle_filled(reset.center(), if hot { 3.2 } else { 2.5 }, accent());
         if hot {
             p.circle_stroke(
                 reset.center(),

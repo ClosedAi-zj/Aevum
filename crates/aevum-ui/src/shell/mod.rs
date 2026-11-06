@@ -10,7 +10,7 @@
 //! Only the layout and interaction habits are borrowed; icons, colour schemes and
 //! controls are all drawn in-house.
 
-use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
+use egui::{Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
 use self::canvas::canvas_panel;
 use self::chrome::window_resize;
@@ -66,9 +66,6 @@ const RULER: f32 = 24.0;
 /// 压在图像上的微标签（标尺刻度、胶片序号）：比界面最小字阶再小一档，
 /// 但不许低于 9px，否则嵌进来的静态字重会发虚。
 const MICRO: f32 = 9.0;
-/// 实心控件的那圈极淡内描边（红绿灯圆点、滑杆推子共用）：
-/// 只给边界，不给 Adobe 式硬边框。
-const INSET_RIM: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 46);
 
 const UV: Rect = Rect {
     min: Pos2::new(0.0, 0.0),

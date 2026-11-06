@@ -663,7 +663,7 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
             state.settings_dirty = true;
         }
         resp.on_hover_text(crate::i18n::t!("预设与快照 (Ctrl+K)"));
-        y += size + 6.0;
+        y += size + 4.0;
     }
     p.line_segment(
         [
@@ -672,7 +672,7 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
         ],
         Stroke::new(1.0, divider()),
     );
-    y += 8.0;
+    y += 6.0;
     for (i, t) in Tool::ALL.iter().enumerate() {
         // 查看类（抓手/缩放）与动手类（裁剪/对比/网格）之间留一道缝。
         if i == 2 {
@@ -683,7 +683,7 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
                 ],
                 Stroke::new(1.0, divider()),
             );
-            y += 8.0;
+            y += 6.0;
         }
         let rect = Rect::from_min_size(Pos2::new(x, y), Vec2::splat(size));
         let resp = ui.interact(rect, ui.make_persistent_id(("tool", i)), Sense::click());
