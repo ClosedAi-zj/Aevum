@@ -354,3 +354,23 @@ fn hsl_band_rails_carry_their_band_colour() {
         "HSL 三条滑块没有走 slider_grad（现 {n} 处），频段渐变退回灰轨"
     );
 }
+
+#[test]
+fn group_headers_end_in_a_single_hairline() {
+    // 用户点名「选项间的分割」不喜欢：旧版组头是「实线+2px 上一道淡线」的
+    // 双线签名，十四组排下来读作表格。现在一条 hairline 收尾——组头函数体
+    // 内 theme::rule 恰好一次，多一次即红。
+    let common = clean("shell/common.rs");
+    let i = common
+        .find("pub(super) fn group_header")
+        .expect("group_header 不见了");
+    let body = &common[i..common[i..]
+        .find("\npub(super) fn ")
+        .map(|j| i + j)
+        .unwrap_or(common.len())];
+    let rules = body.matches("theme::rule(").count();
+    assert_eq!(
+        rules, 1,
+        "group_header 里出现了 {rules} 道分隔线，双线口径已废"
+    );
+}

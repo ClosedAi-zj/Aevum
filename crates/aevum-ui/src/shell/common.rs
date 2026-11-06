@@ -266,8 +266,10 @@ pub(super) fn group_header(
     resettable: bool,
 ) -> bool {
     let title = crate::i18n::tr(title);
-    // 分组之间留一口气：规则线紧贴上一组内容时，滚动起来像一整块密排表。
-    ui.add_space(4.0);
+    // 分组之间留一口气：8px 顶空 + 单 hairline 收尾。旧版是「实线+2px 上一道
+    // 淡线」的双线签名，十四组排下来读作表格横线（用户点名不喜欢的「分割」）；
+    // ACR 2023 的分区头其实只靠标题体格 + 一条低对比线。
+    ui.add_space(8.0);
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
     if state.dock_focus.as_deref() == Some(key) {
@@ -286,14 +288,7 @@ pub(super) fn group_header(
     // ACR's section-header signature: a solid rule at the bottom edge plus a fainter
     // hairline 2 px above it. The double rule reads as "a section starts here", where
     // the old single top rule read as a table row divider.
-    theme::rule(p, rect.left(), rect.right(), rect.bottom() - 1.0, border());
-    theme::rule(
-        p,
-        rect.left(),
-        rect.right(),
-        rect.bottom() - 4.0,
-        divider().gamma_multiply(0.55),
-    );
+    theme::rule(p, rect.left(), rect.right(), rect.bottom() - 1.0, divider());
     let open = !state.collapsed.contains(key);
     // 悬停是一整条圆角高亮，不是方条：macOS 侧栏分组头的口径。
     if resp.hovered() {

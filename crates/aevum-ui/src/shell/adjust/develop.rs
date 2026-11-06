@@ -19,8 +19,19 @@ use super::*;
 /// always works on the nine sections; the heading merely bands a group of sliders.
 /// Callers translate first with `t!` (the macro only takes literals).
 pub(super) fn sub_head(ui: &mut Ui, label: &str) {
-    ui.add_space(6.0);
-    ui.label(RichText::new(label).font(bold(SIZE_SMALL)).color(muted()));
+    // 子区标题（白平衡 / 影调 / 偏好）与滑块标签拉开体格差：上方 10px 呼吸、
+    // 加字距的 10 号 dim 字（ACR 的子区标头读法）——原来它与滑块标签同字号
+    // 同位置，读不出「这里换了一组」。
+    ui.add_space(10.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 14.0), Sense::hover());
+    theme::tracked_text(
+        ui.painter(),
+        Pos2::new(rect.left() + 1.0, rect.center().y - 6.0),
+        label,
+        egui::FontId::proportional(10.0),
+        dim(),
+        1.6,
+    );
 }
 
 /// 按字段画一条推子：清单里写了表里没有的字段，debug 构建当场炸出来，
@@ -112,6 +123,7 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
         // Photo style (LR's Profile slot): the rendering basis beneath every slider.
         // Switching touches no slider value and never enters the "N adjusted" badge --
         // it is a basis, not an adjustment.
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(crate::i18n::t!("风格"))
@@ -124,7 +136,7 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
                     aevum_core::style::NAME_KEYS
                         [current.min(aevum_core::style::COUNT - 1) as usize],
                 ))
-                .width(96.0)
+                .width(112.0)
                 .show_ui(ui, |ui| {
                     for (i, key) in aevum_core::style::NAME_KEYS.iter().enumerate() {
                         let idx = i as u8;

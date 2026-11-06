@@ -28,7 +28,13 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
     let p = ui.painter().clone();
     let strip = Rect::from_min_size(full.min, Vec2::new(full.width(), TAB_H));
     p.rect_filled(strip, 0, header());
-    theme::rule(&p, strip.left(), strip.right(), strip.bottom(), border());
+    theme::rule(
+        &p,
+        strip.left(),
+        strip.right(),
+        strip.bottom(),
+        border_strong(),
+    );
 
     // 面板页签用下划线而不是分段胶囊：一条 HEADER 上排六个名字，
     // 选中项靠白字 + 2px 强调线认，和 PS 的调板页签同一套读法。
