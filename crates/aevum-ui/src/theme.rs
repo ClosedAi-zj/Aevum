@@ -1325,9 +1325,30 @@ pub fn paint_chip(
     active: bool,
     accent: Color32,
 ) -> egui::Response {
+    // ID 不能只由标签文本决定：`左 / 右`、`标准`、`跟随系统` 这类文案在同一屏里
+    // 出现在多行（工具轨/浮动面板/胶片条都有「左·右」，字号与密度都有「标准」），
+    // 同标签同作用域会撞成同一个 ID，egui 当场把「First/Second use of widget ID」
+    // 画在控件上（用户 2026-11-07 截图实证）。
+    //
+    // 位置也进盐：自绘控件的矩形在本帧是唯一的，且同一布局下逐帧稳定，交互状态
+    // 不会丢。
+    //
+    // The id must not depend on the label alone: `左 / 右`, `标准` and `跟随系统` all
+    // appear on several rows of one screen (tool rail / floating panels / filmstrip each
+    // have 左·右, font size and density each have 标准). The same label in the same scope
+    // collapsed into one id, and egui painted "First/Second use of widget ID" right on the
+    // control (user screenshot, 2026-11-07).
+    //
+    // The rect is part of the salt: a self-painted control's rect is unique within a frame
+    // and stable across frames for the same layout, so interaction state survives.
     let resp = ui.interact(
         rect,
-        ui.scope_id().with(("chip", label)),
+        ui.scope_id().with((
+            "chip",
+            label,
+            rect.left().round() as i32,
+            rect.top().round() as i32,
+        )),
         egui::Sense::click(),
     );
     // macOS 小胶囊：靠底色差分层，只有选中态保留强调色描边。
@@ -1531,6 +1552,59 @@ mod token_tests {
         assert!(
             (global - MENU_AREA_W).abs() < f32::EPSILON,
             "Area 读的全局样式宽是 {global}，不是 {MENU_AREA_W}"
+        );
+    }
+
+    /// 同标签、同作用域的两枚 chip 必须拿到不同 ID。
+    ///
+    /// 这是个真实发生过的缺陷：`paint_chip` 的 ID 原本只由标签文本决定，而
+    /// `左 / 右`、`标准`、`跟随系统` 这些文案在同一屏里会出现多行（工具轨 / 浮动面板 /
+    /// 胶片条都有「左·右」；字号与密度都有「标准」）。撞 ID 后 egui 直接把
+    /// 「First use / Second use of widget ID」画在控件上（用户 2026-11-07 截图）。
+    ///
+    /// 改法是把控件矩形也纳入盐；这条判据保证「按标签算 ID」不会再回来。
+    ///
+    /// Two chips with the same label in the same scope must get different ids.
+    ///
+    /// This really happened: `paint_chip` derived its id from the label alone, while
+    /// `左 / 右`, `标准` and `跟随系统` appear on several rows of one screen (tool rail /
+    /// floating panels / filmstrip each have 左·右; font size and density each have 标准).
+    /// Colliding ids made egui paint "First use / Second use of widget ID" onto the
+    /// controls (user screenshot, 2026-11-07).
+    ///
+    /// The fix folds the control rect into the salt; this test keeps label-only ids from
+    /// coming back.
+    #[test]
+    fn two_chips_with_the_same_label_get_different_ids() {
+        let ctx = Context::default();
+        apply_style(&ctx, 1.0);
+
+        let mut ids = [egui::Id::NULL; 2];
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1600.0, 1000.0),
+            )),
+            max_texture_side: Some(8192),
+            ..Default::default()
+        };
+        let mut out = ctx.run_pass(input, |ctx| {
+            ctx.root_ui(|ui| {
+                for (i, slot) in ids.iter_mut().enumerate() {
+                    let rect = egui::Rect::from_min_size(
+                        egui::Pos2::new(0.0, i as f32 * 32.0),
+                        egui::vec2(64.0, 26.0),
+                    );
+                    let resp = paint_chip(ui.painter(), ui, rect, "左", false, accent());
+                    *slot = resp.id;
+                }
+            });
+        });
+        out.textures_delta.clear();
+
+        assert_ne!(
+            ids[0], ids[1],
+            "同标签 chip 撞了同一个 ID —— egui 会在控件上画 First/Second use of widget ID"
         );
     }
 
