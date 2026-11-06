@@ -773,6 +773,27 @@ pub fn row_hover() -> Color32 {
 // 这几个数是"整套界面读起来像不像那张图"的根：差 6px 的轨宽、差 70px 的胶片条，
 // 单独看都无所谓，摆在一起就是另一种软件。
 pub const MENU_H: f32 = 30.0;
+/// 弹层首帧宽度 240：egui 的 `Area` 在没有「上次尺寸」记忆时回落到全局
+/// `Spacing::default_area_size`（egui 默认 600×400），而菜单弹层用的是
+/// `Layout::top_down_justified`，于是**重启后第一次**打开菜单会铺成一条 600px 宽的空板子
+/// （第二次打开已经有尺寸记忆，贴内容——这就是「之前正常、现在不对」的来源）。
+///
+/// 240 是菜单条目实测需要的一档：内容更宽时 `Area` 自己会长，不会截断长条目；
+/// 我们自己的五个浮窗全部显式设了 `default_width`/`default_size`，下拉框走
+/// `Spacing::combo_width`，tooltip 走 `Spacing::tooltip_width`，都不吃这个默认值。
+///
+/// Popup first-frame width, 240 px. An `Area` with no remembered size falls back to the
+/// global `Spacing::default_area_size` (egui defaults to 600x400) and menu popups use a
+/// `top_down_justified` layout, so the first menu opened after a restart stretched into a
+/// 600 px empty slab; the second open already has a remembered size and fits its content,
+/// which is exactly the "it used to be fine, now it is not" report.
+///
+/// 240 px covers the measured menu items; the `Area` still grows when content needs more.
+/// All five of our floating windows set `default_width`/`default_size` explicitly, combo
+/// boxes use `Spacing::combo_width` and tooltips use `Spacing::tooltip_width`, so none of
+/// them read this default.
+pub const MENU_AREA_W: f32 = 240.0;
+
 /// 选项栏高 40：设计图 `.optionbar{height:40px}`。原 34 是把浏览器缩放当成紧凑档
 /// 量出来的偏小值——选项栏里 28px 的 chip 居中后上下各只剩 3px，读作一条挤住的带子。
 ///
@@ -1090,6 +1111,15 @@ pub fn apply_style(ctx: &Context, zoom: f32) {
     style.spacing.scroll.bar_width = 8.0;
     style.spacing.scroll.floating = false;
     style.spacing.indent = 12.0;
+    // 弹层首帧宽度（见 `MENU_AREA_W` 的注释）：不收这一档，重启后第一次点菜单会得到
+    // 一条 egui 默认的 600px 空板子。写在这里是因为 `Area` 读的是 `ctx.global_style()`，
+    // 只有全局样式生效；内容回调里改 `ui.spacing_mut()` 管不到弹层自身的宽度。
+    //
+    // Popup first-frame width (see `MENU_AREA_W`): without this, the first menu opened after
+    // a restart becomes egui's 600 px default slab. It belongs here because `Area` reads
+    // `ctx.global_style()`; changing `ui.spacing_mut()` inside the content callback cannot
+    // affect the popup's own width.
+    style.spacing.default_area_size = Vec2::new(MENU_AREA_W, 400.0);
     style.interaction.selectable_labels = false;
 
     // 浅色不是"把深色反过来"，而是 egui 自己也要换一套基线：
@@ -1452,6 +1482,110 @@ mod token_tests {
         [
             p.surround, p.canvas, p.header, p.panel, p.dock, p.chrome, p.bg,
         ]
+    }
+
+    /// 弹层首帧宽度必须落在菜单档，不能是 egui 默认的 600。
+    ///
+    /// 这条钉的是 `apply_style` 有没有把 `default_area_size` 写进**全局**样式：
+    /// `Area` 读 `ctx.global_style()`，所以只在内容回调里改 `ui.spacing_mut()` 是无效的
+    /// （这正是前三轮菜单样式改了却「没变化」的同类错误）。删掉那行赋值，egui 的
+    /// 600×400 默认值立刻回来，本测试红。
+    ///
+    /// 诚实的边界：弹层在测试环境不渲染（`Popup::open(true)` 在无头帧里只产生空 shape），
+    /// 所以这条只证明「全局样式被正确设置」，**端到端仍需用户重启后首帧点开菜单确认**。
+    ///
+    /// The popup's first-frame width must land in the menu range, not egui's 600 default.
+    ///
+    /// This pins whether `apply_style` writes `default_area_size` into the **global** style:
+    /// `Area` reads `ctx.global_style()`, so touching `ui.spacing_mut()` inside the content
+    /// callback does nothing -- the same class of mistake that made three rounds of menu
+    /// styling changes invisible. Remove that assignment and egui's 600x400 default returns,
+    /// turning this test red.
+    ///
+    /// Honest limit: popups do not render in the test harness (`Popup::open(true)` yields
+    /// only an empty shape in a headless frame), so this proves the global style is set
+    /// correctly; end-to-end still needs the user to restart and open the menu once.
+    #[test]
+    fn popup_first_frame_width_is_menu_sized_not_egui_600() {
+        let ctx = Context::default();
+        apply_style(&ctx, 1.0);
+
+        // 两套主题都要带这一档：apply 写两份，漏一份会在切主题后复发。
+        // Both theme styles must carry it: apply writes both, and a missed one comes back
+        // after a theme switch.
+        for theme in [egui::Theme::Dark, egui::Theme::Light] {
+            let w = ctx.style_of(theme).spacing.default_area_size.x;
+            assert!(
+                (w - MENU_AREA_W).abs() < f32::EPSILON,
+                "{theme:?} 的弹层默认宽是 {w}，不是菜单档 {MENU_AREA_W}"
+            );
+            assert!(
+                w < 600.0,
+                "{theme:?} 的弹层默认宽退回了 egui 的 600，重启后首个菜单会铺成空板子"
+            );
+        }
+
+        // 全局样式（Area 真正读的那份）也得是这个值。
+        // The global style -- the one `Area` actually reads -- must carry it too.
+        let global = ctx.global_style().spacing.default_area_size.x;
+        assert!(
+            (global - MENU_AREA_W).abs() < f32::EPSILON,
+            "Area 读的全局样式宽是 {global}，不是 {MENU_AREA_W}"
+        );
+    }
+
+    /// `Area` 不设 `default_size` 时的实际布局宽度必须跟着 `MENU_AREA_W` 走。
+    ///
+    /// 上一条只证明「样式里存了对的值」；这条跑一帧真实布局，量 `Area` 自己算出来的宽度，
+    /// 证明它真的采纳了这个默认值——菜单弹层用的就是「`Area` 不设尺寸 +
+    /// `top_down_justified` 布局」这同一个组合，只是它换了个 `Popup` 外壳。
+    ///
+    /// The width an `Area` actually lays out to, when it sets no `default_size`, must follow
+    /// `MENU_AREA_W`. The previous test only proves the style holds the right value; this one
+    /// runs a real frame and measures the width the `Area` itself computes, proving the
+    /// default is honoured. A menu popup is exactly this combination -- an `Area` with no
+    /// size plus a `top_down_justified` layout -- just wrapped in a `Popup`.
+    #[test]
+    fn an_area_without_default_size_lays_out_at_the_menu_width() {
+        let ctx = Context::default();
+        apply_style(&ctx, 1.0);
+
+        let mut laid_out = 0.0f32;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1600.0, 1000.0),
+            )),
+            max_texture_side: Some(8192),
+            ..Default::default()
+        };
+        let mut out = ctx.run_pass(input, |ctx| {
+            egui::Area::new(egui::Id::unique("area-width-probe"))
+                .layout(egui::Layout::top_down_justified(egui::Align::Min))
+                .show(ctx, |ui| {
+                    // 探针只用 ASCII：这条判据量的是宽度上限，与文案语言无关，
+                    // 而中文裸字面量会被 `ui_call_sites_have_no_bare_chinese` 抓红
+                    // （英文模式下那两行会直接上屏）。
+                    //
+                    // The probe stays ASCII: this test measures an upper bound on width and
+                    // does not care about language, while bare Chinese literals are flagged
+                    // by `ui_call_sites_have_no_bare_chinese` (they would paint verbatim in
+                    // English mode).
+                    ui.label("File");
+                    ui.label("Export frames...");
+                    laid_out = ui.min_rect().width();
+                });
+        });
+        // 无头帧要把纹理增量消费掉，否则 epaint 在 Drop 时 panic（与本判据无关）。
+        //
+        // A headless frame must consume its texture deltas, or epaint panics on Drop
+        // (unrelated to what this test asserts).
+        out.textures_delta.clear();
+
+        assert!(
+            laid_out <= MENU_AREA_W + 1.0,
+            "无尺寸 Area 排出了 {laid_out}px，超过菜单档 {MENU_AREA_W}（600 默认值回来了？）"
+        );
     }
 
     #[test]
