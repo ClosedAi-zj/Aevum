@@ -162,6 +162,8 @@ pub(super) fn side_note(ui: &mut Ui, text: &str) {
 }
 
 /// 分组之间只留白，不画线框（macOS 统一工具栏口径）。
+///
+/// Whitespace only between groups, no boxes (macOS unified-toolbar convention).
 pub(super) fn group_gap(ui: &mut Ui) {
     ui.add_space(12.0);
 }
@@ -266,9 +268,14 @@ pub(super) fn group_header(
     resettable: bool,
 ) -> bool {
     let title = crate::i18n::tr(title);
-    // 分组之间留一口气：8px 顶空 + 单 hairline 收尾。旧版是「实线+2px 上一道
-    // 淡线」的双线签名，十四组排下来读作表格横线（用户点名不喜欢的「分割」）；
-    // ACR 2023 的分区头其实只靠标题体格 + 一条低对比线。
+    // 分组之间留一口气：5px 顶空 + 单 hairline 收尾。2026-11-06 按设计稿重定标：
+    // 原 8px 顶空 + 32px 行高，十四组排下来比设计稿厚 33%，一屏少放两行参数。
+    // 主次仍靠「粗标题 + 单线」表达，不靠留白堆。
+    //
+    // A breath between groups: 5 px of top space plus one closing hairline.
+    // Re-scaled on 2026-11-06 against the mockup: 8 px + a 32 px header made the
+    // stack 33% thicker than the mockup and cost two rows per screen. Hierarchy
+    // still comes from the bold title and the single line, not from padding.
     ui.add_space(8.0);
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
@@ -900,17 +907,15 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // 而不是放大——光标压上去时圆点陷进轨道，才读得出「按住了」（旧版拖动反而变大，
     // 方向反了）。
     //
-    // Sizes (design spec, sliders): 14px default / 16px hover / 13px pressed. Pressing
-    // **shrinks** the knob -- it sinks into the groove under the cursor, which is what
-    // reads as "held" (the old build grew it while dragging, the wrong direction).
+    // Sizes (design spec, sliders): 16px default / 18px hover / 15px pressed.
     let vx = tx(rail_pos(*v));
     let knob = Pos2::new(vx, track_y);
     let r = if t.dragged() {
-        6.5
+        7.5
     } else if t.hovered() {
-        8.0
+        9.0
     } else {
-        7.0
+        8.0
     };
     p.circle_filled(knob + Vec2::new(0.0, 1.0), r, Color32::from_black_alpha(70));
     p.circle_filled(knob, r, Color32::WHITE);

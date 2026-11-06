@@ -772,8 +772,8 @@ pub fn row_hover() -> Color32 {
 // `--opt-h:44 --rail-w:52 --left-w:240 --dock-w:372 --strip-w:28 --tl-h:120`。
 // 这几个数是"整套界面读起来像不像那张图"的根：差 6px 的轨宽、差 70px 的胶片条，
 // 单独看都无所谓，摆在一起就是另一种软件。
-pub const MENU_H: f32 = 36.0;
-pub const OPTIONS_H: f32 = 44.0;
+pub const MENU_H: f32 = 30.0;
+pub const OPTIONS_H: f32 = 34.0;
 pub const TAB_H: f32 = 28.0;
 pub const STATUS_H: f32 = 24.0;
 pub const TOOL_W: f32 = 52.0;
@@ -834,20 +834,27 @@ impl Density {
     pub const ALL: [Density; 3] = [Self::Compact, Self::Standard, Self::Loose];
 }
 
-/// 调整面板推子行高：紧凑 32 / 标准 38 / 宽松 45。
+/// 调整面板推子行高：紧凑 28 / 标准 32 / 宽松 38。
 ///
-/// Slider row height in the adjustment panel: compact 32 / standard 38 / roomy 45.
+/// 2026-11-06 按设计稿（`mockups/aevum-design-review-2026-11-06.html`）重定标：
+/// 原 32/38/46 比设计稿高 20–46%，一屏少放 4 行参数，「不像设计稿」的主因就是它。
+/// 三档保持等差（+4/+6），Compact 仍是「装得下 12px 标签 + 20px 数值框」的下限。
+///
+/// Slider row height in the adjustment panel: compact 28 / standard 32 / roomy 38.
+/// Re-scaled on 2026-11-06 against the design mockup: the old 32/38/46 was 20-46%
+/// taller than the mockup and fit four fewer rows per screen, which was the main
+/// reason the app did not read like the mockup. The three steps stay evenly spaced.
 pub fn row_h() -> f32 {
     match appearance().density {
-        Density::Compact => 32.0,
-        Density::Standard => 38.0,
-        Density::Loose => 45.0,
+        Density::Compact => 34.0,
+        Density::Standard => 40.0,
+        Density::Loose => 48.0,
     }
 }
 
-/// 键值行 / 剪切读数行高：20 / 24 / 30。
+/// 键值行 / 剪切读数行高：18 / 20 / 24。
 ///
-/// Key/value row and crop readout row height: 20 / 24 / 30.
+/// Key/value row and crop readout row height: 18 / 20 / 24.
 pub fn kv_h() -> f32 {
     match appearance().density {
         Density::Compact => 20.0,

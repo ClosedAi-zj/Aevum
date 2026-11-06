@@ -219,7 +219,7 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
             // 每条山形是一个三角带：每个 bin 四个顶点（左峰、右峰、左底、右底），
             // 顶点色从山脊的半透明衰减到底边的全透明 —— egui 没有纵向渐变填充，
             // 逐顶点插值就是渐变本身。三通道重合处 alpha 叠加自然泛白，和 LR 的读法一致。
-            const CREST_A: u8 = 115; // 界面稿 stop-opacity .45 ≈ 115/255
+            const CREST_A: u8 = 150; // 设计稿填充更实（原 115 在深底上偏淡，山形读不出来）
             let channel_rgb: [[u8; 3]; 3] =
                 [[0xFF, 0x5C, 0x5C], [0x5C, 0xFF, 0x8C], [0x5C, 0x8C, 0xFF]];
             let mut shapes: Vec<Shape> = Vec::with_capacity(4);
@@ -240,6 +240,10 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
                     })
                     .collect();
                 let mut vals = raw.clone();
+                // 两遍卷积（= 四遍 [1,2,1]/4）把真实数据的针状尖峰摊成山形：
+                // 设计稿的圆滑感来自假数据本身平缓，真实照片的直方图是刺猬，
+                // 只靠一遍卷积仍读作线条。只动显示层，不碰 state.hist。
+                smooth_twice(&mut vals, bins);
                 smooth_twice(&mut vals, bins);
                 for (b, &v) in vals.iter().enumerate().take(bins) {
                     let x0 = rect.left() + b as f32 * bar_w;
@@ -287,6 +291,7 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
                 .collect();
             let mut lum_vals = lum_raw.clone();
             smooth_twice(&mut lum_vals, bins);
+            smooth_twice(&mut lum_vals, bins);
             for (b, &v) in lum_vals.iter().enumerate().take(bins) {
                 let x0 = rect.left() + b as f32 * bar_w;
                 let x1 = x0 + bar_w;
@@ -294,10 +299,10 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
                 // 留 6% 空气，山头与 tab 行之间永远有一线呼吸。
                 let y_top = rect.bottom() - rect.height() * 0.94 * v;
                 let i = lum.vertices.len() as u32;
-                lum.colored_vertex(Pos2::new(x0, y_top), Color32::from_white_alpha(140));
-                lum.colored_vertex(Pos2::new(x1, y_top), Color32::from_white_alpha(140));
-                lum.colored_vertex(Pos2::new(x0, rect.bottom()), Color32::from_white_alpha(13));
-                lum.colored_vertex(Pos2::new(x1, rect.bottom()), Color32::from_white_alpha(13));
+                lum.colored_vertex(Pos2::new(x0, y_top), Color32::from_white_alpha(70));
+                lum.colored_vertex(Pos2::new(x1, y_top), Color32::from_white_alpha(70));
+                lum.colored_vertex(Pos2::new(x0, rect.bottom()), Color32::from_white_alpha(5));
+                lum.colored_vertex(Pos2::new(x1, rect.bottom()), Color32::from_white_alpha(5));
                 lum.add_triangle(i, i + 1, i + 3);
                 lum.add_triangle(i, i + 3, i + 2);
             }
@@ -483,16 +488,13 @@ mod dock_paint_tests {
             [[0xFF, 0x5C, 0x5C], [0x5C, 0xFF, 0x8C], [0x5C, 0x8C, 0xFF]];
         let crest: Vec<Color32> = channel_rgb
             .iter()
-            .map(|rgb| Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 115))
+            .map(|rgb| Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 150))
             .collect();
         let base: Vec<Color32> = channel_rgb
             .iter()
             .map(|rgb| Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 0))
             .collect();
-        let (lum_top, lum_base) = (
-            Color32::from_white_alpha(140),
-            Color32::from_white_alpha(13),
-        );
+        let (lum_top, lum_base) = (Color32::from_white_alpha(70), Color32::from_white_alpha(5));
         let mut channel_meshes = [0usize; 3];
         let mut lum_mesh = 0usize;
         let mut solid_bars = 0usize;
