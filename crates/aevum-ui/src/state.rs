@@ -1558,6 +1558,18 @@ pub struct AppState {
     pub hist: Option<[[u32; 256]; 3]>,
 
     pub show_dock: bool,
+    /// 右侧调整面板宽度（可拖动）。默认 `theme::DOCK_W`，夹在 300–560 之间。
+    ///
+    /// 面板宽度原本是编译期常量，用户一旦在窄窗里被挤窄就再也调不回来
+    /// （2026-11-07 反馈「变成这样似乎变不回去了」）。改成运行期量，由面板内缘
+    /// 的拖拽手柄改它；只存会话内，不落盘。
+    ///
+    /// Width of the right-hand panel, draggable. Defaults to `theme::DOCK_W` and is
+    /// clamped to 300–560. It used to be a compile-time constant, so a panel squeezed in a
+    /// narrow window could never be restored (user feedback, 2026-11-07). It now lives at
+    /// runtime and is changed by the drag handle on the panel's inner edge; session only,
+    /// not persisted.
+    pub dock_w: f32,
     /// 「预设与快照」浮窗（预设 / 快照 / 调色副本）开没开。字段名沿用旧左栏
     /// （`show_left`）——settings.json 的键没变，老用户的开关状态照常读回；
     /// 2026-11-04 起它不再是常驻侧栏而是浮窗（docs/界面布局-ACR化-2026-11-04.md §2）。

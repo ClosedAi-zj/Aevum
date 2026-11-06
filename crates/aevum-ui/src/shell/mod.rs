@@ -169,7 +169,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     }
     if state.show_dock && !dock_left {
         egui::Panel::right("dock")
-            .exact_size(DOCK_W)
+            .exact_size(state.dock_w)
             .resizable(false)
             .frame(egui::Frame::NONE.fill(dock()))
             .show(root, |ui| dock_panel(state, ui));
@@ -190,7 +190,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     }
     if state.show_dock && dock_left {
         egui::Panel::left("dock")
-            .exact_size(DOCK_W)
+            .exact_size(state.dock_w)
             .resizable(false)
             .frame(egui::Frame::NONE.fill(dock()))
             .show(root, |ui| dock_panel(state, ui));
@@ -217,7 +217,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // so moving the panes to the left (a persisted layout choice) stole 372 px from the
     // canvas and left a blank band on the right.
     let strip_w = if state.show_strip { STRIP_W } else { 0.0 };
-    let dock_w = if state.show_dock { DOCK_W } else { 0.0 };
+    let dock_w = if state.show_dock { state.dock_w } else { 0.0 };
     let right_inset = strip_w + if dock_left { 0.0 } else { dock_w };
     let left_inset = if dock_left { dock_w } else { 0.0 };
     // 中间区自己也得钉住：`right_inset` 只交代画布**内部**怎么排，管不了

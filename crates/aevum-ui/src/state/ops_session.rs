@@ -517,6 +517,7 @@ impl AppState {
             history: History::new(),
             hist: None,
             show_dock: true,
+            dock_w: crate::theme::DOCK_W,
             // 「预设与快照」浮窗默认关：它悬浮在画布上，开屏即开正好压住主图
             // （用户 2026-11-06 的模块截图里它都盖着画布左上）。入口仍在工具轨
             // 图标与「视图」菜单；该字段不进 settings.json，这只改首启/重置的

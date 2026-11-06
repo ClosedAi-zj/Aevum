@@ -1020,66 +1020,44 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // dark panel against the design's grey one.
     let vx = tx(rail_pos(*v));
     let knob = Pos2::new(vx, track_y);
-    // 三角滑块：PS / Camera Raw 的推子手柄是一个朝上的小三角（▲）骑在轨道上，
-    // 不是圆点。三角的尖顶把「当前值停在哪」指得比圆点更准——圆点遮住轨道本身
-    // 那一小段，读数与位置之间要靠猜；三角只压住底边，轨道与填充都还看得见。
+    // 圆形手柄：用户 2026-11-07 明确要求「三角改回之前的圆形」。PS 的推子确实是
+    // 三角，但本项目在 1280 宽、72% 缩放的实测下三角只有 9×10，读起来像一个小箭头
+    // 而不是可抓的把手；圆点在同样尺寸下更容易命中，也和本界面其它圆形控件同一族。
     //
-    // 尺寸：底宽 9 / 高 10，悬停 11/12，按下 8/9（按下缩小＝陷进轨道）。
+    // 尺寸照旧随状态变化：常态 14、悬停 16、按下 13（按下缩小＝陷进轨道）。
     //
-    // Triangular knob: PS / Camera Raw's fader handle is a small upward triangle (▲)
-    // riding on the rail, not a dot. The apex locates the value more precisely than a
-    // circle, which covers the very stretch of rail you need to read; the triangle only
-    // sits on the bottom edge, so both the rail and its fill stay visible.
+    // Round knob: on 2026-11-07 the user asked to revert the triangle to the earlier
+    // circle. Photoshop's fader really is a triangle, but measured on this UI at 1280 px
+    // and 72% zoom the triangle is only 9x10 and reads as a small arrow rather than a
+    // grabbable handle; a dot is easier to hit at that size and matches the other round
+    // controls here.
     //
-    // Size: 9 wide by 10 tall, 11x12 on hover, 8x9 pressed (shrinking into the rail).
-    let (hw, hh) = if t.dragged() {
-        (4.0, 9.0)
+    // Size still follows state: 14 normally, 16 on hover, 13 pressed (shrinking into the
+    // rail).
+    let r = if t.dragged() {
+        6.5
     } else if t.hovered() {
-        (5.5, 12.0)
+        8.0
     } else {
-        (4.5, 10.0)
+        7.0
     };
-    let apex = Pos2::new(knob.x, knob.y - hh * 0.5 - 1.0);
-    let base_y = apex.y + hh;
-    let tri = vec![
-        apex,
-        Pos2::new(knob.x - hw, base_y),
-        Pos2::new(knob.x + hw, base_y),
-    ];
-    // 先投影再填色：三角比圆点更需要一层暗边，否则贴在浅色渐变轨上会糊掉。
+    // 先投影再填色：浅色渐变轨上，没有暗边的白点会糊进轨道。
     //
-    // Shadow first, then fill: a triangle needs the dark edge more than a circle does,
-    // otherwise it blurs into a light gradient rail.
-    let shadow: Vec<Pos2> = tri.iter().map(|q| *q + Vec2::new(0.0, 1.0)).collect();
-    p.add(egui::Shape::convex_polygon(
-        shadow,
-        Color32::from_black_alpha(70),
-        Stroke::NONE,
-    ));
-    p.add(egui::Shape::convex_polygon(
-        tri.clone(),
+    // Shadow first, then fill: without a dark edge a light dot blurs into a light gradient
+    // rail.
+    p.circle_filled(knob + Vec2::new(0.0, 1.0), r, Color32::from_black_alpha(70));
+    p.circle(
+        knob,
+        r,
         if t.dragged() { accent() } else { text() },
         Stroke::new(1.0, Color32::from_black_alpha(90)),
-    ));
-    // 悬停时在三角外画一圈描边，指认「这个手柄可抓」；拖动中不画——按下态已经
-    // 用 accent 填色区分出来了，再套一圈只会让 10px 的三角显脏。
+    );
+    // 悬停时外圈描边，指认「可抓」；拖动中不画——按下态已用 accent 填色区分。
     //
-    // A stroke halo on hover says "this handle is grabbable"; during a drag it is
-    // omitted -- the accent fill already marks the pressed state, and another ring
-    // around a 10 px triangle only muddies it.
+    // A halo ring on hover says "grabbable"; omitted while dragging, where the accent fill
+    // already marks the pressed state.
     if t.hovered() && !t.dragged() {
-        let halo: Vec<Pos2> = tri
-            .iter()
-            .map(|q| {
-                let d = (*q - knob).normalized();
-                *q + d * 1.5
-            })
-            .collect();
-        p.add(egui::Shape::convex_polygon(
-            halo,
-            Color32::TRANSPARENT,
-            Stroke::new(1.0, border_strong()),
-        ));
+        p.circle_stroke(knob, r + 2.0, Stroke::new(1.0, border_strong()));
     }
     // 复位点画在最后：这时 *v 已经落定，不会在刚被点回默认的那一帧闪一下。
     if (*v - default).abs() > 1e-9 {

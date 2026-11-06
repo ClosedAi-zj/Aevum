@@ -20,14 +20,62 @@ use egui::{
 
 // ---------------------------------------------------------------- 右侧面板
 
+/// 面板宽度可拖：在内缘挂一条 6px 的手柄，左右拖改 `state.dock_w`。
+///
+/// 手柄落在面板**内侧**那条边（右坞是左缘，左坞是右缘），拖动方向按侧别取反；
+/// 宽度夹在 300–560：低于 300，推子行的「标签 76 + 读数 44」会把轨道吃光；高于
+/// 560，画布被挤成一条。悬停/拖动时光标变横向量尺，用户才知道这里能拖。
+///
+/// The panel width is draggable: a 6 px handle sits on the panel's inner edge (left edge
+/// for a right dock, right edge for a left one) and drag direction flips with the side.
+/// Width is clamped to 300-560: below 300 the slider row's "label 76 + value 44" eats the
+/// rail; above 560 the canvas is squeezed into a strip. The cursor becomes a horizontal
+/// resize arrow so the affordance is discoverable.
+fn dock_resize_handle(state: &mut AppState, ui: &mut Ui) {
+    let side_left = state.layout.dock_side.is_left();
+    let full = ui.max_rect();
+    const HANDLE_W: f32 = 6.0;
+    const MIN_W: f32 = 300.0;
+    const MAX_W: f32 = 560.0;
+    let rect = if side_left {
+        Rect::from_min_size(
+            Pos2::new(full.right() - HANDLE_W, full.top()),
+            Vec2::new(HANDLE_W, full.height()),
+        )
+    } else {
+        Rect::from_min_size(full.min, Vec2::new(HANDLE_W, full.height()))
+    };
+    let resp = ui.interact(rect, egui::Id::unique("dock-resize"), Sense::drag());
+    if resp.hovered() || resp.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    if resp.dragged() {
+        let dx = resp.drag_delta().x;
+        let delta = if side_left { dx } else { -dx };
+        state.dock_w = (state.dock_w + delta).clamp(MIN_W, MAX_W);
+    }
+}
+
 pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
     let full = ui.max_rect();
+    dock_resize_handle(state, ui);
     if std::env::var("AEVUM_DBG_RECT").is_ok() {
         eprintln!("DOCK full={:?}", full);
     }
     let p = ui.painter().clone();
+    // 页签行底色用**面板底色**而不是 header：header 与上方那两条外部信息栏
+    // （菜单行 / 选项栏 / 序列页签行）同色，三段连成一片，读起来像「页签跑到
+    // 外部信息栏里去了」（用户 2026-11-07 截图）。改面板底色 + 顶缘一道发丝线，
+    // 页签行就成为右栏自己的表面。
+    //
+    // The tab row uses the panel fill rather than `header`: `header` is the same colour as
+    // the two outer bars above (menu row, options bar, sequence tab row), so the three
+    // merged into one band and read as "the tabs went up into the outer info bar" (user
+    // screenshot, 2026-11-07). Panel fill plus a hairline on the top edge makes the tab row
+    // its own surface inside the dock.
     let strip = Rect::from_min_size(full.min, Vec2::new(full.width(), TAB_H));
-    p.rect_filled(strip, 0, header());
+    p.rect_filled(strip, 0, dock());
+    theme::rule(&p, strip.left(), strip.right(), strip.top(), divider());
     theme::rule(
         &p,
         strip.left(),

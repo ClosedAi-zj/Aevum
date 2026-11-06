@@ -81,13 +81,25 @@ fn gamma_at(x: f32, span: f32) -> f64 {
 /// an accent dot in its top-right corner.
 /// Returns whether the selected band changed.
 pub fn band_chips(ui: &mut Ui, sel: &mut usize, used: &[f64]) -> bool {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), Sense::hover());
-    let cw = (rect.width() / BAND_NAMES.len() as f32).floor();
+    // PS / Camera Raw 的调色混合器：一排**纯色小方块**，块里不写字；选中的那块套
+    // 一圈白描边，当前色相的名字与角度写在下一行（本函数下面的调用点负责）。
+    // 旧版把色名直接印在整条彩色胶囊里，八个词挤成一条彩带，既不像 PS，也让
+    // 「选中」只能靠描边勉强认出来（用户 2026-11-07 反馈「这里没改，改成跟 PS 一样」）。
+    //
+    // Photoshop / Camera Raw's colour mixer is a row of plain colour swatches with no text
+    // inside; the selected one gets a white ring, and the active band's name and angle live
+    // on the next line (drawn by the caller). The old version printed the band name inside a
+    // full-width coloured pill, so eight words merged into one ribbon, unlike PS, and
+    // "selected" was hard to read (user feedback, 2026-11-07).
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 18.0), Sense::hover());
+    const GAP: f32 = 4.0;
+    let cw =
+        ((rect.width() - GAP * (BAND_NAMES.len() as f32 - 1.0)) / BAND_NAMES.len() as f32).max(8.0);
     let mut changed = false;
-    for i in 0..BAND_NAMES.len() {
+    for (i, hue_deg) in BAND_HUES.iter().enumerate() {
         let cell = Rect::from_min_size(
-            Pos2::new(rect.left() + i as f32 * cw, rect.top() + 1.0),
-            Vec2::new((cw - 2.0).max(8.0), 17.0),
+            Pos2::new(rect.left() + i as f32 * (cw + GAP), rect.top() + 1.0),
+            Vec2::new(cw, 15.0),
         );
         let resp = ui.interact(
             cell,
@@ -95,43 +107,48 @@ pub fn band_chips(ui: &mut Ui, sel: &mut usize, used: &[f64]) -> bool {
             Sense::click(),
         );
         let p = ui.painter();
-        let hue = hue_color(BAND_HUES[i]);
+        let hue = hue_color(*hue_deg);
         let on = *sel == i;
+        // 非选中态不压暗太多：色块本身就是识别依据，压到 0.5 会让「绿」和「浅绿」
+        // 分不出来。改成只降一点亮度，选中靠白环与提亮区分。
+        //
+        // Inactive swatches are barely darkened: the colour itself is the identifier, and
+        // dropping to 0.5 made "green" and "aqua" indistinguishable. A slight dim plus a
+        // white ring on the selected one is enough.
         p.rect_filled(
             cell,
             radius_control(),
             if on {
                 hue
             } else if resp.hovered() {
-                hue.gamma_multiply(0.75)
+                hue.gamma_multiply(0.9)
             } else {
-                hue.gamma_multiply(0.5)
+                hue.gamma_multiply(0.78)
             },
         );
         if on {
             p.rect_stroke(
                 cell,
                 radius_control(),
-                Stroke::new(1.5, text()),
+                Stroke::new(1.5, Color32::WHITE),
                 StrokeKind::Inside,
             );
         }
-        p.text(
-            cell.center(),
-            Align2::CENTER_CENTER,
-            // 色相带名是数据表里的词，翻译只能放在画的这一处。
-            crate::i18n::tr(BAND_NAMES[i]),
-            font(SIZE_SMALL),
-            if on {
-                Color32::from_rgb(0x14, 0x14, 0x16)
-            } else {
-                text()
-            },
-        );
-        if used.get(i).copied().unwrap_or(0.0) != 0.0 {
-            p.circle_filled(cell.right_top() + Vec2::new(-4.0, 4.0), 2.2, accent());
+        // 用量提示（某频段有无改动）仍保留：在色块底缘点一个小点，不写字。
+        //
+        // The "band is in use" hint stays: a small dot on the swatch's bottom edge, no text.
+        if used.get(i).is_some_and(|v| v.abs() > 1e-9) {
+            p.circle_filled(
+                Pos2::new(cell.center().x, cell.bottom() - 2.5),
+                1.6,
+                if on {
+                    Color32::from_rgb(0x14, 0x14, 0x16)
+                } else {
+                    Color32::WHITE
+                },
+            );
         }
-        if resp.clicked() {
+        if resp.clicked() && *sel != i {
             *sel = i;
             changed = true;
         }
