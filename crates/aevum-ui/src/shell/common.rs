@@ -165,7 +165,7 @@ pub(super) fn side_note(ui: &mut Ui, text: &str) {
 ///
 /// Whitespace only between groups, no boxes (macOS unified-toolbar convention).
 pub(super) fn group_gap(ui: &mut Ui) {
-    ui.add_space(12.0);
+    ui.add_space(18.0);
 }
 
 /// 选项栏的分段竖线（界面稿 .opt-sep）：1 × 20 的 divider 竖线，

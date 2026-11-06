@@ -872,7 +872,7 @@ pub const CV_TOOLBAR_H: f32 = 28.0;
 ///
 /// Canvas content padding: the inset used when fitting the image to the window, and the
 /// viewport boundary `clamp_pan` clamps against once the view is zoomed in.
-pub const CANVAS_PAD: f32 = 26.0;
+pub const CANVAS_PAD: f32 = 56.0;
 /// 胶片条头部行：标题 + 右端筛选说明，26px。
 ///
 /// Filmstrip header row: title plus a filter note on the right, 26 px.
