@@ -317,8 +317,17 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             w.hovered.weak_bg_fill = elev();
             w.hovered.bg_stroke = Stroke::NONE;
             w.active.weak_bg_fill = selected();
-            ui.spacing_mut().button_padding = Vec2::new(c.menu_pad_x, 3.0);
-            ui.spacing_mut().item_spacing.x = c.menu_gap;
+            // 弹出菜单的样式源头在这里（menu_bar 顶层设置，弹出层继承）：
+            // 必须与 menu_style 同一口径——此前只改了 menu_style，外层这段
+            // (menu_pad_x, 3.0) + menu_gap 仍把项高压在 22、行间留着缝，
+            // 用户实机截图证明弹出的菜单还是旧样子（"这改了吗"）。
+            //
+            // This is where the popup menus inherit their style from (set once on the
+            // menu bar); it must match `menu_style`. Only patching `menu_style` left the
+            // outer (menu_pad_x, 3.0) + menu_gap holding rows at 22 px with gaps, which
+            // the user's screenshot caught ("这改了吗").
+            ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
             // 五项，和界面稿同口径：文件 / 编辑 / 视图 / 插件 / 帮助。
             // 原来的「显影」并进「视图 → 显影」，「模块」由标题栏的工作区胶囊接管 ——
             // 七个菜单名横排会把标题栏撑成一个命令面板，标题栏只需要"去哪找"。
