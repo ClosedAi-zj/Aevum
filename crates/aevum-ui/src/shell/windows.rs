@@ -735,10 +735,8 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                             text()
                         }),
                 );
-                if state.appearance.gray_offset != 0 {
-                    if bar_chip(ui, "归零", false).clicked() {
-                        state.appearance.gray_offset = 0;
-                    }
+                if state.appearance.gray_offset != 0 && bar_chip(ui, "归零", false).clicked() {
+                    state.appearance.gray_offset = 0;
                 }
             });
             if state.appearance.gray_offset.abs() > 2 {
