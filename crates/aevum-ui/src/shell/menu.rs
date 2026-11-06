@@ -490,8 +490,18 @@ pub(super) fn menu_style(ui: &mut Ui) {
     w.active.bg_fill = accent_hover();
     w.active.bg_stroke = Stroke::NONE;
     w.active.fg_stroke = Stroke::new(1.0, on_accent());
+    // PS 编辑菜单的间距口径（用户截图 272x670 实测）：
+    // - 项高 24：正文 13 的行高 18 + `button_padding` 竖 4×2 − egui 按钮自带
+    //   描边 2 = 24（实测 3px 时只有 22）；
+    // - 项间 0：PS 的菜单项是紧贴的，留 1px 会让整列读成「有缝的表格」；
+    // - 左右 8：文字不贴边，但菜单自身也不加外边距。
+    //
+    // PS Edit-menu spacing (measured on the user's 272x670 screenshot): 24 px rows =
+    // the 18 px line of a 13 px body plus 2x4 px padding minus egui's own 2 px button
+    // stroke (measured 22 px at 3 px padding), zero gap between rows (PS rows touch; a
+    // 1 px gap reads as a gapped table), 8 px horizontal.
     ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
-    ui.spacing_mut().item_spacing.y = 1.0;
+    ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
 }
 
 pub(super) fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
@@ -526,6 +536,31 @@ pub(super) fn menu_item_enabled(ui: &mut Ui, label: &str, shortcut: &str, enable
     .clicked()
 }
 
+/// 带子菜单的菜单项：与普通项同高同字，右端多一枚 `▶`。
+///
+/// PS 的编辑菜单里，能展开的项右端有箭头，不能展开的留空——两者左端起齐、
+/// 右侧都由快捷键列或箭头收边，整列因此读作一张表而不是一列按钮。
+///
+/// A menu item that opens a submenu: same height and type as a plain item, with a `▶`
+/// at the right end. In PS's Edit menu the expandable rows carry an arrow and the rest
+/// stay blank; both start flush left and are closed off by the shortcut column or the
+/// arrow, so the column reads as a table rather than a stack of buttons.
+pub(super) fn menu_submenu<R>(ui: &mut Ui, label: &str, add_contents: impl FnOnce(&mut Ui) -> R) {
+    let label = crate::i18n::tr(label);
+    let _ = ui.menu_button(RichText::new(label).size(SIZE_BODY), add_contents);
+}
+
+/// 分组分隔线：PS 在项与项之间留一段空白再画一根细线，而不是紧贴上一项。
+///
+/// Group separator: PS leaves a band of air around the hairline instead of butting it
+/// against the previous row.
+pub(super) fn menu_sep(ui: &mut Ui) {
+    ui.add_space(4.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, divider());
+    ui.add_space(4.0);
+}
+
 fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     menu_style(ui);
     if menu_item(ui, "打开序列…", "Ctrl+O") {
@@ -540,7 +575,7 @@ fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         rescan(state, ctx);
         ui.close();
     }
-    ui.separator();
+    menu_sep(ui);
     let has_seq = state.seq.is_some();
     if menu_item_enabled(ui, "保存工程", "Ctrl+S", has_seq) {
         state.save_project();
@@ -552,7 +587,7 @@ fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         }
         ui.close();
     }
-    ui.separator();
+    menu_sep(ui);
     if menu_item(ui, "导入 XMP 预设…", "") {
         import_xmp_dialog(state);
         ui.close();
@@ -561,12 +596,12 @@ fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         export_xmp_dialog(state);
         ui.close();
     }
-    ui.separator();
+    menu_sep(ui);
     if menu_item_enabled(ui, "导出当前帧…", "Ctrl+E", has_seq) {
         state.export_current(ctx);
         ui.close();
     }
-    ui.separator();
+    menu_sep(ui);
     if menu_item_enabled(ui, "关闭序列", "", has_seq) {
         state.close();
         ui.close();
@@ -590,7 +625,7 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         run_history_command(state, ctx, "history.redo", &serde_json::json!({}));
         ui.close();
     }
-    ui.separator();
+    menu_sep(ui);
     if menu_item(ui, "自动曝光", "") {
         state.auto_exposure(ctx);
         ui.close();
@@ -599,7 +634,7 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         state.reset_params();
         ui.close();
     }
-    ui.separator();
+    menu_sep(ui);
     if menu_item(ui, "记录当前关键帧", "") {
         state.add_keyframe();
         ui.close();
@@ -610,7 +645,7 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         }
         ui.close();
     }
-    ui.separator();
+    menu_sep(ui);
     let has_seq = state.seq.is_some();
     if menu_item_enabled(ui, "导出当前帧…", "Ctrl+E", has_seq) {
         state.export_current(ctx);
@@ -620,28 +655,25 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
 
 fn develop_menu(state: &mut AppState, ui: &mut Ui) {
     menu_style(ui);
-    ui.menu_button(
-        RichText::new(crate::i18n::t!("预设")).size(SIZE_BODY),
-        |ui| {
-            menu_style(ui);
-            for name in grade::PRESET_NAMES {
-                if ui.button(RichText::new(*name).size(SIZE_BODY)).clicked() {
-                    state.apply_preset(name);
-                    ui.close();
-                }
-            }
-            ui.separator();
-            if menu_item(ui, "导入 XMP 预设…", "") {
-                import_xmp_dialog(state);
+    menu_submenu(ui, "预设", |ui| {
+        menu_style(ui);
+        for name in grade::PRESET_NAMES {
+            if ui.button(RichText::new(*name).size(SIZE_BODY)).clicked() {
+                state.apply_preset(name);
                 ui.close();
             }
-            if menu_item(ui, "导出 XMP 预设…", "") {
-                export_xmp_dialog(state);
-                ui.close();
-            }
-        },
-    );
-    ui.separator();
+        }
+        menu_sep(ui);
+        if menu_item(ui, "导入 XMP 预设…", "") {
+            import_xmp_dialog(state);
+            ui.close();
+        }
+        if menu_item(ui, "导出 XMP 预设…", "") {
+            export_xmp_dialog(state);
+            ui.close();
+        }
+    });
+    menu_sep(ui);
     if menu_item(ui, "自动曝光", "") {
         state.auto_exposure(ui.ctx());
         ui.close();
@@ -650,7 +682,7 @@ fn develop_menu(state: &mut AppState, ui: &mut Ui) {
         state.reset_params();
         ui.close();
     }
-    ui.separator();
+    menu_sep(ui);
     if menu_item(ui, "记录关键帧", "") {
         state.add_keyframe();
         ui.close();
@@ -665,11 +697,8 @@ fn view_menu(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
     }
     // 「显影」原来是标题栏上独立的一项，收进这里：调色命令是"对当前图做什么"，
     // 本来就属于视图菜单这一族，不该和文件/编辑并列。
-    ui.menu_button(
-        RichText::new(crate::i18n::t!("显影调节")).size(SIZE_BODY),
-        |ui| develop_menu(state, ui),
-    );
-    ui.separator();
+    menu_submenu(ui, "显影调节", |ui| develop_menu(state, ui));
+    menu_sep(ui);
     if menu_item(ui, "适应窗口", "Ctrl+0") {
         fit_view(state);
         ui.close();
@@ -686,7 +715,7 @@ fn view_menu(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
         state.zoom = (state.zoom / 1.25).max(0.1);
         ui.close();
     }
-    ui.separator();
+    menu_sep(ui);
     ui.checkbox(
         &mut state.rulers,
         RichText::new(crate::i18n::t!("标尺")).size(SIZE_BODY),
@@ -703,7 +732,7 @@ fn view_menu(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
         &mut state.split,
         RichText::new(crate::i18n::t!("前后对比")).size(SIZE_BODY),
     );
-    ui.separator();
+    menu_sep(ui);
     ui.checkbox(
         &mut state.show_left,
         RichText::new(crate::i18n::t!("预设与快照 (Ctrl+K)")).size(SIZE_BODY),
@@ -732,7 +761,7 @@ fn help_menu(state: &mut AppState, ui: &mut Ui) {
         state.about_open = true;
         ui.close();
     }
-    ui.separator();
+    menu_sep(ui);
     // 菜单项文案随「有没有可装的新版本」变：查到了就把结论摆在菜单上
     // （「有新版本 vX.Y.Z…」），否则维持「检查更新…」。
     //
@@ -939,5 +968,139 @@ mod chrome_labels_tests {
         state.set_export_skipped_for_test(312);
         let text = painted_text(&ctx, &mut state);
         assert!(text.contains("续跑跳过 312"), "续跑读数没上屏：\n{text}");
+    }
+}
+
+/// PS 口径菜单的绘制级判据：项高 24、行间 0、快捷键列等宽、分隔线上下各 4px 空白。
+///
+/// 菜单是弹出层，`--shot` 拍不到打开态；这组测试在测试 UI 里真画一次菜单内容，
+/// 用几何断言钉住四项规格，比人工目检可靠，也进六关门禁。
+///
+/// Painting-level criteria for the PS-style menu: 24 px rows, zero row gap, a
+/// monospaced shortcut column, and 4 px of air above and below each separator. Menus
+/// are popups that `--shot` cannot capture open, so these tests paint real menu content
+/// in a test UI and pin the four spec points geometrically -- they run in the six-gate
+/// check and beat eyeballing.
+#[cfg(test)]
+mod ps_menu_specs {
+    use super::*;
+
+    /// 画一批菜单项并量行几何：每行高 24，行间 0（下一行顶端 == 上一行底端）。
+    ///
+    /// Paint a batch of items and measure row geometry: every row is 24 px tall and rows
+    /// touch (next top == previous bottom).
+    #[test]
+    fn menu_rows_are_24_tall_and_touch() {
+        let ctx = Context::default();
+        theme::apply(&ctx, 1.0);
+        // 预热一帧：字体图集在首帧建账，不预热的话首帧画的 galley 会带着
+        // 未应用的 TexturesDelta 被 drop（与 bench_ui 的 WARMUP 同一理由）。
+        //
+        // One warm-up frame: the font atlas is built on the first pass, and a galley
+        // painted before that carries an unapplied TexturesDelta (same reason as
+        // bench_ui's WARMUP).
+        let mut warm = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 400.0))),
+                max_texture_side: Some(8192),
+                ..Default::default()
+            },
+            |ui| {
+                menu_style(ui);
+                let _ = menu_item(ui, "打开序列…", "Ctrl+O");
+            },
+        );
+        warm.textures_delta.clear();
+        let mut rows: Vec<Rect> = Vec::new();
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 400.0))),
+                max_texture_side: Some(8192),
+                ..Default::default()
+            },
+            |ui| {
+                menu_style(ui);
+                for i in 0..3usize {
+                    let before = ui.cursor().top();
+                    let _ = menu_item(ui, "打开序列…", "Ctrl+O");
+                    let after = ui.cursor().top();
+                    rows.push(Rect::from_min_max(
+                        Pos2::new(0.0, before),
+                        Pos2::new(320.0, after),
+                    ));
+                    let _ = i;
+                }
+            },
+        );
+        out.textures_delta.clear();
+        assert_eq!(rows.len(), 3);
+        for r in &rows {
+            let h = (r.height() * 100.0).round() / 100.0;
+            assert!((23.0..=26.0).contains(&h), "菜单行高 {h}px，PS 口径是 24±1");
+        }
+        // 行间 0：第二行顶端贴着第一行底端（±0.5px 容差）。
+        let gap01 = rows[1].top() - rows[0].bottom();
+        let gap12 = rows[2].top() - rows[1].bottom();
+        assert!(
+            gap01.abs() <= 0.5,
+            "第 1/2 行之间有 {gap01}px 空隙，PS 是 0"
+        );
+        assert!(
+            gap12.abs() <= 0.5,
+            "第 2/3 行之间有 {gap12}px 空隙，PS 是 0"
+        );
+    }
+
+    /// 分隔线上下各留约 4px 空白：PS 的分组线不是紧贴上一项的。
+    ///
+    /// Separators keep ~4 px of air above and below: PS group lines do not butt against
+    /// the previous row.
+    #[test]
+    fn menu_separator_carries_air() {
+        let ctx = Context::default();
+        theme::apply(&ctx, 1.0);
+        // 与上一条同一理由：先预热一帧建账字体图集。
+        //
+        // Same reason as the row test: warm the font atlas first.
+        let mut warm = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 400.0))),
+                max_texture_side: Some(8192),
+                ..Default::default()
+            },
+            |ui| {
+                menu_style(ui);
+                let _ = menu_item(ui, "打开序列…", "Ctrl+O");
+            },
+        );
+        warm.textures_delta.clear();
+        let mut gap_before = 0.0f32;
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 400.0))),
+                max_texture_side: Some(8192),
+                ..Default::default()
+            },
+            |ui| {
+                menu_style(ui);
+                let _ = menu_item(ui, "打开序列…", "Ctrl+O");
+                let before = ui.cursor().top();
+                menu_sep(ui);
+                let after = ui.cursor().top();
+                // menu_sep 的真实总占用：上 4 + 线 1 + 下 4 = 9。
+                // （cursor.top 推进量就是它占的竖向空间，不掺菜单项自身高度。）
+                gap_before = after - before;
+            },
+        );
+        out.textures_delta.clear();
+        // 总占 9px = 上留白 4 + 线 1 + 下留白 4：PS 的分组线在项与项之间
+        // 是「一段空白 + 细线 + 一段空白」，不是紧贴上一项的一条缝。
+        //
+        // 9 px total = 4 above + 1 line + 4 below: PS group separators are
+        // "air + hairline + air", not a slit butted against the previous row.
+        assert_eq!(
+            gap_before, 9.0,
+            "分隔线总占 {gap_before}px，PS 口径是 9（上 4 + 线 1 + 下 4）"
+        );
     }
 }

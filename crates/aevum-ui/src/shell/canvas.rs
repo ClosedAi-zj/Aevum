@@ -42,11 +42,8 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     // answer "which project" and "how the app looks", not anything about the current
     // image. Returning early skips the whole canvas pipeline, so switching into them
     // costs less than Develop -- and the frame-budget criterion covers them too.
-    if matches!(state.module, Module::Library | Module::Settings) {
-        match state.module {
-            Module::Library => super::library_page::library_page(state, ui),
-            _ => super::settings_page::settings_page(state, ui),
-        }
+    if matches!(state.module, Module::Library) {
+        super::library_page::library_page(state, ui);
         return;
     }
     // 右边界以「整窗右缘减去右侧面板」为准，再与 egui 给的剩余区取小：

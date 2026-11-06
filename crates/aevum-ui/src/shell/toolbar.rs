@@ -541,13 +541,6 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                         .color(muted()),
                 );
             }
-            Module::Settings => {
-                ui.label(
-                    RichText::new(crate::i18n::t!("改动即时生效"))
-                        .size(SIZE_LABEL)
-                        .color(muted()),
-                );
-            }
         }
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

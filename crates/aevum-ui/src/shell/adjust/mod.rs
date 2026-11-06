@@ -141,7 +141,7 @@ pub(super) fn adjust_tab(state: &mut AppState, ui: &mut Ui) {
         //
         // Library and Settings are full-page views with no parameter faders: the dock
         // shows the page's own panel, and this hint keeps the right side from going blank.
-        Module::Library | Module::Settings => adjust_page_info(state, ui),
+        Module::Library => adjust_page_info(state, ui),
     }
 }
 

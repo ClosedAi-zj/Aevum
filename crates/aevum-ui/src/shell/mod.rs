@@ -45,7 +45,6 @@ mod library_page;
 mod markdown;
 mod mask;
 mod menu;
-mod settings_page;
 mod tabs;
 mod timeline;
 mod toolbar;
@@ -141,10 +140,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // Full-page views (Library / Settings) show no filmstrip or transport: they have
     // nothing to do with the current sequence's frames, and a 48-cell filmstrip under
     // the settings page talks about something that page never answers.
-    let full_page_view = matches!(
-        state.module,
-        crate::state::Module::Library | crate::state::Module::Settings
-    );
+    let full_page_view = matches!(state.module, crate::state::Module::Library);
     if !full_page_view && layout.film.allowed() && state.frame_count() > 0 {
         // 面板高度跟内容走：展开=188；收起胶片后只剩头行(26)+4+走带(36)=66，
         // 曲线开着再加 60——「收起」必须真的把面板收矮（用户截图：收起后

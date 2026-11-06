@@ -130,17 +130,10 @@ pub enum Module {
     /// The existing dock "图库" tab stays as it is (that one views collections and
     /// folders inside the current sequence).
     Library,
-    /// 设置：外观、密度、快捷键、更新——从浮窗升为独立页，对齐 Lightroom 的
-    /// 首选项对话框信息量（浮窗 340px 宽装不下四组设置）。
-    ///
-    /// Settings: appearance, density, shortcuts and updates -- promoted from a floating
-    /// window to a page of its own, matching the information load of Lightroom's
-    /// preferences dialog (a 340 px floating window cannot hold four groups).
-    Settings,
 }
 
 impl Module {
-    pub const ALL: [Module; 9] = [
+    pub const ALL: [Module; 8] = [
         Module::Sequence,
         Module::Deflicker,
         Module::Develop,
@@ -149,7 +142,6 @@ impl Module {
         Module::Audio,
         Module::Merge,
         Module::Library,
-        Module::Settings,
     ];
 
     pub fn cn(self) -> &'static str {
@@ -162,7 +154,6 @@ impl Module {
             Module::Audio => "声音",
             Module::Merge => "合成",
             Module::Library => "项目库",
-            Module::Settings => "设置",
         }
     }
 
@@ -176,7 +167,6 @@ impl Module {
             Module::Audio => "AUDIO",
             Module::Merge => "MERGE",
             Module::Library => "LIBRARY",
-            Module::Settings => "SETTINGS",
         }
     }
 
@@ -190,7 +180,6 @@ impl Module {
             Module::Audio => Glyph::Audio,
             Module::Merge => Glyph::Merge,
             Module::Library => Glyph::Folder,
-            Module::Settings => Glyph::Gear,
         }
     }
 
@@ -218,7 +207,6 @@ impl Module {
             "声音" | "audio" | "5" => Some(Module::Audio),
             "合成" | "merge" | "6" => Some(Module::Merge),
             "项目库" | "library" | "lib" | "7" => Some(Module::Library),
-            "设置" | "settings" | "set" | "8" => Some(Module::Settings),
             _ => None,
         }
     }

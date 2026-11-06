@@ -25,7 +25,7 @@ fn first_screen_keeps_only_the_frequent_groups_open() {
     // views with no parameter groups; including them would demand "the settings page
     // opens a fader group on first screen", which means nothing.
     for module in Module::ALL {
-        if matches!(module, Module::Library | Module::Settings) {
+        if matches!(module, Module::Library) {
             continue;
         }
         assert!(
