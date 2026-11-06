@@ -268,14 +268,13 @@ pub(super) fn group_header(
     resettable: bool,
 ) -> bool {
     let title = crate::i18n::tr(title);
-    // 分组之间留一口气：5px 顶空 + 单 hairline 收尾。2026-11-06 按设计稿重定标：
-    // 原 8px 顶空 + 32px 行高，十四组排下来比设计稿厚 33%，一屏少放两行参数。
-    // 主次仍靠「粗标题 + 单线」表达，不靠留白堆。
+    // 分组头口径（设计图 `.acc-head`）：8px 顶空 + 32px 行高 + 单 hairline 下沿，
+    // 内边距 `0 12px 0 20px`（标题 x=20，右侧留 12）。主次靠「粗标题 + 单线」表达，
+    // 不靠留白堆。
     //
-    // A breath between groups: 5 px of top space plus one closing hairline.
-    // Re-scaled on 2026-11-06 against the mockup: 8 px + a 32 px header made the
-    // stack 33% thicker than the mockup and cost two rows per screen. Hierarchy
-    // still comes from the bold title and the single line, not from padding.
+    // Group header, per the design's `.acc-head`: 8 px of top space, a 32 px row, one
+    // closing hairline, and `0 12px 0 20px` padding. Hierarchy comes from the bold title
+    // and the single line, not from padding.
     ui.add_space(8.0);
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
@@ -664,14 +663,21 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     track: bool,
     tip: &str,
 ) -> bool {
-    // ── 单行横排：标签 76 · 轨道弹性 · 读数 52 ───────────────────────────
-    // 设计稿 `.row` 的口径。旧版把标签压在轨道上方，36px 的行高里排两行，
-    // 一屏八行看下来标签和推子互相咬住，读起来像一张密排表格而不是调整面板。
+    // ── 单行横排：标签 76 · 轨道弹性 · 读数 44 ───────────────────────────
+    // 设计图 `.slider-row{padding:0 12px;gap:8px}` + `.s-label{width:76px}` +
+    // `.s-value{width:44px}` 的口径。读数从 52 收到 44：等宽字体下 `-100` 这类
+    // 三位数带号也排得下，多出来的 8px 还给轨道——设计图里轨道明显更长。
     // 翻译下沉在这里：SPECS 静态表的 label 是 const 数据，不能在表里调 tr；
     // 所有滑块（显影/构图/成片）都汇到这一条路上，改一处全生效。
+    //
+    // One horizontal row: label 76 · elastic rail · readout 44, matching the design's
+    // `.slider-row` padding/gap plus `.s-label` and `.s-value` widths. The readout drops
+    // from 52 to 44 -- monospace fits a signed three-digit value -- and the 8 px goes to
+    // the rail, which is visibly longer in the design.
     const LABEL_W: f32 = 76.0;
-    const VALUE_W: f32 = 52.0;
+    const VALUE_W: f32 = 44.0;
     const RESET_W: f32 = 14.0;
+    const ROW_PAD: f32 = 12.0;
     let label = crate::i18n::tr(label);
     let tip = crate::i18n::tr(tip);
 
@@ -690,7 +696,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         Pos2::new(field.left() - RESET_W * 0.5 - 2.0, rect.center().y),
         Vec2::splat(RESET_W),
     );
-    let rail_left = rect.left() + LABEL_W + 4.0;
+    let rail_left = rect.left() + ROW_PAD + LABEL_W + 4.0;
     let rail_right = (reset.left() - 3.0).max(rail_left + 1.0);
     let track_y = rect.center().y;
     {
@@ -716,7 +722,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         // 档位存在语言表里（`Catalog::ellipsis_chars`），加语言时由那张表自己声明，
         // 这里不再出现具体语言的名字。
         p.text(
-            Pos2::new(rect.left() + 2.0, rect.center().y),
+            Pos2::new(rect.left() + ROW_PAD, rect.center().y),
             Align2::LEFT_CENTER,
             theme::ellipsis(label, crate::i18n::current().ellipsis_chars()),
             font(SIZE_LABEL),
@@ -962,12 +968,32 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
 }
 
 pub(super) fn kv(ui: &mut Ui, key: &str, value: impl Into<String>, color: Color32) {
+    kv_with_h(ui, key, value, color, kv_h());
+}
+
+/// 紧凑键值行：给「一屏要排很多条」的信息列表用（序列页体检结论等）。
+///
+/// 设计图的 `.kv-row` 是 32px，那是**少量信息行**的规格；序列页有 11 行这类信息，
+/// 全按 32px 排会多占约 88px，把体检清单（用户真正要看的结果）挤到可视区外。
+/// 紧凑档取 24px——一对 12px 字仍在行内垂直居中，不重叠。
+///
+/// Compact key/value row for information lists that stack many lines on one screen
+/// (the sequence page's QA summary, for instance). The design's `.kv-row` is 32 px,
+/// which is the spec for a *few* information rows; the sequence page has eleven, and
+/// laying all of them out at 32 px costs about 88 px extra and pushes the QA findings --
+/// the thing the user actually came to read -- out of the visible area. The compact step
+/// uses 24 px, still enough to centre a 12 px pair without overlap.
+pub(super) fn kv_dense(ui: &mut Ui, key: &str, value: impl Into<String>, color: Color32) {
+    kv_with_h(ui, key, value, color, crate::theme::KV_DENSE_H);
+}
+
+fn kv_with_h(ui: &mut Ui, key: &str, value: impl Into<String>, color: Color32, h: f32) {
     let key = crate::i18n::tr(key);
     // 值也可能是文案（`kv(ui, "当前", "未挂外观")`），一样要过一遍翻译：
     // 数字与专名查不到就原样返回，不会把读数翻坏。
     let value = value.into();
     let value = crate::i18n::tr(&value);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), kv_h()), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), Sense::hover());
     let p = ui.painter();
     let key_font = font(SIZE_LABEL);
     let key_w = p

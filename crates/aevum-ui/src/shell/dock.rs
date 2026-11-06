@@ -189,7 +189,13 @@ fn smooth_twice(vals: &mut [f32], bins: usize) {
 }
 
 fn histogram(ui: &mut Ui, state: &mut AppState) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 84.0), Sense::hover());
+    // 94px：设计图 `.hist-svg{height:94px}`。原 84 让山形比设计图矮一档，
+    // 裁切角标与峰值之间的空气也跟着少。
+    //
+    // 94 px per the design mockup (`.hist-svg{height:94px}`). The old 84 made the
+    // mountain shapes one step shorter than the design and squeezed the air between the
+    // clipping wedges and the peaks.
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 94.0), Sense::hover());
     let p = ui.painter().clone();
     let Some(h) = state.hist else {
         p.text(

@@ -154,8 +154,21 @@ impl Chrome {
     /// specification you are aligning to.
     pub fn of(os: Os) -> Self {
         match os {
-            // Windows 11：标题栏 36（含 8px 上下气口），菜单 12px、项左右 12px 内边距，
-            // 右上三枚 46×32 的窗口按钮，模块切换是带轨道的分段控件。
+            // Windows 11：标题栏 36（含 8px 上下气口 + 自绘窗口按钮），菜单 12px、
+            // 项左右 12px 内边距，右上三枚 42×32 的窗口按钮，模块切换是带轨道的分段控件。
+            //
+            // 为什么不是设计图的 30：设计稿是浏览器里演示的，`.menubar` 只有菜单项、
+            // **没有窗口按钮**；真实桌面应用必须自绘最小化/最大化/关闭三枚（42×32），
+            // 30px 行装不下 32 高的按钮。这里保留平台原生口径 36，与设计图的 30
+            // 相差 6px 记作「平台约束」而非「未对齐」。
+            //
+            // Windows 11: a 36 px title bar (8 px of breathing room plus the self-drawn
+            // window buttons), 12 px menu text, and three 42×32 buttons at the top right.
+            // Why not the design's 30: the mockup runs in a browser and its `.menubar`
+            // carries menu items only -- there are **no window buttons**; a real desktop
+            // window must draw minimise/maximise/close itself (42×32), which does not fit
+            // a 30 px row. The platform's native 36 stays, and the 6 px gap to the design
+            // is recorded as a platform constraint rather than a miss.
             Os::Win => Self {
                 buttons_left: false,
                 traffic_lights: false,

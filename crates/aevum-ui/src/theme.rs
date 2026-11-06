@@ -773,10 +773,22 @@ pub fn row_hover() -> Color32 {
 // 这几个数是"整套界面读起来像不像那张图"的根：差 6px 的轨宽、差 70px 的胶片条，
 // 单独看都无所谓，摆在一起就是另一种软件。
 pub const MENU_H: f32 = 30.0;
-pub const OPTIONS_H: f32 = 34.0;
+/// 选项栏高 40：设计图 `.optionbar{height:40px}`。原 34 是把浏览器缩放当成紧凑档
+/// 量出来的偏小值——选项栏里 28px 的 chip 居中后上下各只剩 3px，读作一条挤住的带子。
+///
+/// Options bar 40 px, per the design mockup (`.optionbar{height:40px}`). The previous 34
+/// came from measuring the mockup at browser zoom; a 28 px chip then leaves only 3 px of
+/// air above and below and the bar reads as cramped.
+pub const OPTIONS_H: f32 = 40.0;
 pub const TAB_H: f32 = 28.0;
 pub const STATUS_H: f32 = 24.0;
-pub const TOOL_W: f32 = 52.0;
+/// 工具轨宽 48：设计图 `.toolrail{width:48px}`，内放 32×32 的 `.tool-btn`，
+/// 左右各留 8px。原 52 是照旧界面稿的 `--rail-w`，比设计图宽 4px。
+///
+/// Tool rail 48 px wide, per the design mockup (`.toolrail{width:48px}`), holding 32×32
+/// tool buttons with 8 px on each side. The old 52 followed the legacy mockup's
+/// `--rail-w` and sat 4 px wider than the design.
+pub const TOOL_W: f32 = 48.0;
 /// 右侧调整面板宽 372：界面稿 `--dock-w`。推子行「标签 76 · 轨道弹性 · 读数 52」
 /// 的排布就是照这个宽度定的，窄一档标签就开始抢轨道的地盘。
 ///
@@ -841,27 +853,45 @@ impl Density {
 /// 三档保持等差（+4/+6），Compact 仍是「装得下 12px 标签 + 20px 数值框」的下限。
 ///
 /// Slider row height in the adjustment panel: compact 28 / standard 32 / roomy 38.
-/// Re-scaled on 2026-11-06 against the design mockup: the old 32/38/46 was 20-46%
-/// taller than the mockup and fit four fewer rows per screen, which was the main
-/// reason the app did not read like the mockup. The three steps stay evenly spaced.
+/// Re-scaled on 2026-11-06 against the design mockup (`.slider-row{height:32px}`,
+/// `.density-loose .slider-row{height:40px}`): the standard step is 32 and only the roomy
+/// step goes to 40, exactly as the design does it.
 pub fn row_h() -> f32 {
     match appearance().density {
-        Density::Compact => 34.0,
-        Density::Standard => 40.0,
-        Density::Loose => 48.0,
+        Density::Compact => 28.0,
+        Density::Standard => 32.0,
+        Density::Loose => 40.0,
     }
 }
 
-/// 键值行 / 剪切读数行高：18 / 20 / 24。
+/// 键值行 / 剪切读数行高：24 / 32 / 40。
 ///
-/// Key/value row and crop readout row height: 18 / 20 / 24.
+/// Key/value row and crop readout row height: 24 / 32 / 40.
+///
+/// 设计图 `.kv-row{height:32px}` 与推子行同高：一行里只排一对字却比推子行矮，
+/// 竖向节奏会断，读起来像表格里的夹行。紧凑档 24 仍留得住一对 12px 字。
+///
+/// The design gives `.kv-row` the same 32 px as a slider row. A row that holds only one
+/// key/value pair but is shorter than the slider row breaks the vertical rhythm and reads
+/// as a squeezed table row. The compact step keeps 24 px, enough for one 12 px pair.
 pub fn kv_h() -> f32 {
     match appearance().density {
-        Density::Compact => 20.0,
-        Density::Standard => 24.0,
-        Density::Loose => 30.0,
+        Density::Compact => 24.0,
+        Density::Standard => 32.0,
+        Density::Loose => 40.0,
     }
 }
+
+/// 紧凑键值行高：长信息列表（序列页体检结论等）用，固定 24px 不随密度档变。
+///
+/// 设计图 `.kv-row` 的 32px 是「少量信息行」的规格；一屏排十余条时会多占近 90px，
+/// 把用户真正要看的结果挤出可视区。这里固定 24px：一对 12px 字垂直居中且不重叠。
+///
+/// Compact key/value row height for long information lists (the sequence page's QA
+/// summary and the like). It stays at 24 px regardless of the density step. The design's
+/// 32 px `.kv-row` is the spec for a few rows; a dozen of them costs nearly 90 px more
+/// and pushes the result the user came to read out of view.
+pub const KV_DENSE_H: f32 = 24.0;
 
 /// 画布内部顶栏（cv-toolbar）：文档页签 + 尺寸读数 + 右端上下文，28px。
 ///

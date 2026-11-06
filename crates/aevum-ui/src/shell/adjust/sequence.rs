@@ -29,13 +29,13 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "seq", "序列", false) {
         let n = state.frame_count();
         let valid = state.metrics.iter().filter(|m| m.is_some()).count();
-        kv(
+        kv_dense(
             ui,
             "帧数",
             format!("{n}"),
             if n > 0 { text() } else { dim() },
         );
-        kv(
+        kv_dense(
             ui,
             "测光完成",
             format!("{valid}"),
@@ -49,8 +49,8 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
             .resolution
             .map(|(w, h)| format!("{w} × {h}"))
             .unwrap_or_else(|| "—".to_owned());
-        kv(ui, "分辨率", res, text());
-        kv(
+        kv_dense(ui, "分辨率", res, text());
+        kv_dense(
             ui,
             "缺帧 / 异常",
             format!("{}", state.issues.len()),
@@ -316,9 +316,9 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         }
         if state.qa_run && !busy {
             if state.qa_findings.is_empty() {
-                kv(ui, "结论", "没发现问题", ok());
+                kv_dense(ui, "结论", "没发现问题", ok());
             } else {
-                kv(
+                kv_dense(
                     ui,
                     "结论",
                     crate::i18n::tr_fmt("{} 处", &[&state.qa_findings.len()]),
@@ -466,7 +466,7 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "seq-align-report", "对齐质量", false) {
         if let Some(report) = &state.align_report {
             let crop = report.crop;
-            kv(
+            kv_dense(
                 ui,
                 "统一裁切",
                 format!("{}×{} @ {},{}", crop.w, crop.h, crop.x, crop.y),
@@ -478,14 +478,14 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
                 mx = mx.max(o[0].abs());
                 my = my.max(o[1].abs());
             }
-            kv(
+            kv_dense(
                 ui,
                 "最大位移",
                 format!("X {mx:.1} px · Y {my:.1} px"),
                 text(),
             );
             let low = report.scores.iter().filter(|s| **s < 0.35).count();
-            kv(
+            kv_dense(
                 ui,
                 "低分帧",
                 format!("{low}"),
@@ -521,9 +521,9 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         }
     }
     if group_header(ui, state, "seq-spec", "口径", false) {
-        kv(ui, "测光长边", "512 px", muted());
-        kv(ui, "去闪输入", "全帧均值", muted());
-        kv(ui, "预览长边", "1600 px", muted());
+        kv_dense(ui, "测光长边", "512 px", muted());
+        kv_dense(ui, "去闪输入", "全帧均值", muted());
+        kv_dense(ui, "预览长边", "1600 px", muted());
     }
 }
 
@@ -610,7 +610,7 @@ pub(super) fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "def-stats", "分析结果", false) {
         if let Some(a) = &state.analysis {
             let st = a.stats;
-            kv(
+            kv_dense(
                 ui,
                 "亮度抖动",
                 format!("{:.3} → {:.3} EV", st.jitter_before, st.jitter_after),
@@ -621,7 +621,7 @@ pub(super) fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
                 },
             );
             if st.channels {
-                kv(
+                kv_dense(
                     ui,
                     "色闪抖动",
                     format!("{:.3} → {:.3} EV", st.color_before, st.color_after),
@@ -632,16 +632,16 @@ pub(super) fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
                     },
                 );
             }
-            kv(ui, "最大修正", format!("{:+.2} EV", st.max_ev), text());
-            kv(ui, "平均修正", format!("{:.3} EV", st.mean_abs_ev), text());
-            kv(
+            kv_dense(ui, "最大修正", format!("{:+.2} EV", st.max_ev), text());
+            kv_dense(ui, "平均修正", format!("{:.3} EV", st.mean_abs_ev), text());
+            kv_dense(
                 ui,
                 "有效帧",
                 format!("{} / {}", st.valid, st.frames),
                 muted(),
             );
             let moved = state.corr.iter().filter(|v| v.abs() > 0.05).count();
-            kv(ui, "受影响帧", format!("{moved}"), muted());
+            kv_dense(ui, "受影响帧", format!("{moved}"), muted());
         } else {
             ui.label(
                 RichText::new(crate::i18n::t!("等待测光…"))

@@ -622,7 +622,14 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
     // snapshots / copies live in a floating window (plan §2), and ACR likewise keeps
     // them on the tool strip rather than in the edit panel. It is a panel toggle, not a
     // tool, so a divider separates it from the hands-on tools below.
-    let size = 36.0;
+    // 工具按钮 32×32：设计图 `.tool-btn{width:32px;height:32px}`，48px 轨宽里
+    // 左右各留 8px。原 36 配的是 52px 轨；轨收窄后按钮必须同步，否则会顶到轨边、
+    // 左右不再对称。
+    //
+    // Tool buttons are 32×32 per the design's `.tool-btn`, centred in the 48 px rail
+    // with 8 px on each side. The old 36 paired with the 52 px rail; once the rail
+    // narrowed the button has to follow or it touches the edge.
+    let size = 32.0;
     let x = full.left() + (TOOL_W - size) * 0.5;
     let mut y = full.top() + 8.0;
     {

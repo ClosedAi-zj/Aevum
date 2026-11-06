@@ -10,6 +10,7 @@ use super::common::group_header;
 use super::common::hsl_band_stops;
 use super::common::in_field;
 use super::common::kv;
+use super::common::kv_dense;
 use super::common::note;
 use super::common::slider;
 use super::common::slider_grad;

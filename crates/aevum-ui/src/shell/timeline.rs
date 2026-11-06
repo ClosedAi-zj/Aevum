@@ -868,9 +868,15 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     // it used to do nothing and read as a bug.
     let mut mini =
         |ui: &mut Ui, glyph: Glyph, active: bool, tint: Color32, enabled: bool| -> bool {
+            // 走带按钮 26×26：设计图 `.tp-btn{width:26px;height:26px}`，按 26px 一格排。
+            // 原 22 的命中区在触摸屏上偏小，也与设计图不符。
+            //
+            // Transport buttons are 26×26 per the design's `.tp-btn`, laid out on a
+            // 26 px pitch. The old 22 hit area was small for touch and did not match
+            // the design.
             let r = Rect::from_center_size(
                 Pos2::new(rect.left() + 16.0 + idx as f32 * 26.0, cy),
-                Vec2::splat(22.0),
+                Vec2::splat(26.0),
             );
             let resp = ui.interact(
                 r,

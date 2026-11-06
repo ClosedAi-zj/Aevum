@@ -407,5 +407,8 @@ fn dock_strip(state: &mut AppState, ui: &mut Ui) {
 }
 // ---------------------------------------------------------------- 选项栏
 
-/// 工具栏控件高度：跟加高后的选项栏行高配套，按钮不再显得飘在中间。
-const BAR_H: f32 = 30.0;
+/// 工具栏控件高度：设计图 `.chip-opt{height:28px}`，选项栏 40px 高，上下各留 6px 呼吸。
+///
+/// Options-bar control height: the design's `.chip-opt` is 28 px inside a 40 px bar,
+/// leaving 6 px of air above and below.
+const BAR_H: f32 = 28.0;
