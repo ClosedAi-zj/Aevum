@@ -1102,6 +1102,31 @@ pub(super) fn kv(ui: &mut Ui, key: &str, value: impl Into<String>, color: Color3
 /// row in Photoshop and Camera Raw carries a left label, and that is the most direct
 /// "does this read as a professional tool" signal. The label column reuses the slider's
 /// 76 px, and wrapped options hang under the first option instead of under the label.
+/// 下拉框弹层的统一口径（风格/编码器/交付预设全走它）：
+/// egui ComboBox 默认弹层是裸灰底默认字——全站最不像成熟软件的一块（用户点名）。
+/// 项 hover/选中 = 强调色实底 + 白字（与菜单同一语言），行高 26，圆角走 token。
+///
+/// One shared skin for every dropdown popup (style / codec / delivery presets):
+/// egui's stock ComboBox popup is a bare grey list with default type -- the least
+/// "mature software" block in the app (user-flagged). Items hover/selected = accent
+/// fill + white text (same language as the menus), 26 px rows, token radius.
+pub(super) fn combo_style(ui: &mut Ui) {
+    let w = &mut ui.style_mut().visuals.widgets;
+    w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    w.inactive.bg_stroke = Stroke::NONE;
+    w.inactive.fg_stroke = Stroke::new(1.0, text());
+    w.hovered.weak_bg_fill = accent();
+    w.hovered.bg_fill = accent();
+    w.hovered.bg_stroke = Stroke::NONE;
+    w.hovered.fg_stroke = Stroke::new(1.0, on_accent());
+    w.active.weak_bg_fill = accent_hover();
+    w.active.bg_fill = accent_hover();
+    w.active.bg_stroke = Stroke::NONE;
+    w.active.fg_stroke = Stroke::new(1.0, on_accent());
+    ui.spacing_mut().button_padding = Vec2::new(10.0, 5.0);
+    ui.spacing_mut().item_spacing.y = 1.0;
+}
+
 pub(super) fn chip_row(ui: &mut Ui, label: &str, mut chips: impl FnMut(&mut Ui)) {
     // 与滑块同列：LABEL_W 76、行内缩进 12，两处数字必须一致，否则面板里两种缩进并存。
     //

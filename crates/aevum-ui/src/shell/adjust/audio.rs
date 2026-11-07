@@ -136,6 +136,7 @@ pub(super) fn adjust_audio(state: &mut AppState, ui: &mut Ui) {
             )
             .width(ui.available_width())
             .show_ui(ui, |ui| {
+                combo_style(ui);
                 for codec in [
                     AudioCodec::Auto,
                     AudioCodec::Copy,

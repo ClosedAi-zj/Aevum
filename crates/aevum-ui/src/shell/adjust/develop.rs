@@ -150,6 +150,7 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
                 ))
                 .width(112.0)
                 .show_ui(ui, |ui| {
+                    combo_style(ui);
                     for (i, key) in aevum_core::style::NAME_KEYS.iter().enumerate() {
                         let idx = i as u8;
                         if ui

@@ -5,6 +5,7 @@
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::BAR_H;
+use super::common::combo_style;
 use super::common::group_gap;
 use super::common::in_field;
 use super::common::opt_sep;
@@ -380,6 +381,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     )
                     .width(118.0)
                     .show_ui(ui, |ui| {
+                        combo_style(ui);
                         for name in grade::PRESET_NAMES {
                             if ui
                                 .add(egui::Button::selectable(
@@ -475,6 +477,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     )
                     .width(84.0)
                     .show_ui(ui, |ui| {
+                        combo_style(ui);
                         for codec in ["HEVC", "H.264", "ProRes"] {
                             if ui
                                 .add(egui::Button::selectable(state.codec == codec, codec))

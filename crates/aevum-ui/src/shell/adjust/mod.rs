@@ -7,6 +7,7 @@
 use super::BAR_H;
 use super::common::HslKind;
 use super::common::chip_row;
+use super::common::combo_style;
 use super::common::group_header;
 use super::common::hsl_band_stops;
 use super::common::in_field;
