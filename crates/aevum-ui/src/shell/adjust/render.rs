@@ -82,8 +82,10 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             .filter(|p| state.matches_delivery(p))
             .map(|p| p.name(zh))
             .collect();
+        // 状态行只说结论不写括号注解：旧句 24 字还带双括号，dim 色排出来像
+        // debug 文本（用户截图点名）。命中平台时列平台名，未命中就四个字。
         let line = if active.is_empty() {
-            crate::i18n::t!("当前不是任何平台的口径（按自己的数字导出）").to_owned()
+            crate::i18n::t!("未套平台预设").to_owned()
         } else {
             active.join(" · ")
         };

@@ -909,3 +909,63 @@ fn first_type_arg(seg: &str) -> Option<String> {
     }
     None
 }
+
+#[test]
+fn panel_files_never_hardcode_font_sizes() {
+    // 「字体大小不同」（用户截图）：面板里出现 `.size(9.0)` 这类裸数字就是
+    // 第二套字阶的入口。字号只许走 theme 的 SIZE_* token（zoom 缩放才能全局生效）。
+    // 数字字体（mono 数值读数）同样走 SIZE_*；egui 内部默认（DragValue 无显式字号）
+    // 不在此列——那走全局 Style。
+    use std::path::Path;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shell");
+    let mut offenders = Vec::new();
+    for entry in walkdir_lite(&root) {
+        let src = std::fs::read_to_string(&entry).unwrap_or_default();
+        for (i, line) in src.lines().enumerate() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            // .size( 后面是裸数字（非 SIZE_* / 变量）
+            if let Some(k) = t.find(".size(") {
+                let rest = &t[k + 6..];
+                let starts_digit = rest.chars().next().is_some_and(|c| c.is_ascii_digit());
+                if starts_digit {
+                    offenders.push(format!(
+                        "{}:{}",
+                        entry.file_name().unwrap().to_string_lossy(),
+                        i + 1
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "面板出现硬编码字号（必须走 SIZE_* token）：{:?}",
+        offenders
+    );
+}
+
+/// 只向下收两层：src/shell/<file>.rs 与 src/shell/<dir>/<file>.rs，够了。
+fn walkdir_lite(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return out;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            if let Ok(sub) = std::fs::read_dir(&p) {
+                for s in sub.flatten() {
+                    if s.path().extension().is_some_and(|x| x == "rs") {
+                        out.push(s.path());
+                    }
+                }
+            }
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            out.push(p);
+        }
+    }
+    out
+}

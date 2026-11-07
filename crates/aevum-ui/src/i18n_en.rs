@@ -749,7 +749,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("强度", "Strength"),
     ("归零", "Reset to zero"),
     ("当前", "Current"),
-    ("当前不是任何平台的口径（按自己的数字导出）", "Not any platform's convention right now (exporting with your own numbers)"),
+    ("未套平台预设", "No platform preset"),
     ("当前变速设定，外加按序列帧数换算的输出帧数、时长与错误（倍速填错在这儿报，不用等导出）。", "The current speed settings, plus the resulting frame count, duration, and errors computed from the sequence length (a bad speed shows up here, not at export time)."),
     ("当前帧", "Current frame"),
     ("当前帧后再拼", "Also stitch after the current frame"),
