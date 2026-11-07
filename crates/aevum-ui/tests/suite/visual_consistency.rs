@@ -55,34 +55,31 @@ fn slider_rows_never_consume_wheel_scroll() {
 
 #[test]
 fn film_collapse_control_is_a_real_button() {
-    // 收起入口曾「降为 ghost」：透明底 + dim 字 + 悬停才抬起，藏在 1600px 最右端。
-    // 用户三轮反复要求「有个按钮」，现在必须是带底色/描边、有文案的真控件。
-    // The collapse control used to be a ghost chip at the far right; the user
-    // repeatedly asked for a button. It must now be a real, labelled control.
+    // 2026-11-07 用户拍板改版：按钮**不再写字**——头行水平居中、22px 圆形图标钮、
+    // hover 才亮、名字进 tooltip（「只能展示一个功能」）。判据改钉新口径：
+    // 交互 ID 仍是 tl-film、点击仍翻 show_film、tooltip 文案仍在、
+    // 不许回到「112px 带字大按钮」的旧形态。
     let tl = clean("shell/timeline.rs");
     assert!(
-        tl.contains("收起预览") && tl.contains("展开预览"),
-        "胶片条收起按钮缺可读写明文案（收起预览 / 展开预览）"
-    );
-    // 真按钮必须有自己的底色——`rect_filled` 是「看起来像按钮」的最小证据。
-    // A real button must paint its own fill; rect_filled is the minimum evidence.
-    assert!(
-        tl.contains("rect_filled") && tl.contains("radius_control()"),
-        "胶片条收起控件没有走 control token 的圆角/底色"
-    );
-    // 默认态不能再是 dim()：那是「看不见」的根因。找 tl-film 交互区附近 1200 字符。
-    // Default state must not be dim(): that was the root cause of invisibility.
-    let show_film_block = tl
-        .find("tl-film")
-        .map(|i| &tl[i.saturating_sub(200)..(i + 1200).min(tl.len())])
-        .unwrap_or("");
-    assert!(
-        !show_film_block.is_empty(),
-        "找不到 tl-film 的交互区，收起按钮可能被搬走或改名"
+        tl.contains("make_persistent_id(\"tl-film\")"),
+        "收起控件的 tl-film 交互 ID 不见了"
     );
     assert!(
-        !show_film_block.contains("else { dim() }"),
-        "收起按钮默认态又退回 dim()，会重新变成看不见的 ghost 控件"
+        tl.contains("state.show_film = !state.show_film"),
+        "收起控件不再翻转 show_film"
+    );
+    assert!(
+        tl.contains("收起 / 展开底部预览栏"),
+        "收起控件的 tooltip 文案不见了"
+    );
+    assert!(
+        !tl.contains("btn_w = 112.0"),
+        "收起控件退回带文字的宽按钮（旧形态已废，名字进 tooltip）"
+    );
+    // 真按钮的最低证据：悬停有自己的底色（elev_hover）。
+    assert!(
+        tl.contains("elev_hover()"),
+        "收起控件悬停无底色，会重新变成看不见的 ghost"
     );
 }
 

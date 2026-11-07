@@ -344,10 +344,16 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         }
     }
 
+    // 投影不外扩（用户截图：四周露出一圈黑板读作「黑边」）——只向下方偏移 5px
+    // 露出一条柔影，左右上三面贴住图像；画面与背景的区分交给 1px 细描边。
+    //
+    // The drop shadow no longer expands (user screenshot: the exposed slab read as a
+    // "black border" on all four sides) -- it only offsets downward so a soft edge
+    // shows beneath; the 1 px hairline separates frame from background.
     p.rect_filled(
-        img.translate(Vec2::new(0.0, 7.0)).expand(7.0),
+        img.translate(Vec2::new(0.0, 5.0)),
         0,
-        Color32::from_black_alpha(70),
+        Color32::from_black_alpha(55),
     );
     p.rect_stroke(
         img,

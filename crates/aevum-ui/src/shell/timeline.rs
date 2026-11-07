@@ -39,7 +39,6 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     //
     // Measure the title first: the collapse button is pinned right after it and follows
     // whatever width the text needs.
-    let title_g = p.layout_no_wrap(title_text.clone(), font(SIZE_SMALL), dim());
     p.text(
         Pos2::new(hd.left() + 10.0, cy),
         Align2::LEFT_CENTER,
@@ -62,72 +61,44 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // It used to be a dim ghost chip at the far right (transparent, dim text, only lifting
     // on hover). The user asked three times for "a button that collapses the preview" --
     // the feature existed but was invisible, which is the same as not having it.
-    let curve_w = 40.0;
-    let btn_w = 112.0;
-    let btn_h = 24.0;
-    // 右边界保护：序号到四位、或窗口变窄时，按钮不许压到右端的「曲线」开关。
+    // 收起/展开按钮（用户 2026-11-07 拍板）：**只此一个功能**、头行水平居中、
+    // 22px 圆形图标钮、不写字——名字进悬停提示。静置是低调的灰圆（不与标题/星级
+    // 抢注意），悬停抬起并亮起，tooltip 说明收起/展开。
     //
-    // Right-edge guard: with a four-digit count or a narrow window the button must not
-    // run into the "Curve" toggle at the right end.
-    let max_left = hd.right() - 10.0 - curve_w - 8.0 - btn_w;
-    let btn_left = (hd.left() + 10.0 + title_g.size().x + 12.0).min(max_left);
-    let film_rect = Rect::from_min_size(
-        Pos2::new(btn_left, cy - btn_h * 0.5),
-        Vec2::new(btn_w, btn_h),
-    );
+    // The collapse control (user decision): one function, horizontally centred on the
+    // header, a 22 px round icon button with no text -- the name lives in the tooltip.
+    // At rest it is a quiet grey disc; hover lifts and lights it.
+    let btn = 22.0;
+    let film_rect = Rect::from_center_size(Pos2::new(full.center().x, cy), Vec2::splat(btn));
     let film_resp = ui.interact(film_rect, ui.make_persistent_id("tl-film"), Sense::click());
-    p.rect_filled(
-        film_rect,
-        radius_control(),
-        if film_resp.hovered() {
-            elev_hover()
-        } else {
-            elev()
-        },
-    );
-    // 描边默认 border_strong、悬停才用 accent：设计文档 §5.2 要求强调色占比 ≤ 2%，
-    // 常驻的 accent 描边会和「当前选中」抢语义。
-    //
-    // Stroke is border_strong by default and accent on hover: the design spec caps the
-    // accent at 2% of pixels, and a permanent accent outline would compete with "selected".
-    p.rect_stroke(
-        film_rect,
-        radius_control(),
-        Stroke::new(
-            1.0,
-            if film_resp.hovered() {
-                accent()
-            } else {
-                border_strong()
-            },
-        ),
-        StrokeKind::Inside,
-    );
+    let hovered = film_resp.hovered();
+    if hovered {
+        p.rect_filled(film_rect, btn * 0.5, elev_hover());
+        p.rect_stroke(
+            film_rect,
+            btn * 0.5,
+            Stroke::new(1.0, border_strong()),
+            StrokeKind::Inside,
+        );
+    } else {
+        p.circle_filled(film_rect.center(), btn * 0.5, panel().gamma_multiply(1.35));
+    }
     icons::paint(
         &p,
-        Rect::from_center_size(Pos2::new(film_rect.left() + 16.0, cy), Vec2::splat(13.0)),
+        Rect::from_center_size(film_rect.center(), Vec2::splat(13.0)),
         if state.show_film {
             Glyph::ChevronDown
         } else {
             Glyph::ChevronRight
         },
-        text(),
-    );
-    p.text(
-        Pos2::new(film_rect.left() + 28.0, cy),
-        Align2::LEFT_CENTER,
-        if state.show_film {
-            crate::i18n::t!("收起预览")
-        } else {
-            crate::i18n::t!("展开预览")
-        },
-        font(SIZE_SMALL),
-        text(),
+        if hovered { text() } else { muted() },
     );
     if film_resp.clicked() {
         state.show_film = !state.show_film;
     }
     film_resp.on_hover_text(crate::i18n::t!("收起 / 展开底部预览栏"));
+    // 右端「曲线」开关的宽度常量（星级筛选/说明行的右边界都要用它）。
+    let curve_w = 40.0;
 
     // 缩略图与主图曝光不同的说明：缩略图走机身内嵌原片（未显影），主画布已显影，
     // 两者亮度天然有差。写在这里是为了止住「是不是有 bug」的疑问，而不是改渲染链。

@@ -1048,8 +1048,18 @@ pub fn font_definitions() -> FontDefinitions {
         list.insert(0, "inter".to_owned());
         list.insert(1, "noto".to_owned());
     }
+    // 等宽族与主字体**同形**：原先 egui 内置 mono 打头，状态栏/走带/读数的
+    // 数字字形与主界面明显两套（用户截图圈名「下面的字体与全局字体不同」）。
+    // 改为 Inter 打头、noto 兜底——数字与正文同一张脸；数字列对齐靠同字体
+    // 同字号的稳定宽度（Inter 数字近 tabular），牺牲可忽略。
+    //
+    // The monospace family now shares the main typeface: egui's bundled mono used to
+    // lead, so digits in the status bar / transport / readouts rendered in a visibly
+    // different face (user screenshot). Inter leads and noto backs up -- digits share
+    // the body face; column alignment survives on Inter's near-tabular digits.
     if let Some(list) = fonts.families.get_mut(&FontFamily::Monospace) {
-        list.push("noto".to_owned());
+        list.insert(0, "inter".to_owned());
+        list.insert(1, "noto".to_owned());
     }
     // 粗体字族：两份 700 子集打头，**后面整条接上常规字族的列表**（含 egui 自带的
     // 兜底字体）。这样缺字只有一种结果：那个字画成常规体。整条兜底链复制而不是
@@ -1109,7 +1119,15 @@ pub fn apply_style(ctx: &Context, zoom: f32) {
     style.spacing.slider_width = 110.0;
     style.spacing.slider_rail_height = 4.0;
     style.spacing.scroll.bar_width = 8.0;
-    style.spacing.scroll.floating = false;
+    // 浮动滚动条（悬浮于内容之上、不占布局宽度）：固定 false 时，展开一个长组
+    // → 竖滚动条出现 → 面板内容整体横移 8px——用户实测「点击展开某个调色选项
+    // 界面会动」。浮动后滚动条 hover 才显形，布局宽度恒定，展开零位移。
+    //
+    // Floating scrollbars (overlay, no layout width): with fixed bars, expanding a
+    // long group made the vertical bar appear and shifted the whole panel 8 px --
+    // the user-reported "expanding a section moves the UI". Floating bars appear on
+    // hover, layout width stays constant, zero shift.
+    style.spacing.scroll.floating = true;
     style.spacing.indent = 12.0;
     // 弹层首帧宽度（见 `MENU_AREA_W` 的注释）：不收这一档，重启后第一次点菜单会得到
     // 一条 egui 默认的 600px 空板子。写在这里是因为 `Area` 读的是 `ctx.global_style()`，

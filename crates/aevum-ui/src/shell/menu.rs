@@ -511,6 +511,13 @@ pub(super) fn menu_style(ui: &mut Ui) {
     // 1 px gap reads as a gapped table), 8 px horizontal.
     ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
     ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+    // 弹层最小宽 232：贴屏幕右缘的菜单（缩放/视图）会被窗口边界钳宽，快捷键列
+    // 被挤到弹层外面画（用户截图 7 实锤）——给足最小宽，快捷键永远在层内。
+    //
+    // A 232 px popup minimum: menus near the window's right edge (zoom / view) get
+    // width-clamped and the shortcut column painted outside the surface (user
+    // screenshot 7). The minimum keeps shortcuts inside the layer.
+    ui.set_min_width(232.0);
 }
 
 pub(super) fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
