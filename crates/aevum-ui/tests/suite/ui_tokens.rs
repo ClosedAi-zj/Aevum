@@ -969,3 +969,16 @@ fn walkdir_lite(root: &Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
+
+#[test]
+fn look_window_uses_warn_once_for_the_contrast_warning() {
+    // 「颜色不统一」的静态防线（用户截图：橙字夹在白灰文字里无章法）：
+    // 警示色是语义色不是装饰色——外观窗内 warn() 只许出现在明暗微调的
+    // 对比度警告那一行；再想加警示必须先改这条判据说清楚理由。
+    let src = read_clean("shell/windows.rs");
+    let n = src.matches("warn()").count();
+    assert!(
+        n <= 1,
+        "外观窗出现了 {n} 处 warn()——警示色只许用于明暗微调的对比度警告，多了就是第二套装饰色"
+    );
+}

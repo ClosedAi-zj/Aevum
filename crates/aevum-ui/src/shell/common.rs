@@ -683,7 +683,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // `.slider-row` padding/gap plus `.s-label` and `.s-value` widths. The readout drops
     // from 52 to 44 -- monospace fits a signed three-digit value -- and the 8 px goes to
     // the rail, which is visibly longer in the design.
-    const LABEL_W: f32 = 76.0;
+    let label_w = label_col_w(ui);
     const VALUE_W: f32 = 44.0;
     // 复位点 5px：设计图 `.slider-row .s-reset{width:5px;height:5px}`。原 14px 是
     // 一个带内边距的点击靶，比设计稿宽 9px，轨道因此短了一截——实测程序轨道
@@ -726,7 +726,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         Pos2::new(rect.right() - ROW_PAD - RESET_W * 0.5, rect.center().y),
         Vec2::splat(RESET_W),
     );
-    let rail_left = rect.left() + ROW_PAD + LABEL_W + 4.0;
+    let rail_left = rect.left() + ROW_PAD + label_w + 4.0;
     let rail_right = (field.left() - 8.0).max(rail_left + 1.0);
     let track_y = rect.center().y;
     {
@@ -1127,16 +1127,27 @@ pub(super) fn combo_style(ui: &mut Ui) {
     ui.spacing_mut().item_spacing.y = 1.0;
 }
 
+/// 面板自适应标签列宽（Microsoft/Material 比例口径）：面板宽 24%，夹 64..100。
+/// 窄面板列先让路不挤轨道，宽面板列封顶、多出的宽度全给轨道——「该长的长」。
+/// slider_row 与 chip_row 共享一份，两列在任何面板宽度下都对齐。
+///
+/// Adaptive label column (Microsoft/Material proportional guidance): 24 % of panel
+/// width, clamped 64..100. Shared by slider_row and chip_row so both columns stay
+/// aligned at every panel width.
+pub(super) fn label_col_w(ui: &Ui) -> f32 {
+    (ui.available_width() * 0.24).clamp(64.0, 100.0)
+}
+
 pub(super) fn chip_row(ui: &mut Ui, label: &str, mut chips: impl FnMut(&mut Ui)) {
-    // 与滑块同列：LABEL_W 76、行内缩进 12，两处数字必须一致，否则面板里两种缩进并存。
+    // 与滑块同列：列宽走共享 label_col_w（比例自适应），两列任意面板宽度都对齐。
     //
-    // Same column as the sliders: 76 px label, 12 px row inset. These two numbers must
-    // match, or the panel ends up with two different indentations.
-    const LABEL_W: f32 = 76.0;
+    // Same column as the sliders: the width comes from the shared label_col_w, so both
+    // columns stay aligned at any panel width.
+    let label_w = label_col_w(ui);
     let label_text = crate::i18n::tr(label);
     ui.horizontal_top(|ui| {
         let (rect, _) =
-            ui.allocate_exact_size(Vec2::new(LABEL_W, super::BAR_H - 2.0), Sense::hover());
+            ui.allocate_exact_size(Vec2::new(label_w, super::BAR_H - 2.0), Sense::hover());
         // 标签按列宽**单行省略号截断**：英文的 `Format and bit depth` 比 76px 列宽，
         // 旧写法直接画出去，压住第一枚选项 26px（重叠判据在 Lang("en") 下当场点名）。
         // 完整文案走悬停，中文这一列本来就放得下，看不出变化。
@@ -1152,7 +1163,7 @@ pub(super) fn chip_row(ui: &mut Ui, label: &str, mut chips: impl FnMut(&mut Ui))
             muted(),
         );
         job.wrap = egui::text::TextWrapping {
-            max_width: LABEL_W - 6.0,
+            max_width: label_w - 6.0,
             max_rows: 1,
             break_anywhere: true,
             overflow_character: Some('…'),

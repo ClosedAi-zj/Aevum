@@ -746,28 +746,26 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
             // family only; the three text steps stay put, otherwise this slider would
             // become a contrast knob (see Palette::of in theme.rs).
             look_section(ui, "界面明暗微调");
-            let mut off = state.appearance.gray_offset as f32;
-            let resp = ui.add_sized(
-                [200.0, 20.0],
-                egui::Slider::new(&mut off, -3.0..=3.0)
-                    .step_by(1.0)
-                    .show_value(false),
-            );
-            if resp.changed() {
-                state.appearance.gray_offset = off.round() as i8;
-            }
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!("{:+.0}", state.appearance.gray_offset))
-                        .font(mono(SIZE_LABEL))
-                        .color(if state.appearance.gray_offset == 0 {
-                            dim()
-                        } else {
-                            text()
-                        }),
-                );
-                if state.appearance.gray_offset != 0 && bar_chip(ui, "归零", false).clicked() {
-                    state.appearance.gray_offset = 0;
+            // 七档离散量用 chip 行（-3..+3）：这行原来是全应用唯一一处 egui 原生
+            // Slider（宽 200 写死、灰轨白钮），与自绘滑块两套语言——用户截图圈名
+            // 「颜色/样式不统一」。chips 让档位一目了然，读数并入选中态，归零点档 0。
+            //
+            // The seven discrete steps become a chip row (-3..+3): this was the only
+            // stock egui Slider left in the app (hard-coded 200 px, grey rail, white
+            // knob) -- a second control language (user-flagged). Chips make the steps
+            // legible; the readout is the selected chip, tapping 0 zeroes it.
+            ui.horizontal_wrapped(|ui| {
+                for off in -3..=3 {
+                    let label = format!("{off:+}");
+                    if bar_chip(ui, &label, state.appearance.gray_offset == off).clicked() {
+                        state.appearance.gray_offset = off;
+                    }
+                }
+                if state.appearance.gray_offset != 0 {
+                    ui.add_space(4.0);
+                    if bar_chip(ui, "归零", false).clicked() {
+                        state.appearance.gray_offset = 0;
+                    }
                 }
             });
             if state.appearance.gray_offset.abs() > 2 {
