@@ -141,6 +141,18 @@ pub struct Layout {
     pub rail: Side,
     pub dock_side: Side,
     pub film: FilmSlot,
+    /// 信息密度：`true` = 紧凑（参数组头 28px），`false` = 标准（32px，默认）。
+    ///
+    /// 这个开关解决的是"照哪张参考图"的分歧：用户提供的 ACR 截图实测是 32px，
+    /// 而更紧凑的 ACR 版本是 26–28px。两者都对，取决于你习惯的屏与视力，所以
+    /// 交给用户选，而不是替他决定。
+    ///
+    /// Density: `true` = compact (28 px group headers), `false` = standard (32 px, default).
+    ///
+    /// This settles a genuine "which reference" disagreement: the user's ACR screenshot
+    /// measures 32 px, while tighter ACR builds use 26-28 px. Both are right and it
+    /// depends on screen and eyesight, so the user chooses instead of us deciding.
+    pub dense: bool,
 }
 
 impl Default for Layout {
@@ -150,6 +162,7 @@ impl Default for Layout {
             rail: Side::Left,
             dock_side: Side::Right,
             film: FilmSlot::Shown,
+            dense: false,
         }
     }
 }
@@ -160,7 +173,17 @@ impl Layout {
     /// Which preset the current configuration matches; change one item and this returns
     /// `None`, so the preset buttons in the panel go dark on their own.
     pub fn preset(&self) -> Option<LayoutPreset> {
-        LayoutPreset::ALL.into_iter().find(|p| p.layout() == *self)
+        // 密度不参与"是否是某个预设"的判定：它是一层与版面无关的观感偏好，
+        // 选了紧凑不该让三个预设按钮一起熄灭。
+        //
+        // Density is excluded from the preset match: it is a look-and-feel preference
+        // independent of arrangement, and picking compact must not extinguish all three
+        // preset buttons.
+        let probe = Self {
+            dense: false,
+            ..*self
+        };
+        LayoutPreset::ALL.into_iter().find(|p| p.layout() == probe)
     }
 
     pub fn with_preset(self, p: LayoutPreset) -> Self {

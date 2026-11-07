@@ -118,10 +118,8 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     {
         let clear_text = crate::i18n::t!("清除筛选");
         let label_text = crate::i18n::t!("筛选");
-        let count_text = crate::i18n::tr_fmt(
-            "已筛选 {} / {} 帧",
-            &[&state.film_visible_count(), &n],
-        );
+        let count_text =
+            crate::i18n::tr_fmt("已筛选 {} / {} 帧", &[&state.film_visible_count(), &n]);
         let clear_g = p.layout_no_wrap(clear_text.to_owned(), font(SIZE_SMALL), muted());
         let count_g = p.layout_no_wrap(count_text.clone(), mono(SIZE_SMALL), dim());
         let label_g = p.layout_no_wrap(label_text.to_owned(), font(SIZE_SMALL), muted());
@@ -129,6 +127,16 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         let star_w = 5.0 * DOT;
         let flag_w = 2.0 * DOT;
         let color_w = 4.0 * DOT;
+        // 筛选是否真的在生效：决定「清除筛选」与「已筛选 n / N 帧」要不要占位。
+        // 没筛选时那句读数和左上角的「12 帧」是同一件事，白占 80px，还把
+        // 「清除筛选」淹在一串无关文字里（用户 2026-11-07 的视觉走查）。
+        //
+        // Whether a filter is actually narrowing the strip; it decides whether the
+        // "clear" and "x of N" readouts take any space at all. With no filter the count
+        // repeats the "12 frames" on the left, costs 80 px, and drowns "clear filters".
+        let filters_on = state.film_filter_stars > 0
+            || state.film_filter_flag != 0
+            || state.film_filter_label > 0;
         let group_w = label_g.size().x
             + 8.0
             + star_w
@@ -138,14 +146,23 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             + color_w
             + 8.0
             + clear_g.size().x
-            + 8.0
-            + count_g.size().x;
+            + if filters_on {
+                8.0 + count_g.size().x
+            } else {
+                0.0
+            };
         let group_left = right_cursor - group_w;
-        // 窄窗整组收起：宁可看不见筛选器，也不让它压住标题与收起按钮。
+        // 窄窗整组收起：宁可看不见筛选器，也不让它压住标题与收起按钮。但筛选**正在
+        // 生效**时不能一起收掉——那样整条胶片条会莫名其妙地空着，界面上却找不到
+        // 原因（用户截图「突然底部没有预览图了」）。这时退成一枚「已筛选 x / y ·
+        // 清除筛选」的窄读数，让状态始终可见、可一键恢复。
         //
         // Collapse the whole group in a narrow window: better invisible than overlapping
-        // the title and the collapse button.
-        if group_left > film_rect.right() + 220.0 {
+        // the title and the collapse button. An **active** filter must not vanish with it,
+        // or the strip goes inexplicably empty with no cause on screen (user screenshot:
+        // "the filmstrip previews suddenly disappeared"). It falls back to a compact
+        // "x of y · clear filters" readout so the state stays visible and reversible.
+        if group_left > film_rect.right() + 12.0 {
             p.text(
                 Pos2::new(group_left, cy),
                 Align2::LEFT_CENTER,
@@ -197,7 +214,11 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     Sense::click(),
                 );
                 let on = state.film_filter_flag == flag;
-                let tint = if flag > 0 { label_color(3) } else { label_color(1) };
+                let tint = if flag > 0 {
+                    label_color(3)
+                } else {
+                    label_color(1)
+                };
                 if on {
                     p.rect_filled(r, radius_control(), tint.gamma_multiply(0.22));
                 }
@@ -259,9 +280,7 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 }
                 resp.on_hover_text(crate::i18n::tr_fmt(
                     "只看{}色标",
-                    &[&crate::i18n::tr(
-                        crate::state::LABEL_NAMES[k as usize],
-                    )],
+                    &[&crate::i18n::tr(crate::state::LABEL_NAMES[k as usize])],
                 ));
                 sx += DOT;
             }
@@ -290,13 +309,54 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 state.film_filter_flag = 0;
                 state.film_filter_label = 0;
             }
+            if filters_on {
+                p.text(
+                    Pos2::new(clear_rect.right() + 8.0, cy),
+                    Align2::LEFT_CENTER,
+                    count_text,
+                    mono(SIZE_SMALL),
+                    dim(),
+                );
+            }
+        } else if filters_on {
+            // 窄窗下的紧凑筛选读数：右对齐，只留「已筛选 x / y」与一枚可点的清除。
+            //
+            // Compact filter readout for narrow windows: right-aligned, just the
+            // "x of y" count and a clickable clear.
+            let clear_left = right_cursor - 6.0 - clear_g.size().x;
+            let count_left = clear_left - 10.0 - count_g.size().x;
+            let clear_rect = Rect::from_min_size(
+                Pos2::new(clear_left - 4.0, cy - 9.0),
+                Vec2::new(clear_g.size().x + 8.0, 18.0),
+            );
+            let clear_resp = ui.interact(
+                clear_rect,
+                ui.make_persistent_id("film-filter-clear-compact"),
+                Sense::click(),
+            );
             p.text(
-                Pos2::new(clear_rect.right() + 8.0, cy),
+                Pos2::new(count_left, cy),
                 Align2::LEFT_CENTER,
                 count_text,
                 mono(SIZE_SMALL),
                 dim(),
             );
+            p.text(
+                Pos2::new(clear_rect.left() + 4.0, cy),
+                Align2::LEFT_CENTER,
+                clear_text,
+                font(SIZE_SMALL),
+                if clear_resp.hovered() {
+                    text()
+                } else {
+                    muted()
+                },
+            );
+            if clear_resp.clicked() {
+                state.film_filter_stars = 0;
+                state.film_filter_flag = 0;
+                state.film_filter_label = 0;
+            }
         }
     }
 
@@ -344,16 +404,16 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     if state.show_film {
         // 高度优先级：用户拖过的高度 > 按首帧比例自动适配 > 兜底 56。
-        // 之前一股脑撑满剩余空间：横图时条比图高出两三倍，下面一截空皮。
-        let avail_h = (full.bottom() - y - 36.0).max(56.0);
-        let auto_h = state
-            .thumb(state.selected)
-            .map(|t| {
-                let (tw, th) = (t.size[0] as f32, t.size[1] as f32);
-                (92.0 * th / tw.max(1.0) + 18.0).clamp(64.0, 220.0)
-            })
-            .unwrap_or(84.0);
-        let h = state.film_h.unwrap_or(auto_h).clamp(48.0, avail_h);
+        // 走带是固定 36 高的一行，胶片条只吃自己需要的高度——以前剩余高度全被
+        // 走带吞掉，单帧序列底下会留出半条空带（用户截图：走带里只有两撮字的
+        // 大空白）。
+        //
+        // Height priority: user drag > first-frame aspect > 56 fallback. The transport is
+        // a fixed 36 px row and the strip takes only what it needs; the leftover used to
+        // be swallowed by the transport, leaving half a band of empty space under a
+        // one-frame sequence (user screenshot: two clumps of text in a wide blank row).
+        let avail_h = (full.bottom() - y - 40.0).max(56.0);
+        let h = state.film_height().clamp(48.0, avail_h);
         // 上边缘 5px 的拖动条：上下拉自定义高度，双击回到自动适配。
         let grip = Rect::from_min_max(
             Pos2::new(full.left() + pad, y - 2.0),
@@ -394,10 +454,7 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         ui,
         Rect::from_min_size(
             Pos2::new(full.left() + pad, y),
-            Vec2::new(
-                full.width() - pad * 2.0,
-                (full.bottom() - y - 4.0).max(24.0),
-            ),
+            Vec2::new(full.width() - pad * 2.0, 36.0),
         ),
     );
 }
@@ -629,7 +686,14 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                         (((clip.left() - strip.left()) / cell_w).floor() as isize).max(0) as usize;
                     let hi =
                         ((((clip.right() - strip.left()) / cell_w).ceil() as usize) + 1).min(n);
-                    visible = lo..hi.max(lo);
+                    // 虚拟化窗口退化时至少留一格：旧滚动偏移把视口推到内容之外、或窗口
+                    // 极窄时，算出来的区间会是空集，整条胶片条就画成一片空白。
+                    //
+                    // Keep at least one cell when the virtualisation window degenerates: a
+                    // stale scroll offset or a very narrow window can yield an empty range,
+                    // and the whole strip would paint as a blank band.
+                    let lo = lo.min(n.saturating_sub(1));
+                    visible = lo..hi.max(lo + 1).min(n);
 
                     let p = ui.painter();
                     for i in lo..hi {
@@ -867,10 +931,74 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                         state.scroll_to_selected = false;
                     }
                 });
+
+            // 筛选把所有帧都藏掉时不能留一片纯白（用户截图「突然底部没有
+            // 预览图了」）：在条内居中写明原因，并给一枚一键清除。
+            // 这枚提示画在滚动区**外面**：横向 ScrollArea 的内容只有 n 格宽
+            // （单帧时 92px），落在内容布局之外的控件虽然画得出来，命中区却被
+            // 内容 UI 的 clip 裁空，点了没反应。画在条自己的 Ui 上，命中区就是
+            // 整个可见条。
+            //
+            // When the filter hides every frame the strip must not sit blank
+            // (user screenshot: "the filmstrip previews suddenly disappeared"):
+            // say why, centred, and offer a one-click clear. It is drawn *outside*
+            // the horizontal ScrollArea: the content is only n cells wide (92 px for
+            // a single frame), and a widget laid out beyond that content gets its
+            // interact rect clipped away while still painting — so clicks went
+            // nowhere. Painting on the strip's own Ui keeps the whole visible
+            // strip hittable.
+            if n > 0 && state.film_visible_count() == 0 {
+                empty_hint(state, ui, rect);
+            }
         },
     );
 
     state.ensure_thumbs(ctx, visible.start.saturating_sub(2), visible.end + 2);
+}
+
+/// 空条提示：原因 + 一键清除。必须在滚动区外调用，理由见调用处。
+fn empty_hint(state: &mut AppState, ui: &mut Ui, rect: Rect) {
+    let p = ui.painter().clone();
+    let hint = crate::i18n::tr("当前筛选下没有帧");
+    let clear_g = p.layout_no_wrap(
+        crate::i18n::tr("清除筛选").to_owned(),
+        font(SIZE_SMALL),
+        muted(),
+    );
+    let cy = rect.center().y;
+    p.text(
+        Pos2::new(rect.center().x, cy - 9.0),
+        Align2::CENTER_CENTER,
+        hint,
+        font(SIZE_SMALL),
+        dim(),
+    );
+    let cr = Rect::from_center_size(
+        Pos2::new(rect.center().x, cy + 11.0),
+        Vec2::new(clear_g.size().x + 16.0, 20.0),
+    );
+    let cresp = ui.interact(
+        cr,
+        ui.make_persistent_id("film-empty-clear"),
+        Sense::click(),
+    );
+    if cresp.hovered() {
+        p.rect_filled(cr, radius_control(), elev());
+    }
+    p.galley(
+        Pos2::new(
+            cr.center().x - clear_g.size().x * 0.5,
+            cr.center().y - clear_g.size().y * 0.5,
+        ),
+        clear_g,
+        if cresp.hovered() { text() } else { muted() },
+    );
+    if cresp.clicked() {
+        state.film_filter_stars = 0;
+        state.film_filter_flag = 0;
+        state.film_filter_label = 0;
+        state.scroll_to_selected = true;
+    }
 }
 
 fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {

@@ -19,7 +19,6 @@ use super::mask::mask_hit_any;
 use super::mask::mask_pick_color;
 use super::mask::mask_pixel_size;
 use super::menu::fit_view;
-use super::toolbar::doc_tab;
 use crate::icons::{self, Glyph};
 use crate::state::{AppState, CropDrag, Module, MotionBox, Tool};
 use crate::theme::{self, *};
@@ -50,7 +49,6 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         Pos2::new(right.max(raw.left() + 1.0), raw.bottom()),
     );
     let p = ui.painter().clone();
-    let ctx = ui.ctx().clone();
 
     // 顶层错误横幅：画布顶部正中央一条 danger 底横幅——状态栏 24px 里塞长文本
     // 必然截断，用户截屏证明他根本没看到（"错误信息放在下面我根本看不到"）。
@@ -99,59 +97,14 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         xresp.on_hover_text(crate::i18n::t!("关闭这条错误提示"));
     }
 
-    // 画布顶栏（cv-toolbar）：28px header 底 + 下缘发丝线，画在 CentralPanel 内部
-    // —— 不新增 egui Panel。左端文档页签，中段尺寸读数，右端蒙版数与撤销提示。
-    let tb = Rect::from_min_size(full.min, Vec2::new(full.width(), CV_TOOLBAR_H));
-    p.rect_filled(tb, 0, header());
-    theme::rule(&p, tb.left(), tb.right(), tb.bottom(), divider());
-    let tab_w = 208.0;
-    doc_tab(
-        state,
-        &p,
-        ui,
-        &ctx,
-        Rect::from_min_size(
-            Pos2::new(tb.left() + 10.0, tb.top() + 1.0),
-            Vec2::new(tab_w, TL_HD_H),
-        ),
-    );
-    // 中段：画幅 W × H · 位深 n bit（位深从 RAW/DNG 解析注记里取，普通文件不显示）。
-    // 裸数字曾被当成关闭叉（评审 E3 / 用户反馈 #7）：「画幅」标签把它框成尺寸读数。
-    let bits = state.source_note.as_ref().and_then(|s| {
-        s.strip_suffix(" 位")
-            .and_then(|t| t.rsplit(' ').next())
-            .and_then(|t| t.parse::<u32>().ok())
-    });
-    let mid_text = frame_size_text(state.resolution, bits);
-    p.text(
-        Pos2::new(tb.left() + 10.0 + tab_w + 12.0, tb.center().y),
-        Align2::LEFT_CENTER,
-        mid_text,
-        font(SIZE_SMALL),
-        dim(),
-    );
-    // 右端：蒙版 n 个 · 撤销 Ctrl+Z（11px dim，说明文字不上交互）。
-    let undo_text = crate::i18n::t!("撤销 Ctrl+Z");
-    let undo_w = p
-        .layout_no_wrap(undo_text.to_owned(), font(SIZE_SMALL), dim())
-        .size()
-        .x;
-    p.text(
-        Pos2::new(tb.right() - 10.0, tb.center().y),
-        Align2::RIGHT_CENTER,
-        undo_text,
-        font(SIZE_SMALL),
-        dim(),
-    );
-    p.text(
-        Pos2::new(tb.right() - 10.0 - undo_w - 12.0, tb.center().y),
-        Align2::RIGHT_CENTER,
-        crate::i18n::tr_fmt("蒙版 {} 个", &[&state.params.masks.len()]),
-        font(SIZE_SMALL),
-        dim(),
-    );
+    // 文档页签与读数已搬进选项行（顶部三层 chrome 压成两层）：画布从 CentralPanel
+    // 顶边整块开始，图像多得到 28px 高。
+    //
+    // The document tab and readouts moved into the options bar, folding three rows of top
+    // chrome into two; the canvas now starts at the CentralPanel's top edge and the image
+    // gains 28 px of height.
+    let body = full;
 
-    let body = Rect::from_min_max(Pos2::new(full.left(), full.top() + CV_TOOLBAR_H), full.max);
     p.rect_filled(body, 0, surround());
 
     let gutter = if state.rulers { RULER } else { 0.0 };
@@ -347,15 +300,23 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     // 投影不外扩（用户截图：四周露出一圈黑板读作「黑边」）——只向下方偏移 5px
     // 露出一条柔影，左右上三面贴住图像；画面与背景的区分交给 1px 细描边。
     //
+    // 放大后 `img` 会越出内容区：投影 / 描边 / 分屏原图 / 分割线一律裁到 `content`，
+    // 否则会在画布工具条与标尺上盖出一条黑带（用户截图「放大后上面一边有黑边」）。
+    //
     // The drop shadow no longer expands (user screenshot: the exposed slab read as a
     // "black border" on all four sides) -- it only offsets downward so a soft edge
     // shows beneath; the 1 px hairline separates frame from background.
-    p.rect_filled(
+    //
+    // Once zoomed, `img` overflows the content rect: the shadow, border, split original,
+    // divider and chips are all clipped to `content`, or they paint a dark band over the
+    // canvas toolbar and rulers (user screenshot: "one side has a black band at the top").
+    let cp = p.clone().with_clip_rect(content);
+    cp.rect_filled(
         img.translate(Vec2::new(0.0, 5.0)),
         0,
         Color32::from_black_alpha(55),
     );
-    p.rect_stroke(
+    cp.rect_stroke(
         img,
         0,
         Stroke::new(1.0, border_strong()),
@@ -368,90 +329,106 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
             //
             // Clip the image to the content rect: zoomed-in pixels outside the canvas are
             // not drawn, so the image never pushes up into the toolbar / rulers.
-            p.clone()
-                .with_clip_rect(content)
-                .image(t.id(), img, UV, Color32::WHITE);
+            cp.image(t.id(), img, UV, Color32::WHITE);
             if let Some(o) = &orig {
                 // 分割线位置跟着 `split_pos`（0..1）走，按住手柄左右拉；LR 的
                 // 前后对比就是这一种——不是钉死在中间的一条死线。
                 let x = img.min.x + img.width() * state.split_pos.clamp(0.02, 0.98);
-                let left = Rect::from_min_max(img.min, Pos2::new(x, img.max.y));
-                p.clone()
+                let left = Rect::from_min_max(img.min, Pos2::new(x, img.max.y)).intersect(content);
+                cp.clone()
                     .with_clip_rect(left)
                     .image(o.id(), img, UV, Color32::WHITE);
-                p.line_segment(
-                    [Pos2::new(x, img.top()), Pos2::new(x, img.bottom())],
-                    Stroke::new(1.0, Color32::from_white_alpha(200)),
-                );
-                // 拖动手柄：分割线中段一枚圆形抓手，纵向居中；双击回到居中。
-                let grip =
-                    Rect::from_center_size(Pos2::new(x, img.center().y), Vec2::new(18.0, 28.0));
-                let gresp = ui.interact(
-                    grip,
-                    ui.make_persistent_id("split-grip"),
-                    Sense::click_and_drag(),
-                );
-                if gresp.dragged()
-                    && let Some(pt) = gresp.interact_pointer_pos()
-                {
-                    state.split_pos = ((pt.x - img.min.x) / img.width().max(1.0)).clamp(0.02, 0.98);
+                // 分割线只在画面还没被裁出去时才画；放大到线落在可视区外就整条收掉，
+                // 免得它贴着工具条边缘画成一条白边。
+                //
+                // The divider is drawn only while it still falls inside the canvas; once
+                // zoomed past it, the whole overlay is dropped rather than pinned to the edge.
+                let line_visible = x > content.left() && x < content.right();
+                if line_visible {
+                    cp.line_segment(
+                        [
+                            Pos2::new(x, img.top().max(content.top())),
+                            Pos2::new(x, img.bottom().min(content.bottom())),
+                        ],
+                        Stroke::new(1.0, Color32::from_white_alpha(200)),
+                    );
                 }
-                if gresp.double_clicked() {
-                    state.split_pos = 0.5;
+                if line_visible {
+                    // 拖动手柄：分割线中段一枚圆形抓手；纵向位置钉在**可见区域**的
+                    // 中段——放大后整幅图的中线可能已经在画布外，用图心的 y 会让手柄
+                    // 消失。双击回到居中。
+                    //
+                    // Drag handle: a round grip on the divider's middle, pinned to the
+                    // middle of the *visible* area; once zoomed the image's own center may
+                    // sit outside the canvas and a handle anchored to it disappears.
+                    let gy = img
+                        .center()
+                        .y
+                        .clamp(content.top() + 14.0, content.bottom() - 14.0);
+                    let grip = Rect::from_center_size(Pos2::new(x, gy), Vec2::new(18.0, 28.0));
+                    let gresp = ui.interact(
+                        grip,
+                        ui.make_persistent_id("split-grip"),
+                        Sense::click_and_drag(),
+                    );
+                    if gresp.dragged()
+                        && let Some(pt) = gresp.interact_pointer_pos()
+                    {
+                        state.split_pos =
+                            ((pt.x - img.min.x) / img.width().max(1.0)).clamp(0.02, 0.98);
+                    }
+                    if gresp.double_clicked() {
+                        state.split_pos = 0.5;
+                    }
+                    if gresp.hovered() || gresp.dragged() {
+                        ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+                    }
+                    // 手柄本体：深底白描边，两枚箭头示意可拉；悬停时抬亮。
+                    let gcol = if gresp.dragged() {
+                        accent()
+                    } else if gresp.hovered() {
+                        elev_hover()
+                    } else {
+                        Color32::from_rgba_unmultiplied(24, 24, 26, 235)
+                    };
+                    cp.circle_filled(
+                        grip.center() + Vec2::new(0.0, 1.0),
+                        11.0,
+                        Color32::from_black_alpha(90),
+                    );
+                    cp.circle_filled(grip.center(), 11.0, gcol);
+                    cp.circle_stroke(
+                        grip.center(),
+                        11.0,
+                        Stroke::new(1.0, Color32::from_white_alpha(190)),
+                    );
+                    let arrow = |dx: f32| {
+                        let c = grip.center();
+                        [
+                            Pos2::new(c.x + dx - 2.2, c.y - 4.0),
+                            Pos2::new(c.x + dx - 4.0, c.y),
+                            Pos2::new(c.x + dx - 2.2, c.y + 4.0),
+                            Pos2::new(c.x + dx + 0.6, c.y),
+                        ]
+                    };
+                    cp.add(Shape::convex_polygon(
+                        arrow(-3.4).to_vec(),
+                        Color32::WHITE,
+                        Stroke::NONE,
+                    ));
+                    cp.add(Shape::convex_polygon(
+                        arrow(5.2).to_vec(),
+                        Color32::WHITE,
+                        Stroke::NONE,
+                    ));
+                    // 角标也钉在可见区的顶缘，而不是图顶：放大后图顶在工具条上方。
+                    //
+                    // The "before / after" chips pin to the visible area's top edge, not
+                    // the image's: zoomed in, the image top sits above the toolbar.
+                    let chip_y = content.top() + 8.0;
+                    chip_label(&cp, Pos2::new(x - 8.0, chip_y), "前", Align2::RIGHT_TOP);
+                    chip_label(&cp, Pos2::new(x + 8.0, chip_y), "后", Align2::LEFT_TOP);
                 }
-                if gresp.hovered() || gresp.dragged() {
-                    ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
-                }
-                // 手柄本体：深底白描边，两枚箭头示意可拉；悬停时抬亮。
-                let gcol = if gresp.dragged() {
-                    accent()
-                } else if gresp.hovered() {
-                    elev_hover()
-                } else {
-                    Color32::from_rgba_unmultiplied(24, 24, 26, 235)
-                };
-                p.circle_filled(
-                    grip.center() + Vec2::new(0.0, 1.0),
-                    11.0,
-                    Color32::from_black_alpha(90),
-                );
-                p.circle_filled(grip.center(), 11.0, gcol);
-                p.circle_stroke(
-                    grip.center(),
-                    11.0,
-                    Stroke::new(1.0, Color32::from_white_alpha(190)),
-                );
-                let arrow = |dx: f32| {
-                    let c = grip.center();
-                    [
-                        Pos2::new(c.x + dx - 2.2, c.y - 4.0),
-                        Pos2::new(c.x + dx - 4.0, c.y),
-                        Pos2::new(c.x + dx - 2.2, c.y + 4.0),
-                        Pos2::new(c.x + dx + 0.6, c.y),
-                    ]
-                };
-                p.add(Shape::convex_polygon(
-                    arrow(-3.4).to_vec(),
-                    Color32::WHITE,
-                    Stroke::NONE,
-                ));
-                p.add(Shape::convex_polygon(
-                    arrow(5.2).to_vec(),
-                    Color32::WHITE,
-                    Stroke::NONE,
-                ));
-                chip_label(
-                    &p,
-                    Pos2::new(x - 8.0, img.top() + 8.0),
-                    "前",
-                    Align2::RIGHT_TOP,
-                );
-                chip_label(
-                    &p,
-                    Pos2::new(x + 8.0, img.top() + 8.0),
-                    "后",
-                    Align2::LEFT_TOP,
-                );
             }
         }
         None => {
@@ -559,6 +536,12 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
             Align2::RIGHT_TOP,
         );
     }
+
+    // 辅看开关浮在画布右下角（原先是窗口右缘的 28px 竖条）。
+    //
+    // The overlay toggles float at the canvas's bottom-right corner (they used to be a
+    // 28 px rail on the window's right edge).
+    super::overlay_toggles(state, ui, content);
 
     if state.rulers {
         draw_rulers(ui, body, content, Some(img), scale, hover);
@@ -1396,7 +1379,7 @@ fn empty_state(state: &mut AppState, ui: &mut Ui, content: Rect) {
 /// the label frames W × H as a dimension -- × is a multiplication sign, not a close
 /// cross (review E3 / user feedback #7). Bit depth comes from the RAW/DNG note and is
 /// hidden for plain files. With no sequence open it degrades to a placeholder dash.
-fn frame_size_text(res: Option<(u32, u32)>, bits: Option<u32>) -> String {
+pub(super) fn frame_size_text(res: Option<(u32, u32)>, bits: Option<u32>) -> String {
     let Some((w, h)) = res else {
         return "—".to_owned();
     };

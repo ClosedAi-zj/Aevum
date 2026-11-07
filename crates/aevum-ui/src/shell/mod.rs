@@ -20,6 +20,7 @@ use self::menu::menu_row;
 use self::timeline::timeline;
 use self::toolbar::options_bar;
 use self::toolbar::status_bar;
+use self::toolbar::status_bar_needed;
 use self::toolbar::tool_rail;
 use self::windows::about_window;
 use self::windows::error_dialog;
@@ -99,7 +100,11 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         .show(root, |ui| menu_row(state, ui, &ctx));
 
     // 状态栏放到标题栏之下时，它读起来是抬头：先读到在哪个文件、什么色彩空间。
-    if layout.status == StatusSlot::Top {
+    // 只在真有话要说（告警 / 长任务 / 边车）时才占这一行。
+    //
+    // A status bar under the title bar reads as a header line; it only takes the row
+    // when it actually has something to say (notice / long task / sidecar).
+    if layout.status == StatusSlot::Top && status_bar_needed(state) {
         egui::Panel::top("status-bar")
             .exact_size(STATUS_H)
             .frame(egui::Frame::NONE.fill(header()))
@@ -128,7 +133,13 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
 
     // 3 底部两行：**先声明状态栏**，它才拿得到窗口最底边；胶片条压在它上面。
     //   反过来声明就成了"状态栏飘在胶片条之上"，与界面稿差出整整一行。
-    if layout.status == StatusSlot::Bottom {
+    //   没有告警 / 任务时整条不声明——底边留白还回来（用户 2026-11-08）。
+    //
+    // Two bottom rows: the status bar is declared **first** so it gets the very bottom;
+    // the filmstrip stacks above it. Declared the other way round it would float above
+    // the strip, a whole row off the design. With nothing to report the whole bar is not
+    // declared at all and the edge is given back (user, 2026-11-08).
+    if layout.status == StatusSlot::Bottom && status_bar_needed(state) {
         egui::Panel::bottom("status-bar")
             .exact_size(STATUS_H)
             .frame(egui::Frame::NONE.fill(header()))
@@ -136,16 +147,19 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     }
     // 整页视图（项目库 / 设置）不摆胶片条与走带：它们与「当前序列的帧」无关，
     if layout.film.allowed() && state.frame_count() > 0 {
-        // 面板高度跟内容走：展开=188；收起胶片后只剩头行(26)+4+走带(36)=66，
-        // 曲线开着再加 60——「收起」必须真的把面板收矮（用户截图：收起后
-        // 122px 空黑仍在，按钮文案变了高度没变）。
+        // 面板高度跟内容走：头行 26 + 间距 4 + [曲线 54 + 间距 6] + 胶片条实际
+        // 高度 + 间距 4 + 走带 36。胶片条高度由首帧比例决定，面板就照着它收——
+        // 固定 188 会把多出来的三四十像素全塞给走带，读作一条空带（用户截图）。
         //
-        // The panel height follows the content: expanded = 188; with the filmstrip
-        // collapsed only header (26) + 4 + transport (36) = 66 remain, plus 60 when
-        // the curve is open -- "collapse" must actually shrink the panel (user
-        // screenshot: the label flipped but 122 px of black stayed).
+        // The panel height follows the content: header 26 + gap 4 + [curve 54 + gap 6]
+        // + the strip's actual height + gap 4 + transport 36. The strip height comes
+        // from the first frame's aspect and the panel hugs it; a fixed 188 handed the
+        // leftover thirty-odd pixels to the transport, reading as an empty band (user
+        // screenshot).
         let tl_h = match (state.show_film, state.show_curves) {
-            (true, _) => TIMELINE_H,
+            (true, curves) => {
+                26.0 + 4.0 + if curves { 60.0 } else { 0.0 } + state.film_height() + 4.0 + 36.0
+            }
             (false, true) => 26.0 + 4.0 + 60.0 + 36.0,
             (false, false) => 66.0,
         };
@@ -161,13 +175,11 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     let rail_left = layout.rail.is_left();
     let dock_left = layout.dock_side.is_left();
 
-    if state.show_strip {
-        egui::Panel::right("dock-strip")
-            .exact_size(STRIP_W)
-            .resizable(false)
-            .frame(egui::Frame::NONE.fill(header()))
-            .show(root, |ui| dock_strip(state, ui));
-    }
+    // 竖条（网格 / 胶片 / 曲线）已移入画布右下浮层，这里不再占一列，
+    // 右坞因此直接贴到窗口右缘。
+    //
+    // The rail (grid / film / curves) now floats on the canvas, so no column is
+    // reserved here and the dock reaches the window edge.
     if state.show_dock && !dock_left {
         egui::Panel::right("dock")
             .exact_size(state.dock_w)
@@ -217,7 +229,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // right dock, the left edge for a left one. The old code always clamped the right,
     // so moving the panes to the left (a persisted layout choice) stole 372 px from the
     // canvas and left a blank band on the right.
-    let strip_w = if state.show_strip { STRIP_W } else { 0.0 };
+    let strip_w = 0.0;
     let dock_w = if state.show_dock { state.dock_w } else { 0.0 };
     let right_inset = strip_w + if dock_left { 0.0 } else { dock_w };
     let left_inset = if dock_left { dock_w } else { 0.0 };
@@ -354,18 +366,40 @@ fn export_confirm_window(state: &mut AppState, ctx: &egui::Context, full: egui::
     }
 }
 
-// ---------------------------------------------------------------- 右侧竖条
+// ---------------------------------------------------------------- 画布辅看浮层
 
-/// 最外那条 28px 竖条：网格 / 胶片 / 曲线三枚开关（界面稿里是 ⌗ ◐ ◑）。
+/// 画布右下角的辅看开关：网格 / 胶片 / 曲线。
 ///
-/// 它挂在调整面板外侧、贴着窗口右沿 —— 是"画布上加什么辅看"这一层，
-/// 和面板里"改什么参数"不是一类东西，所以宁可窄成一条也不并进页签。
-fn dock_strip(state: &mut AppState, ui: &mut Ui) {
-    let full = ui.max_rect();
+/// 这三个开关原先占一条 28px 竖条贴在窗口最右缘，问题有三：① 它把右坞从窗口
+/// 边缘切开 28px，视觉上像被裁掉一条；② 三枚无字图标挂在面板外侧，归属不明；
+/// ③ 它管的是"画布上叠加什么"，却被放进了"改什么参数"的那一列。
+///
+/// 改成画布内的实色浮层：常驻、一键可切、归属清楚（辅看属于画布），右坞直接
+/// 贴到窗口右缘，画布还多回 28px。**必须实色**——半透明或模糊会透出图像，
+/// 干扰对明度与色相的判断。
+///
+/// Canvas overlay toggles (grid / filmstrip / curves), bottom-right of the canvas.
+///
+/// They used to occupy a 28 px rail pinned to the window's right edge, which (a) cut the
+/// dock off the edge, (b) left three unlabelled icons outside the panel with no visible
+/// owner, and (c) put a *canvas* concern into the *parameter* column. As a solid overlay
+/// they stay persistent and one-click, their owner is obvious, the dock reaches the
+/// window edge, and the canvas wins 28 px back. It must be solid -- translucency or blur
+/// would let the image through and bias the judgement of tone and hue.
+pub(super) fn overlay_toggles(state: &mut AppState, ui: &mut Ui, content: Rect) {
+    const W: f32 = 96.0;
+    const H: f32 = 26.0;
+    let at = Rect::from_min_size(
+        Pos2::new(content.right() - W - 12.0, content.bottom() - H - 12.0),
+        Vec2::new(W, H),
+    );
     let p = ui.painter().clone();
-    p.line_segment(
-        [full.left_top(), full.left_bottom()],
-        Stroke::new(1.0, border()),
+    p.rect_filled(at, radius_control(), elev());
+    p.rect_stroke(
+        at,
+        radius_control(),
+        Stroke::new(1.0, divider()),
+        egui::StrokeKind::Inside,
     );
     let items: [(Glyph, &str, bool); 3] = [
         (Glyph::Grid, "网格 (G) · 三分线", state.grid),
@@ -373,20 +407,24 @@ fn dock_strip(state: &mut AppState, ui: &mut Ui) {
         (Glyph::Sliders, "亮度曲线", state.show_curves),
     ];
     let mut flip = [false; 3];
-    let mut y = full.top() + 6.0;
     for (i, (glyph, tip, on)) in items.iter().enumerate() {
-        let r = Rect::from_min_size(Pos2::new(full.left() + 3.0, y), Vec2::splat(22.0));
-        let resp = ui.interact(r, ui.make_persistent_id(("strip", i)), Sense::click());
+        let r = Rect::from_min_size(
+            Pos2::new(at.left() + 3.0 + i as f32 * 30.0, at.top() + 2.0),
+            Vec2::new(22.0, 22.0),
+        );
+        let resp = ui.interact(
+            r,
+            ui.make_persistent_id(("overlay-toggle", i)),
+            Sense::click(),
+        );
         if *on {
-            // 选中只给一层极淡的强调色底 + 强调色图标：整块实心蓝在这条 28px
-            // 的窄条里会变成一颗抢眼的按钮，而它其实只是"辅看开着"。
             p.rect_filled(r, radius_control(), accent_dim());
         } else if resp.hovered() {
-            p.rect_filled(r, radius_control(), elev());
+            p.rect_filled(r, radius_control(), elev_hover());
         }
         icons::paint(
             &p,
-            r.shrink(5.0),
+            r.shrink(4.0),
             *glyph,
             if *on {
                 accent()
@@ -401,7 +439,6 @@ fn dock_strip(state: &mut AppState, ui: &mut Ui) {
         if clicked {
             flip[i] = true;
         }
-        y += 26.0;
     }
     if flip[0] {
         state.grid = !state.grid;
@@ -413,6 +450,7 @@ fn dock_strip(state: &mut AppState, ui: &mut Ui) {
         state.show_curves = !state.show_curves;
     }
 }
+
 // ---------------------------------------------------------------- 选项栏
 
 /// 工具栏控件高度：设计图 `.chip-opt{height:28px}`，选项栏 40px 高，上下各留 6px 呼吸。

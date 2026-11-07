@@ -298,9 +298,7 @@ impl AppState {
             "create" => {
                 let frames = self.lib_frames_arg(args, root)?;
                 if frames.len() < 2 {
-                    return Err(
-                        crate::i18n::t!("堆叠至少需要 2 帧：一次选中至少两帧").to_owned()
-                    );
+                    return Err(crate::i18n::t!("堆叠至少需要 2 帧：一次选中至少两帧").to_owned());
                 }
                 self.lib_stack_create(root, &frames)?
             }

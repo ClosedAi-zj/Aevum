@@ -825,13 +825,6 @@ pub const DOCK_W: f32 = 372.0;
 /// The outermost 28 px vertical strip: grid / filmstrip / curve toggles, drawn as three
 /// glyphs in the mockup.
 pub const STRIP_W: f32 = 28.0;
-/// 胶片条总高：正文只有"标题 + 缩略图"两段（界面稿 --tl-h:120），
-/// 这里多留 68 —— 这个软件是序列工具，底部还要一行播放控制。
-///
-/// Total filmstrip height: the body is only "title + thumbnails" (mockup `--tl-h:120`),
-/// and the extra 68 is because this is a sequence tool — a playback row lives at the
-/// bottom as well.
-pub const TIMELINE_H: f32 = 188.0;
 
 /// 面板里的两种行高：推子行要容下标签、轨道与数值，键值行只排一对字。
 /// 之前都是按最小可放下的高度定的，整列读起来像密排表；现在按 macOS 侧栏的

@@ -58,6 +58,58 @@ fn filmstrip_filters_combine_stars_flags_and_labels() {
     assert!(state.film_visible(0) && !state.film_visible(1) && state.film_visible(2));
 }
 
+/// 换序列 / 关闭时胶片条筛选归零：星级下限 / 旗标 / 色标属于**上一份**序列，
+/// 带过去会把整组新帧静默藏掉，用户看到的就是「突然底部没有预览图了」。
+///
+/// Opening or closing a sequence clears the filmstrip filters: a star minimum, flag or
+/// colour label belongs to the **previous** sequence; carrying it over silently hides
+/// every new frame, which the user sees as "the filmstrip previews suddenly disappeared".
+#[test]
+fn opening_or_closing_a_sequence_clears_filmstrip_filters() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!(
+        "aevum-ui-filter-reset-{}-{nanos}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("建临时目录");
+    let img = image::RgbImage::from_pixel(8, 6, image::Rgb([30, 60, 90]));
+    img.save(dir.join("f001.png")).expect("写 PNG");
+
+    let ctx = egui::Context::default();
+    let mut state = AppState::demo();
+    state.film_filter_stars = 5;
+    state.film_filter_flag = -1;
+    state.film_filter_label = 2;
+    state.open_paths(&ctx, std::slice::from_ref(&dir));
+    assert_eq!(state.frame_count(), 1, "临时序列要开得起来");
+    assert_eq!(
+        (
+            state.film_filter_stars,
+            state.film_filter_flag,
+            state.film_filter_label
+        ),
+        (0, 0, 0),
+        "换序列必须清掉上一份序列的筛选，否则新帧会被整组藏掉"
+    );
+
+    state.film_filter_stars = 4;
+    state.film_filter_flag = 1;
+    state.film_filter_label = 3;
+    state.close();
+    assert_eq!(
+        (
+            state.film_filter_stars,
+            state.film_filter_flag,
+            state.film_filter_label
+        ),
+        (0, 0, 0),
+        "关闭序列后筛选也要归零"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
 
 /// 浮窗位置的记录规则：拖动中不记、同值不置脏、真移动了才置脏。
 ///

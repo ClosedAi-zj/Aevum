@@ -467,8 +467,7 @@ impl AppState {
             .filter_map(|i| {
                 let thumb = self.thumbs.get(&i)?;
                 let src = self.thumb_src.get(&i)?;
-                (thumb.grade.as_ref() != Some(&params))
-                    .then(|| (i, Arc::clone(src), self.ev_at(i)))
+                (thumb.grade.as_ref() != Some(&params)).then(|| (i, Arc::clone(src), self.ev_at(i)))
             })
             .collect();
         if stale.is_empty() {

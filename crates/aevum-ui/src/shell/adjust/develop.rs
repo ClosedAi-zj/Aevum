@@ -52,6 +52,84 @@ pub(super) fn spec_field(ui: &mut Ui, state: &mut AppState, field: Field) -> boo
     }
 }
 
+/// 组内的文字动作（LR 的「自动」位）：只有字，没有底、没有框，悬停浮一层极浅
+/// 的底色，按下沉到 press 档，点中后留一小段强调色余晖。选中态（黑白开着）把字
+/// 换成强调色，不画蓝底蓝框——三枚这样的胶囊并排会读成三颗主按钮，把下面真正
+/// 要看的推子压没了。
+///
+/// 余晖是给「自动」这种异步动作的：它要先测光再回填推子，点下去的一瞬屏幕上
+/// 什么都没变，光有 hover 洗不掉「到底点上没有」的疑问（用户反馈「有些按钮按下
+/// 去没有视觉效果」）。
+///
+/// The in-group text action (Lightroom's Auto slot): text only, no fill, no stroke --
+/// a barely-there hover wash, a pressed step while the pointer is down, and a short
+/// accent afterglow once clicked. The active state (B&W on) changes the text to the
+/// accent colour instead of painting a blue pill with a blue outline -- three such
+/// pills side by side read as three primary buttons and bury the sliders below.
+///
+/// The afterglow exists for asynchronous actions such as Auto: metering fills the
+/// sliders a beat later, so a click used to leave the screen unchanged and hover alone
+/// did not answer "did that register?" (user report: "some buttons have no visual
+/// effect when pressed").
+fn quiet_action(ui: &mut Ui, label: &str, active: bool) -> egui::Response {
+    const GLOW: f64 = 0.26;
+    let label = crate::i18n::tr(label);
+    // 只借它量宽度：颜色要在拿到 resp 之后才定，见下面重排。
+    let measure = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font(SIZE_SMALL), text());
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(measure.size().x + 14.0, 24.0), Sense::click());
+    let pressed = resp.is_pointer_button_down_on();
+    // 余晖按动作名记：文字就是身份，三枚动作的字互不相同。
+    let glow_id = ui.make_persistent_id(("quiet-action", label));
+    let now = ui.input(|i| i.time);
+    if resp.clicked() {
+        ui.data_mut(|d| d.insert_temp(glow_id, now));
+        ui.ctx().request_repaint();
+    }
+    let age = ui.data(|d| d.get_temp::<f64>(glow_id)).map(|t| now - t);
+    let fired = age.is_some_and(|a| a < GLOW);
+    if let Some(rest) = age.map(|a| GLOW - a).filter(|rest| *rest > 0.0) {
+        // 不靠下一次输入把余晖收掉：到期那一帧自己醒一次。
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(rest));
+    }
+    let p = ui.painter();
+    let fill = if pressed {
+        Some(press())
+    } else if fired {
+        Some(accent().gamma_multiply(0.20))
+    } else if active {
+        Some(selected())
+    } else if resp.hovered() {
+        Some(elev())
+    } else {
+        None
+    };
+    if let Some(fill) = fill {
+        p.rect_filled(rect, radius_control(), fill);
+    }
+    let fg = if pressed || fired || active {
+        accent()
+    } else if resp.hovered() {
+        text()
+    } else {
+        muted()
+    };
+    // 文字颜色必须在排字时定死：`galley()` 的 fallback 色只对没上色的 galley
+    // 生效，先按 text() 排好的字再传 fg 只会被忽略——按下时底变了、字不变，
+    // 正是用户说的「按下去没有视觉效果」。
+    //
+    // The text colour must be baked at layout time: the fallback passed to `galley()`
+    // only applies to an unpainted galley, so a galley laid out with text() ignores fg --
+    // the fill changed on press but the letters did not, which is exactly the reported
+    // "no visual effect when pressed".
+    let galley = p.layout_no_wrap(label.to_owned(), font(SIZE_SMALL), fg);
+    p.galley(rect.center() - galley.size() * 0.5, galley, fg);
+    resp
+}
+
 /// 显影面板：ACR 的九分区次序（基本 → 曲线 → 颜色混合器 → 颜色分级 → 细节 →
 /// 光学 → 效果 → 外观 → 蒙版）。旧版的 21 组混排已并入这九个分区，参数与
 /// 工程格式零改动，只动 UI 组织（docs/界面布局-ACR化-2026-11-04.md §3）。
@@ -130,35 +208,36 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     // Sliders come from explicit field lists, so display order is decoupled from the
     // table -- the table is the parameter registry, not the page layout.
     if group_header(ui, state, "basic", "基本", true) {
-        // 快捷动作行（LR 的 Treatment / Auto 位）：三枚胶囊，与推子同一条左缘。
+        // 快捷动作行（LR 的 Treatment / Auto 位）：三枚文字动作，与推子同一条左缘。
         // 自动住在这里而不是面板顶栏——它改的就是下面这堆推子，动作贴着自己的
         // 结果放，按完抬眼就能看见哪几根动了。
         //
-        // Quick actions (LR's treatment / auto slot): three chips on the slider rail.
-        // Auto lives here rather than the panel's top bar because it drives exactly the
-        // sliders below -- the action sits next to its outcome.
+        // Quick actions (LR's treatment / auto slot): three text actions on the slider
+        // rail. Auto lives here rather than the panel's top bar because it drives
+        // exactly the sliders below -- the action sits next to its outcome.
         ui.add_space(2.0);
         let mut auto = false;
         let mut mono_toggle = false;
         let mut hdr = false;
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
             ui.add_space(6.0);
             // 自动结果（「+1.17 EV · 对比 …」）进悬停提示，不铺在面板里：那是一串
             // 读数，摊开会把推子推下去。
             //
             // The auto result ("+1.17 EV · contrast …") stays in the tooltip rather than
             // the panel body: it is a wall of readings that would push the sliders down.
-            let chip = bar_chip(ui, "自动", false);
+            let chip = quiet_action(ui, "自动", false);
             auto = match state.auto_note.as_deref() {
                 Some(note) => chip.on_hover_text(note).clicked(),
                 None => chip.clicked(),
             };
-            mono_toggle = bar_chip(ui, "黑白", state.params.mono >= 50.0)
+            mono_toggle = quiet_action(ui, "黑白", state.params.mono >= 50.0)
                 .on_hover_text(crate::i18n::t!(
                     "在彩色与黑白之间切换；黑白后可到「颜色混合器 → 黑白」逐色相调明暗"
                 ))
                 .clicked();
-            hdr = bar_chip(ui, "HDR", false)
+            hdr = quiet_action(ui, "HDR", false)
                 .on_hover_text(crate::i18n::t!(
                     "切到合成模块的 HDR 合并：同一场景的包围曝光帧合成一张"
                 ))

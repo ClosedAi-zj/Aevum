@@ -523,7 +523,6 @@ impl AppState {
             film_filter_stars: 0,
             film_filter_flag: 0,
             film_filter_label: 0,
-            plugin_input_scope: 0,
             scroll_to_selected: false,
             ratings: HashMap::new(),
             flags: HashMap::new(),
@@ -905,6 +904,16 @@ impl AppState {
         // mismatched length would write into the wrong slots.
         self.def_means = vec![None; n];
         self.selected = 0;
+        // 筛选只对上一份序列成立：星级下限 / 旗标 / 色标一路带到新序列，整组新帧会被
+        // 静默筛掉，胶片条看起来「突然没有预览图」（用户截图）。换序列一律归零。
+        //
+        // A filter belongs to the sequence it was set on: carrying a minimum star rating,
+        // flag or colour label into a new sequence silently hides every frame there and the
+        // strip reads as "the previews suddenly disappeared" (user screenshot). Opening a
+        // sequence clears all three.
+        self.film_filter_stars = 0;
+        self.film_filter_flag = 0;
+        self.film_filter_label = 0;
         self.texture = None;
         self.texture_orig = None;
         self.reset_session();
@@ -1143,6 +1152,12 @@ impl AppState {
         self.corr_rgb.clear();
         self.def_means.clear();
         self.selected = 0;
+        // 关闭后筛选归零，和打开新序列同一口径。
+        //
+        // Closing clears the filter too, matching the open path.
+        self.film_filter_stars = 0;
+        self.film_filter_flag = 0;
+        self.film_filter_label = 0;
         self.texture = None;
         self.texture_orig = None;
         self.reset_session();
@@ -1420,7 +1435,26 @@ impl AppState {
     ///
     /// Frames surviving all three filters, for the header's "n / m shown" readout.
     pub fn film_visible_count(&self) -> usize {
-        (0..self.frame_count()).filter(|i| self.film_visible(*i)).count()
+        (0..self.frame_count())
+            .filter(|i| self.film_visible(*i))
+            .count()
+    }
+
+    /// 胶片条当前高度：用户拖过的优先，其次按首帧比例自动适配，兜底 84。
+    /// 底部面板与胶片条共用这一个数，面板才不会为「剩下的空间」留出一条空带。
+    ///
+    /// The filmstrip's current height: a user-dragged value first, else fitted to the
+    /// first frame's aspect, else 84. The bottom panel and the strip share this number so
+    /// the panel cannot keep a blank band for "whatever space is left".
+    pub fn film_height(&self) -> f32 {
+        let auto = self
+            .thumb(self.selected)
+            .map(|t| {
+                let (tw, th) = (t.size[0] as f32, t.size[1] as f32);
+                (92.0 * th / tw.max(1.0) + 18.0).clamp(64.0, 220.0)
+            })
+            .unwrap_or(84.0);
+        self.film_h.unwrap_or(auto).clamp(48.0, 220.0)
     }
 
     pub fn set_frame(&mut self, i: usize) {

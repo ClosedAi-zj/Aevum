@@ -262,18 +262,25 @@ fn canvas_top_bar_frame_size_is_labelled() {
         canvas.contains("fn frame_size_text"),
         "canvas.rs 的 frame_size_text() 不见了，顶栏画幅又变回裸数字"
     );
-    assert!(
-        canvas.contains("frame_size_text(state.resolution, bits)"),
-        "顶栏中段没有走 frame_size_text()（行 {:?}）",
-        hits(&canvas, "× {h}")
-    );
-    // 双向钉住：底部状态栏自己的「画幅」标签别被顺手删掉。
-    // Two-sided: the bottom status bar keeps its own Frame-size label.
+    // 2026-11-08 顶部压层：画幅读数从画布顶栏搬进选项行右段，所以调用点在
+    // toolbar.rs。要求不变——尺寸仍是带「画幅」标签的成句，不是裸数字。
+    //
+    // 2026-11-08 chrome fold: the frame-size readout moved from the canvas's own top row
+    // into the options bar, so the call site now lives in toolbar.rs. The requirement is
+    // unchanged -- a labelled sentence, never bare numbers.
     let toolbar = clean("shell/toolbar.rs");
     assert!(
-        toolbar.contains("t!(\"画幅\")"),
-        "底部状态栏的「画幅」标签不见了"
+        toolbar.contains("frame_size_text(state.resolution, bits)"),
+        "选项行右段没有走 frame_size_text()（行 {:?}）",
+        hits(&toolbar, "× {h}")
     );
+    // 状态栏的常驻「画幅」读数已随整条底部读数撤掉（用户 2026-11-08「底部其实
+    // 没有必要显示」）：画幅只留画布顶栏这一处，判据到此为止，不再反向钉状态栏。
+    //
+    // The status bar's permanent Frame-size readout went with the rest of the bottom
+    // chrome (user, 2026-11-08: "the bottom does not need to show anything"). The label
+    // lives on the canvas top bar only; the check stops there and no longer pins the
+    // status bar.
 }
 
 #[test]
@@ -408,9 +415,15 @@ fn group_headers_match_the_acr_panel_column() {
         !body.contains("Glyph::Sliders"),
         "组头又加回了滑杆图标（参考图里箭头之后直接是标题）"
     );
+    // 行高现在由「信息密度」偏好决定：标准 32px（用户 ACR 截图实测）/ 紧凑 28px。
+    // 判据要的是"默认仍是 32，且密度开关真的接在行高上"，不是写死一个数字。
+    //
+    // Height now follows the density preference: 32 px standard (measured on the user's
+    // ACR screenshot) / 28 px compact. The criterion checks that 32 stays the default and
+    // that the switch really drives the row height, not that one number is hard-coded.
     assert!(
-        body.contains("Vec2::new(ui.available_width(), 32.0)"),
-        "组头行高不再是参考图实测的 32px"
+        body.contains("if state.layout.dense { 28.0 } else { 32.0 }"),
+        "组头行高应随「信息密度」在 28 / 32 之间切换，且默认 32px"
     );
 }
 

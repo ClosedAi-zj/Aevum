@@ -278,8 +278,13 @@ pub(super) fn group_header(
     // newest reference has neither -- the glyph turned eight headers into eight
     // buttons, and without the rule collapsed groups blur into one slab.
     ui.add_space(2.0);
-    let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
+    // 行高由「信息密度」偏好决定：标准 32px（用户 ACR 截图实测），紧凑 28px
+    // （更紧的 ACR 版本）。折叠态四个组头的差别就是 16px，展开态还会再放大。
+    //
+    // Row height follows the density preference: 32 px standard (measured on the user's
+    // ACR screenshot) or 28 px compact (tighter ACR builds).
+    let gh = if state.layout.dense { 28.0 } else { 32.0 };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), gh), Sense::click());
     if state.dock_focus.as_deref() == Some(key) {
         // 只推一次：egui 在下一帧把目标滚到位，截图时机在 900ms 之后，足够稳定。
         resp.scroll_to_me(Some(Align::Min));
@@ -447,10 +452,7 @@ pub(super) fn group_header(
         } else {
             rect.right() - 12.0
         };
-        let rr = Rect::from_center_size(
-            Pos2::new(reset_x, rect.center().y),
-            Vec2::splat(20.0),
-        );
+        let rr = Rect::from_center_size(Pos2::new(reset_x, rect.center().y), Vec2::splat(20.0));
         let rresp = ui.interact(
             rr,
             ui.make_persistent_id(("group-reset", key)),
@@ -739,10 +741,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         Pos2::new(rect.right() - ROW_PAD - VALUE_W, rect.top()),
         Vec2::new(VALUE_W, FIELD_H),
     );
-    let reset = Rect::from_center_size(
-        Pos2::new(field.left() - 7.0, l1y),
-        Vec2::splat(RESET_W),
-    );
+    let reset = Rect::from_center_size(Pos2::new(field.left() - 7.0, l1y), Vec2::splat(RESET_W));
     // 轨道通栏：左端与标签同起，右端与读数框右缘同止——参考图里轨道就是从框下方
     // 穿过去的，滑块能走到数值框的正下方。
     //
@@ -769,7 +768,17 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         // rather than a bare number floating at the rail's right end. `field()` is a
         // step below the panel, and `divider()` draws the edge, so the eye can separate
         // "label | rail | value" -- the most recognisable trait of PS's adjustment panel.
-        p.rect_filled(field, radius_control(), theme::field());
+        // 静止态只留框线、不填底：ACR 的读数是「面板底色上的一个矩形轮廓」，
+        // 我们原来填了比面板沉一档的凹槽色，一行行看下来像七个 Web 输入框。悬停
+        // 或拖动时才填底，把「可点可拖」留给交互态而不是常驻装饰。
+        //
+        // At rest only the outline, no fill: ACR's readout is a rectangle drawn on the
+        // panel colour, while a recessed fill made a column of rows look like seven web
+        // input fields. The fill appears on hover or drag, so "clickable" is an
+        // interaction cue instead of permanent decoration.
+        if ui.rect_contains_pointer(field) {
+            p.rect_filled(field, radius_control(), theme::field());
+        }
         p.rect_stroke(
             field,
             radius_control(),
@@ -1318,7 +1327,11 @@ pub(super) fn acr_tabs(ui: &mut Ui, labels: &[&str], tips: &[&str], sel: usize) 
                 None => resp,
             };
             let p = ui.painter();
-            let col = if on || resp.hovered() { text() } else { muted() };
+            let col = if on || resp.hovered() {
+                text()
+            } else {
+                muted()
+            };
             p.galley(
                 Pos2::new(rect.left(), rect.center().y - galley.size().y * 0.5),
                 galley,

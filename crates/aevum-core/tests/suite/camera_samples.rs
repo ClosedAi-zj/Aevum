@@ -737,9 +737,8 @@ fn filmstrip_source_shares_the_canvas_tone() {
         eprintln!("缺样张 {}，跳过", path.display());
         return;
     }
-    let mean_f32 = |rgb: &[f32]| {
-        rgb.iter().map(|v| *v as f64).sum::<f64>() / rgb.len() as f64 * 255.0
-    };
+    let mean_f32 =
+        |rgb: &[f32]| rgb.iter().map(|v| *v as f64).sum::<f64>() / rgb.len() as f64 * 255.0;
     let (thumb, w, h) = metrics::decode_thumb_source(&path, "", 128)
         .unwrap_or_else(|e| panic!("胶片条源解码失败：{e}"));
     assert!(w > 0 && h > 0, "胶片条源尺寸为 0");
@@ -754,8 +753,8 @@ fn filmstrip_source_shares_the_canvas_tone() {
          （目标：同一套色彩链，只差半尺寸去马赛克的采样）"
     );
 
-    let embedded = metrics::thumbnail(&path, 128)
-        .unwrap_or_else(|e| panic!("内嵌预览解码失败：{e}"));
+    let embedded =
+        metrics::thumbnail(&path, 128).unwrap_or_else(|e| panic!("内嵌预览解码失败：{e}"));
     let de = embedded
         .pixels()
         .map(|p| (p[0] as f64 + p[1] as f64 + p[2] as f64) / 3.0)

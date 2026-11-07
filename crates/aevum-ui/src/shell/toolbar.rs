@@ -16,7 +16,6 @@ use super::menu::fit_view;
 use super::menu::menu_item;
 use super::menu::menu_style;
 use crate::icons::{self, Glyph};
-use crate::platform;
 use crate::state::{AppState, Aspect, Module, Tool};
 use crate::theme::{self, *};
 use aevum_core::export::OutputMode;
@@ -225,7 +224,21 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         border(),
     );
 
+    // 文档页签贴在选项行左端、压着下缘线：文件名回答的是"这一行在编辑哪个文档"，
+    // 属于选项行，不属于图像；搬下来之后画布整块还给画面。
+    //
+    // The document tab sits at the options bar's left end on its bottom rule: the file
+    // name answers "which document is this row editing", so it belongs here, not to the
+    // image -- and the canvas gets the whole block back.
+    let tab_rect = Rect::from_min_size(
+        Pos2::new(full.left() + 8.0, full.bottom() - theme::TL_HD_H),
+        Vec2::new(208.0, theme::TL_HD_H),
+    );
+    let tab_painter = ui.painter().clone();
+    doc_tab(state, &tab_painter, ui, ctx, tab_rect);
+
     ui.horizontal_centered(|ui| {
+        ui.add_space(208.0 + 10.0);
         group_gap(ui);
         // 工具身份：界面稿 .tool-id 是一颗**下拉**（icon + 名字 + ▼），点了换工具；
         // 之前只画静态名字，工具身份和工具栏读起来像两个东西。
@@ -606,6 +619,38 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             );
         });
     });
+    // 右段读数（原画布顶行）：画幅·位深 / 蒙版 n 个 / 撤销 Ctrl+Z。用 painter 排在
+    // 缩放控件左侧，避免挤进那个 right_to_left 布局；三处都是 11px dim，不参与交互。
+    //
+    // Right-hand readouts (moved from the canvas's own top row): frame size · bit depth,
+    // mask count, undo hint. Painted left of the zoom control so they do not have to be
+    // threaded through the right-to-left layout; all 11 px dim and non-interactive.
+    let bits = state.source_note.as_ref().and_then(|s| {
+        s.strip_suffix(" 位")
+            .and_then(|t| t.rsplit(' ').next())
+            .and_then(|t| t.parse::<u32>().ok())
+    });
+    let p = ui.painter();
+    let zoom_w =
+        p.layout_no_wrap(
+            format!("{:.0}%  ▼", state.zoom * state.fit_scale * 100.0),
+            mono(SIZE_LABEL),
+            text(),
+        )
+        .size()
+        .x + 26.0;
+    let mut x = full.right() - 10.0 - zoom_w - 14.0;
+    let readings = [
+        crate::i18n::t!("撤销 Ctrl+Z").to_owned(),
+        crate::i18n::tr_fmt("蒙版 {} 个", &[&state.params.masks.len()]),
+        super::canvas::frame_size_text(state.resolution, bits),
+    ];
+    for text_line in readings {
+        let g = p.layout_no_wrap(text_line, font(SIZE_SMALL), dim());
+        x -= g.size().x;
+        p.galley(Pos2::new(x, full.center().y - g.size().y * 0.5), g, dim());
+        x -= 14.0;
+    }
 }
 
 // ---------------------------------------------------------------- 工具轨
@@ -779,6 +824,29 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
 
 // ---------------------------------------------------------------- 状态栏
 
+/// 状态栏只在「有话要说」时存在：告警、长任务进度、边车提示。
+///
+/// 常驻的文件名 / 画幅 / 帧号 / 缩放 / 色彩管线 / 引擎状态整条撤掉（用户 2026-11-08
+/// 「底部其实没有必要显示」）——这些读数在画布面包屑、走带与选项栏里都已经有一份，
+/// 底边再抄一遍只是白占 24px。顶层错误改由画布顶部的错误条承担，状态栏不再重复。
+///
+/// The status bar exists only when it has something to say: a notice, a long-task
+/// progress row, or a sidecar hint. The permanent filename / frame size / frame counter
+/// / zoom / pipeline / engine readouts are gone (user, 2026-11-08: "the bottom does not
+/// need to show anything") -- the canvas breadcrumb, transport and options bar already
+/// carry them, and a second copy only eats 24 px. Top-level errors live in the canvas
+/// banner; the status bar no longer repeats them.
+pub(super) fn status_bar_needed(state: &AppState) -> bool {
+    !state.notices.is_empty()
+        || state.sidecar_hint.is_some()
+        || state.plugin_running()
+        || state.export_progress().is_some()
+        || state.queue_progress().is_some()
+        || state.merge_progress().is_some()
+        || state.align_progress().is_some()
+        || state.qa_progress().is_some()
+}
+
 pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
     let full = ui.max_rect();
     theme::rule(
@@ -823,6 +891,13 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
         });
     ui.horizontal_centered(|ui| {
         ui.add_space(8.0);
+        // 这一行现在只讲「正在发生的事」：告警 / 长任务 / 边车。段间中点只在前面
+        // 真画过一段时才点，否则状态栏会以一枚孤零零的「·」开头或结尾。
+        //
+        // This row now only carries what is happening: notice / long task / sidecar. The
+        // inter-segment dot is emitted only when something was drawn before it, or the bar
+        // would open or close on a lone "·".
+        let mut spoke = false;
         // 常驻告警：护带目录搬不动 / 只读 / 被同名文件占住这类「用户点保存之前
         // 就该知道」的事实。空的时候一个形状都不建——`--selftest` 的形状计数
         // 靠的就是这条路径在无告警时完全不留痕。
@@ -845,6 +920,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                 state.notices.remove(0);
             }
             ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
+            spoke = true;
         }
         if plugin_run {
             let (done, total) = state.plugin_progress;
@@ -867,6 +943,7 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                 state.plugin_cancel();
             }
             ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
+            spoke = true;
         } else if let Some((what, done, total, stage)) = prog {
             let pct = if total > 0 {
                 done as f32 * 100.0 / total as f32
@@ -919,120 +996,20 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                         .color(muted()),
                 );
             }
-            ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
+            spoke = true;
         }
-        // 文件名打头、加粗：状态栏第一格回答的是"这是哪个文件"，
-        // 缩放这种随时会变的数放到最右，别占着最贵的位置。
-        let name = state
-            .seq
-            .as_ref()
-            .map(|s| s.display_name())
-            .unwrap_or_else(|| "未打开序列".to_owned());
-        // 状态栏只用两种字：词走比例字、数字走等宽字，同为常规字重。文件名原先
-        // 加粗，等于在这一行里引入第三种字重，紧挨着的「画幅」「帧」立刻显得不是
-        // 一套（用户 2026-11-07 反馈「下面的字体不一样」）。强调交给亮度，不交给字重。
+        // 文件名 / 画幅 / 帧号 / 星级这些常驻读数已撤：画布面包屑、走带和选项栏各有一份，
+        // 底边不再抄第二遍（用户 2026-11-08「底部其实没有必要显示」）。
         //
-        // The status bar uses exactly two faces: proportional for words, monospace for
-        // numbers, both at regular weight. The file name used to be bold, which introduced a
-        // third weight into the row and made the adjacent "画幅" / "帧" look foreign (user
-        // feedback, 2026-11-07). Emphasis comes from brightness, not from weight.
-        ui.label(RichText::new(name).font(font(SIZE_LABEL)).color(text()));
-        ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
-        // 「画幅」标签把 4000 × 6000 框成尺寸读数：× 是乘号，不是关闭叉。段间用中点
-        // 加一个 spacing token 的间隔，和错误条的清除控件拉开距离。
-        //
-        // The "Frame size" label frames 4000 × 6000 as a dimension: × is a multiplication
-        // sign, not a close cross. A middle dot plus one spacing token parts the segments
-        // and keeps them away from the error bar's dismiss control.
-        ui.label(
-            RichText::new(crate::i18n::t!("画幅"))
-                .size(SIZE_LABEL)
-                .color(dim()),
-        );
-        ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
-        ui.add_space(ui.spacing().item_spacing.x);
-        let res = state
-            .resolution
-            .map(|(w, h)| format!("{w} × {h}"))
-            .unwrap_or_else(|| "—".to_owned());
-        ui.label(RichText::new(res).font(mono(SIZE_LABEL)).color(muted()));
-        let n = state.frame_count();
-        if n > 0 {
-            // 「帧」是词、`0001 / 0048` 是数字：分开画，否则等宽字体里的中文走回退
-            // 字形，和旁边的比例字中文不是一套（同一条「字体不一样」）。
-            //
-            // "帧" is a word and `0001 / 0048` is a number: draw them separately, or the
-            // CJK glyph inside a monospace run falls back to a different face than the
-            // proportional CJK next to it -- the same "the fonts do not match" report.
-            ui.label(
-                RichText::new(crate::i18n::t!("帧"))
-                    .font(font(SIZE_LABEL))
-                    .color(dim()),
-            );
-            ui.label(
-                RichText::new(format!("{:04} / {:04}", state.selected + 1, n))
-                    .font(mono(SIZE_LABEL))
-                    .color(dim()),
-            );
-            let r = state.selected_rating();
-            if r > 0 {
-                ui.label(
-                    RichText::new("★".repeat(r as usize))
-                        .size(SIZE_LABEL)
-                        .color(star()),
-                );
-            }
-        }
-        // 错误条是顶层失败唯一的常驻出口。一段长文本挤在状态栏里必然被截断，所以
-        // 悬停给全文、点一下（或点「清除」按钮）清掉这一条；打开新序列时仍由
-        // `open_paths` 统一清空，那里不改。
-        //
-        // The status-bar error is the only persistent home for a top-level failure. Long
-        // text is necessarily truncated here, so hovering shows it in full and clicking
-        // either the text or the "Clear" button dismisses it. Opening a new sequence still
-        // clears it wholesale in `open_paths`.
-        if let Some(err) = state.error.clone() {
-            let resp = ui
-                .add(
-                    egui::Label::new(
-                        RichText::new(theme::ellipsis(&err, 52))
-                            .size(SIZE_LABEL)
-                            .color(danger()),
-                    )
-                    .selectable(false)
-                    .sense(Sense::click()),
-                )
-                .on_hover_text(format!("{err}\n{}", crate::i18n::t!("点击清除这条错误")));
-            if resp.clicked() {
-                state.error = None;
-            }
-            // 清除按钮带文字，不用孤立的 × —— 它和画幅读数的乘号太像了。
-            //
-            // The clear button carries text instead of a lone ×, which reads too much
-            // like the frame-size multiplication sign.
-            let clear = ui
-                .add(egui::Button::new(
-                    RichText::new(crate::i18n::t!("清除"))
-                        .size(SIZE_LABEL)
-                        .color(danger()),
-                ))
-                .on_hover_text(crate::i18n::t!("清除这条错误"));
-            if clear.clicked() {
-                state.error = None;
-            }
-        } else {
-            ui.label(
-                RichText::new(theme::ellipsis(&state.status, 64))
-                    .size(SIZE_LABEL)
-                    .color(dim()),
-            );
-        }
+        // The permanent filename / frame-size / frame-counter / rating readouts are gone:
+        // the canvas breadcrumb, transport and options bar each carry their own copy, so the
+        // bottom edge no longer repeats them (user, 2026-11-08).
         // 边车提示：检测到同目录 .xmp 时给一枚一键应用。不做静默套用——
         // 改不改参数要让用户亲手按下这一下（策略：提示 + 一键应用）。
-        if state.error.is_none()
-            && let Some(sidecar) = state.sidecar_hint.clone()
-        {
-            ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
+        if let Some(sidecar) = state.sidecar_hint.clone() {
+            if spoke {
+                ui.label(RichText::new("·").size(SIZE_LABEL).color(dim()));
+            }
             let name = sidecar
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -1052,42 +1029,6 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
                 &[&sidecar.display()],
             ));
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            // 右段从右往左排：平台与字体 → 缩放 → 色彩管线 → 引擎状态（绿点在最左），
-            // 顺序对齐界面稿状态栏右段的读法。
-            ui.add_space(8.0);
-            let platform_label = match platform::os() {
-                platform::Os::Mac => "macOS · SF Pro Text",
-                platform::Os::Win => "Windows 11 · Segoe UI Variable",
-            };
-            ui.label(RichText::new(platform_label).size(SIZE_LABEL).color(dim()));
-            ui.label(
-                RichText::new(format!("{:.0}%", state.zoom * state.fit_scale * 100.0))
-                    .font(mono(SIZE_LABEL))
-                    .color(text()),
-            );
-            ui.label(
-                RichText::new(crate::i18n::t!("sRGB · 16 bit 管线"))
-                    .size(SIZE_LABEL)
-                    .color(dim()),
-            );
-            ui.label(
-                RichText::new(crate::i18n::t!("引擎就绪"))
-                    .size(SIZE_LABEL)
-                    .color(dim()),
-            );
-            // 一枚 6px 绿灯 = 引擎线程还活着；出错时变红。状态栏里唯一值得上颜色的东西。
-            let (dot, _) = ui.allocate_exact_size(Vec2::splat(9.0), Sense::hover());
-            ui.painter().circle_filled(
-                dot.center(),
-                3.0,
-                if state.error.is_some() {
-                    danger()
-                } else {
-                    ok()
-                },
-            );
-        });
     });
     // 窗口底边再压一条随进度变长的细线：瞥一眼右下角就知道活儿干完没有。
     // 插件在飞时这条线归插件（done/total），导出/队列照旧。

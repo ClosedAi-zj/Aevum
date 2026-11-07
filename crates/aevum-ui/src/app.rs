@@ -724,8 +724,11 @@ fn apply_window_corners(frame: &eframe::Frame, ppp: f32) {
     }
     #[link(name = "user32")]
     unsafe extern "system" {
-        fn SetWindowRgn(hwnd: *mut core::ffi::c_void, rgn: *mut core::ffi::c_void, redraw: i32)
-        -> i32;
+        fn SetWindowRgn(
+            hwnd: *mut core::ffi::c_void,
+            rgn: *mut core::ffi::c_void,
+            redraw: i32,
+        ) -> i32;
     }
 
     #[link(name = "dwmapi")]

@@ -382,7 +382,9 @@ fn print_help() {
     say!("  --shot-queue      截图前用几行演示数据填满渲染队列");
     say!("  --shot-end        截图前把右侧面板滚到底，用来拍长面板的下半截");
     say!("  --shot-group <名> 截图前展开并把某个分组滚到面板顶部，如 masks、color");
-    say!("  --shot-color      截图前给调色盘摆演示值（点曲线 / 分级轮 / HSL），配合 --shot-group curve|grade|mixer");
+    say!(
+        "  --shot-color      截图前给调色盘摆演示值（点曲线 / 分级轮 / HSL），配合 --shot-group curve|grade|mixer"
+    );
     say!("  --shot-channels   截图前勾上「分通道（RGB 色闪）」去闪，用来拍色闪被压住的状态");
     say!("  --shot-crop       截图前用 crop.set 拉一个内收的取景框，拍裁剪态的画布");
     say!("  --shot-rotate     截图前用 crop.set 拉直 6°，拍削过空白角的取景态画布");

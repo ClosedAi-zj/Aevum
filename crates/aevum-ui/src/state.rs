@@ -1565,13 +1565,6 @@ pub struct AppState {
     ///
     /// Filmstrip colour-label filter (memory only): 0 = no filter, 1..=4 = that label only.
     pub film_filter_label: u8,
-    /// 插件运行时的输入范围（纯内存，不落盘、不进 Snapshot）：0 = 当前窗口，1 = 文件，
-    /// 2 = 文件夹。默认 0，供插件面板读取。
-    ///
-    /// Plugin input scope while running (memory only, never persisted, never in the
-    /// Snapshot): 0 = current window, 1 = file, 2 = folder. Defaults to 0; read by the
-    /// plugin panel.
-    pub plugin_input_scope: u8,
     pub scroll_to_selected: bool,
 
     pub ratings: HashMap<usize, u8>,

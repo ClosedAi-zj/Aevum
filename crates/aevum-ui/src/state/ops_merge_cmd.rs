@@ -65,10 +65,9 @@ impl AppState {
         };
         let kind = MergeKind::Hdr;
         if indices.len() < 2 {
-            return Err(crate::i18n::t!(
-                "HDR 合并至少需要 2 帧：把「从当前帧起，前后各取」调大"
-            )
-            .to_owned());
+            return Err(
+                crate::i18n::t!("HDR 合并至少需要 2 帧：把「从当前帧起，前后各取」调大").to_owned(),
+            );
         }
         if indices.len() > kind.max_frames() {
             return Err(crate::i18n::tr_fmt(
@@ -773,10 +772,9 @@ impl AppState {
         let kind = MergeKind::Stack;
         let indices = self.pick_indices(args, n, IndicesAnchor::Center, self.stack_around)?;
         if indices.len() < 2 {
-            return Err(crate::i18n::t!(
-                "堆栈至少需要 2 帧：把「从当前帧起，前后各取」调大"
-            )
-            .to_owned());
+            return Err(
+                crate::i18n::t!("堆栈至少需要 2 帧：把「从当前帧起，前后各取」调大").to_owned(),
+            );
         }
         if indices.len() > kind.max_frames() {
             return Err(crate::i18n::tr_fmt(
@@ -1051,10 +1049,9 @@ impl AppState {
         let kind = MergeKind::Focus;
         let indices = self.pick_indices(args, n, IndicesAnchor::Start, self.focus_around)?;
         if indices.len() < 2 {
-            return Err(crate::i18n::t!(
-                "焦点合成至少需要 2 帧：把「从当前帧起，向后多取」调大"
-            )
-            .to_owned());
+            return Err(
+                crate::i18n::t!("焦点合成至少需要 2 帧：把「从当前帧起，向后多取」调大").to_owned(),
+            );
         }
         if indices.len() > kind.max_frames() {
             return Err(crate::i18n::tr_fmt(

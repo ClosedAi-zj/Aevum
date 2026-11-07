@@ -326,14 +326,22 @@ pub fn grade_wheel(
 
     // 盘面：一张网格，中心灰 → 边缘全饱和（拍板规格）。
     p.add(Shape::mesh(wheel_mesh(c, r_disc, 8, 64)));
-    p.circle_stroke(c, r_disc, Stroke::new(1.0, Color32::from_rgb(0x2C, 0x2C, 0x2C)));
+    p.circle_stroke(
+        c,
+        r_disc,
+        Stroke::new(1.0, Color32::from_rgb(0x2C, 0x2C, 0x2C)),
+    );
     // 把手：浓度 0 时落在盘心，读作「中性」；有浓度才往外走。
     let a = *hue * std::f64::consts::PI / 180.0;
     let rr = r_disc * (*amount as f32 / 100.0).clamp(0.0, 1.0);
     let k = Pos2::new(c.x + rr * (a as f32).cos(), c.y - rr * (a as f32).sin());
     p.circle_filled(k + Vec2::new(0.0, 1.0), 5.0, Color32::from_black_alpha(70));
     p.circle_filled(k, 5.0, Color32::from_rgb(0x9A, 0x9A, 0x9A));
-    p.circle_stroke(k, 5.0, Stroke::new(2.0, Color32::from_rgb(0x4B, 0x4B, 0x4B)));
+    p.circle_stroke(
+        k,
+        5.0,
+        Stroke::new(2.0, Color32::from_rgb(0x4B, 0x4B, 0x4B)),
+    );
     // 明度轨：暗 → 中灰 → 亮 三段渐变（拍板 #2E2E2E / #8C8C8C / #E8E8E8），
     // 中点 = 0。24 片插值铺 4px 高的轨，接缝不可见。
     let rail = Rect::from_min_max(
@@ -365,7 +373,11 @@ pub fn grade_wheel(
         4.5,
         Color32::from_black_alpha(70),
     );
-    p.circle_filled(Pos2::new(kx, rail_y), 4.5, Color32::from_rgb(0xD8, 0xD8, 0xD8));
+    p.circle_filled(
+        Pos2::new(kx, rail_y),
+        4.5,
+        Color32::from_rgb(0xD8, 0xD8, 0xD8),
+    );
     p.circle_stroke(
         Pos2::new(kx, rail_y),
         4.5,
@@ -1140,7 +1152,9 @@ mod tests {
         assert_eq!(mesh.vertices.len(), 9 * 65);
         assert_eq!(mesh.indices.len(), 8 * 64 * 6);
         assert!(
-            mesh.indices.iter().all(|&i| (i as usize) < mesh.vertices.len()),
+            mesh.indices
+                .iter()
+                .all(|&i| (i as usize) < mesh.vertices.len()),
             "索引越界"
         );
     }

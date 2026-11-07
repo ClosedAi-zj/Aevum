@@ -14,9 +14,7 @@ use crate::icons::{self, Glyph};
 use crate::state::{AppState, DockTab};
 use crate::theme::{self, *};
 use crate::widgets;
-use egui::{
-    Align2, Color32, Pos2, Rect, ScrollArea, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
-};
+use egui::{Align2, Color32, Pos2, Rect, ScrollArea, Sense, Shape, Stroke, Ui, UiBuilder, Vec2};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
 // ---------------------------------------------------------------- 右侧面板
@@ -219,14 +217,15 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
 
 /// 直方图：对齐 PS / Camera Raw —— 一块近黑的内凹底，三条 RGB 山形用低透明度
 /// 的纯色填充、再用饱和细线勾出山脊；重叠处靠叠加自然读出灰褐，不再压一层白色
-/// 亮度包络（那层白会让整块泛奶、暗部发灰）。下方一行 10px 的剪切读数
-/// （左阴影、右高光，两端对齐）。
+/// 亮度包络（那层白会让整块泛奶、暗部发灰）。顶角一对剪切角标，只在真裁切时
+/// 着色，读数收在悬停提示里。
 ///
 /// The histogram, in PS / Camera Raw's manner: a near-black inset well, three RGB
 /// mountains filled at low alpha in pure channel colours with a saturated hairline
 /// along each crest. Overlaps go grey-brown on their own, and the white luminance
 /// envelope is gone -- that layer milked the whole panel and greyed the shadows.
-/// Below it, a 10 px row of clipping readouts (shadows left, highlights right).
+/// A mirrored pair of clipping wedges sits in the top corners, coloured only when a
+/// channel really clips; the percentages live in the hover tooltip.
 /// 直方图显示层的两遍 [1,2,1]/4 卷积：三通道山形共用。
 /// 抽出来是一份事实源——以后想改平滑强度只动这里。
 fn smooth_twice(vals: &mut [f32], bins: usize) {
@@ -244,55 +243,64 @@ fn smooth_twice(vals: &mut [f32], bins: usize) {
     }
 }
 
-/// 直方图下方那行拍摄参数：焦距 · 光圈 · 快门 · ISO。缺项直接省略，不补
-/// 破折号——四个「—」比一行空着更吵。
+/// 直方图下方那行拍摄参数，LR 的口径：ISO → 焦距 → 光圈 → 快门，四项各占
+/// 一格。缺项直接省略，不补破折号——四个「—」比一行空着更吵。
 ///
-/// The capture-parameter line under the histogram: focal · aperture · shutter · ISO.
-/// Missing fields are omitted rather than padded with dashes -- four em dashes read
-/// louder than an empty row.
+/// The capture-parameter line under the histogram in Lightroom's order: ISO, focal
+/// length, aperture, shutter, one slot each. Missing fields are omitted rather than
+/// padded with dashes -- four em dashes read louder than an empty row.
 fn capture_line(
+    iso: Option<f64>,
     focal_mm: Option<f64>,
     fnum: Option<f64>,
-    shutter: Option<String>,
-    iso: Option<f64>,
-) -> Option<String> {
+    exposure_sec: Option<f64>,
+) -> Vec<String> {
     let mut parts: Vec<String> = Vec::with_capacity(4);
-    if let Some(v) = focal_mm {
-        parts.push(format!("{v:.0} mm"));
-    }
-    if let Some(v) = fnum {
-        // f/8 不写成 f/8.0：整档光圈在相机上就是整数字。
-        //
-        // f/8 rather than f/8.0: full-stop apertures read as whole numbers on camera.
-        parts.push(if (v.fract()).abs() < 0.05 {
-            format!("f/{v:.0}")
-        } else {
-            format!("f/{v:.1}")
-        });
-    }
-    if let Some(v) = shutter {
-        parts.push(v);
-    }
-    if let Some(v) = iso {
+    // 坏 EXIF 里的 0 值不显示：`f / 0.0`、`1/inf` 这类读数比缺项更糟。
+    //
+    // Zero values from broken EXIF are dropped: `f / 0.0` or `1/inf` reads worse than
+    // a missing field.
+    if let Some(v) = iso.filter(|v| *v > 0.0) {
         parts.push(format!("ISO {v:.0}"));
     }
-    (!parts.is_empty()).then(|| parts.join("  ·  "))
+    if let Some(v) = focal_mm.filter(|v| *v > 0.0) {
+        parts.push(format!("{v:.0} mm"));
+    }
+    if let Some(v) = fnum.filter(|v| *v > 0.0) {
+        // 光圈按 LR 的写法：`f / 8.0`，整档也带一位小数——参考图里就是 8.0。
+        //
+        // Aperture in Lightroom's spelling: `f / 8.0`, with one decimal even on whole
+        // stops -- the reference shows 8.0.
+        parts.push(format!("f / {v:.1}"));
+    }
+    if let Some(sec) = exposure_sec.filter(|v| *v > 0.0) {
+        // Shutter in Lightroom's Chinese spelling, with the unit on both sides of one
+        // second: `1/250 秒`, `4.0 秒`.
+        //
+        // 快门按 LR 中文写法，1 秒上下都带单位：`1/250 秒`、`4.0 秒`。
+        parts.push(if sec >= 1.0 {
+            crate::i18n::tr_fmt("{} 秒", &[&format!("{sec:.1}")])
+        } else {
+            crate::i18n::tr_fmt("1/{} 秒", &[&format!("{:.0}", 1.0 / sec)])
+        });
+    }
+    parts
 }
 
 fn histogram(ui: &mut Ui, state: &mut AppState) {
     // 94px：设计图 `.hist-svg{height:94px}`。原 84 让山形比设计图矮一档，
     // 裁切角标与峰值之间的空气也跟着少。
-    // 宽度左右各收 4px：直方图不再顶着 dock 两侧描边，与下方推子行左右缘对齐。
+    // 左右各收 4px 且居中：原先只把宽度减 8 再贴左放，左边贴住、右边空 10px，
+    // 整块直方图是偏的（对称是这套界面的底线）。
     //
     // 94 px per the design mockup (`.hist-svg{height:94px}`). The old 84 made the
     // mountain shapes one step shorter than the design and squeezed the air between the
-    // clipping wedges and the peaks. The width gives back 4 px on each side so the
-    // histogram lines up with the fader rows below instead of kissing the dock border.
+    // clipping wedges and the peaks. Four px off each side, centred: the old version
+    // only subtracted 8 from the width and left-aligned the well, so the left edge
+    // touched while the right kept 10 px -- the whole block sat off-centre.
     let inset = 4.0;
-    let (rect, _) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width() - inset * 2.0, 94.0),
-        Sense::hover(),
-    );
+    let (slot, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 94.0), Sense::hover());
+    let rect = slot.shrink2(Vec2::new(inset, 0.0));
     let p = ui.painter().clone();
     let Some(h) = state.hist else {
         p.text(
@@ -503,7 +511,14 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
         p.add(shape.clone());
     }
 
-    // 剪切角标：真的剪切才出现，两枚小三角压在直方图区顶角。
+    // 剪切角标：左右一对小三角压在直方图顶角，平时只描一道细边，真裁切才着色。
+    // 角标就是裁切罩的开关，读数与提示都收进悬停；原先下面那行「阴影 0.0% /
+    // 高光 0.0%」被反馈太啰嗦，静态不再留文字。
+    //
+    // The clipping wedges: a mirrored pair in the histogram's top corners, a hairline
+    // when idle and a filled colour when a channel really clips. Each wedge toggles its
+    // clip mask, and the readout lives in the tooltip -- the old "Shadows 0.0% /
+    // Highlights 0.0%" row was too wordy and is gone.
     let total: u64 = (0..256)
         .map(|v| h[0][v] as u64 + h[1][v] as u64 + h[2][v] as u64)
         .sum();
@@ -513,36 +528,6 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
     let high: u64 = (253..256)
         .map(|v| h[0][v] as u64 + h[1][v] as u64 + h[2][v] as u64)
         .sum();
-    let clip_low = total > 0 && (low as f32 / total as f32) > 0.0003;
-    let clip_high = total > 0 && (high as f32 / total as f32) > 0.0003;
-    let s = 4.0;
-    if clip_low {
-        p.add(egui::Shape::convex_polygon(
-            vec![
-                Pos2::new(rect.left() + 1.0, rect.top() + 1.0),
-                Pos2::new(rect.left() + 1.0 + s * 2.0, rect.top() + 1.0),
-                Pos2::new(rect.left() + 1.0, rect.top() + 1.0 + s * 2.0),
-            ],
-            text(),
-            Stroke::NONE,
-        ));
-    }
-    if clip_high {
-        p.add(egui::Shape::convex_polygon(
-            vec![
-                Pos2::new(rect.right() - 1.0, rect.top() + 1.0),
-                Pos2::new(rect.right() - 1.0 - s * 2.0, rect.top() + 1.0),
-                Pos2::new(rect.right() - 1.0, rect.top() + 1.0 + s * 2.0),
-            ],
-            text(),
-            Stroke::NONE,
-        ));
-    }
-
-    // 剪切读数行：左「◧ 阴影 n%」右「高光 n% ◨」，两端对齐；两枚读数本身就是
-    // 开关——点一下让画布盖对应的裁切罩（LR 直方图角标的做法），悬停提示 J 键。
-    let (clip_row, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), kv_h()), Sense::hover());
     let pct = |n: u64| {
         if total > 0 {
             format!("{:.1}", n as f32 * 100.0 / total as f32)
@@ -550,104 +535,132 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
             "0.0".to_owned()
         }
     };
-    let micro = font(10.0);
-    let shadow_chip = Rect::from_min_size(
-        Pos2::new(clip_row.left(), clip_row.center().y - 9.0),
-        Vec2::new(64.0, 18.0),
-    );
-    let high_chip = Rect::from_min_size(
-        Pos2::new(clip_row.right() - 64.0, clip_row.center().y - 9.0),
-        Vec2::new(64.0, 18.0),
-    );
-    for (chip, on, label, col) in [
+    for (left, on, clip, col, salt) in [
         (
-            shadow_chip,
+            true,
             state.clip_shadows,
-            crate::i18n::tr_fmt("◧ 阴影 {}%", &[&pct(low)]),
+            total > 0 && (low as f32 / total as f32) > 0.0003,
             Color32::from_rgb(56, 110, 255),
+            "clip-wedge-shadow",
         ),
         (
-            high_chip,
+            false,
             state.clip_highlights,
-            crate::i18n::tr_fmt("高光 {}% ◨", &[&pct(high)]),
+            total > 0 && (high as f32 / total as f32) > 0.0003,
             Color32::from_rgb(255, 46, 46),
+            "clip-wedge-highlight",
         ),
     ] {
-        let resp = ui.interact(
-            chip,
-            ui.make_persistent_id(("clip-chip", chip == shadow_chip)),
-            Sense::click(),
-        );
-        if on || resp.hovered() {
-            let fill = if on {
-                Color32::from_rgba_unmultiplied(col[0], col[1], col[2], 46)
+        let hit = Rect::from_min_size(
+            if left {
+                rect.left_top()
             } else {
-                elev()
-            };
-            p.rect_filled(chip, radius_control(), fill);
-        }
-        if on {
-            p.rect_stroke(
-                chip,
+                Pos2::new(rect.right() - 20.0, rect.top())
+            },
+            Vec2::splat(20.0),
+        );
+        let resp = ui.interact(hit, ui.make_persistent_id(salt), Sense::click());
+        if on || resp.hovered() {
+            p.rect_filled(
+                hit,
                 radius_control(),
-                Stroke::new(1.0, col),
-                StrokeKind::Inside,
+                if on {
+                    Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 40)
+                } else {
+                    elev()
+                },
             );
         }
-        p.text(
-            chip.center(),
-            Align2::CENTER_CENTER,
-            label,
-            micro.clone(),
-            if on { text() } else { dim() },
-        );
+        let (x0, x1) = if left {
+            (hit.left() + 4.0, hit.left() + 13.0)
+        } else {
+            (hit.right() - 4.0, hit.right() - 13.0)
+        };
+        let tri = vec![
+            Pos2::new(x0, hit.top() + 4.0),
+            Pos2::new(x1, hit.top() + 4.0),
+            Pos2::new(x0, hit.top() + 13.0),
+        ];
+        if clip {
+            p.add(egui::Shape::convex_polygon(tri.clone(), col, Stroke::NONE));
+        } else {
+            p.add(egui::Shape::closed_line(
+                tri.clone(),
+                Stroke::new(1.0, dim()),
+            ));
+        }
+        if on {
+            p.add(egui::Shape::closed_line(tri, Stroke::new(1.5, col)));
+        }
+        let readout = if left {
+            crate::i18n::tr_fmt("◧ 阴影 {}%", &[&pct(low)])
+        } else {
+            crate::i18n::tr_fmt("高光 {}% ◨", &[&pct(high)])
+        };
+        let mask = crate::i18n::tr(if left {
+            if on {
+                "阴影裁切罩：开"
+            } else {
+                "阴影裁切罩：关"
+            }
+        } else if on {
+            "高光裁切罩：开"
+        } else {
+            "高光裁切罩：关"
+        });
+        let resp = resp.on_hover_text(crate::i18n::tr_fmt(
+            "{}（J 键循环开关）",
+            &[&format!("{readout} · {mask}")],
+        ));
         if resp.clicked() {
-            match chip == shadow_chip {
-                true => state.clip_shadows = !state.clip_shadows,
-                false => state.clip_highlights = !state.clip_highlights,
+            if left {
+                state.clip_shadows = !state.clip_shadows;
+            } else {
+                state.clip_highlights = !state.clip_highlights;
             }
             state.clip_mask_stamp = u64::MAX;
         }
     }
-    let shadow_tip = if state.clip_shadows {
-        "阴影裁切罩：开"
-    } else {
-        "阴影裁切罩：关"
-    };
-    let high_tip = if state.clip_highlights {
-        "高光裁切罩：开"
-    } else {
-        "高光裁切罩：关"
-    };
-    ui.interact(shadow_chip, ui.scope_id().with("st"), Sense::hover())
-        .on_hover_text(crate::i18n::tr_fmt(
-            "{}（J 键循环开关）",
-            &[&crate::i18n::tr(shadow_tip)],
-        ));
-    ui.interact(high_chip, ui.scope_id().with("ht"), Sense::hover())
-        .on_hover_text(crate::i18n::tr_fmt(
-            "{}（J 键循环开关）",
-            &[&crate::i18n::tr(high_tip)],
-        ));
 
-    // 拍摄参数（LR 同位）：压在直方图与推子之间，用的是直方图本来就留着的呼吸位。
-    // 只有 EXIF 真读到东西时才占位——空帧不该多出一条空行。
+    // 拍摄参数（LR 同位同序）：紧贴直方图下方，按等间距铺满凹槽的宽度，两端
+    // 留白相同——等分槽位会让短字段之间忽宽忽窄，对称的节奏只能来自等间隙。
     //
-    // Capture parameters (LR's slot): between the histogram and the sliders, in air the
-    // histogram already leaves. The row only takes space when EXIF is present -- a frame
-    // without EXIF should not leave an empty line.
-    if let Some(e) = state.exif.get(state.selected)
-        && let Some(line) = capture_line(e.focal_mm(), e.fnum(), e.shutter_text(), e.iso())
-    {
-        let (row, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 15.0), Sense::hover());
-        p.text(
-            Pos2::new(row.left() + 2.0, row.center().y),
-            Align2::LEFT_CENTER,
-            theme::ellipsis(&line, 48),
-            font(10.0),
-            dim(),
-        );
+    // Capture parameters (Lightroom's slot and order) right under the histogram,
+    // spread with equal gaps across the well's width and equal end margins. Equal-slot
+    // layout made the gaps jump between short fields; an even rhythm needs equal gaps.
+    if let Some(e) = state.exif.get(state.selected) {
+        let items = capture_line(e.iso(), e.focal_mm(), e.fnum(), e.exposure_sec());
+        if !items.is_empty() {
+            ui.add_space(7.0);
+            let (row, _) =
+                ui.allocate_exact_size(Vec2::new(ui.available_width(), 14.0), Sense::hover());
+            let galleys: Vec<_> = items
+                .iter()
+                .map(|s| {
+                    ui.painter().layout_no_wrap(
+                        theme::ellipsis(s, 12).to_owned(),
+                        font(10.0),
+                        dim(),
+                    )
+                })
+                .collect();
+            let used: f32 = galleys.iter().map(|g| g.size().x).sum();
+            let margin = 6.0;
+            let gap = if galleys.len() > 1 {
+                ((rect.width() - margin * 2.0 - used) / (galleys.len() - 1) as f32).max(8.0)
+            } else {
+                0.0
+            };
+            let mut x = rect.left() + margin;
+            for g in &galleys {
+                p.galley(
+                    Pos2::new(x, row.center().y - g.size().y * 0.5),
+                    g.clone(),
+                    dim(),
+                );
+                x += g.size().x + gap;
+            }
+        }
     }
 }
 
@@ -662,30 +675,35 @@ mod dock_paint_tests {
     use crate::state::Module;
     use egui::Context;
 
-    /// 拍摄参数行的拼法与省略规则：齐了按 焦距 · 光圈 · 快门 · ISO 排，整档
-    /// 光圈不带小数点，缺项不补占位、全缺就没有这一行。
+    /// 拍摄参数行的拼法与省略规则：齐了按 LR 的顺序 ISO → 焦距 → 光圈 → 快门
+    /// 排，光圈写 `f / 8.0`，快门一律带「秒」，缺项不补占位、全缺就是空表。
     ///
-    /// The capture-line composition and omission rules: full order is focal ·
-    /// aperture · shutter · ISO, whole-stop apertures lose the decimal, missing
-    /// fields leave no placeholder, and an all-missing frame has no row at all.
+    /// The capture-line composition and omission rules: Lightroom's order ISO, focal,
+    /// aperture, shutter; aperture as `f / 8.0`; the shutter always carries the unit;
+    /// missing fields leave no placeholder, and an all-missing frame yields no items.
     #[test]
     fn capture_line_formats_and_omits_missing_fields() {
         assert_eq!(
-            capture_line(Some(35.0), Some(8.0), Some("1/250".to_owned()), Some(200.0))
-                .as_deref(),
-            Some("35 mm  ·  f/8  ·  1/250  ·  ISO 200")
+            capture_line(Some(200.0), Some(35.0), Some(8.0), Some(1.0 / 250.0)),
+            vec!["ISO 200", "35 mm", "f / 8.0", "1/250 秒"]
         );
         assert_eq!(
-            capture_line(Some(50.0), Some(1.8), Some("1/60".to_owned()), Some(1600.0))
-                .as_deref(),
-            Some("50 mm  ·  f/1.8  ·  1/60  ·  ISO 1600")
+            capture_line(Some(1600.0), Some(50.0), Some(1.8), Some(1.0 / 60.0)),
+            vec!["ISO 1600", "50 mm", "f / 1.8", "1/60 秒"]
+        );
+        // 1 秒以上：LR 中文口径写「4.0 秒」。
+        assert_eq!(
+            capture_line(Some(100.0), Some(249.0), Some(8.0), Some(4.0)),
+            vec!["ISO 100", "249 mm", "f / 8.0", "4.0 秒"]
         );
         // 缺项：直接跳过，不补「—」。
         assert_eq!(
-            capture_line(None, Some(4.0), None, Some(100.0)).as_deref(),
-            Some("f/4  ·  ISO 100")
+            capture_line(Some(100.0), None, Some(4.0), None),
+            vec!["ISO 100", "f / 4.0"]
         );
-        assert_eq!(capture_line(None, None, None, None), None);
+        assert!(capture_line(None, None, None, None).is_empty());
+        // 坏 EXIF 的 0 值当缺项：不出 `f / 0.0` 或 `1/inf`。
+        assert!(capture_line(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).is_empty());
     }
 
     fn input(w: f32, h: f32) -> egui::RawInput {
@@ -779,8 +797,7 @@ mod dock_paint_tests {
         // 所以期望值也用同一构造算出来，逐色完整比较。
         let channel_rgb: [[u8; 3]; 3] =
             [[0xC8, 0x3C, 0x38], [0x3C, 0x96, 0x4B], [0x37, 0x69, 0xD2]];
-        let ridge_rgb: [[u8; 3]; 3] =
-            [[0xF0, 0x5A, 0x50], [0x5E, 0xD8, 0x78], [0x5A, 0x9B, 0xFF]];
+        let ridge_rgb: [[u8; 3]; 3] = [[0xF0, 0x5A, 0x50], [0x5E, 0xD8, 0x78], [0x5A, 0x9B, 0xFF]];
         let crest: Vec<Color32> = channel_rgb
             .iter()
             .map(|rgb| Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 88))

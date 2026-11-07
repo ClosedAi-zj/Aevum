@@ -180,50 +180,27 @@ pub(super) fn plugin_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .color(dim()),
         );
     }
-    // 输入范围：这一组插件作用在什么对象上。默认「当前窗口」，会话内保持。
-    // 内置动作（HDR 合并 / 全景 / 镜头校正）只吃当前序列，选文件或文件夹时置灰并说明；
-    // 第三方插件三档都放开，由 MCP 侧按范围取帧。
+    // 插件菜单只列插件本身：曾经的「输入范围」选择器没有任何代码消费，
+    // 还让内置动作被误置灰。
     //
-    // Input scope: what this plugin run applies to. Defaults to the current window and is
-    // kept for the session. Built-in actions (HDR merge / panorama / lens correction) only
-    // take the current sequence, so they grey out with an explanation for file/folder;
-    // third-party plugins allow all three scopes and let the MCP side gather frames.
-    if !rows.is_empty() {
-        menu_section(ui, "输入范围");
-        ui.horizontal_wrapped(|ui| {
-            for (value, label) in [(0u8, "当前窗口"), (1, "文件"), (2, "文件夹")] {
-                if bar_chip(ui, label, state.plugin_input_scope == value).clicked() {
-                    state.plugin_input_scope = value;
-                }
-            }
-        });
-    }
+    // The plugin menu lists plugins only: the old "input scope" selector had no
+    // consumer and only made built-in actions look disabled.
 
     let mut open_market = false;
     let mut fire: Option<(String, String)> = None;
     for (title, items) in &rows {
         menu_section(ui, title);
         for r in items {
-            // 内置动作只支持「当前窗口」：换了范围就禁用，并把原因挂在悬停里，
-            // 而不是让用户点下去才发现没反应（设计文档 §7 红线 1：不做假控件）。
-            //
-            // Built-in actions only support the current window: disable them for other
-            // scopes and explain on hover, instead of letting the click silently do nothing
-            // (design spec section 7, red line 1: no fake controls).
-            let scope_ok = builtin_action(&r.id).is_none() || state.plugin_input_scope == 0;
-            let resp = ui.add_enabled(
-                scope_ok,
+            let resp = ui.add(
                 egui::Button::new(RichText::new(&r.label).size(SIZE_BODY))
                     .shortcut_text(RichText::new(&r.tag).size(SIZE_SMALL).color(dim())),
             );
-            let resp = if !scope_ok {
-                resp.on_disabled_hover_text(crate::i18n::t!("该插件不支持此输入范围"))
-            } else if r.desc.is_empty() {
+            let resp = if r.desc.is_empty() {
                 resp
             } else {
                 resp.on_hover_text(&r.desc)
             };
-            if resp.clicked() && scope_ok {
+            if resp.clicked() {
                 fire = Some((r.id.clone(), r.label.clone()));
             }
         }
@@ -604,9 +581,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                                         let line = format!("{}：{why}", path.display());
                                         ui.add(
                                             egui::Label::new(
-                                                RichText::new(&line)
-                                                    .size(SIZE_SMALL)
-                                                    .color(dim()),
+                                                RichText::new(&line).size(SIZE_SMALL).color(dim()),
                                             )
                                             .truncate(),
                                         )
@@ -708,8 +683,10 @@ fn market_row(
     meta: &str,
     enabled: bool,
 ) -> bool {
-    let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), MARKET_ROW_H), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), MARKET_ROW_H),
+        Sense::click(),
+    );
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
@@ -737,9 +714,18 @@ fn market_row(
     };
     p.rect_filled(sw, 8.0, track);
     if !enabled {
-        p.rect_stroke(sw, 8.0, Stroke::new(1.0, border()), egui::StrokeKind::Inside);
+        p.rect_stroke(
+            sw,
+            8.0,
+            Stroke::new(1.0, border()),
+            egui::StrokeKind::Inside,
+        );
     }
-    let knob_x = if enabled { sw.right() - 8.0 } else { sw.left() + 8.0 };
+    let knob_x = if enabled {
+        sw.right() - 8.0
+    } else {
+        sw.left() + 8.0
+    };
     p.circle_filled(
         Pos2::new(knob_x, sw.center().y),
         6.0,
@@ -1145,6 +1131,13 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                         state.layout = state.layout.with_preset(p);
                     }
                 },
+            );
+            look_row(
+                ui,
+                "信息密度",
+                state.layout.dense,
+                &[(false, "标准"), (true, "紧凑")],
+                |v| state.layout.dense = v,
             );
             look_row(
                 ui,
@@ -2295,9 +2288,7 @@ mod update_window_tests {
         theme::apply(&ctx, 1.0);
         let mut state = AppState::demo();
         state.install_demo_textures(&ctx);
-        state.error = Some(
-            "HDR 合并至少需要 2 帧：把「从当前帧起，前后各取」调大".to_owned(),
-        );
+        state.error = Some("HDR 合并至少需要 2 帧：把「从当前帧起，前后各取」调大".to_owned());
 
         // 两帧：`Area`（Modal 的载体）第一帧只做尺寸测量，第二帧才出形状。
         // 只跑一帧会「什么都抓不到」，这正是旧回滚判据一直假绿的机制。
