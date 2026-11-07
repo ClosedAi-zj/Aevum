@@ -13,6 +13,7 @@ use super::tabs::keys_tab;
 use crate::icons::{self, Glyph};
 use crate::state::{AppState, DockTab};
 use crate::theme::{self, *};
+use crate::widgets;
 use egui::{
     Align2, Color32, Pos2, Rect, ScrollArea, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
 };
@@ -216,10 +217,17 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
     );
 }
 
-/// 直方图：对齐界面稿 `.histo` —— 没有卡片、没有描边、没有网格线，
-/// 三条 RGB 渐变填充山形直接画在 dock 底上，白色亮度山形压在最上面；
-/// 下方一行 10px 的剪切读数（左阴影、右高光，两端对齐）。
-/// 直方图显示层的两遍 [1,2,1]/4 卷积：三通道山形与白色亮度山形共用，
+/// 直方图：对齐 PS / Camera Raw —— 一块近黑的内凹底，三条 RGB 山形用低透明度
+/// 的纯色填充、再用饱和细线勾出山脊；重叠处靠叠加自然读出灰褐，不再压一层白色
+/// 亮度包络（那层白会让整块泛奶、暗部发灰）。下方一行 10px 的剪切读数
+/// （左阴影、右高光，两端对齐）。
+///
+/// The histogram, in PS / Camera Raw's manner: a near-black inset well, three RGB
+/// mountains filled at low alpha in pure channel colours with a saturated hairline
+/// along each crest. Overlaps go grey-brown on their own, and the white luminance
+/// envelope is gone -- that layer milked the whole panel and greyed the shadows.
+/// Below it, a 10 px row of clipping readouts (shadows left, highlights right).
+/// 直方图显示层的两遍 [1,2,1]/4 卷积：三通道山形共用。
 /// 抽出来是一份事实源——以后想改平滑强度只动这里。
 fn smooth_twice(vals: &mut [f32], bins: usize) {
     for _ in 0..2 {
@@ -234,6 +242,41 @@ fn smooth_twice(vals: &mut [f32], bins: usize) {
             vals[b] = (l + 2.0 * prev[b] + r) * 0.25;
         }
     }
+}
+
+/// 直方图下方那行拍摄参数：焦距 · 光圈 · 快门 · ISO。缺项直接省略，不补
+/// 破折号——四个「—」比一行空着更吵。
+///
+/// The capture-parameter line under the histogram: focal · aperture · shutter · ISO.
+/// Missing fields are omitted rather than padded with dashes -- four em dashes read
+/// louder than an empty row.
+fn capture_line(
+    focal_mm: Option<f64>,
+    fnum: Option<f64>,
+    shutter: Option<String>,
+    iso: Option<f64>,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::with_capacity(4);
+    if let Some(v) = focal_mm {
+        parts.push(format!("{v:.0} mm"));
+    }
+    if let Some(v) = fnum {
+        // f/8 不写成 f/8.0：整档光圈在相机上就是整数字。
+        //
+        // f/8 rather than f/8.0: full-stop apertures read as whole numbers on camera.
+        parts.push(if (v.fract()).abs() < 0.05 {
+            format!("f/{v:.0}")
+        } else {
+            format!("f/{v:.1}")
+        });
+    }
+    if let Some(v) = shutter {
+        parts.push(v);
+    }
+    if let Some(v) = iso {
+        parts.push(format!("ISO {v:.0}"));
+    }
+    (!parts.is_empty()).then(|| parts.join("  ·  "))
 }
 
 fn histogram(ui: &mut Ui, state: &mut AppState) {
@@ -263,7 +306,23 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
     };
 
     let bins = 128usize;
-    let max = h.iter().flatten().copied().max().unwrap_or(0).max(1) as f32;
+    // 分母必须和画出来的量同口径：每个点是相邻两个 bin 之和，就取「两 bin 之和」
+    // 的最大值。用单 bin 最大值当分母时，尖峰摊在两个相邻 bin 上，分子能到
+    // 2×max，山形直接冲出凹槽顶部（用户 2026-11-07 截图里的那条直线）。
+    //
+    // The divisor must match the plotted quantity: each point is the sum of two
+    // adjacent bins, so normalise by the max of those sums. With the single-bin max,
+    // a spike split across two neighbours reaches 2x and the mountain leaves the well.
+    let max = (0..bins)
+        .map(|b| {
+            (0..3)
+                .map(|ch| h[ch][b * 2] + h[ch][b * 2 + 1])
+                .max()
+                .unwrap_or(0)
+        })
+        .max()
+        .unwrap_or(0)
+        .max(1) as f32;
     let bar_w = rect.width() / bins as f32;
     // RGB 读数胶囊（ACR 同位：直方图顶部居中）：三通道均值 ×255。
     // 加权均值：Σ(档位×计数)/Σ计数 → 0..255 的真实平均亮度
@@ -302,9 +361,32 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
         );
     }
 
-    // 4 个 Mesh 形状（3 通道 + 亮度包络）走缓存（E6）：键 = (hist_version, rect)。
+    // 内凹底：比面板沉两档的近黑，加一道细描边，山形才有「装在一个凹槽里」的
+    // 读法（PS 的直方图就是一块黑底）。浅色主题只压一点点，否则一块黑砖砸在
+    // 白面板上。
+    //
+    // The inset well: near-black, two steps below the panel, with a hairline outline,
+    // so the mountains read as sitting in a recess (PS's histogram is a black well).
+    // The light theme darkens only slightly, or a black brick lands on a white panel.
+    {
+        let depth = if theme::is_light() { 0.12 } else { 0.42 };
+        let well = widgets::mix(theme::field(), Color32::BLACK, depth);
+        p.rect_filled(rect, radius_control(), well);
+        p.rect_stroke(
+            rect,
+            radius_control(),
+            Stroke::new(1.0, divider()),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    // 3 个填充 Mesh + 3 条山脊线走缓存（E6）：键 = (hist_version, rect)。
     // 新预览落地时 hist_version 才变；静止悬停帧直接 clone —— Shape::Mesh 持
     // Arc<Mesh>（epaint 0.37 已确认），clone 零拷贝。
+    //
+    // Three fill meshes plus three crest lines ride the cache: key = (hist_version,
+    // rect). hist_version only changes when a new preview lands; idle hover frames
+    // clone shapes, and Shape::Mesh holds an Arc<Mesh> (confirmed in epaint 0.37).
     let cached = match &state.hist_mesh_cache {
         Some(c) if c.version == state.hist_version && c.rect == rect => Some(c.shapes.clone()),
         _ => None,
@@ -313,17 +395,34 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
         Some(shapes) => shapes,
         None => {
             // 每条山形是一个三角带：每个 bin 四个顶点（左峰、右峰、左底、右底），
-            // 顶点色从山脊的半透明衰减到底边的全透明 —— egui 没有纵向渐变填充，
-            // 逐顶点插值就是渐变本身。三通道重合处 alpha 叠加自然泛白，和 LR 的读法一致。
-            const CREST_A: u8 = 150; // 设计稿填充更实（原 115 在深底上偏淡，山形读不出来）
+            // 顶点色从山脊的低透明度纯色衰减到底边的更淡——egui 没有纵向渐变填充，
+            // 逐顶点插值就是渐变本身。alpha 压得低，三通道重叠处才会叠出 PS 那种
+            // 灰褐，而不是一层奶白。
+            //
+            // Each mountain is a triangle strip: four vertices per bin (left crest,
+            // right crest, left base, right base), with a low-alpha pure colour at the
+            // crest fading to an even fainter base -- egui has no vertical gradient fill,
+            // so per-vertex interpolation is the gradient. Alpha stays low so overlapping
+            // channels land on PS's grey-brown instead of a layer of milk.
+            const CREST_A: u8 = 88;
+            const BASE_A: u8 = 14;
             let channel_rgb: [[u8; 3]; 3] =
-                [[0xFF, 0x5C, 0x5C], [0x5C, 0xFF, 0x8C], [0x5C, 0x8C, 0xFF]];
-            let mut shapes: Vec<Shape> = Vec::with_capacity(4);
+                [[0xC8, 0x3C, 0x38], [0x3C, 0x96, 0x4B], [0x37, 0x69, 0xD2]];
+            let ridge_rgb: [[u8; 3]; 3] =
+                [[0xF0, 0x5A, 0x50], [0x5E, 0xD8, 0x78], [0x5A, 0x9B, 0xFF]];
+            let mut shapes: Vec<Shape> = Vec::with_capacity(6);
             for ch in 0..3 {
                 let mut mesh = egui::Mesh::default();
                 // 显示平滑：[1,2,1]/4 卷积两遍。原始 bin 在尖峰数据（大面积纯色天空）
                 // 下会画出锯齿山，界面稿的圆滑感来自它的样例数据本身平缓 ——
-                // 卷积只动显示层，不碰 state.hist 的原始数据。
+                // 卷积只动显示层，不碰 state.hist 的原始数据。PS 的山脊仍带细密锯齿，
+                // 所以只走一遍；原来四遍会把真实照片的直方图糊成一块色团。
+                //
+                // Display smoothing: two passes of the [1,2,1]/4 kernel. Raw bins spike on
+                // flat subjects (a big patch of sky) and look like a saw; the mockup's
+                // smoothness came from gently varying sample data. This only touches the
+                // display layer. PS's ridges still carry fine saw teeth, so one pass only --
+                // the old four passes smeared a real photo into a blob.
                 let raw: Vec<f32> = (0..bins)
                     .map(|b| {
                         let lo = b * 2;
@@ -331,15 +430,11 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
                         if count == 0 {
                             0.0
                         } else {
-                            (count as f32 / max).powf(0.55)
+                            (count as f32 / max).powf(0.7).clamp(0.0, 1.0)
                         }
                     })
                     .collect();
                 let mut vals = raw.clone();
-                // 两遍卷积（= 四遍 [1,2,1]/4）把真实数据的针状尖峰摊成山形：
-                // 设计稿的圆滑感来自假数据本身平缓，真实照片的直方图是刺猬，
-                // 只靠一遍卷积仍读作线条。只动显示层，不碰 state.hist。
-                smooth_twice(&mut vals, bins);
                 smooth_twice(&mut vals, bins);
                 for (b, &v) in vals.iter().enumerate().take(bins) {
                     let x0 = rect.left() + b as f32 * bar_w;
@@ -359,50 +454,42 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
                     );
                     mesh.colored_vertex(
                         Pos2::new(x0, rect.bottom()),
-                        Color32::from_rgba_unmultiplied(r, g, bl, 0),
+                        Color32::from_rgba_unmultiplied(r, g, bl, BASE_A),
                     );
                     mesh.colored_vertex(
                         Pos2::new(x1, rect.bottom()),
-                        Color32::from_rgba_unmultiplied(r, g, bl, 0),
+                        Color32::from_rgba_unmultiplied(r, g, bl, BASE_A),
                     );
                     mesh.add_triangle(i, i + 1, i + 3);
                     mesh.add_triangle(i, i + 3, i + 2);
                 }
                 shapes.push(egui::Shape::Mesh(mesh.into()));
-            }
 
-            // 亮度包络：三通道按同一缩放相加后的轮廓，一条白色山形把「整体曝光」
-            // 从彩色山里拎出来。顶点 alpha 140 → 底 13（界面稿 .55 → .05）。
-            let mut lum = egui::Mesh::default();
-            // 亮度包络与三通道同一套平滑，山形才叠得齐。
-            let lum_raw: Vec<f32> = (0..bins)
-                .map(|b| {
-                    let lo = b * 2;
-                    let sum = [0usize, 1, 2]
-                        .iter()
-                        .map(|&ch| h[ch][lo] as f32 + h[ch][lo + 1] as f32)
-                        .sum::<f32>();
-                    (sum / (max * 2.2)).powf(0.55).min(1.0)
-                })
-                .collect();
-            let mut lum_vals = lum_raw.clone();
-            smooth_twice(&mut lum_vals, bins);
-            smooth_twice(&mut lum_vals, bins);
-            for (b, &v) in lum_vals.iter().enumerate().take(bins) {
-                let x0 = rect.left() + b as f32 * bar_w;
-                let x1 = x0 + bar_w;
-                // 山形封顶在 94%：峰值贴着页签行的「超出」观感（用户截图）——
-                // 留 6% 空气，山头与 tab 行之间永远有一线呼吸。
-                let y_top = rect.bottom() - rect.height() * 0.94 * v;
-                let i = lum.vertices.len() as u32;
-                lum.colored_vertex(Pos2::new(x0, y_top), Color32::from_white_alpha(40));
-                lum.colored_vertex(Pos2::new(x1, y_top), Color32::from_white_alpha(40));
-                lum.colored_vertex(Pos2::new(x0, rect.bottom()), Color32::from_white_alpha(5));
-                lum.colored_vertex(Pos2::new(x1, rect.bottom()), Color32::from_white_alpha(5));
-                lum.add_triangle(i, i + 1, i + 3);
-                lum.add_triangle(i, i + 3, i + 2);
+                // 山脊线：PS 把通道读成一根 1px 的彩色细线，填充只是线的附庸。
+                // 没有这根线，低透明度的三条填充在深底上会糊成一团雾。
+                //
+                // The crest line: PS reads a channel as a 1 px coloured hairline with the
+                // fill as its shadow. Without the line, three low-alpha fills dissolve into
+                // fog on the dark well.
+                let [r, g, bl] = ridge_rgb[ch];
+                let mut pts: Vec<Pos2> = vals
+                    .iter()
+                    .enumerate()
+                    .map(|(b, &v)| {
+                        Pos2::new(
+                            rect.left() + (b as f32 + 0.5) * bar_w,
+                            rect.bottom() - rect.height() * 0.94 * v,
+                        )
+                    })
+                    .collect();
+                if let Some(last) = pts.last_mut() {
+                    last.x = rect.right();
+                }
+                shapes.push(egui::Shape::line(
+                    pts,
+                    Stroke::new(1.15, Color32::from_rgb(r, g, bl)),
+                ));
             }
-            shapes.push(egui::Shape::Mesh(lum.into()));
 
             state.hist_mesh_cache = Some(HistMeshCache {
                 version: state.hist_version,
@@ -542,6 +629,26 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
             "{}（J 键循环开关）",
             &[&crate::i18n::tr(high_tip)],
         ));
+
+    // 拍摄参数（LR 同位）：压在直方图与推子之间，用的是直方图本来就留着的呼吸位。
+    // 只有 EXIF 真读到东西时才占位——空帧不该多出一条空行。
+    //
+    // Capture parameters (LR's slot): between the histogram and the sliders, in air the
+    // histogram already leaves. The row only takes space when EXIF is present -- a frame
+    // without EXIF should not leave an empty line.
+    if let Some(e) = state.exif.get(state.selected)
+        && let Some(line) = capture_line(e.focal_mm(), e.fnum(), e.shutter_text(), e.iso())
+    {
+        let (row, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 15.0), Sense::hover());
+        p.text(
+            Pos2::new(row.left() + 2.0, row.center().y),
+            Align2::LEFT_CENTER,
+            theme::ellipsis(&line, 48),
+            font(10.0),
+            dim(),
+        );
+    }
 }
 
 /// 直方图与推子读数：三色柱、白色亮度折线、改动后才变蓝的数值。
@@ -555,6 +662,32 @@ mod dock_paint_tests {
     use crate::state::Module;
     use egui::Context;
 
+    /// 拍摄参数行的拼法与省略规则：齐了按 焦距 · 光圈 · 快门 · ISO 排，整档
+    /// 光圈不带小数点，缺项不补占位、全缺就没有这一行。
+    ///
+    /// The capture-line composition and omission rules: full order is focal ·
+    /// aperture · shutter · ISO, whole-stop apertures lose the decimal, missing
+    /// fields leave no placeholder, and an all-missing frame has no row at all.
+    #[test]
+    fn capture_line_formats_and_omits_missing_fields() {
+        assert_eq!(
+            capture_line(Some(35.0), Some(8.0), Some("1/250".to_owned()), Some(200.0))
+                .as_deref(),
+            Some("35 mm  ·  f/8  ·  1/250  ·  ISO 200")
+        );
+        assert_eq!(
+            capture_line(Some(50.0), Some(1.8), Some("1/60".to_owned()), Some(1600.0))
+                .as_deref(),
+            Some("50 mm  ·  f/1.8  ·  1/60  ·  ISO 1600")
+        );
+        // 缺项：直接跳过，不补「—」。
+        assert_eq!(
+            capture_line(None, Some(4.0), None, Some(100.0)).as_deref(),
+            Some("f/4  ·  ISO 100")
+        );
+        assert_eq!(capture_line(None, None, None, None), None);
+    }
+
     fn input(w: f32, h: f32) -> egui::RawInput {
         egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(w, h))),
@@ -563,50 +696,119 @@ mod dock_paint_tests {
         }
     }
 
-    /// 一块有峰有谷的直方图：每个通道都铺满 128 档，亮度包络才画得出折线的凹处。
+    /// 一块有峰有谷的直方图：每个通道都铺满 128 档，山脊线才画得出折线的凹处。
     fn textured_hist() -> [[u32; 256]; 3] {
         let shapes = [(7u32, 40u32, 4u32), (11, 30, 3), (13, 36, 5)];
         shapes.map(|(mul, span, base)| std::array::from_fn(|v| base + (v as u32 * mul) % span))
     }
 
+    /// 尖峰直方图：一个高台横跨相邻两档——正是「分子是两 bin 之和、分母却取
+    /// 单 bin 最大值」会翻倍的那种数据。旧实现下它必然冲出凹槽顶部。
+    ///
+    /// A spiky histogram: one plateau straddling two adjacent bins -- exactly the case
+    /// where plotting a two-bin sum against a single-bin max doubles the ratio and sent
+    /// the mountain out of the well.
+    fn spiky_hist() -> [[u32; 256]; 3] {
+        let mut h = [[1u32; 256]; 3];
+        h[0][100] = 4000;
+        h[0][101] = 4000;
+        h[2][100] = 3500;
+        h[2][101] = 3500;
+        h
+    }
+
     #[test]
-    fn histogram_paints_three_channel_meshes_and_a_luminance_mesh() {
+    fn histogram_peaks_stay_inside_the_well() {
+        let ctx = Context::default();
+        theme::apply(&ctx, 1.0);
+        let mut state = AppState::new();
+        state.hist = Some(spiky_hist());
+        let mut draw = |ui: &mut Ui| histogram(ui, &mut state);
+        let mut out = ctx.run_ui(input(320.0, 200.0), &mut draw);
+        let well = widgets::mix(theme::field(), Color32::BLACK, 0.42);
+        let mut well_rect = None;
+        for clipped in &out.shapes {
+            if let egui::Shape::Rect(r) = &clipped.shape
+                && r.fill == well
+                && r.rect.height() > 80.0
+            {
+                well_rect = Some(r.rect);
+            }
+        }
+        let well_rect = well_rect.expect("直方图的凹槽没上屏");
+        let mut topmost = f32::INFINITY;
+        for clipped in &out.shapes {
+            match &clipped.shape {
+                egui::Shape::Mesh(m) => {
+                    for v in &m.vertices {
+                        topmost = topmost.min(v.pos.y);
+                    }
+                }
+                egui::Shape::Path(path) => {
+                    // 只看山脊线：剪切角标是无描边的填充三角，压着凹槽顶角。
+                    if let egui::epaint::ColorMode::Solid(col) = path.stroke.color
+                        && col.a() > 0
+                    {
+                        for pt in &path.points {
+                            topmost = topmost.min(pt.y);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.textures_delta.clear();
+        // 不只要求「不越界」，还要保住 94% 封顶留下的那一线空气。
+        assert!(
+            topmost >= well_rect.top() + 4.0,
+            "直方图冲出凹槽顶部：最高点 y={topmost}，凹槽顶 y={}",
+            well_rect.top()
+        );
+    }
+
+    #[test]
+    fn histogram_paints_three_channel_fills_and_crest_lines() {
         let ctx = Context::default();
         theme::apply(&ctx, 1.0);
         let mut state = AppState::new();
         state.hist = Some(textured_hist());
         let mut draw = |ui: &mut Ui| histogram(ui, &mut state);
         let mut out = ctx.run_ui(input(320.0, 200.0), &mut draw);
-        // 新规格：山形是逐顶点渐变的三角带（Mesh），不再有逐 bin 的实心矩形柱。
+        // 新规格（PS 口径）：三条低透明度纯色填充山形 + 三条饱和山脊细线。
         // 顶点色经 from_rgba_unmultiplied 落进顶点时已按 alpha 压平，
         // 所以期望值也用同一构造算出来，逐色完整比较。
         let channel_rgb: [[u8; 3]; 3] =
-            [[0xFF, 0x5C, 0x5C], [0x5C, 0xFF, 0x8C], [0x5C, 0x8C, 0xFF]];
+            [[0xC8, 0x3C, 0x38], [0x3C, 0x96, 0x4B], [0x37, 0x69, 0xD2]];
+        let ridge_rgb: [[u8; 3]; 3] =
+            [[0xF0, 0x5A, 0x50], [0x5E, 0xD8, 0x78], [0x5A, 0x9B, 0xFF]];
         let crest: Vec<Color32> = channel_rgb
             .iter()
-            .map(|rgb| Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 150))
+            .map(|rgb| Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 88))
             .collect();
         let base: Vec<Color32> = channel_rgb
             .iter()
-            .map(|rgb| Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 0))
+            .map(|rgb| Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 14))
             .collect();
-        let (lum_top, lum_base) = (Color32::from_white_alpha(40), Color32::from_white_alpha(5));
+        let ridges: Vec<Color32> = ridge_rgb
+            .iter()
+            .map(|rgb| Color32::from_rgb(rgb[0], rgb[1], rgb[2]))
+            .collect();
         let mut channel_meshes = [0usize; 3];
-        let mut lum_mesh = 0usize;
+        let mut ridge_lines = [0usize; 3];
+        let mut white_wash = 0usize;
         let mut solid_bars = 0usize;
         for clipped in &out.shapes {
             match &clipped.shape {
                 egui::Shape::Mesh(m) => {
                     let mut touched = [false; 3];
-                    let mut white = false;
                     for v in &m.vertices {
                         for k in 0..3 {
                             if v.color == crest[k] || v.color == base[k] {
                                 touched[k] = true;
                             }
                         }
-                        if v.color == lum_top || v.color == lum_base {
-                            white = true;
+                        if v.color == Color32::from_white_alpha(22) {
+                            white_wash += 1;
                         }
                     }
                     for k in 0..3 {
@@ -614,14 +816,27 @@ mod dock_paint_tests {
                             channel_meshes[k] += 1;
                         }
                     }
-                    if white {
-                        lum_mesh += 1;
+                }
+                egui::Shape::Path(path) => {
+                    if let egui::epaint::ColorMode::Solid(color) = path.stroke.color
+                        && let Some(k) = ridges.iter().position(|c| *c == color)
+                    {
+                        ridge_lines[k] += 1;
                     }
                 }
                 egui::Shape::Rect(r) => {
                     // 旧实现是逐 bin 实心矩形柱：新实现不许再出现这类色块。
-                    let opaque_colored =
-                        r.fill.a() > 100 && (r.fill[0] != r.fill[1] || r.fill[1] != r.fill[2]);
+                    // 直方图自己的内凹底不算——它是一整块带一点点色偏的近黑，
+                    // 按「不透明彩色矩形」的字面判据会被误抓。
+                    //
+                    // The old implementation drew one solid rectangle per bin; that must
+                    // not come back. The histogram's own inset well is exempt: it is one
+                    // near-black slab with a faint tint that the literal "opaque coloured
+                    // rect" criterion would otherwise catch.
+                    let well = widgets::mix(theme::field(), Color32::BLACK, 0.42);
+                    let opaque_colored = r.fill.a() > 100
+                        && (r.fill[0] != r.fill[1] || r.fill[1] != r.fill[2])
+                        && r.fill != well;
                     if opaque_colored {
                         solid_bars += 1;
                     }
@@ -631,9 +846,12 @@ mod dock_paint_tests {
         }
         out.textures_delta.clear();
         for (ch, n) in channel_meshes.iter().enumerate() {
-            assert!(*n >= 1, "{} 通道的渐变山形没上屏", ["红", "绿", "蓝"][ch]);
+            assert!(*n >= 1, "{} 通道的填充山形没上屏", ["红", "绿", "蓝"][ch]);
         }
-        assert!(lum_mesh >= 1, "亮度山形没上屏，整体曝光读不出来");
+        for (ch, n) in ridge_lines.iter().enumerate() {
+            assert!(*n >= 1, "{} 通道的山脊线没上屏", ["红", "绿", "蓝"][ch]);
+        }
+        assert_eq!(white_wash, 0, "直方图又压上了白色亮度包络");
         assert_eq!(solid_bars, 0, "直方图又退回了实心矩形柱");
     }
 

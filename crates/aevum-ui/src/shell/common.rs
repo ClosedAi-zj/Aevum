@@ -267,14 +267,17 @@ pub(super) fn group_header(
     resettable: bool,
 ) -> bool {
     let title = crate::i18n::tr(title);
-    // 分组头口径（设计图 `.acc-head`）：8px 顶空 + 32px 行高 + 单 hairline 下沿，
-    // 内边距 `0 12px 0 20px`（标题 x=20，右侧留 12）。主次靠「粗标题 + 单线」表达，
-    // 不靠留白堆。
+    // 分组头口径（ACR 2023+ 的面板列，用户 2026-11-07 截图）：一行 32px，
+    // 箭头 + 常规字重标题 + 眼睛，下面一道通栏 hairline。上一版按更早的效果图
+    // 加了滑杆图标又把分隔线撤掉；最新的参考图里两样都没有——图标让八个组头
+    // 变成八颗按钮，没有线则让折叠后的分组糊成一整块。
     //
-    // Group header, per the design's `.acc-head`: 8 px of top space, a 32 px row, one
-    // closing hairline, and `0 12px 0 20px` padding. Hierarchy comes from the bold title
-    // and the single line, not from padding.
-    ui.add_space(8.0);
+    // Group header, per ACR's 2023+ panel column (user screenshot, 2026-11-07):
+    // a 32 px row of chevron + regular-weight title + eye, closed by a full-width
+    // hairline. An earlier mockup added a sliders glyph and dropped the rule; the
+    // newest reference has neither -- the glyph turned eight headers into eight
+    // buttons, and without the rule collapsed groups blur into one slab.
+    ui.add_space(2.0);
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
     if state.dock_focus.as_deref() == Some(key) {
@@ -286,14 +289,14 @@ pub(super) fn group_header(
         state.collapsed.remove(key);
     }
     let p = ui.painter();
-    // ACR 的分区头签名：标题条下沿一道实线，再往上 2px 一道更淡的细线——
-    // 双线把「一个分区从这里开始」和表格横线区分开。旧版只在顶部画单线，
-    // 十四组排下来整屏读着像一张表格。
+    // 组头只留「箭头 + 标题 + 眼睛」三件：箭头表示开合，标题是分区名，
+    // 眼睛是这一组是否参与预览。多一枚滑杆图标只是重复「这里是参数区」，
+    // 却把标题推右 9px、让整列失去共同的左缘。
     //
-    // ACR's section-header signature: a solid rule at the bottom edge plus a fainter
-    // hairline 2 px above it. The double rule reads as "a section starts here", where
-    // the old single top rule read as a table row divider.
-    theme::rule(p, rect.left(), rect.right(), rect.bottom() - 1.0, divider());
+    // The header keeps exactly three things: the chevron (open state), the title
+    // (section name), and the eye (whether this group renders into the preview). A
+    // sliders glyph only repeats "parameters live here" while pushing every title
+    // 9 px right and breaking the column's shared left edge.
     let open = !state.collapsed.contains(key);
     // 悬停是一整条圆角高亮，不是方条：macOS 侧栏分组头的口径。
     if resp.hovered() {
@@ -302,8 +305,8 @@ pub(super) fn group_header(
     icons::paint(
         p,
         Rect::from_center_size(
-            Pos2::new(rect.left() + 9.0, rect.center().y),
-            Vec2::splat(9.0),
+            Pos2::new(rect.left() + 11.0, rect.center().y),
+            Vec2::splat(11.0),
         ),
         if open {
             Glyph::ChevronDown
@@ -312,20 +315,24 @@ pub(super) fn group_header(
         },
         if resp.hovered() { text() } else { muted() },
     );
-    // 字号比正文大一档 + 真粗体（700 子集字族）：ACR 的分区标题是 semibold，
-    // 只靠字号和颜色堆不出这层「这是标题」的体格差。
+    // 标题用正文字阶 + 常规字重：ACR 的组名是常规字重，800 的粗体叠在
+    // 十来个组头上会把面板读成一排按钮。
     //
-    // One step above body copy plus real bold (the 700 subset family): ACR's section
-    // headers are semibold, and size plus colour alone cannot carry that "this is a
-    // heading" weight difference.
-    let title_galley = p.layout_no_wrap(title.to_owned(), bold(SIZE_LABEL + 1.0), text());
-    let title_x = rect.left() + 20.0;
+    // Title at body scale in the regular weight: ACR's group names are regular, and
+    // a bold 800 across ten headers reads as a column of buttons.
+    let title_galley = p.layout_no_wrap(title.to_owned(), font(SIZE_LABEL + 1.0), text());
+    let title_x = rect.left() + 26.0;
     p.galley(
         Pos2::new(title_x, rect.center().y - title_galley.size().y * 0.5),
         title_galley.clone(),
         text(),
     );
-    // 说明入口贴着标题放：右端只留复位，两个圆图标挤在一起分不清谁是谁。
+    // 说明入口贴着标题放，但默认不显形（效果图里组头只有图标和标题）：悬停
+    // 标题条时才亮出来，仍然占着同一块热区，帮助没有丢。
+    //
+    // The help entry keeps its slot next to the title but stays invisible until the
+    // header is hovered (the mockup shows only glyph + title): the hit area is still
+    // there, so the help is not lost.
     if let Some(help) = group_help(key).map(crate::i18n::tr) {
         let ir = Rect::from_center_size(
             Pos2::new(title_x + title_galley.size().x + 11.0, rect.center().y),
@@ -346,7 +353,7 @@ pub(super) fn group_header(
             if iresp.hovered() {
                 accent_hover()
             } else {
-                dim()
+                Color32::TRANSPARENT
             },
         );
         iresp.on_hover_text(help);
@@ -364,9 +371,17 @@ pub(super) fn group_header(
     let bypassable = controls::is_bypassable(key);
     if bypassable {
         let off = state.bypassed.contains(key);
+        // 眼睛贴右缘：PS 参考图里组头眼睛在内容右缘内 6~18px，此前为了给复位
+        // 让位退到 right−30，整行右侧空出一大截。现在眼睛占住最右一格，复位
+        // 只在悬停时于它左侧滑出。
+        //
+        // Eye against the right edge: in the PS reference the header eye sits 6-18 px
+        // inside the content edge; it used to retreat to right-30 to make room for the
+        // reset, leaving a conspicuous gap. The eye now owns the rightmost slot and the
+        // reset slides out to its left on hover only.
         let er = Rect::from_center_size(
-            Pos2::new(rect.right() - 30.0, rect.center().y),
-            Vec2::splat(18.0),
+            Pos2::new(rect.right() - 13.0, rect.center().y),
+            Vec2::splat(20.0),
         );
         let eresp = ui.interact(
             er,
@@ -383,7 +398,13 @@ pub(super) fn group_header(
             if eresp.hovered() && !off {
                 text()
             } else {
-                muted()
+                // PS 的眼睛比正文暗一档（参考图 141 对 240）：它是开关，不该和
+                // 标题抢视线。此前用 muted，和标签几乎同亮。
+                //
+                // PS's eye sits one step below body text (141 vs 240 in the reference):
+                // it is a switch and should not compete with the title. It used muted
+                // before, nearly as bright as the labels.
+                dim()
             },
         );
         if off {
@@ -413,17 +434,22 @@ pub(super) fn group_header(
     // 亮一枚 5px accent 圆点；复位之后自然熄灭。
     if state.group_changed(key) {
         let dx = match (bypassable, resettable) {
-            (true, true) => 44.0,
-            (true, false) => 29.0,
-            (false, true) => 26.0,
+            (true, true) => 52.0,
+            (true, false) => 31.0,
+            (false, true) => 31.0,
             (false, false) => 12.0,
         };
         p.circle_filled(Pos2::new(rect.right() - dx, rect.center().y), 2.5, accent());
     }
     if resettable {
+        let reset_x = if bypassable {
+            rect.right() - 34.0
+        } else {
+            rect.right() - 12.0
+        };
         let rr = Rect::from_center_size(
-            Pos2::new(rect.right() - 11.0, rect.center().y),
-            Vec2::splat(18.0),
+            Pos2::new(reset_x, rect.center().y),
+            Vec2::splat(20.0),
         );
         let rresp = ui.interact(
             rr,
@@ -437,7 +463,7 @@ pub(super) fn group_header(
         // 只读作「箭头 + 名字 + 眼睛」，改动点与复位都是次级信息。
         icons::paint(
             p,
-            rr.shrink(4.0),
+            rr.shrink(4.5),
             Glyph::Reset,
             if rresp.hovered() {
                 text()
@@ -503,6 +529,13 @@ pub(super) fn group_header(
             state.settings_dirty = true;
         }
     });
+    // 通栏 hairline：最新的 ACR 截图里每组之间都有一条极淡的线。它读作
+    // 「一列分组的边界」，不是旧版那种把分组切成表格的双线。
+    //
+    // Full-width hairline: the newest ACR reference has a faint rule between groups.
+    // It reads as the boundary of a column of sections, not the old double rule that
+    // cut each section into a table row.
+    theme::rule(p, rect.left(), rect.right(), rect.bottom(), divider());
     ui.add_space(4.0);
     !state.collapsed.contains(key)
 }
@@ -548,42 +581,6 @@ pub(super) fn slider<K: std::hash::Hash + std::fmt::Debug>(
 ) -> bool {
     slider_row(
         ui, key, label, v, min, max, default, decimals, signed, "", None, false, "",
-    )
-}
-
-/// 带渐变轨道的推子：轨道两端色由调用方给定（HSL 频段这类「轨道即含义」
-/// 的参数）。其余行为与 [`slider`] 完全一致。
-///
-/// A fader with a gradient rail: the caller supplies the two end colours for
-/// parameters whose *track carries meaning* (HSL bands). Behaviour is otherwise
-/// identical to [`slider`].
-#[allow(clippy::too_many_arguments)]
-pub(super) fn slider_grad<K: std::hash::Hash + std::fmt::Debug>(
-    ui: &mut Ui,
-    key: K,
-    label: &str,
-    v: &mut f64,
-    min: f64,
-    max: f64,
-    default: f64,
-    decimals: usize,
-    signed: bool,
-    stops: &'static [(f32, Color32)],
-) -> bool {
-    slider_row(
-        ui,
-        key,
-        label,
-        v,
-        min,
-        max,
-        default,
-        decimals,
-        signed,
-        "",
-        Some(stops),
-        false,
-        "",
     )
 }
 
@@ -678,70 +675,88 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     track: bool,
     tip: &str,
 ) -> bool {
-    // ── 单行横排：标签 76 · 轨道弹性 · 读数 44 ───────────────────────────
-    // 设计图 `.slider-row{padding:0 12px;gap:8px}` + `.s-label{width:76px}` +
-    // `.s-value{width:44px}` 的口径。读数从 52 收到 44：等宽字体下 `-100` 这类
-    // 三位数带号也排得下，多出来的 8px 还给轨道——设计图里轨道明显更长。
-    // 翻译下沉在这里：SPECS 静态表的 label 是 const 数据，不能在表里调 tr；
-    // 所有滑块（显影/构图/成片）都汇到这一条路上，改一处全生效。
+    // ── 紧凑两行：标签 + 读数在首行，通栏轨道压在第二行 ──────────────
+    // 单行式把轨道塞在标签与读数框之间，只剩约 200px，右边还空出 12px 的死区；
+    // 并排看 PS，轨道是**从标签左缘一直铺到读数框右缘**、并从框下方穿过的，滑块
+    // 走的是整条量程。现在照参考图的版式改回两行，但节距仍是 30px（参考图 31），
+    // 密度一分不丢，只是把原来浪费在中缝的空白换成了轨道长度。
     //
-    // One horizontal row: label 76 · elastic rail · readout 44, matching the design's
-    // `.slider-row` padding/gap plus `.s-label` and `.s-value` widths. The readout drops
-    // from 52 to 44 -- monospace fits a signed three-digit value -- and the 8 px goes to
-    // the rail, which is visibly longer in the design.
+    // Compact two lines: label + readout on the first line, a full-width rail on the
+    // second. The single-line form squeezed the rail between the label and the box
+    // (~200 px) and left a 12 px dead gutter; side by side with PS the rail there runs
+    // from the label's left edge all the way under the readout box to its right edge,
+    // and the handle travels the whole range. This restores the reference's two-line
+    // form while keeping the 30 px pitch (reference: 31), so nothing gets looser --
+    // the space that used to be dead becomes rail.
     const VALUE_W: f32 = 44.0;
-    // 复位点 5px：设计图 `.slider-row .s-reset{width:5px;height:5px}`。原 14px 是
-    // 一个带内边距的点击靶，比设计稿宽 9px，轨道因此短了一截——实测程序轨道
-    // 188px vs 设计稿约 207px。命中区改用 `ui.interact` 的矩形另行放大，
-    // 不再靠占位宽度换手感。
+    const FIELD_H: f32 = 18.0;
+    // 复位点 5px：设计图 `.slider-row .s-reset{width:5px;height:5px}`。命中区改用
+    // `ui.interact` 的矩形另行放大，不靠占位宽度换手感。
     //
-    // 5 px per the design's `.slider-row .s-reset{width:5px;height:5px}`. The old
-    // 14 px padding box was 9 px wider than the design and shortened the rail
-    // accordingly -- measured 188 px against the design's ~207 px. Hit area is widened
-    // through the `ui.interact` rect instead of by reserving layout width.
+    // 5 px per the design's `.slider-row .s-reset{width:5px;height:5px}`. The hit area
+    // is widened through the `ui.interact` rect instead of by reserving layout width.
     const RESET_W: f32 = 5.0;
-    const ROW_PAD: f32 = 12.0;
+    const ROW_PAD: f32 = 6.0;
+    // 两行排布：首行中线 9px（标签与读数框），轨道中线 26px，行高 34——标签与轨道
+    // 之间留 17px，轨道与下一行标签之间留 21px。参考图是 31px 节距，但实测这套
+    // 深色 + 通栏轨道的组合按参考节距排下来太挤（用户 2026-11-07 实机反馈），
+    // 放到 38px 节距才松得下来。
+    //
+    // Two-line split: first-line centre at 9 px (label and readout), rail centre at
+    // 26 px, row height 34. That leaves 17 px between label and rail and 21 px from
+    // rail to the next label. The reference pitch is 31 px, but this dark panel with
+    // full-width rails read cramped at the reference rhythm (user feedback, 2026-11-07);
+    // a 38 px pitch breathes.
+    const L1_Y: f32 = 9.0;
+    const TRACK_Y: f32 = 26.0;
+    // 标签 13 / 读数 11 / 组标题 14：PS 参考图的字号阶梯——参数名比读数大一档，
+    // 读数收在框里做次级信息；三档都用 13 会让整列读起来一样重。
+    //
+    // Label 13 / readout 11 / section title 14, the PS reference's ladder: the parameter
+    // name is one step above its number, and the number recedes inside its box. Making
+    // all three 13 gives the column one flat weight.
+    const LABEL_SIZE: f32 = SIZE_LABEL + 1.0;
+    const VALUE_SIZE: f32 = SIZE_SMALL;
     let label = crate::i18n::tr(label);
     let tip = crate::i18n::tr(tip);
 
     let (rect, row_resp) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), row_h()), Sense::hover());
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::hover());
     let hot_row = ui.rect_contains_pointer(rect);
     let changed_now = (*v - default).abs() > 1e-9;
 
-    // 数值框：右端留出复位点位置，读数右对齐 —— 一列读数的小数点才会落在同一条竖线上。
-    // 右侧排布照设计图 DOM 顺序：轨道(flex:1) → 读数(44) → 复位点(5px)，
-    // 复位点**在读数之后**，不占轨道宽度。
-    // 两行式（ACR 灵魂，用户拍板）：行1 = 标签+数值框；行2 = 全宽轨道。
-    let l1y = rect.top() + 10.0;
-    let track_y = rect.bottom() - 12.0;
-    let field = Rect::from_min_size(
-        Pos2::new(rect.right() - ROW_PAD - VALUE_W, l1y - 10.0),
-        Vec2::new(VALUE_W, 20.0),
-    );
-    // 复位点排在读数右侧：偏离默认值才现形。旧版把它夹在轨道与读数之间，即使参数
-    // 没改动也一直占着 14px，轨道被压短一截——这是并排对照里「轨道比设计稿短」的
-    // 直接原因。
+    // 两行：首行放标签与读数框，第二行是通栏轨道。
+    // First line holds the label and readout box; the second the full-width rail.
+    let l1y = rect.top() + L1_Y;
+    let track_y = rect.top() + TRACK_Y;
+    // 右侧一列：读数框贴右缘（与组头眼睛、混色器频段框同一竖线），复位点收在
+    // 框**左侧**的槽里，悬停才显形。
     //
-    // The restore dot sits to the **right** of the readout, matching the design's DOM
-    // order (track flex:1 → value 44 → reset 5 px). The old version wedged it between
-    // the track and the readout, so it reserved 14 px even on untouched parameters and
-    // the rail came out visibly shorter than the design.
+    // Right-hand column: the readout box sits on the content edge (one vertical line
+    // with the header eye and the mixer band boxes), and the reset lives in the gutter
+    // to its **left**, appearing on hover.
+    let field = Rect::from_min_size(
+        Pos2::new(rect.right() - ROW_PAD - VALUE_W, rect.top()),
+        Vec2::new(VALUE_W, FIELD_H),
+    );
     let reset = Rect::from_center_size(
-        Pos2::new(rect.right() - ROW_PAD - RESET_W * 0.5, track_y),
+        Pos2::new(field.left() - 7.0, l1y),
         Vec2::splat(RESET_W),
     );
+    // 轨道通栏：左端与标签同起，右端与读数框右缘同止——参考图里轨道就是从框下方
+    // 穿过去的，滑块能走到数值框的正下方。
+    //
+    // Full-width rail: starts with the label, ends flush with the readout box's right
+    // edge -- in the reference the rail passes beneath the box and the handle travels
+    // all the way under it.
     let rail_left = rect.left() + ROW_PAD;
-    let rail_right = (rect.right() - ROW_PAD - 8.0).max(rail_left + 1.0);
+    let rail_right = rect.right() - ROW_PAD;
     {
         let p = ui.painter();
         if hot_row {
-            // 通栏轻微提亮：一行 36px，只提 7/255，够指认、不打断纵向扫读。
+            // 通栏轻微提亮：一行 30px，只提 7/255，够指认、不打断纵向扫读。
             p.rect_filled(
-                Rect::from_min_max(
-                    Pos2::new(rect.left() - 6.0, rect.top() + 1.0),
-                    Pos2::new(rect.right() + 6.0, rect.bottom() - 1.0),
-                ),
+                rect.shrink2(Vec2::new(0.0, 1.0)),
                 radius_control(),
                 row_hover(),
             );
@@ -770,18 +785,17 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
                 egui::StrokeKind::Inside,
             );
         }
-        // 6 字截断：5 字中文在 76px 里刚好排满，再长就让位给轨道，
-        // 宁可少两个字，也不让标签爬进推子的地盘。
-        // 截断长度按语言分档：中文 6 字约 78px 恰好贴住 LABEL_W，英文同宽只放得
-        // 下 ~11 个半角字符，仍按 6 截会把 "Highlights" 截成 "Highli…"。
-        // 档位存在语言表里（`Catalog::ellipsis_chars`），加语言时由那张表自己声明，
-        // 这里不再出现具体语言的名字。
+        // 6 字截断：13 号字体下 6 个汉字约 78px，落在 81px 标签列里刚好排满，
+        // 再长就让位给轨道，宁可少两个字，也不让标签爬进推子的地盘。
+        // 截断长度按语言分档：英文同列只放得下 ~11 个半角字符，仍按 6 截会把
+        // "Highlights" 截成 "Highli…"。档位存在语言表里（`Catalog::ellipsis_chars`），
+        // 加语言时由那张表自己声明，这里不再出现具体语言的名字。
         p.text(
             Pos2::new(rect.left() + ROW_PAD, l1y),
             Align2::LEFT_CENTER,
             theme::ellipsis(label, crate::i18n::current().ellipsis_chars()),
-            font(SIZE_LABEL),
-            if changed_now { text() } else { muted() },
+            font(LABEL_SIZE),
+            text(),
         );
     }
 
@@ -798,7 +812,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // column of sliders must share one vertical line. `DragValue` has no `.font()`,
     // so the font is overridden for this scope only and restored right after --
     // the same pattern as the options bar's `bar_value`.
-    ui.style_mut().override_font_id = Some(mono(SIZE_LABEL));
+    ui.style_mut().override_font_id = Some(mono(VALUE_SIZE));
     let mut resp = in_field(ui, Color32::TRANSPARENT, Color32::TRANSPARENT, |ui| {
         ui.scope_builder(
             UiBuilder::new()
@@ -818,7 +832,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
                 // down to mono, scoped to this one box and restored by `in_field`.
                 ui.style_mut()
                     .text_styles
-                    .insert(egui::TextStyle::Button, mono(SIZE_LABEL));
+                    .insert(egui::TextStyle::Button, mono(VALUE_SIZE));
                 ui.add(
                     egui::DragValue::new(v)
                         .range(min..=max)
@@ -944,91 +958,56 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
             }
         }
         None => {
-            // 轨道槽（设计稿 §滑块）：3px 槽 + 1px divider 环。只靠 track 色在深底
-            // 上几乎看不见——用户反馈「线条太细」的真实原因是**对比度**，不是尺寸；
-            // 描一圈边才把「这里可以拖」指出来。
+            // 通用轨道：PS 参考图（512×2093）实测是一整段「左暗右亮」渐变——
+            // 左端 92、右端 231（面板底 83），读数靠圆点位置读，不另铺填充条。
+            // 此前的深槽 + 左端填充在深色面板上读成一根短而脏的黑线；换渐变后
+            // 轨道自身的明度坡度就把量程说清楚了，也不再和色温/色调的彩轨分家。
+            // 左端取 `track`、右端取 `text`，与 PS 的 92→231 对背景 83 同比例。
             //
-            // Track groove (design spec, sliders): a 3px groove with a 1px divider
-            // ring. The track colour alone nearly vanishes on the dark panel -- the
-            // "too thin" feedback was really about contrast, not size; the ring is what
-            // says "this is draggable".
-            p.rect_filled(rail, rail_h * 0.5, palette().track);
-            p.rect_stroke(
-                rail,
-                rail_h * 0.5,
-                Stroke::new(1.0, divider()),
-                egui::StrokeKind::Inside,
-            );
-            let vx = tx(rail_pos(*v));
-            // 填充口径按设计图 `.slider-track .fill{left:0;…}`：从轨道**左端**铺到
-            // knob，读作一根进度条。旧版是「默认值 → 当前值」的差值段：参数回到默认
-            // 整条填充就消失，稍改一点只剩很短一截，整列看上去全是空轨道——这是并排
-            // 对照时最扎眼的一处差异（设计稿每一行都有一条明确的填充量）。
-            //
-            // 左端填充对「色温 / 色调」这类无默认中点的轨道同样成立：它们本来就是
-            // 从左到右的量程，不是双向偏移量。
-            //
-            // Fill per the design's `.slider-track .fill{left:0;…}`: from the rail's
-            // **left end** to the knob, reading as a progress bar. The old span ran from
-            // the default value to the current one, so a parameter back at its default
-            // showed no fill at all and a small change showed a stub -- the whole column
-            // read as blank tracks. That was the most conspicuous difference in the
-            // side-by-side comparison, where every row in the design shows a clear amount
-            // of fill. Left-anchored fill also suits temperature and tint, whose range
-            // runs left to right rather than around a centre.
-            if vx - rail_left > 0.5 {
+            // Generic rail: the PS reference (512×2093) is a full-width dark -> light
+            // gradient -- 92 on the left, 231 on the right over an 83 background. The
+            // readout comes from the knob position, not a fill bar. The old dark groove
+            // plus left-anchored fill read as a short, dirty black line on the dark
+            // panel; the ramp itself now states the range and matches the temperature/
+            // tint colour rails. Left end `track`, right end `text` -- the same ratio
+            // as PS's 92 -> 231 over 83.
+            const SLICES: f32 = 48.0;
+            let lo = theme::track();
+            let hi = theme::text();
+            for k in 0..SLICES as usize {
+                let t0 = k as f32 / SLICES;
+                let t1 = (k as f32 + 1.0) / SLICES;
+                let x0 = rail_left + (rail_right - rail_left) * t0;
+                let x1 = rail_left + (rail_right - rail_left) * t1;
                 p.rect_filled(
                     Rect::from_min_max(
-                        Pos2::new(rail_left, track_y - rail_h * 0.5),
-                        Pos2::new(vx, track_y + rail_h * 0.5),
+                        Pos2::new(x0, rail.top()),
+                        Pos2::new(x1 + 0.6, rail.bottom()),
                     ),
-                    rail_h * 0.5,
-                    // 填充色 = 读数色（refit-preview `.srow .rail .fill{background:var(--value)}`）：
-                    // 轨道填充与右侧读数同一个颜色来源，扫读时「这条轨对应那个数」
-                    // 靠同色就能对上；elev_hover 灰填与任何读数都无呼应。
-                    //
-                    // Fill colour = the readout colour (refit-preview's
-                    // `.srow .rail .fill{background:var(--value)}`): rail fill and the
-                    // readout on the right share one colour source, so a row's slider and
-                    // its number pair up by hue alone; the old grey fill answered nothing.
-                    value(),
+                    0,
+                    crate::widgets::mix(lo, hi, t0),
                 );
             }
         }
     }
-    // 中心刻线：跨零的推子给一条 1px 竖标，0 在哪一眼就看得见。
-    // 不跨零的参数不画 —— 每一行都画一根，整列会多出一道虚线。
-    if min < 0.0 && max > 0.0 {
-        let cx = tx(rail_pos(0.0));
-        p.line_segment(
-            [Pos2::new(cx, track_y - 3.5), Pos2::new(cx, track_y + 3.5)],
-            Stroke::new(1.0, divider()),
-        );
-    }
-    // knob 尺寸与配色严格照设计图 `.slider-track .knob`：直径 14px、底色
-    // `elev_hover`、`border_strong` 描边。hover 16 / 按下 13（按下是**缩小**，
-    // 光标压上去时圆点陷进轨道才读得出「按住了」）。
+    // 参考图的轨道上没有中缝刻线：零位由滑块本身的位置读出，未动的推子滑块就在
+    // 正中。此前每根跨零推子都画一道暗刻线，整列叠起来像一排虚线。
     //
-    // 旧版是 16px **纯白**大圆点：深底上一列白点比任何参数内容都抢眼，整列读起来
-    // 像一排按钮而不是推子——这是并排对照时最直接的「不像」来源，不是尺寸差 2px
-    // 的问题，是白点在深色面板上的对比度远高于设计稿的灰点。
+    // The reference rail carries no centre notch: the handle itself marks zero, and
+    // an untouched slider sits exactly in the middle. The old per-slider tick stacked
+    // into a dashed column down the whole group.
+    // knob 配色：亮色实心 + 1px 暗描边，压在渐变轨上仍分得清；hover 加一圈细描边。
     //
-    // Knob size and colour follow the design's `.slider-track .knob` exactly: 14 px
-    // across, `elev_hover` fill, `border_strong` stroke. Hover is 16, pressed is 13
-    // (pressed **shrinks**, so the dot sinks into the track and reads as held down).
-    //
-    // The old knob was a 16 px **pure white** dot: a column of white dots on a dark
-    // panel out-shouted every piece of parameter content and read as a row of buttons
-    // rather than a fader. That was the most direct source of "this does not look like
-    // the design" -- not the 2 px size difference, but the contrast of a white dot on a
-    // dark panel against the design's grey one.
+    // Knob colour: a bright solid fill with a 1 px dark outline so it stays legible on
+    // the gradient rail; hover adds a thin halo.
     let vx = tx(rail_pos(*v));
     let knob = Pos2::new(vx, track_y);
     // 圆形手柄：用户 2026-11-07 明确要求「三角改回之前的圆形」。PS 的推子确实是
     // 三角，但本项目在 1280 宽、72% 缩放的实测下三角只有 9×10，读起来像一个小箭头
     // 而不是可抓的把手；圆点在同样尺寸下更容易命中，也和本界面其它圆形控件同一族。
     //
-    // 尺寸照旧随状态变化：常态 14、悬停 16、按下 13（按下缩小＝陷进轨道）。
+    // 两行版式里轨道中线离标签只有 13px，12px 的大圆点会顶到标签下缘；照参考图
+    // 的手柄量级收到 9px（悬停 11、按下 8），白点才退成「量程上的一个点了」。
     //
     // Round knob: on 2026-11-07 the user asked to revert the triangle to the earlier
     // circle. Photoshop's fader really is a triangle, but measured on this UI at 1280 px
@@ -1036,14 +1015,15 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // grabbable handle; a dot is easier to hit at that size and matches the other round
     // controls here.
     //
-    // Size still follows state: 14 normally, 16 on hover, 13 pressed (shrinking into the
-    // rail).
+    // In the two-line form the rail sits only 13 px below the label, so a 12 px dot
+    // collided with the label's lower edge; matching the reference's handle scale, it is
+    // now 9 px (11 hover, 8 pressed), so the white dot reads as a point on the range.
     let r = if t.dragged() {
-        6.5
+        4.0
     } else if t.hovered() {
-        8.0
+        5.5
     } else {
-        7.0
+        4.5
     };
     // 先投影再填色：浅色渐变轨上，没有暗边的白点会糊进轨道。
     //
@@ -1063,8 +1043,13 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     if t.hovered() && !t.dragged() {
         p.circle_stroke(knob, r + 2.0, Stroke::new(1.0, border_strong()));
     }
-    // 复位点画在最后：这时 *v 已经落定，不会在刚被点回默认的那一帧闪一下。
-    if (*v - default).abs() > 1e-9 {
+    // 复位点只在悬停这一行时画：每条推子常年挂一颗蓝点，整列看起来像一排指示灯，
+    // 既挤又吵；需要时它就在读数框左边。
+    //
+    // The reset dot is painted only while this row is hovered: a blue dot on every
+    // adjusted slider turns the column into rows of indicator lights, which is both
+    // noisy and cramped. It is there, left of the readout box, when needed.
+    if (*v - default).abs() > 1e-9 && hot_row {
         let hot = reset_resp.hovered();
         // 5px 尺寸下圆点画 2.5/3.2：设计稿复位点本身就是 5x5 的小圆。
         p.circle_filled(reset.center(), if hot { 3.2 } else { 2.5 }, accent());
@@ -1085,7 +1070,276 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     if !tip.is_empty() {
         row_resp.on_hover_text(tip);
     }
+    // 数值框是子 Ui：DragValue 的最小交互高只有 22，比整行 46 矮，子 Ui 的
+    // min_rect 会把父游标推进到「框底 + 行距」，行与行因此叠在一起（实测节距 26，
+    // 应为 50）。画完把游标按回整行底部。
+    //
+    // The value box is a child UI: DragValue's minimum interaction height is 22, short of
+    // the 46 px row, and the child's min_rect advances the parent cursor to "field bottom
+    // + spacing" -- successive rows overlapped (measured pitch 26, expected 50). Re-assert
+    // the full row height on the parent cursor once the row is painted.
+    if ui.cursor().top() < rect.bottom() {
+        ui.advance_cursor_after_rect(rect);
+    }
     changed
+}
+
+/// 混色器的紧凑频段行（参考图实测：行距 31、标签与数值框同一行、渐变轨下一行）。
+/// 与普通滑块同一版式，只是行高再压 2px——八条频段同屏，整组高度才是参考图的量级。
+///
+/// Compact band row for the mixer (measured on the reference: 31 px pitch, label and
+/// value field on one line, gradient rail on the next). Same two-line form as the
+/// normal sliders, only 2 px shorter, so eight bands fit the reference's group height.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn band_row<K: std::hash::Hash + std::fmt::Debug>(
+    ui: &mut Ui,
+    key: K,
+    label: &str,
+    v: &mut f64,
+    min: f64,
+    max: f64,
+    default: f64,
+    stops: Option<&'static [(f32, Color32)]>,
+) -> bool {
+    const H: f32 = 28.0;
+    const VALUE_W: f32 = 44.0;
+    const FIELD_H: f32 = 18.0;
+    let label = crate::i18n::tr(label);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), H), Sense::hover());
+    let hot_row = ui.rect_contains_pointer(rect);
+    let changed_now = (*v - default).abs() > 1e-9;
+    let l1y = rect.top() + 9.0;
+    let track_y = rect.top() + 22.0;
+
+    // 读数框与普通滑块同列：右侧留 6px，宽度同为 44——混色器八行与上面的
+    // 滑块共用一条竖直的数值列，PS 参考里所有框都落在同一条线上。
+    //
+    // Same value column as the normal sliders: 6 px inset, 44 wide. The eight mixer
+    // rows and the sliders above share one vertical number column, as every box does
+    // in the PS reference.
+    let field = Rect::from_min_size(
+        Pos2::new(rect.right() - 6.0 - VALUE_W, rect.top()),
+        Vec2::new(VALUE_W, FIELD_H),
+    );
+    {
+        let p = ui.painter();
+        if hot_row {
+            p.rect_filled(
+                rect.shrink2(Vec2::new(0.0, 1.0)),
+                radius_control(),
+                row_hover(),
+            );
+        }
+        p.rect_filled(field, radius_control(), theme::field());
+        p.rect_stroke(
+            field,
+            radius_control(),
+            Stroke::new(
+                1.0,
+                if ui.rect_contains_pointer(field) {
+                    border_strong()
+                } else {
+                    divider()
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        p.text(
+            Pos2::new(rect.left() + 6.0, l1y),
+            Align2::LEFT_CENTER,
+            theme::ellipsis(label, crate::i18n::current().ellipsis_chars()),
+            font(SIZE_LABEL + 1.0),
+            text(),
+        );
+    }
+
+    let old_text = ui.style().visuals.override_text_color;
+    let old_font = ui.style().override_font_id.clone();
+    ui.style_mut().visuals.override_text_color = Some(if changed_now { text() } else { value() });
+    ui.style_mut().override_font_id = Some(mono(SIZE_SMALL));
+    let mut resp = in_field(ui, Color32::TRANSPARENT, Color32::TRANSPARENT, |ui| {
+        ui.scope_builder(
+            UiBuilder::new()
+                .id_salt(("band-value", &key))
+                .max_rect(field.shrink2(Vec2::new(3.0, 0.0)))
+                .layout(Layout::right_to_left(Align::Center)),
+            |ui| {
+                ui.style_mut()
+                    .text_styles
+                    .insert(egui::TextStyle::Button, mono(SIZE_SMALL));
+                ui.add(
+                    egui::DragValue::new(v)
+                        .range(min..=max)
+                        .speed((max - min) / 300.0)
+                        .fixed_decimals(0)
+                        .custom_formatter(move |n, _| theme::number(n, 0, true)),
+                )
+            },
+        )
+        .inner
+    });
+    ui.style_mut().visuals.override_text_color = old_text;
+    ui.style_mut().override_font_id = old_font;
+    let mut changed = resp.changed();
+
+    let rail = Rect::from_min_max(
+        Pos2::new(rect.left() + 6.0, track_y - 1.5),
+        Pos2::new(rect.right() - 6.0, track_y + 1.5),
+    );
+    let span = rail.width().max(1.0);
+    let tx = |val: f64| {
+        rail.left() + span * (((val - min) / (max - min).max(1e-9)).clamp(0.0, 1.0)) as f32
+    };
+    let hit = Rect::from_min_max(
+        Pos2::new(rail.left(), track_y - 8.0),
+        Pos2::new(rail.right(), track_y + 8.0),
+    );
+    let t = ui.interact(
+        hit,
+        ui.make_persistent_id(("band", &key)),
+        Sense::click_and_drag(),
+    );
+    if (t.clicked() || t.dragged())
+        && let Some(pos) = t.interact_pointer_pos()
+    {
+        let frac = ((pos.x - rail.left()) / span).clamp(0.0, 1.0) as f64;
+        let nv = min + frac * (max - min);
+        if (*v - nv).abs() > 1e-9 {
+            *v = nv;
+            changed = true;
+        }
+    }
+    if t.double_clicked() {
+        *v = default;
+        changed = true;
+    }
+    if changed {
+        resp.mark_changed();
+        history::note(label, format!("{label} {}", theme::number(*v, 0, true)));
+    }
+
+    let p = ui.painter();
+    match stops {
+        Some(table) => {
+            const SLICES: f32 = 48.0;
+            for k in 0..SLICES as usize {
+                let t0 = k as f32 / SLICES;
+                let t1 = (k as f32 + 1.0) / SLICES;
+                let x0 = rail.left() + rail.width() * t0;
+                let x1 = rail.left() + rail.width() * t1;
+                p.rect_filled(
+                    Rect::from_min_max(
+                        Pos2::new(x0, rail.top()),
+                        Pos2::new(x1 + 0.6, rail.bottom()),
+                    ),
+                    0,
+                    controls::sample_stops(table, t0),
+                );
+            }
+        }
+        None => {
+            // 与普通推子同一条通栏渐变（参考图混色器：彩轨与灰轨都是左暗右亮），
+            // 混色器八行才不会在视觉上和上面的滑块分家。
+            //
+            // The same full-width ramp as the normal sliders (the reference mixer shows
+            // both hue and neutral rails running dark -> light), so the eight bands do
+            // not split visually from the sliders above.
+            const SLICES: f32 = 48.0;
+            let lo = theme::track();
+            let hi = theme::text();
+            for k in 0..SLICES as usize {
+                let t0 = k as f32 / SLICES;
+                let t1 = (k as f32 + 1.0) / SLICES;
+                let x0 = rail.left() + rail.width() * t0;
+                let x1 = rail.left() + rail.width() * t1;
+                p.rect_filled(
+                    Rect::from_min_max(
+                        Pos2::new(x0, rail.top()),
+                        Pos2::new(x1 + 0.6, rail.bottom()),
+                    ),
+                    0,
+                    crate::widgets::mix(lo, hi, t0),
+                );
+            }
+        }
+    }
+    let knob = Pos2::new(tx(*v), track_y);
+    let r = if t.dragged() {
+        4.0
+    } else if t.hovered() {
+        5.0
+    } else {
+        4.0
+    };
+    p.circle_filled(knob + Vec2::new(0.0, 1.0), r, Color32::from_black_alpha(70));
+    p.circle(
+        knob,
+        r,
+        if t.dragged() { accent() } else { text() },
+        Stroke::new(1.0, Color32::from_black_alpha(90)),
+    );
+    if t.hovered() && !t.dragged() {
+        p.circle_stroke(knob, r + 2.0, Stroke::new(1.0, border_strong()));
+    }
+    // 同 slider_row：数值框子 Ui 只推进 22px，紧凑行 28px 会被下一行压上来。
+    // Same as slider_row: the value-box child UI only advances 22 px, so the next row
+    // rode up over this 28 px compact row.
+    if ui.cursor().top() < rect.bottom() {
+        ui.advance_cursor_after_rect(rect);
+    }
+    changed
+}
+
+/// ACR 式下划线选项卡（拍板 2026-11-07 §6）：文字即按钮，选中态一条 2px
+/// 亮色下划线，不画胶囊底。曲线模式/通道、混色器模式/属性都汇到这一条路，
+/// 改一处全生效。返回被点中的序号；没点返回 None。
+///
+/// ACR-style underline tabs (finalised 2026-11-07 §6): the text is the button and
+/// the selected one carries a 2 px bright underline, no pill background. Curve
+/// modes/channels and mixer modes/properties all route through here. Returns the
+/// clicked index, or None.
+pub(super) fn acr_tabs(ui: &mut Ui, labels: &[&str], tips: &[&str], sel: usize) -> Option<usize> {
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 16.0;
+        for (i, raw) in labels.iter().enumerate() {
+            let label = crate::i18n::tr(raw);
+            let on = i == sel;
+            let galley = ui.painter().layout_no_wrap(
+                label.to_owned(),
+                font(SIZE_LABEL),
+                if on { text() } else { muted() },
+            );
+            let (rect, resp) =
+                ui.allocate_exact_size(Vec2::new(galley.size().x, 24.0), Sense::click());
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            let resp = match tips.get(i).filter(|t| !t.is_empty()) {
+                Some(tip) => resp.on_hover_text(crate::i18n::tr(tip)),
+                None => resp,
+            };
+            let p = ui.painter();
+            let col = if on || resp.hovered() { text() } else { muted() };
+            p.galley(
+                Pos2::new(rect.left(), rect.center().y - galley.size().y * 0.5),
+                galley,
+                col,
+            );
+            if on {
+                p.rect_filled(
+                    Rect::from_min_size(
+                        Pos2::new(rect.left(), rect.bottom() - 2.0),
+                        Vec2::new(rect.width(), 2.0),
+                    ),
+                    0.0,
+                    text(),
+                );
+            }
+            if resp.clicked() {
+                picked = Some(i);
+            }
+        }
+    });
+    picked
 }
 
 pub(super) fn kv(ui: &mut Ui, key: &str, value: impl Into<String>, color: Color32) {
@@ -1327,7 +1581,12 @@ mod slider_reset_tests {
             slider(root, "exp", "曝光", &mut value, -5.0, 5.0, 0.0, 2, true);
         };
         let dot = {
-            let mut out = ctx.run_ui(input(vec![]), &mut draw);
+            // 复位点只在悬停这一行时出现，所以先让指针落在行内再找它。
+            //
+            // The dot exists only while the row is hovered, so park the pointer in the
+            // row before looking for it.
+            let hover = vec![egui::Event::PointerMoved(Pos2::new(200.0, 17.0))];
+            let mut out = ctx.run_ui(input(hover), &mut draw);
             let found = out.shapes.iter().find_map(|cs| match &cs.shape {
                 egui::Shape::Circle(circle)
                     if circle.fill == accent() && (circle.radius - 2.6).abs() < 0.2 =>

@@ -769,6 +769,35 @@ pub struct AiLogEntry {
 pub struct Thumb {
     pub texture: TextureHandle,
     pub size: [u32; 2],
+    /// 这张贴图是按哪一份参数显影的。与当前 `preview_params()` 不一致就是过期，
+    /// 需要重调色；代理与图库缩略图不走显影链，恒为 `None`。
+    ///
+    /// Which parameter set this texture was developed with. A mismatch with the current
+    /// `preview_params()` means it is stale and must be re-graded; proxies and library
+    /// thumbnails skip the develop chain and stay `None`.
+    pub grade: Option<GradeParams>,
+}
+
+/// 缩略图的解码源：与主画布同一条解码口径的 sRGB 浮点像素，**未调色**。
+///
+/// 缩略图要跟主画布一个口径（用户 2026-11-07：「预览图应该跟主图一致」），换参数
+/// 就得重走一遍显影链。解码（读盘 + RAW 半尺寸去马赛克，约 270ms）比 128px 上的
+/// 一次调色贵三个量级，所以源像素留在这里，参数变了只重调色、不重解码。
+/// `profile` 记下这份源是按哪份相机配置解的：配置一换源就作废，必须重解——只重调色
+/// 会把旧配置的色彩留在新配置上。
+///
+/// Decoded source for a thumbnail: sRGB float pixels at the canvas's decoding convention,
+/// **ungraded**. The filmstrip has to match the canvas, so a parameter change re-runs the
+/// develop chain. Decoding (disk read plus a half-size RAW demosaic, about 270 ms) costs
+/// three orders of magnitude more than grading 128 px, so the source stays here and a
+/// parameter change re-grades only. `profile` records which camera profile produced this
+/// source: a profile change invalidates it and forces a re-decode -- re-grading alone would
+/// keep the old profile's colour.
+pub struct ThumbSrc {
+    pub rgb: Vec<f32>,
+    pub w: usize,
+    pub h: usize,
+    pub profile: String,
 }
 
 /// 进不了 [`Snapshot`]、但照样要写进工程文件那部分的签名。
@@ -784,21 +813,61 @@ struct ProjectStamp {
     crop: Option<(u32, u32, u32, u32)>,
 }
 
+/// 打开序列的第一份回包：EXIF、分辨率与保真度口径。
+///
+/// 这一包**不背测光结果**。千帧序列测一遍要几十秒，首帧的分辨率与 EXIF 几百
+/// 毫秒就到了：镜头匹配、信息面板、直方图下方那行参数都只等这一包，没有理由
+/// 陪整条测光一起堵在后面。测光另走 [`Measured`] 分块回包。
+///
+/// The first reply after opening a sequence: EXIF, resolution and the fidelity note.
+///
+/// It deliberately carries **no metering results**. Metering a thousand-frame sequence
+/// takes tens of seconds, while the first frame's resolution and EXIF arrive in a few
+/// hundred milliseconds: lens matching, the info panel and the capture line under the
+/// histogram only wait for this package and have no reason to queue behind the whole
+/// metering pass. Metering arrives separately, in chunks, via [`Measured`].
 struct Loaded {
     token: u64,
-    metrics: Vec<Option<FrameMetrics>>,
-    def_means: Vec<Option<FrameMeans>>,
-    issues: Vec<(usize, String)>,
     resolution: Option<(u32, u32)>,
     /// 首帧的保真度口径（RAW 才有：传感器 CFA 还是机身预览）。
     source_note: Option<String>,
     exif: Vec<Exif>,
 }
 
+/// 一块测光结果：从第 `lo` 帧起的连续切片。
+///
+/// 分段回包的理由是「看得见」：状态栏进度、去闪曲线、可读/缺帧计数在千帧导入
+/// 里一路更新，而不是最后一次性跳出来。
+///
+/// One chunk of metering results: a contiguous slice starting at frame `lo`.
+///
+/// Chunked replies exist so the work is **visible**: the status-line progress, the
+/// deflicker curve and the readable/missing counts update along the way instead of
+/// appearing all at once at the end.
+struct Measured {
+    token: u64,
+    lo: usize,
+    metrics: Vec<Option<FrameMetrics>>,
+    def_means: Vec<Option<FrameMeans>>,
+    issues: Vec<(usize, String)>,
+    /// 最后一块：清 `measuring` 并写汇总。
+    ///
+    /// The last chunk: clears `measuring` and writes the summary.
+    done: bool,
+}
+
 struct ThumbMsg {
     index: usize,
     image: ColorImage,
     size: [u32; 2],
+    /// 解码源：重调色只换 `image`，源像素原样留着（见 [`ThumbSrc`]）。
+    ///
+    /// The decoded source: a re-grade swaps only `image`; the source pixels stay.
+    src: Arc<ThumbSrc>,
+    /// `image` 是按哪一份参数显影的。
+    ///
+    /// Which parameter set `image` was developed with.
+    grade: GradeParams,
 }
 
 /// 播放代理回包：形状与 [`ThumbMsg`] 一致，但走自己的消息与纹理命名，绝不与 128px
@@ -989,6 +1058,7 @@ pub struct PluginJob {
 
 enum Msg {
     Loaded(Box<Loaded>),
+    Measured(Box<Measured>),
     Preview(Box<PreviewMsg>),
     Thumbs(Vec<ThumbMsg>),
     /// 播放代理回包（[`PROXY_SIDE`] 长边），与胶片条缩略图分开落账。
@@ -1343,13 +1413,25 @@ pub struct AppState {
     pub sidecar_hint: Option<PathBuf>,
     /// 打开序列后的测光进度：`Some(帧数)` 表示正在测量这么多帧，`None` 表示已经测完。
     /// 存帧数而不是一个 bool，是因为状态栏那句「正在测量 N 帧…」要能一直说到
-    /// `Msg::Loaded` 落账为止——中途任何一次状态改写都不该把它换成一个假的汇总。
+    /// 最后一块测光落账为止——中途任何一次状态改写都不该把它换成一个假的汇总。
     ///
     /// Metering progress after opening a sequence: `Some(frame count)` while that many frames
     /// are being measured, `None` once done. A count rather than a bool so the "measuring N
-    /// frames…" status can stand until `Msg::Loaded` lands, and no intermediate status write
+    /// frames…" status can stand until the last chunk lands, and no intermediate status write
     /// replaces it with a summary that claims the work is already done.
     pub measuring: Option<usize>,
+    /// 当前这一趟测光的取消旗。换序列 / 关图时置位，后台线程在块与块之间看一眼就
+    /// 收工——否则千帧被测完之前切走，旧序列的解码会继续把核吃满。
+    ///
+    /// 每趟新开一个（与 `cancel_merge` 同理）：沿用同一个原子会让新一趟的
+    /// `store(false)` 把旧一趟的取消要求抹掉。
+    ///
+    /// Cancel flag of the current metering pass. Raised on sequence switch / close; the
+    /// background thread checks it between chunks and stops -- otherwise switching away
+    /// before a thousand frames finish leaves the old sequence's decodes eating cores. A
+    /// fresh atom **per pass** (like `cancel_merge`): sharing one lets the new pass's
+    /// `store(false)` undo the old pass's cancellation.
+    cancel_measure: Arc<AtomicBool>,
 
     pub params: GradeParams,
     pub preset: String,
@@ -1438,6 +1520,16 @@ pub struct AppState {
 
     pub thumbs: HashMap<usize, Thumb>,
     thumb_pending: HashSet<usize>,
+    /// 缩略图的解码源（见 [`ThumbSrc`]）：只给「参数变了重调色」用，不参与绘制。
+    ///
+    /// Decoded thumbnail sources (see [`ThumbSrc`]): only for re-grading when parameters
+    /// change, never drawn directly.
+    thumb_src: HashMap<usize, Arc<ThumbSrc>>,
+    /// 正在后台重调色的帧号：一批没回来之前不重复排队，免得拖推子时堆一串任务。
+    ///
+    /// Frames whose re-grade is in flight: no duplicate queueing until the batch returns,
+    /// so a slider drag cannot pile up jobs.
+    thumb_regrade: HashSet<usize>,
     /// 播放用的较大尺寸代理纹理（纯内存，不落盘、不进 Snapshot）。播放态画布吃这一档，
     /// 暂停后回全质量；纹理名用 `proxy.{i}`，与 128px 的 `thumb.{i}` 分开。
     ///
@@ -1465,6 +1557,14 @@ pub struct AppState {
     /// 0 = no filter, 1..=5 = show only frames at this rating or above. Consumed by the
     /// filmstrip.
     pub film_filter_stars: u8,
+    /// 胶片条旗标筛选（纯内存）：0 = 不过滤，1 = 只看选用，-1 = 只看排除。
+    ///
+    /// Filmstrip flag filter (memory only): 0 = no filter, 1 = picks only, -1 = rejects only.
+    pub film_filter_flag: i8,
+    /// 胶片条色标筛选（纯内存）：0 = 不过滤，1..=4 = 只看该色标。
+    ///
+    /// Filmstrip colour-label filter (memory only): 0 = no filter, 1..=4 = that label only.
+    pub film_filter_label: u8,
     /// 插件运行时的输入范围（纯内存，不落盘、不进 Snapshot）：0 = 当前窗口，1 = 文件，
     /// 2 = 文件夹。默认 0，供插件面板读取。
     ///
@@ -2485,6 +2585,34 @@ fn thumb_pool() -> &'static rayon::ThreadPool {
             .thread_name(|i| format!("aevum-thumb-{i}"))
             .build()
             .expect("缩略图线程池")
+    })
+}
+
+/// 测光专用线程池：**不占满全核**。
+///
+/// 导入千帧时测光要解每帧的整幅像素（整幅 RAW 去马赛克或整幅 JPEG），走全局池
+/// 会把每个逻辑核排满，界面线程与预览渲染一起被挤下去（用户 2026-11-07 报告：
+/// 1387 帧导入期间只剩 4 fps）。这里给界面 / 预览留两个核，测光的并行度按
+/// `核数 - 2` 封顶。
+///
+/// Dedicated metering pool: **it does not take every core**.
+///
+/// Importing a thousand frames decodes each frame's full pixels (full RAW demosaic or a
+/// full-size JPEG), and running that on the global pool queues every logical core, pushing
+/// the UI thread and preview rendering aside (user report, 2026-11-07: 4 fps while
+/// importing 1387 frames). Two cores are left to the UI / preview, and metering's own
+/// parallelism is capped at `cores - 2`.
+fn measure_pool() -> &'static rayon::ThreadPool {
+    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let cores = std::thread::available_parallelism()
+            .map(|v| v.get())
+            .unwrap_or(4);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(cores.saturating_sub(2).max(1))
+            .thread_name(|i| format!("aevum-measure-{i}"))
+            .build()
+            .expect("测光线程池")
     })
 }
 

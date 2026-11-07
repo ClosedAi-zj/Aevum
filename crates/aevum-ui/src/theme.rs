@@ -1381,6 +1381,14 @@ pub fn paint_chip(
     // inner shadow is drawn -- the physical "pressed in" feel is what makes PS buttons
     // feel right (user feedback 3); self-painted chips get none of egui's active fill.
     let pressed = resp.is_pointer_button_down_on();
+    // 选中态的字色跟主题走：深色下白字压在低饱和蓝底上；浅色下 selected() 是淡蓝，
+    // 白字几乎看不见（用户截图：浅色设置窗里「中文 / 浅色 / 石墨」一片发白）。
+    // on_selected() 正是为「强调色低透明叠底」准备的那一档。
+    //
+    // The active label colour follows the theme: white on the low-saturation blue in dark
+    // themes; in light themes selected() is pale blue and white text all but disappears
+    // (the user's screenshot: "中文 / 浅色 / 石墨" washed out in the light settings
+    // window). on_selected() is exactly the step meant for an accent-tinted fill.
     let (fill, stroke, fg, cr) = if pressed {
         (
             press(),
@@ -1389,14 +1397,14 @@ pub fn paint_chip(
             } else {
                 Stroke::NONE
             },
-            if active { Color32::WHITE } else { text() },
+            if active { on_selected() } else { text() },
             radius_control(),
         )
     } else if active {
         (
             selected(),
             Stroke::new(1.0, accent),
-            Color32::WHITE,
+            on_selected(),
             radius_control(),
         )
     } else if resp.hovered() {

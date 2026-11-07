@@ -632,6 +632,12 @@ pub fn fetch_with(url: &str, find: &Locator) -> Result<Vec<u8>, String> {
         // as a successful download.
         let out = Command::new(&curl)
             .args(["-fsSL", "--max-time", "300", "-o", "-", url])
+            .stdin(std::process::Stdio::null())
+            // 检查更新也走这里：漏掉这一句，点一次「检查更新」就闪一次黑框。
+            //
+            // The check path runs through here too: omitting this flashes a black console
+            // window on every "check for updates" click.
+            .no_console_window()
             .output()
             .map_err(|e| format!("调用 curl 失败（{}）：{e}", curl.display()))?;
         if !out.status.success() {
@@ -675,6 +681,8 @@ pub fn fetch_with(url: &str, find: &Locator) -> Result<Vec<u8>, String> {
         );
         let out = Command::new(&ps)
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .stdin(std::process::Stdio::null())
+            .no_console_window()
             .output()
             .map_err(|e| format!("调用 PowerShell 失败（{}）：{e}", ps.display()))?;
         if !out.status.success() {

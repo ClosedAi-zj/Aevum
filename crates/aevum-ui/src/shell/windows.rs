@@ -18,7 +18,10 @@ use crate::layout::StatusSlot;
 use crate::platform;
 use crate::state::{AppState, UpdatePhase};
 use crate::theme::{self, *};
-use egui::{Align, Context, Layout, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
+use egui::{
+    Align, Align2, Color32, Context, Layout, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, Ui,
+    Vec2,
+};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
 /// 这些浮窗在 `settings.json` 里的键。改名字等于丢掉用户已经调好的位置，
@@ -347,12 +350,22 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
             // 把缩放手柄顶死，窗口拉不大也收不小。
             let body_h = ui.available_height() - 4.0;
             ui.horizontal_top(|ui| {
-                // 左栏：类别。用 selectable_label 而不是自制列表，
-                // 键鼠焦点与选中态就是现成的。
+                // 左栏：类别 + 插件目录。类别行整行可点、计数贴右缘；原生
+                // Button 把「名字  数字」当一整串文字左对齐，扫一列时数字对不齐。
+                //
+                // Left column: categories and the plug-in folder. Whole rows are clickable
+                // with a right-aligned count; a native Button treats "name  count" as one
+                // left-aligned string, so the numbers never line up down the column.
                 ui.allocate_ui_with_layout(
-                    Vec2::new(132.0, body_h),
+                    Vec2::new(MARKET_SIDE_W, body_h),
                     Layout::top_down(Align::Min),
                     |ui| {
+                        ui.label(
+                            RichText::new(crate::i18n::t!("类别"))
+                                .size(SIZE_SMALL)
+                                .color(dim()),
+                        );
+                        ui.add_space(5.0);
                         let kinds: [(Option<Kind>, &str); 4] = [
                             (None, "全部"),
                             (Some(Kind::Filter), "修图滤镜"),
@@ -366,38 +379,60 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                                 .iter()
                                 .filter(|p| k.is_none_or(|k| p.manifest.plugin.kind == k))
                                 .count();
-                            // 「全部」前面那个数要算上清单坏掉的，否则用户会觉得少了东西。
+                            // 「全部」要算上清单坏掉的，否则用户会觉得少了东西。
                             if k.is_none() {
                                 n += state.registry.errors().len();
                             }
-                            let text = format!("{label}  {n}");
-                            if ui
-                                .add(
-                                    egui::Button::new(RichText::new(text).size(SIZE_BODY))
-                                        .selected(state.market_filter == k),
-                                )
-                                .clicked()
-                            {
+                            if market_cat_row(ui, label, n, state.market_filter == k).clicked() {
                                 state.market_filter = k;
                             }
+                            ui.add_space(2.0);
                         }
-                        ui.add_space(8.0);
+                        // 目录与重扫钉在底部：类别是常读的，路径与维护动作是偶尔用的。
+                        let spare = ui.available_height() - 76.0;
+                        if spare > 0.0 {
+                            ui.add_space(spare);
+                        }
                         ui.label(
-                            RichText::new(crate::i18n::t!("来自 %APPDATA%\naevum-studio\\plugins"))
+                            RichText::new(crate::i18n::t!("插件目录"))
                                 .size(SIZE_SMALL)
                                 .color(dim()),
                         );
+                        ui.add_space(2.0);
+                        // 显示真实路径而不是 "%APPDATA%\..."：后者是占位符，用户
+                        // 照着它找不到目录。路径过长时省略，悬停给全文。
+                        //
+                        // Show the real path rather than "%APPDATA%\...": the placeholder
+                        // cannot be followed to the folder. Long paths elide; hover shows
+                        // the whole thing.
+                        let dir = crate::settings::plugin_dir();
+                        let full = dir.display().to_string();
+                        ui.add(
+                            egui::Label::new(RichText::new(&full).size(SIZE_SMALL).color(dim()))
+                                .truncate(),
+                        )
+                        .on_hover_text(&full);
+                        ui.add_space(5.0);
                         if ui
-                            .add(egui::Button::new(
-                                RichText::new(crate::i18n::t!("重新扫描")).size(SIZE_SMALL),
-                            ))
+                            .add_sized(
+                                [ui.available_width(), 24.0],
+                                egui::Button::new(
+                                    RichText::new(crate::i18n::t!("重新扫描")).size(SIZE_SMALL),
+                                ),
+                            )
                             .clicked()
                         {
                             rescan = true;
                         }
                     },
                 );
-                soft_sep(ui);
+
+                // 竖分栏：一条 1px 线比软分割线更直白地说明「左选类别、右看清单」。
+                let (line, _) = ui.allocate_exact_size(Vec2::new(1.0, body_h), Sense::hover());
+                ui.painter().line_segment(
+                    [line.center_top(), line.center_bottom()],
+                    Stroke::new(1.0, divider()),
+                );
 
                 // 右栏：搜索 + 列表。宽度按「剩余宽度减一点余量」算死：
                 // `available_width()` 在 horizontal 里会含未消费的间距，直接拿去
@@ -407,28 +442,38 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                 // minus a small margin; `available_width()` inside a horizontal still counts
                 // unspent spacing, and allocating that much pushes the column past the
                 // window's right edge, clipping the list text.
-                let right_w = (ui.available_width() - 10.0).max(180.0);
+                let right_w = (ui.available_width() - 2.0).max(180.0);
                 ui.allocate_ui_with_layout(
                     Vec2::new(right_w, body_h),
                     Layout::top_down(Align::Min),
                     |ui| {
+                        // 搜索框吃满整栏，右侧留一个固定宽度的清除位：查询为空时
+                        // 那一格也不塌陷，输入框宽度不会随内容跳动。
+                        //
+                        // The search field spans the column with a fixed-width clear slot
+                        // on the right. The slot stays even when empty, so the field width
+                        // never jumps with the text.
                         ui.horizontal(|ui| {
-                            ui.add(
+                            let field_w = (ui.available_width() - 30.0).max(120.0);
+                            ui.add_sized(
+                                [field_w, 26.0],
                                 egui::TextEdit::singleline(&mut state.market_query)
-                                    .hint_text(crate::i18n::t!("搜索插件、厂商"))
-                                    .desired_width(240.0),
+                                    .hint_text(crate::i18n::t!("搜索名称、厂商或说明"))
+                                    .margin(Vec2::new(8.0, 4.0)),
                             );
                             if !state.market_query.is_empty()
                                 && ui
-                                    .add(egui::Button::new(
-                                        RichText::new(crate::i18n::t!("清除")).size(SIZE_SMALL),
-                                    ))
+                                    .add_sized(
+                                        [20.0, 26.0],
+                                        egui::Button::new(
+                                            RichText::new("×").size(SIZE_BODY).color(dim()),
+                                        ),
+                                    )
                                     .clicked()
                             {
                                 state.market_query.clear();
                             }
                         });
-                        ui.add_space(4.0);
 
                         let q = state.market_query.to_lowercase();
                         let hits: Vec<usize> = state
@@ -452,83 +497,120 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
                             .map(|(i, _)| i)
                             .collect();
 
+                        // 统计行：当前筛选下有多少个、开了几个；坏清单只给一个数，
+                        // 详情放在列表末尾，不让它抢在前面。
+                        //
+                        // Summary line: how many under the current filter and how many
+                        // are on. Broken manifests get a count here; details stay at the
+                        // end of the list.
+                        let on = hits
+                            .iter()
+                            .filter(|&&i| state.registry.all()[i].enabled)
+                            .count();
+                        let bad = state.registry.errors().len();
+                        ui.add_space(7.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(crate::i18n::tr_fmt("{} 个插件", &[&hits.len()]))
+                                    .size(SIZE_SMALL)
+                                    .color(dim()),
+                            );
+                            ui.label(RichText::new("·").size(SIZE_SMALL).color(dim()));
+                            ui.label(
+                                RichText::new(crate::i18n::tr_fmt("已启用 {}", &[&on]))
+                                    .size(SIZE_SMALL)
+                                    .color(dim()),
+                            );
+                            if bad > 0 {
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(
+                                        RichText::new(crate::i18n::tr_fmt(
+                                            "{} 份清单无法读取",
+                                            &[&bad],
+                                        ))
+                                        .size(SIZE_SMALL)
+                                        .color(danger()),
+                                    );
+                                });
+                            }
+                        });
+                        ui.add_space(2.0);
+                        let (rule, _) = ui.allocate_exact_size(
+                            Vec2::new(ui.available_width(), 1.0),
+                            Sense::hover(),
+                        );
+                        theme::rule(
+                            ui.painter(),
+                            rule.left(),
+                            rule.right(),
+                            rule.center().y,
+                            divider(),
+                        );
+                        ui.add_space(2.0);
+
                         ScrollArea::vertical()
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 if hits.is_empty() {
-                                    ui.add_space(12.0);
-                                    ui.label(
-                                        RichText::new(crate::i18n::t!("没有匹配的插件"))
-                                            .size(SIZE_BODY)
+                                    ui.add_space(28.0);
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(
+                                            RichText::new(crate::i18n::t!("没有匹配的插件"))
+                                                .size(SIZE_BODY)
+                                                .color(text()),
+                                        );
+                                        ui.add_space(2.0);
+                                        ui.label(
+                                            RichText::new(crate::i18n::t!(
+                                                "换一个关键词，或重新扫描插件目录"
+                                            ))
+                                            .size(SIZE_SMALL)
                                             .color(dim()),
-                                    );
+                                        );
+                                    });
                                 }
                                 for i in hits {
                                     let p = &state.registry.all()[i];
                                     let meta = &p.manifest.plugin;
                                     let enabled = p.enabled;
-                                    // 行：名字 + 版本 + 厂商，右侧开关。
-                                    ui.horizontal(|ui| {
-                                        ui.set_min_height(26.0);
-                                        ui.label(
-                                            RichText::new(&meta.name).size(SIZE_BODY).color(text()),
-                                        );
-                                        ui.label(
-                                            RichText::new(&meta.version)
-                                                .size(SIZE_SMALL)
-                                                .color(dim()),
-                                        );
-                                        ui.with_layout(
-                                            Layout::right_to_left(Align::Center),
-                                            |ui| {
-                                                let mut on = enabled;
-                                                if ui.checkbox(&mut on, "").changed() {
-                                                    toggle = Some((meta.id.clone(), on));
-                                                }
-                                                ui.label(
-                                                    RichText::new(meta.source.cn())
-                                                        .size(SIZE_SMALL)
-                                                        .color(dim()),
-                                                );
-                                                ui.label(
-                                                    RichText::new(meta.kind.cn())
-                                                        .size(SIZE_SMALL)
-                                                        .color(dim()),
-                                                );
-                                            },
-                                        );
-                                    });
-                                    if !meta.description.is_empty() {
-                                        ui.label(
-                                            RichText::new(&meta.description)
-                                                .size(SIZE_SMALL)
-                                                .color(dim()),
-                                        );
+                                    if market_row(
+                                        ui,
+                                        &meta.name,
+                                        &meta.version,
+                                        &meta.description,
+                                        &format!("{} · {}", meta.kind.cn(), meta.source.cn()),
+                                        enabled,
+                                    ) {
+                                        toggle = Some((meta.id.clone(), !enabled));
                                     }
-                                    ui.add_space(3.0);
-                                    soft_sep(ui);
-                                    ui.add_space(3.0);
                                 }
 
                                 // 坏清单单独列在最后：不藏，也不打断上面的列表。
-                                if !state.registry.errors().is_empty() {
-                                    ui.add_space(8.0);
+                                // 路径与原因压成一行、超出省略，悬停给全文。
+                                //
+                                // Broken manifests stay last: not hidden, and they do not
+                                // interrupt the list. Path and reason share one elided line;
+                                // hover gives the full text.
+                                let errs = state.registry.errors();
+                                if !errs.is_empty() {
+                                    ui.add_space(10.0);
                                     ui.label(
-                                        RichText::new(crate::i18n::t!("清单有问题"))
+                                        RichText::new(crate::i18n::t!("清单无法读取"))
                                             .size(SIZE_SMALL)
                                             .color(danger()),
                                     );
-                                    for (path, why) in state.registry.errors() {
-                                        ui.label(
-                                            RichText::new(format!(
-                                                "{}：{why}",
-                                                path.parent()
-                                                    .map(|d| d.display().to_string())
-                                                    .unwrap_or_default()
-                                            ))
-                                            .size(SIZE_SMALL)
-                                            .color(dim()),
-                                        );
+                                    ui.add_space(2.0);
+                                    for (path, why) in errs {
+                                        let line = format!("{}：{why}", path.display());
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&line)
+                                                    .size(SIZE_SMALL)
+                                                    .color(dim()),
+                                            )
+                                            .truncate(),
+                                        )
+                                        .on_hover_text(&line);
                                     }
                                 }
                             });
@@ -542,7 +624,8 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
     state.market_open = open;
     if let Some((id, on)) = toggle {
         state.registry.set_enabled(&id, on);
-        state.status = format!("{}：{}", id, if on { "已启用" } else { "已停用" });
+        let word = crate::i18n::tr(if on { "已启用" } else { "已停用" });
+        state.status = crate::i18n::tr_fmt("{}：{}", &[&id, &word]);
     }
     if rescan {
         let root = crate::settings::plugin_dir();
@@ -557,6 +640,208 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
 }
 
 // ---------------------------------------------------------------- 外观与布局
+
+/// 插件窗口左栏宽度：够放下「修图滤镜」四个字加一个两位数计数，
+/// 又不至于把右栏清单挤窄。
+///
+/// Sidebar width: wide enough for a four-character category plus a two-digit count,
+/// without squeezing the list column.
+const MARKET_SIDE_W: f32 = 168.0;
+
+/// 插件行高：两行文字（名称/版本、说明/元信息）+ 上下留白。
+///
+/// Plugin row height: two text lines (name/version, description/meta) plus padding.
+const MARKET_ROW_H: f32 = 56.0;
+
+/// 左栏一条类别：整行点击、左名右数；选中是实心底，悬停只抬一档。
+///
+/// One category row: whole-row click, name left and count right; the selected state
+/// uses the solid fill, hover lifts one step.
+fn market_cat_row(ui: &mut Ui, label: &str, count: usize, active: bool) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
+    let p = ui.painter();
+    if active {
+        p.rect_filled(rect, radius_control(), selected());
+    } else if resp.hovered() {
+        p.rect_filled(rect, radius_control(), row_hover());
+    }
+    let (name_fg, count_fg) = if active {
+        (on_selected(), on_selected())
+    } else {
+        (text(), dim())
+    };
+    p.text(
+        Pos2::new(rect.left() + 10.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        crate::i18n::tr(label),
+        font(SIZE_BODY),
+        name_fg,
+    );
+    p.text(
+        Pos2::new(rect.right() - 10.0, rect.center().y),
+        Align2::RIGHT_CENTER,
+        count.to_string(),
+        font(SIZE_SMALL),
+        count_fg,
+    );
+    resp
+}
+
+/// 一行插件：名称 + 版本、单行说明、类别·来源、右侧开关。整行可点。
+///
+/// 说明始终单行省略：插件描述常有整段文字，任它换行会把固定的 56px 节奏
+/// 打乱，一屏能读的条数完全由描述长度决定。悬停整行可以看完整说明。
+///
+/// One plugin row: name + version, one-line description, kind · source, and the
+/// switch on the right. The whole row is clickable.
+///
+/// The description is always elided to one line: plugin descriptions often run to a
+/// paragraph, and letting them wrap destroys the fixed 56 px rhythm, making the
+/// number of readable rows depend on description length. Hovering the row shows it
+/// in full.
+fn market_row(
+    ui: &mut Ui,
+    name: &str,
+    version: &str,
+    desc: &str,
+    meta: &str,
+    enabled: bool,
+) -> bool {
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), MARKET_ROW_H), Sense::click());
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let p = ui.painter();
+    if resp.hovered() {
+        p.rect_filled(rect, radius_control(), row_hover());
+    }
+
+    // 开关：34×16 的胶囊，开时强调色底 + 白钮，关时输入框底 + 描边 + 正文色钮。
+    // 原生 checkbox 在无标签时只剩一个孤立方框，和右侧一列元信息对不齐。
+    //
+    // The switch: a 34x16 pill. On = accent track with the light knob; off = field
+    // fill, a hairline border, and the body-coloured knob. A label-less checkbox is a
+    // lone square that cannot line up with the metadata column.
+    let sw = Rect::from_min_size(
+        Pos2::new(rect.right() - 12.0 - 34.0, rect.center().y - 8.0),
+        Vec2::new(34.0, 16.0),
+    );
+    let track = if enabled {
+        accent()
+    } else if resp.hovered() {
+        field_hover()
+    } else {
+        field()
+    };
+    p.rect_filled(sw, 8.0, track);
+    if !enabled {
+        p.rect_stroke(sw, 8.0, Stroke::new(1.0, border()), egui::StrokeKind::Inside);
+    }
+    let knob_x = if enabled { sw.right() - 8.0 } else { sw.left() + 8.0 };
+    p.circle_filled(
+        Pos2::new(knob_x, sw.center().y),
+        6.0,
+        if enabled { on_accent() } else { text() },
+    );
+
+    let left = rect.left() + 12.0;
+    let text_right = sw.left() - 14.0;
+
+    // 第一行：名称（正文）+ 版本（小字，压暗）。
+    let name_y = rect.top() + 9.0;
+    let ver = version.trim();
+    let ver_w = if ver.is_empty() {
+        0.0
+    } else {
+        p.layout_no_wrap(ver.to_owned(), font(SIZE_SMALL), dim())
+            .size()
+            .x
+            + 7.0
+    };
+    let name_galley = elided_text(ui, name, SIZE_BODY, text(), text_right - left - ver_w);
+    let name_w = name_galley.size().x;
+    p.galley(Pos2::new(left, name_y), name_galley, text());
+    if !ver.is_empty() {
+        p.text(
+            Pos2::new(left + name_w + 7.0, name_y + 1.5),
+            Align2::LEFT_TOP,
+            ver,
+            font(SIZE_SMALL),
+            dim(),
+        );
+    }
+
+    // 第二行：说明（单行省略）+ 类别·来源（贴开关左缘）。
+    let line_y = rect.top() + 30.0;
+    let meta_w = if meta.is_empty() {
+        0.0
+    } else {
+        p.layout_no_wrap(meta.to_owned(), font(SIZE_SMALL), dim())
+            .size()
+            .x
+    };
+    if !meta.is_empty() {
+        p.text(
+            Pos2::new(text_right, line_y + 1.0),
+            Align2::RIGHT_TOP,
+            meta,
+            font(SIZE_SMALL),
+            dim(),
+        );
+    }
+    if !desc.is_empty() {
+        let desc_w = (text_right - left - meta_w - 14.0).max(20.0);
+        p.galley(
+            Pos2::new(left, line_y),
+            elided_text(ui, desc, SIZE_SMALL, dim(), desc_w),
+            dim(),
+        );
+    }
+
+    // 行尾 hairline：与组头的通栏线同口径，整列读作一张表，而不是卡片堆。
+    theme::soft_rule(p, rect.left(), rect.right(), rect.bottom());
+    let resp = if desc.is_empty() {
+        resp
+    } else {
+        resp.on_hover_text(desc)
+    };
+    resp.clicked()
+}
+
+/// 把一段文字排成「最多一行、超出加省略号」的 galley。
+///
+/// `Painter::text` 不会截断：长插件名会直接画出自己的矩形、压到开关上。
+/// 这里显式给 `max_rows = 1` 与 `break_anywhere`，宽度之外一律省略。
+///
+/// Lay text out as "at most one row, ellipsis beyond that". `Painter::text` never
+/// truncates: a long plugin name would paint past its own rect and run under the
+/// switch. Setting `max_rows = 1` and `break_anywhere` elides everything past the
+/// width.
+fn elided_text(
+    ui: &Ui,
+    text: &str,
+    size: f32,
+    color: Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        egui::text::TextFormat {
+            font_id: font(size),
+            color,
+            ..Default::default()
+        },
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: width.max(1.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    ui.painter().layout_job(job)
+}
 
 /// 小标题：10px 等宽、压暗一档，与面板里的分组标题同一套语气。
 fn look_section(ui: &mut Ui, title: &str) {
@@ -2010,7 +2295,9 @@ mod update_window_tests {
         theme::apply(&ctx, 1.0);
         let mut state = AppState::demo();
         state.install_demo_textures(&ctx);
-        state.error = Some("HDR 合并至少要 2 帧：给 frames 数组，或把 around 调大".to_owned());
+        state.error = Some(
+            "HDR 合并至少需要 2 帧：把「从当前帧起，前后各取」调大".to_owned(),
+        );
 
         // 两帧：`Area`（Modal 的载体）第一帧只做尺寸测量，第二帧才出形状。
         // 只跑一帧会「什么都抓不到」，这正是旧回滚判据一直假绿的机制。
@@ -2026,7 +2313,7 @@ mod update_window_tests {
             "新错误没有被抬成弹窗，只留在状态栏"
         );
         assert!(
-            text.contains("HDR 合并至少要 2 帧：给 frames 数组，或把 around 调大"),
+            text.contains("HDR 合并至少需要 2 帧：把「从当前帧起，前后各取」调大"),
             "弹窗没有把错误正文画出来：\n{text}"
         );
         assert!(text.contains("知道了"), "弹窗缺少确认按钮：\n{text}");

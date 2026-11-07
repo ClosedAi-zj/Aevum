@@ -195,6 +195,7 @@ impl AppState {
                 Thumb {
                     texture: tex,
                     size: [128, 72],
+                    grade: None,
                 },
             );
         }

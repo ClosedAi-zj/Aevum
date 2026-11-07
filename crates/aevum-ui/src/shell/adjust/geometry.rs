@@ -5,7 +5,7 @@
 // 共用件（theme / i18n / 兄弟模块的函数）由 mod.rs 的 use 树统一带入。
 //
 // Shared pieces (theme, i18n, sibling helpers) come in through mod.rs's use tree.
-use super::develop::{profiles_body, spec_field, sub_head};
+use super::develop::{lens_profile_body, spec_field, sub_head};
 use super::*;
 /// 几何：透视校正。自动一路只修梯形（竖线收敛到一个画外消失点），不修旋转、
 /// 不修枕形畸变——证据不足时宁可不动作，也不猜一个把画面撕歪的四边形。
@@ -243,9 +243,9 @@ pub(super) fn adjust_optics(state: &mut AppState, ui: &mut Ui) -> bool {
     let mut changed = false;
     sub_head(ui, crate::i18n::t!("镜头校正"));
     changed |= lens_body(state, ui);
-    sub_head(ui, crate::i18n::t!("相机与镜头配置"));
+    sub_head(ui, crate::i18n::t!("镜头配置"));
     let ctx = ui.ctx().clone();
-    profiles_body(state, &ctx, ui);
+    lens_profile_body(state, &ctx, ui);
     changed
 }
 

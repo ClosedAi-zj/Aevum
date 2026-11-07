@@ -1,5 +1,64 @@
 use super::*;
 
+/// 胶片条三轴筛选：三组判据**同时**成立才画，任何一组关着都不参与收窄；
+/// 计数与显隐同一口径（头行那个「已筛选 n / m 帧」不能和实际画出来的格子对不上）。
+///
+/// Filmstrip three-axis filter: a cell is drawn only when **all** criteria hold, and a
+/// disabled axis narrows nothing; the count shares that one definition (the header's
+/// "n / m shown" must not disagree with the cells actually painted).
+#[test]
+fn filmstrip_filters_combine_stars_flags_and_labels() {
+    let mut state = AppState::demo();
+    let n = state.frame_count();
+    assert!(n >= 4, "演示序列要有几帧才测得出筛选：{n}");
+    // 演示工程自带一些星级与色标，先清空，判据才是这条测试自己摆的那几帧。
+    //
+    // The demo project ships with some ratings and labels of its own; clear them so the
+    // criteria cover exactly the frames this test lays out.
+    state.ratings.clear();
+    state.flags.clear();
+    state.labels.clear();
+    state.film_filter_stars = 0;
+    state.film_filter_flag = 0;
+    state.film_filter_label = 0;
+    state.set_rating(0, 5);
+    state.set_rating(1, 4);
+    state.set_rating(2, 1);
+    state.set_flag(0, 1);
+    state.set_flag(1, -1);
+    state.set_label(0, 3);
+    state.set_label(2, 3);
+
+    // 全开：每一帧都可见。
+    assert_eq!(state.film_visible_count(), n);
+
+    // 星级下限：两帧够格。
+    state.film_filter_stars = 4;
+    assert_eq!(state.film_visible_count(), 2);
+    assert!(!state.film_visible(2));
+
+    // 再叠旗标「只看选用」：只剩第 0 帧。
+    state.film_filter_flag = 1;
+    assert_eq!(state.film_visible_count(), 1);
+    assert!(state.film_visible(0) && !state.film_visible(1));
+
+    // 再叠色标：第 0 帧正好是绿标，仍然可见。
+    state.film_filter_label = 3;
+    assert_eq!(state.film_visible_count(), 1);
+
+    // 色标换成第 0 帧没有的：三轴同时成立，结果为空。
+    state.film_filter_label = 2;
+    assert_eq!(state.film_visible_count(), 0);
+
+    // 关掉中间两组，只留色标：第 0、2 帧。
+    state.film_filter_stars = 0;
+    state.film_filter_flag = 0;
+    state.film_filter_label = 3;
+    assert_eq!(state.film_visible_count(), 2);
+    assert!(state.film_visible(0) && !state.film_visible(1) && state.film_visible(2));
+}
+
+
 /// 浮窗位置的记录规则：拖动中不记、同值不置脏、真移动了才置脏。
 ///
 /// 这三条合起来才是「能跨启动记住位置」而不「每帧写一次文件」：
@@ -657,6 +716,7 @@ fn playback_uses_proxy_and_restores_full_on_pause() {
         Thumb {
             texture: tex,
             size: [2, 2],
+            grade: None,
         },
     );
     assert!(state.proxies.contains_key(&0), "代理已就位");

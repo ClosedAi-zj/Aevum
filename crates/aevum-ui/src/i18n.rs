@@ -1061,6 +1061,7 @@ mod tests {
             "V-Log",
             "S-Log3",
             "PQ",
+            "HDR",
             "AVIF",
             "WebP",
             "GIF",

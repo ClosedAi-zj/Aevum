@@ -16,6 +16,16 @@ serde.workspace = true
 serde_json.workspace = true
 # 胶片条批量解码；用独立线程池，不和预览渲染抢核。
 rayon.workspace = true
+# 取 winit 窗口的原生句柄，把外观圆角落到 Windows 的窗口边界上。
+raw-window-handle.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# 无边框窗口顶部那条 1px 白线是 DWM 投影的上边缘，只能从 winit 层关掉
+# （`WindowExtWindows::set_undecorated_shadow`）。Linux/macOS 不引这一条。
+#
+# The 1 px line on top of the borderless window is the DWM shadow's top edge and can
+# only be turned off through winit (`WindowExtWindows::set_undecorated_shadow`).
+winit.workspace = true
 
 [dev-dependencies]
 # 字体判据要读 `OS/2.usWeightClass` 与 cmap：这两个值没有别的来源，只能解析字体。

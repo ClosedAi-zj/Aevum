@@ -899,17 +899,13 @@ pub fn decode_preview_sketch(
     full_side: u32,
 ) -> Result<SketchSource, MetricsError> {
     if profile.is_empty()
-        && let Some((img, (fw, fh), orientation)) = crate::raw::read_half(path)
+        && let Some((small, fw, fh)) = raw_half_rgb(path, sketch_side)
     {
-        let img = crate::exif::oriented(DynamicImage::ImageRgb16(img), orientation);
-        // 转正后宽高互换（5..8 是带 90° 的四种）。全量那边也是先转正再缩，
-        // 这里必须用同一对边长去算逻辑尺寸。
+        // 全量那边也是先转正再缩，逻辑尺寸要按转正后的边长算。
         //
-        // Orientations 5..8 rotate by 90 degrees, so the sides swap; the full path also
-        // orients before scaling, so the logical size must come from the same pair.
-        let (fw, fh) = if orientation >= 5 { (fh, fw) } else { (fw, fh) };
-        let full = fit_dims(fw as usize, fh as usize, full_side);
-        let small = fit_long_side(&img.to_rgb8(), sketch_side);
+        // The full path also orients before scaling, so the logical size comes from the
+        // oriented side lengths.
+        let full = fit_dims(fw, fh, full_side);
         let (w, h) = (small.width() as usize, small.height() as usize);
         // 与全量口同一约定：传感器数据在出口做 sRGB 显示编码（见
         // decode_rgb_f32_with_origin 的注释），草图与全量必须同域，否则
@@ -940,6 +936,25 @@ pub fn decode_preview_sketch(
         full: (fw, fh),
         half: false,
     })
+}
+
+/// RAW 半尺寸快路：2×2 单元估计直接交出来，转正、缩到 `max_side`，并交回转正后的
+/// 传感器边长（逻辑尺寸要用它）。
+///
+/// The RAW half-size fast route: hand out the 2x2 cell estimates, oriented and scaled to
+/// `max_side`, plus the oriented sensor side lengths (the logical size needs them).
+fn raw_half_rgb(path: &Path, max_side: u32) -> Option<(image::RgbImage, usize, usize)> {
+    let (img, (fw, fh), orientation) = crate::raw::read_half(path)?;
+    let img = crate::exif::oriented(DynamicImage::ImageRgb16(img), orientation);
+    // 转正后宽高互换（5..8 是带 90° 的四种）。
+    //
+    // Orientations 5..8 rotate by 90 degrees, so the sides swap.
+    let (fw, fh) = if orientation >= 5 { (fh, fw) } else { (fw, fh) };
+    Some((
+        fit_long_side(&img.to_rgb8(), max_side),
+        fw as usize,
+        fh as usize,
+    ))
 }
 
 /// [`fit_long_side`] 的尺寸算法（不出像素），供草图算全量预览的逻辑尺寸。
@@ -1011,6 +1026,57 @@ pub fn thumbnail(path: impl AsRef<Path>, max_side: u32) -> Result<RgbaImage, Met
     let out = resize_to_rgba(&img.to_rgb8(), max_side);
     write_thumb_cache(path, max_side, &out);
     Ok(out)
+}
+
+/// 胶片条/播放代理的显影源：与画布同一套解码，边长压到 `max_side`；**不读机身内嵌
+/// JPEG**。
+///
+/// # 这条函数是从一个「两边曝光不一样」的报障里长出来的
+///
+/// 2026-11-07 用户报「小图与大图曝光不同」，要的是「哪个与实图不一样」。定位结果：
+/// 胶片条那一侧。它原来走 [`thumbnail`]，RAW/DNG 拿到的是机身按 As Shot 出的 8 位
+/// JPEG——自带相机的色调曲线；同一帧 128px 均值 78.9，而画布解 RAW 是 62.0，差了近
+/// 一档。机身 JPEG 再小也是「相机认为的样子」，不是这条显影链的输入；胶片条是画布的
+/// 预览列，必须和画布同源。
+///
+/// 解码与 [`decode_preview_sketch`] 是同一条路（RAW 半尺寸去马赛克；有相机配置时整幅
+/// 解再缩），只换目标边长：128px 上 63.3 对 62.0，差的是半尺寸去马赛克的采样，不是
+/// 色调。代价是每张 RAW 约 270ms（内嵌 JPEG 只要 1ms），所以只在胶片条上按需解、
+/// 解过就把源留在内存里，参数变化只重调色不重解码。
+///
+/// # Filmstrip/proxy develop source at the canvas decoding convention, never the
+/// camera-embedded JPEG
+///
+/// Born from the 2026-11-07 report "the small and the large preview have different
+/// exposure", which asked which one differs from the real image. The filmstrip was the
+/// outlier: it went through [`thumbnail`], which for RAW/DNG returns the camera's As Shot
+/// 8-bit JPEG carrying the camera's own tone curve -- mean 78.9 over 128 px for a frame
+/// whose RAW decode (what the canvas shows) is 62.0, nearly a stop brighter. A camera
+/// JPEG is "what the camera thought", not an input to this develop chain; the filmstrip
+/// is a column of previews *of the canvas* and must share its source.
+///
+/// Decoding follows [`decode_preview_sketch`] (half-size RAW demosaic; a full decode plus
+/// downscale when a camera profile is set), only the target side changes: 63.3 vs 62.0 at
+/// 128 px, the gap being half-size demosaic sampling rather than tone. It costs about
+/// 270 ms per RAW frame (the embedded JPEG is 1 ms), so it runs on demand for the
+/// filmstrip and the decoded source stays in memory; parameter changes re-grade only.
+pub fn decode_thumb_source(
+    path: &Path,
+    profile: &str,
+    max_side: u32,
+) -> Result<(Vec<f32>, usize, usize), MetricsError> {
+    if profile.is_empty()
+        && let Some((small, _, _)) = raw_half_rgb(path, max_side)
+    {
+        let (w, h) = (small.width() as usize, small.height() as usize);
+        let pixels = small
+            .as_raw()
+            .iter()
+            .map(|&v| enc(v as f32 / 255.0, true))
+            .collect();
+        return Ok((pixels, w, h));
+    }
+    decode_profile_preview(path, profile, max_side)
 }
 
 /// 缩略图磁盘缓存：`<序列根>/.aevum/thumbs/<名>-<mtime>-<字节数>-<边长>.png`。

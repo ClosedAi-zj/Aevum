@@ -6,6 +6,8 @@
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::BAR_H;
 use super::common::HslKind;
+use super::common::acr_tabs;
+use super::common::band_row;
 use super::common::chip_row;
 use super::common::combo_style;
 use super::common::group_header;
@@ -15,7 +17,6 @@ use super::common::kv;
 use super::common::kv_dense;
 use super::common::note;
 use super::common::slider;
-use super::common::slider_grad;
 use super::common::slider_row;
 use super::common::spec_slider;
 use super::dialogs::choose_audio;

@@ -755,10 +755,21 @@ mod qa_panel_tests {
     use super::*;
     use crate::shell::ui;
 
+    /// 画布高度 1400：面板行距按 ACR 口径（两行式 46 + 行距），体检组排在
+    /// 序列面板末尾，1000px 视口下最后一条落在折叠线外，被裁剪后不上屏。
+    /// 实际窗口里右栏有 ScrollArea，往下滚就能看到；测试要断言四条都画出来，
+    /// 就得给一个能容纳整栏的视口。
+    ///
+    /// 1400 px canvas: panel rows use the ACR two-line pitch (46 + spacing), and the
+    /// QA group sits at the tail of the Sequence panel -- at a 1000 px viewport the
+    /// last finding falls past the fold and is culled. The real dock scrolls, but the
+    /// test asserts all four rows are painted, so the viewport must hold the column.
+    const VIEW: Vec2 = Vec2::new(1600.0, 1400.0);
+
     fn paint_count(ctx: &Context, state: &mut AppState) -> usize {
         let mut out = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, VIEW)),
                 max_texture_side: Some(8192),
                 ..Default::default()
             },
@@ -773,7 +784,7 @@ mod qa_panel_tests {
     fn painted_text(ctx: &Context, state: &mut AppState) -> String {
         let mut out = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, VIEW)),
                 max_texture_side: Some(8192),
                 ..Default::default()
             },

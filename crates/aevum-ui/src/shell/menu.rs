@@ -295,11 +295,17 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         let icon_tile = Rect::from_min_size(Pos2::new(x, mid - 9.0), Vec2::splat(18.0));
         p.rect_filled(icon_tile, radius_control(), accent_dim());
         icons::paint(&p, icon_tile.shrink(4.0), Glyph::Sequence, accent());
-        x = icon_tile.right() + 8.0;
+        // 图标到首项菜单只留 4px：`brand_gap` 是给 mac 的「交通灯 → 菜单」留的，
+        // 有图标时再加 16px 会把「文件」推到 32px 之外（用户截图）。
+        //
+        // Only 4 px from the tile to the first menu: `brand_gap` is the macOS
+        // "traffic lights -> menus" distance, and adding it on top of the tile's 8 px
+        // pushed 「文件」 32 px away on Windows.
+        x = icon_tile.right() + 4.0;
     }
 
     // 菜单：紧接品牌之后，间距与内边距按平台。
-    let menus_x = x + c.brand_gap;
+    let menus_x = x + if c.brand_icon { 4.0 } else { c.brand_gap };
     let left_rect = Rect::from_min_max(
         Pos2::new(menus_x, full.top()),
         Pos2::new(menus_x + 360.0, full.bottom()),

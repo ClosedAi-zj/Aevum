@@ -277,25 +277,46 @@ fn canvas_top_bar_frame_size_is_labelled() {
 }
 
 #[test]
-fn thumbnails_carry_the_original_chip() {
-    // 评审 E2 的可见标记：行内说明字已在（d701cca），但验收口径是「每个缩略图
-    // 有可见标记」——胶片条每格右上角的「原片」角标不许回退，英文表要有键。
-    // The visible marker from review E2: the inline caption already exists (d701cca),
-    // but the acceptance wording is "every thumbnail carries a visible marker" -- the
-    // per-cell chip must not regress, and the English table must have the key.
+fn thumbnails_are_developed_like_the_canvas() {
+    // 用户 2026-11-07：「预览图应该跟主图一致」。缩略图必须走主画布同一份显影参数，
+    // 而不是机身内嵌的未显影原片；胶片条上原来那枚「原片」角标随之取消。
+    //
+    // User, 2026-11-07: "the previews should match the main image". Thumbnails must
+    // go through the canvas's develop parameters instead of the undeveloped embedded
+    // original, and the filmstrip's "ORIG" chip goes with it.
+    let cache = clean("state/ops_cache.rs");
+    assert!(
+        cache.contains("render_sketch"),
+        "缩略图没有走显影链（render_sketch），会和主画布不一致"
+    );
+    assert!(
+        cache.contains("preview_params()"),
+        "缩略图没用主画布那份参数（preview_params），旁路/取景态会和画布分叉"
+    );
+    assert!(
+        cache.contains("thumb_regrade"),
+        "缩略图没有失效重调色的通路，改参数后胶片条会停在旧画面"
+    );
+    // 同一条报障的后半：胶片条原来抓的是机身内嵌 JPEG（自带相机色调曲线），比画布
+    // 解出的 RAW 亮近一档（2026-11-07 实测 78.9 对 62.0）。显影参数一致还不够，源也
+    // 得同源；`decode_thumb_source` 是那条与画布同口径的解码口。
+    //
+    // The other half of the same report: the filmstrip used the camera-embedded JPEG,
+    // which carries the camera's tone curve and measured nearly a stop brighter than the
+    // canvas RAW (78.9 vs 62.0, 2026-11-07). Matching parameters is not enough -- the
+    // source has to match too; `decode_thumb_source` is the canvas-convention decoder.
+    assert!(
+        cache.contains("decode_thumb_source"),
+        "胶片条又去读机身内嵌 JPEG 了（metrics::thumbnail），会和画布差近一档曝光"
+    );
+    assert!(
+        !cache.contains("thumbnail(path, THUMB_SIDE)"),
+        "胶片条仍在用 metrics::thumbnail 解 128px：那是相机按 As Shot 出的 JPEG"
+    );
     let tl = clean("shell/timeline.rs");
     assert!(
-        tl.contains("t!(\"原片\")"),
-        "胶片条缩略图的「原片」角标不见了（评审 E2 回退）"
-    );
-    assert!(
-        tl.contains("rect_filled(chip_rect"),
-        "「原片」角标没有自己的底色，会重新糊进缩略图里"
-    );
-    let en = clean("i18n_en.rs");
-    assert!(
-        en.contains("(\"原片\", \"ORIG\")"),
-        "i18n_en.rs 缺「原片」的英文键（i18n_literals 会红，这里提前指路）"
+        !tl.contains("t!(\"原片\")"),
+        "缩略图已经显影，胶片条不应再贴「原片」角标"
     );
 }
 
@@ -329,34 +350,47 @@ fn floating_windows_read_as_floating() {
 
 #[test]
 fn hsl_band_rails_carry_their_band_colour() {
-    // D1（LightCraft Track::Hue/Sat/Lum 语义）：HSL 三条轨道必须走频段渐变——
+    // D1（LightCraft Track::Hue/Sat/Lum 语义）：HSL 轨道必须走频段渐变——
     // 色相=频段色→补色、饱和=灰→频段色、明亮=黑→频段色。三个种类不许退回
     // 同一个无含义的灰轨，红(0°)与蓝(240°)的频段色必须分得开。
-    // D1 (LightCraft Track semantics): the three HSL rails must take band
-    // gradients; the three kinds must not collapse into one grey rail, and the
-    // red (0 deg) and blue (240 deg) band colours must differ.
+    // 2026-11-07 起混色器走紧凑行 band_row（参考图实测 31px 行距），HSL 渐变
+    // 由它统一绘制——门禁盯「频段行确实把停靠点交给 band_row」。
+    // Since 2026-11-07 the mixer uses the compact band_row (31 px pitch measured on
+    // the reference) and it paints the HSL gradients, so the gate pins that the band
+    // rows hand it per-band stop tables.
     let common = clean("shell/common.rs");
     for needle in [
         "fn hsl_band_stops",
         "HslKind::Hue",
         "HslKind::Sat",
         "HslKind::Lum",
+        "pub(super) fn band_row",
+        "controls::sample_stops(table, t0)",
     ] {
         assert!(common.contains(needle), "common.rs 缺 {needle}");
     }
     let dev = clean("shell/adjust/develop.rs");
-    let n = dev.matches("slider_grad").count();
+    let n = dev.matches("Some(hsl_band_stops(band, kind))").count();
     assert!(
-        n >= 3,
-        "HSL 三条滑块没有走 slider_grad（现 {n} 处），频段渐变退回灰轨"
+        n >= 2,
+        "HSL 频段行没有把渐变停靠点交给 band_row（现 {n} 处），频段渐变退回灰轨"
+    );
+    assert!(
+        dev.contains("hsl_band_stops(band, kind)"),
+        "HSL 行没有按「频段 + 属性」取渐变停靠点"
     );
 }
 
 #[test]
-fn group_headers_end_in_a_single_hairline() {
-    // 用户点名「选项间的分割」不喜欢：旧版组头是「实线+2px 上一道淡线」的
-    // 双线签名，十四组排下来读作表格。现在一条 hairline 收尾——组头函数体
-    // 内 theme::rule 恰好一次，多一次即红。
+fn group_headers_match_the_acr_panel_column() {
+    // 用户 2026-11-07 最新的 ACR 面板截图：组头是一行 32px 的「折叠箭头 +
+    // 标题 + 眼睛」，下面一道通栏 hairline。参考图里既没有滑杆图标，标题也
+    // 不是粗体——八个组头叠在一起时，粗体会把面板读成一排按钮。
+    //
+    // The user's newest ACR panel screenshot (2026-11-07): a 32 px row of chevron +
+    // title + eye, closed by a full-width hairline. The reference has neither a
+    // sliders glyph nor a bold title -- bold across eight headers reads as a column
+    // of buttons.
     let common = clean("shell/common.rs");
     let i = common
         .find("pub(super) fn group_header")
@@ -365,10 +399,18 @@ fn group_headers_end_in_a_single_hairline() {
         .find("\npub(super) fn ")
         .map(|j| i + j)
         .unwrap_or(common.len())];
-    let rules = body.matches("theme::rule(").count();
     assert_eq!(
-        rules, 1,
-        "group_header 里出现了 {rules} 道分隔线，双线口径已废"
+        body.matches("theme::rule(").count(),
+        1,
+        "组头下应有且只有一道通栏 hairline（最新 ACR 参考图）"
+    );
+    assert!(
+        !body.contains("Glyph::Sliders"),
+        "组头又加回了滑杆图标（参考图里箭头之后直接是标题）"
+    );
+    assert!(
+        body.contains("Vec2::new(ui.available_width(), 32.0)"),
+        "组头行高不再是参考图实测的 32px"
     );
 }
 

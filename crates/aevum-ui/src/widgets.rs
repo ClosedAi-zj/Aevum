@@ -31,6 +31,20 @@ const GAMMA_HI: f64 = 5.0;
 /// 实心控件的那圈极淡内描边，与窗口红绿灯、滑杆推子同一材质口径。
 const RIM: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 46);
 
+/// ACR 曲线编辑框材质（拍板 2026-11-07 §6）：定色不随主题走，与 RIM、
+/// 色温轨停靠点同一口径——编辑框是一块独立的「深色画布」，浅色主题下
+/// 也保持深底，曲线与剪影的对比才稳定。
+///
+/// ACR curve-editor materials (finalised 2026-11-07 §6): fixed colours outside
+/// the theme ladder, same convention as RIM and the temperature stops -- the
+/// editor is a self-contained dark canvas so curve/silhouette contrast holds in
+/// every theme.
+const CURVE_BG: Color32 = Color32::from_rgb(0x4B, 0x4B, 0x4B);
+const CURVE_BORDER: Color32 = Color32::from_rgb(0x8C, 0x8C, 0x8C);
+const CURVE_GRID: Color32 = Color32::from_rgb(0x6E, 0x6E, 0x6E);
+const CURVE_HIST: Color32 = Color32::from_rgb(0x3A, 0x3A, 0x3A);
+const CURVE_DIAG: Color32 = Color32::from_rgb(0xD8, 0xD8, 0xD8);
+
 /// 色相角 -> 纯色（HSV 满饱和满亮），只用于画示色。
 ///
 /// Hue angle -> pure colour (HSV at full saturation and value); only used to paint
@@ -158,18 +172,61 @@ pub fn band_chips(ui: &mut Ui, sel: &mut usize, used: &[f64]) -> bool {
 
 // -------------------------------------------------------------------- 分级色轮
 
-/// 分级调色的一枚色轮：外环选色相，内盘按角度选色相、按半径选浓度，底下一轨选亮度。
+/// 色轮盘面的顶点色（拍板 2026-11-07 §6）：中心灰 128 → 边缘全饱和，
+/// 逐通道 `128 + (c - 128) * sat`。与 egui-proof 验证 crate 同一套数学。
 ///
-/// 内盘是矢量楔形铺出来的（36 段 × 6 圈），不用贴图：满幅渐变盘要么吃一张纹理，
-/// 要么靠 shader，两条路都不值得；而中性灰底盘又读不出「往哪边走是什么颜色」。
+/// Wheel-disc vertex colour (finalised 2026-11-07 §6): neutral grey 128 at the
+/// centre to full saturation at the rim, per channel `128 + (c - 128) * sat` --
+/// the same maths verified in the egui-proof crate.
+fn wheel_vertex_color(deg: f64, sat: f32) -> Color32 {
+    let hc = hue_color(deg);
+    let ch = |c: u8| (128.0 + (c as f32 - 128.0) * sat).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgb(ch(hc.r()), ch(hc.g()), ch(hc.b()))
+}
+
+/// 整张色轮盘面一个网格画完（ rings+1 圈顶点 × segments+1 列）：
+/// 旧版 5×36 楔形是 180 个 Shape，三轮 540 个；网格把颜色插值交给
+/// 光栅化，每轮只剩 1 个 Shape，渐变还更平滑。
 ///
-/// One grading wheel: the outer ring picks hue, the inner disc picks hue by angle
-/// and concentration by radius, the strip below picks luminance.
+/// The whole disc in one mesh ((rings+1) vertex rows x segments+1 columns):
+/// the old 5x36 wedges cost 180 shapes per wheel; the mesh hands colour
+/// interpolation to the rasteriser, leaving one shape and a smoother gradient.
+fn wheel_mesh(c: Pos2, radius: f32, rings: usize, segments: usize) -> egui::Mesh {
+    let mut mesh = egui::Mesh::default();
+    let stride = segments + 1;
+    for b in 0..=rings {
+        let r = radius * b as f32 / rings as f32;
+        let sat = b as f32 / rings as f32;
+        for k in 0..=segments {
+            let a = k as f64 / segments as f64 * std::f64::consts::TAU;
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: Pos2::new(c.x + r * (a as f32).cos(), c.y - r * (a as f32).sin()),
+                uv: Pos2::ZERO,
+                color: wheel_vertex_color(a.to_degrees(), sat),
+            });
+        }
+    }
+    for b in 0..rings {
+        for k in 0..segments {
+            let i0 = (b * stride + k) as u32;
+            let i1 = i0 + 1;
+            let i2 = i0 + stride as u32;
+            let i3 = i2 + 1;
+            mesh.indices.extend_from_slice(&[i0, i2, i1, i1, i2, i3]);
+        }
+    }
+    mesh
+}
+
+/// 分级调色的一枚色轮（ACR 同构，拍板 2026-11-07）：HSV 盘面角度选色相、
+/// 半径选浓度，底下一条明度轨。盘面中心灰 128、边缘全饱和；把手 10px
+/// `#9A9A9A` 套 2px `#4B4B4B` 环。双击盘面整轮复位，双击明度轨归零。
 ///
-/// The inner disc is tiled from vector wedges (36 segments x 6 rings) rather than
-/// a texture: a full gradient disc either costs a texture or needs a shader,
-/// neither of which is worth it here -- and a flat neutral-grey disc cannot show
-/// which direction maps to which colour.
+/// One grading wheel (mirroring ACR, finalised 2026-11-07): the HSV disc picks
+/// hue by angle and concentration by radius, with a luminance rail below. The
+/// disc runs from neutral grey 128 at the centre to full saturation at the rim;
+/// the handle is 10 px `#9A9A9A` inside a 2 px `#4B4B4B` ring. Double-click the
+/// disc to reset the wheel, double-click the rail to zero the lift.
 pub fn grade_wheel(
     ui: &mut Ui,
     id: &'static str,
@@ -181,19 +238,32 @@ pub fn grade_wheel(
 ) -> bool {
     // 翻译下沉：色轮标题（阴影 / 中间调 / 高光）由这里统一处理。
     let label = crate::i18n::tr(label);
-    let head = 14.0;
-    let rail_h = 15.0;
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(size, head + size + rail_h), Sense::hover());
+    // 参考图逐项实测（轮径 92.5）：标签中心在块顶下方 7px，标签中心到盘顶 21px
+    // （= 轮径的 22.7%），盘底到明度轨中线 21.5px（23.2%），轨宽 = 轮径 93%。
+    // 旧版 head 固定 16、轨下留 18，结果是标签贴住盘顶、轨后空出一大段——竖向
+    // 节奏和参考图正好相反。
+    //
+    // Measured on the reference (disc 92.5): the label centre sits 7 px below the
+    // block top, 21 px above the disc top (22.7 % of the disc), the rail centre is
+    // 21.5 px below the disc (23.2 %), and the rail is 93 % of the disc wide. The old
+    // fixed head of 16 and 18 px below the rail put the label on the disc and left a
+    // big hole after the rail -- the vertical rhythm was inverted.
+    let head = 7.0 + size * 0.227;
+    let rail_gap = size * 0.232;
+    let rail_h = 10.0;
+    let rail_w = size * 0.93;
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(size, head + size + rail_gap + rail_h),
+        Sense::hover(),
+    );
     let c = Pos2::new(rect.center().x, rect.top() + head + size * 0.5);
-    let r_out = size * 0.5 - 1.0;
-    let ring_w = 9.0;
-    let r_in = r_out - ring_w;
-    let r_disc = (r_in - 2.0).max(6.0);
+    let r_disc = size * 0.5 - 1.0;
     let active = *amount != 0.0 || *lift != 0.0 || *hue != 0.0;
     let p = ui.painter();
+    // 标题居中压在轮子上方：三轮摆成品字时各自认领各自的轮。
     p.text(
-        Pos2::new(rect.left(), rect.top() + 6.0),
-        Align2::LEFT_CENTER,
+        Pos2::new(rect.center().x, rect.top() + 7.0),
+        Align2::CENTER_CENTER,
         label,
         font(SIZE_SMALL),
         if active { text() } else { muted() },
@@ -205,10 +275,11 @@ pub fn grade_wheel(
         ui.make_persistent_id(("wheel", id)),
         Sense::click_and_drag(),
     );
-    let rail_y = rect.bottom() - rail_h * 0.5;
+    let rail_y = rect.top() + head + size + rail_gap;
+    let rail_x = rect.center().x - rail_w * 0.5;
     let rail_rect = Rect::from_min_max(
-        Pos2::new(rect.left(), rail_y - 6.0),
-        Pos2::new(rect.right(), rail_y + 6.0),
+        Pos2::new(rail_x, rail_y - 7.0),
+        Pos2::new(rail_x + rail_w, rail_y + 7.0),
     );
     let rresp = ui.interact(
         rail_rect,
@@ -220,18 +291,16 @@ pub fn grade_wheel(
     if let Some(pt) = wresp.interact_pointer_pos().filter(|_| wresp.dragged()) {
         let d = pt - c;
         let r = (d.x * d.x + d.y * d.y).sqrt();
-        // 屏幕 y 向下，取负让色相逆时针增长。
-        let ang = (d.y as f64)
-            .atan2(-(d.x as f64))
-            .to_degrees()
-            .rem_euclid(360.0);
         if r <= r_disc + 4.0 {
-            *hue = ang;
+            // 屏幕 y 向下，取负让色相逆时针增长；与绘制用的
+            // (cos a, -sin a) 同一口径，拖到哪把手就在哪。
+            *hue = (-(d.y as f64))
+                .atan2(d.x as f64)
+                .to_degrees()
+                .rem_euclid(360.0);
             *amount = (r / r_disc.max(1.0)).clamp(0.0, 1.0) as f64 * 100.0;
-        } else if r <= r_out + 4.0 {
-            *hue = ang;
+            changed = true;
         }
-        changed = true;
     }
     if wresp.double_clicked() && active {
         *hue = 0.0;
@@ -255,102 +324,53 @@ pub fn grade_wheel(
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     }
 
-    // 外环：48 段纯色楔形。
-    let tau = std::f64::consts::TAU;
-    let seg = 48usize;
-    let ring_point =
-        |r: f32, a: f64| Pos2::new(c.x + r * (a as f32).cos(), c.y - r * (a as f32).sin());
-    for k in 0..seg {
-        let a0 = k as f64 * tau / seg as f64;
-        let a1 = (k + 1) as f64 * tau / seg as f64;
-        let deg = (a0 + a1) * 0.5 * 180.0 / std::f64::consts::PI;
-        p.add(Shape::convex_polygon(
-            vec![
-                ring_point(r_in, a0),
-                ring_point(r_out, a0),
-                ring_point(r_out, a1),
-                ring_point(r_in, a1),
-            ],
-            hue_color(deg),
-            Stroke::NONE,
-        ));
-    }
-    // 内盘：PS Camera Raw 的读法——**深色底**（贴面板灰、随亮度轨明暗），
-    // 色相只从边缘往内淡出：盘面安静，选中的那一份才跳出来。之前的白心
-    // 柔和盘三枚并排一片发亮，互相打架（用户点名"色彩分级不好看"）。
-    // 亮度轨仍然改这层底色的明暗：提亮压暗在盘上看得见。
-    //
-    // Inner disc, PS Camera Raw reading: a **dark** base hugging the panel grey and
-    // shifting with the luminance rail, with hue fading in from the rim only. The old
-    // white-core gradient discs sat side by side as three bright pies fighting each
-    // other (user: "色彩分级不好看"). The luminance rail still changes this base's
-    // brightness, so lifts and pulls stay visible on the disc.
-    let base_l = (0.16 + *lift as f32 / 100.0 * 0.10).clamp(0.06, 0.30);
-    let base = hsl(0.0, 0.0, base_l * 100.0);
-    let bands = 5usize;
-    let disc_seg = 36usize;
-    for b in 0..bands {
-        let r0 = (r_disc * b as f32 / bands as f32).max(1.0);
-        let r1 = r_disc * (b + 1) as f32 / bands as f32;
-        // 色相从外缘往内衰减：最外圈 0.55 饱和，中心 0——反向于旧的白心渐变。
-        let sat = (1.0 - b as f32 / bands as f32) * 0.55;
-        for k in 0..disc_seg {
-            let a0 = k as f64 * tau / disc_seg as f64;
-            let a1 = (k + 1) as f64 * tau / disc_seg as f64;
-            let deg = (a0 + a1) * 0.5 * 180.0 / std::f64::consts::PI;
-            p.add(Shape::convex_polygon(
-                vec![
-                    ring_point(r0, a0),
-                    ring_point(r1, a0),
-                    ring_point(r1, a1),
-                    ring_point(r0, a1),
-                ],
-                mix(base, hue_color(deg), sat),
-                Stroke::NONE,
-            ));
-        }
-    }
-    p.circle_stroke(c, r_disc, Stroke::new(1.0, RIM));
-    // 环上的推子定色相，盘上的推子同时读出浓度。
-    let ring_k = ring_point(r_in + ring_w * 0.5, *hue * std::f64::consts::PI / 180.0);
-    p.circle_filled(
-        ring_k + Vec2::new(0.0, 1.0),
-        5.0,
-        Color32::from_black_alpha(70),
-    );
-    p.circle_filled(ring_k, 5.0, Color32::WHITE);
-    p.circle_stroke(ring_k, 5.0, Stroke::new(1.0, RIM));
-    if *amount != 0.0 {
-        let rr = r_disc * *amount as f32 / 100.0;
-        let k = ring_point(rr, *hue * std::f64::consts::PI / 180.0);
-        p.circle_stroke(k, 4.0, Stroke::new(1.5, text()));
-    }
-    // 亮度轨：中点 = 0，左右各 100。
+    // 盘面：一张网格，中心灰 → 边缘全饱和（拍板规格）。
+    p.add(Shape::mesh(wheel_mesh(c, r_disc, 8, 64)));
+    p.circle_stroke(c, r_disc, Stroke::new(1.0, Color32::from_rgb(0x2C, 0x2C, 0x2C)));
+    // 把手：浓度 0 时落在盘心，读作「中性」；有浓度才往外走。
+    let a = *hue * std::f64::consts::PI / 180.0;
+    let rr = r_disc * (*amount as f32 / 100.0).clamp(0.0, 1.0);
+    let k = Pos2::new(c.x + rr * (a as f32).cos(), c.y - rr * (a as f32).sin());
+    p.circle_filled(k + Vec2::new(0.0, 1.0), 5.0, Color32::from_black_alpha(70));
+    p.circle_filled(k, 5.0, Color32::from_rgb(0x9A, 0x9A, 0x9A));
+    p.circle_stroke(k, 5.0, Stroke::new(2.0, Color32::from_rgb(0x4B, 0x4B, 0x4B)));
+    // 明度轨：暗 → 中灰 → 亮 三段渐变（拍板 #2E2E2E / #8C8C8C / #E8E8E8），
+    // 中点 = 0。24 片插值铺 4px 高的轨，接缝不可见。
     let rail = Rect::from_min_max(
-        Pos2::new(rail_rect.left(), rail_y - 1.5),
-        Pos2::new(rail_rect.right(), rail_y + 1.5),
+        Pos2::new(rail_rect.left(), rail_y - 2.0),
+        Pos2::new(rail_rect.right(), rail_y + 2.0),
     );
-    p.rect_filled(rail, 1.5, rail_fill());
-    let half = rail_rect.width() * 0.5;
-    let kx = rail_rect.center().x + half * (*lift as f32 / 100.0);
-    let cx = rail_rect.center().x;
-    if (kx - cx).abs() > 0.5 {
+    const LUM_STOPS: [(f32, Color32); 3] = [
+        (0.0, Color32::from_rgb(0x2E, 0x2E, 0x2E)),
+        (0.5, Color32::from_rgb(0x8C, 0x8C, 0x8C)),
+        (1.0, Color32::from_rgb(0xE8, 0xE8, 0xE8)),
+    ];
+    for s in 0..24 {
+        let t0 = s as f32 / 24.0;
+        let x0 = rail.left() + rail.width() * t0;
+        let x1 = rail.left() + rail.width() * (s as f32 + 1.0) / 24.0;
         p.rect_filled(
             Rect::from_min_max(
-                Pos2::new(kx.min(cx), rail_y - 1.5),
-                Pos2::new(kx.max(cx), rail_y + 1.5),
+                Pos2::new(x0, rail.top()),
+                Pos2::new(x1 + 0.6, rail.bottom()),
             ),
-            1.5,
-            accent(),
+            0,
+            crate::controls::sample_stops(&LUM_STOPS, t0),
         );
     }
+    let half = rail_rect.width() * 0.5;
+    let kx = rail_rect.center().x + half * (*lift as f32 / 100.0);
     p.circle_filled(
         Pos2::new(kx, rail_y + 1.0),
-        4.0,
+        4.5,
         Color32::from_black_alpha(70),
     );
-    p.circle_filled(Pos2::new(kx, rail_y), 4.0, Color32::WHITE);
-    p.circle_stroke(Pos2::new(kx, rail_y), 4.0, Stroke::new(1.0, RIM));
+    p.circle_filled(Pos2::new(kx, rail_y), 4.5, Color32::from_rgb(0xD8, 0xD8, 0xD8));
+    p.circle_stroke(
+        Pos2::new(kx, rail_y),
+        4.5,
+        Stroke::new(1.0, Color32::from_rgb(0x2C, 0x2C, 0x2C)),
+    );
     changed
 }
 
@@ -398,13 +418,15 @@ pub(crate) fn curve_lut_fingerprint(pts: &[[f64; 2]]) -> u64 {
 /// without counting cells (review E8).
 fn curve_grid_stroke(major: bool) -> Stroke {
     if major {
-        Stroke::new(1.0, divider())
+        Stroke::new(1.0, CURVE_GRID)
     } else {
-        Stroke::new(0.5, divider())
+        Stroke::new(0.5, CURVE_GRID)
     }
 }
 
 /// 色调曲线编辑框：横轴输入、纵轴输出，都在 0..255。
+/// ACR 同构（拍板 2026-11-07）：深灰画布 + 直方图剪影垫底，曲线画在
+/// 剪影之上——拉点时看的是「这张照片的影调分布」，不是一块空网格。
 ///
 /// 拖动只改纵坐标，点空白加一个点，双击中间点删掉，双击空白整条复位。
 /// `grab` 是外存的抓取序号：拖动中点在指针下走，靠它才不会跳。
@@ -415,6 +437,7 @@ pub fn curve_box(
     id: &'static str,
     label: &str,
     tint: Color32,
+    hist: Option<&[[u32; 256]; 3]>,
     pts: &mut Vec<[f64; 2]>,
     side: f32,
     grab: &mut Option<usize>,
@@ -423,8 +446,20 @@ pub fn curve_box(
     // 同上：曲线框的坐标说明（输出 ↑ / 输入 →）也在这里翻。
     let label = crate::i18n::tr(label);
     let head = 15.0;
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(side, head + side), Sense::hover());
-    let inner = Rect::from_min_size(Pos2::new(rect.left(), rect.top() + head), Vec2::splat(side));
+    // 参考图实测：编辑框在组内**居中**，且近似正方（222×220）。旧版左贴边、
+    // 高宽比 1.12，并排对照里是最大的比例差。
+    //
+    // Measured on the reference: the editor is **centred** in the group and close to
+    // square (222x220). The old one hugged the left edge at a 1.12 height ratio --
+    // the biggest proportion mismatch in the side-by-side.
+    let outer_w = ui.available_width();
+    let w = side.min(outer_w).max(120.0);
+    let h = w.round();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(outer_w, head + h), Sense::hover());
+    let inner = Rect::from_min_size(
+        Pos2::new(rect.left() + (outer_w - w) * 0.5, rect.top() + head),
+        Vec2::new(w, h),
+    );
     let p = ui.painter();
     p.text(
         Pos2::new(inner.left(), rect.top() + 6.0),
@@ -433,17 +468,61 @@ pub fn curve_box(
         font(SIZE_SMALL),
         text(),
     );
-    p.rect_filled(inner, radius_control(), field());
+    p.rect_filled(inner, radius_control(), CURVE_BG);
     p.rect_stroke(
         inner,
         radius_control(),
-        Stroke::new(1.0, RIM),
+        Stroke::new(1.0, CURVE_BORDER),
         StrokeKind::Inside,
     );
     let sx = inner.width() / 255.0;
     let sy = inner.height() / 255.0;
     let to_px =
         |x: f64, y: f64| Pos2::new(inner.left() + x as f32 * sx, inner.bottom() - y as f32 * sy);
+
+    // 直方图剪影：三通道逐 bin 取最大值合成一条影调分布，64 段采样，
+    // 峰值归一。**逐列四边形**而不是一条闭合多边形——剪影是非凸的，
+    // PathShape 的填充三角化会在凹处漏出大块楔形（实机截图里右下角那块
+    // 灰色三角形），逐列三角带没有这个问题。
+    //
+    // Histogram silhouette: per-bin max over the three channels, 64 samples,
+    // normalised to the peak. Drawn as **one quad per column** rather than a closed
+    // polygon: the silhouette is concave, and PathShape's fill triangulation leaked a
+    // large wedge at the concave side (the grey triangle in the lower right of the live
+    // screenshot). A column strip has no such failure mode.
+    if let Some(h) = hist {
+        let peak = h
+            .iter()
+            .flat_map(|b| b.iter())
+            .max()
+            .copied()
+            .unwrap_or(0)
+            .max(1) as f32;
+        let mut mesh = egui::Mesh::default();
+        let n = 64usize;
+        let mut prev: Option<(f32, f32)> = None;
+        for k in 0..n {
+            let i0 = k * 4;
+            let mx = h
+                .iter()
+                .map(|b| b[i0..i0 + 4].iter().max().copied().unwrap_or(0))
+                .max()
+                .unwrap_or(0);
+            let x = inner.left() + (k as f32 / (n - 1) as f32) * inner.width();
+            let y = inner.bottom() - (mx as f32 / peak) * (inner.height() - 2.0);
+            if let Some((px, py)) = prev {
+                let i = mesh.vertices.len() as u32;
+                mesh.colored_vertex(Pos2::new(px, py), CURVE_HIST);
+                mesh.colored_vertex(Pos2::new(x, y), CURVE_HIST);
+                mesh.colored_vertex(Pos2::new(px, inner.bottom()), CURVE_HIST);
+                mesh.colored_vertex(Pos2::new(x, inner.bottom()), CURVE_HIST);
+                mesh.add_triangle(i, i + 1, i + 2);
+                mesh.add_triangle(i + 1, i + 3, i + 2);
+            }
+            prev = Some((x, y));
+        }
+        p.add(Shape::Mesh(mesh.into()));
+    }
 
     for i in 1..4 {
         let f = i as f32 / 4.0;
@@ -467,7 +546,7 @@ pub fn curve_box(
     }
     p.line_segment(
         [to_px(0.0, 0.0), to_px(255.0, 255.0)],
-        Stroke::new(1.0, border_strong()),
+        Stroke::new(1.0, CURVE_DIAG),
     );
 
     let resp = ui.interact(
@@ -559,20 +638,44 @@ pub fn curve_box(
         .enumerate()
         .map(|(k, v)| to_px(k as f64 * 2.0, *v as f64))
         .collect();
-    p.add(Shape::line(line, Stroke::new(1.4, tint)));
+    // 曲线与圆点一律裁进画布：线宽 1.2 压在 1px 描边上也会溢出去，端点圆点
+    // 更是有一半落在框外（用户截图说的「曲线顶出显示区域」）。
+    //
+    // Line and handles are clipped to the plot: a 1.2 px line still spills over the
+    // 1 px border, and the endpoint dots sit half outside the frame -- the "curve
+    // pokes out of the display area" complaint.
+    let cp = p.with_clip_rect(inner);
+    cp.add(Shape::line(line, Stroke::new(1.2, tint)));
+    let hover_pos = ui.input(|i| i.pointer.hover_pos());
+    let hover_idx = hover_pos.and_then(|q| nearest(pts, q));
     for (i, q) in pts.iter().enumerate() {
         let c = to_px(q[0], q[1]);
         let editable = i != 0 && i + 1 != pts.len();
         let held = *grab == Some(i);
-        p.circle_filled(
+        // 端点默认不画圆点：PS / ACR 参考图里两端就是一条线收到框角，没有
+        // 半出框的圆点；只有悬停在端点上或正在拖它时才补一枚（仍裁在框内）。
+        //
+        // Endpoints draw no dot by default -- in the PS / ACR reference the line
+        // simply reaches the corner. A dot appears only while that endpoint is hovered
+        // or dragged, and it is clipped to the plot.
+        if !editable && !held && hover_idx != Some(i) {
+            continue;
+        }
+        let r = if held { 4.0 } else { 3.2 };
+        // 控制点随通道着色（拍板 §6）：红通道一条红点，绿通道一条绿点，
+        // 与曲线本体同色——三条单通道来回切时不会认错自己刚拉的那条。
+        cp.circle_filled(c, r, if editable { tint } else { CURVE_BG });
+        cp.circle_stroke(
             c,
-            if held { 4.5 } else { 3.6 },
-            if editable { accent() } else { field() },
-        );
-        p.circle_stroke(
-            c,
-            if held { 4.5 } else { 3.6 },
-            Stroke::new(1.2, if editable { text() } else { accent() }),
+            r,
+            Stroke::new(
+                1.0,
+                if editable {
+                    Color32::from_rgb(0x2C, 0x2C, 0x2C)
+                } else {
+                    CURVE_BORDER
+                },
+            ),
         );
     }
     changed
@@ -1011,6 +1114,37 @@ mod tests {
         assert_eq!(hue_color(480.0), hue_color(120.0));
     }
 
+    /// 拍板 §6 的色轮数学：盘心必须是真中性灰 128，边缘必须是满饱和，
+    /// 半半径是两者的逐通道中点。这三条钉住「灰心 HSV 盘」不退化成
+    /// 旧的白心盘或深底盘。
+    #[test]
+    fn wheel_disc_is_neutral_at_center_and_saturated_at_rim() {
+        assert_eq!(
+            wheel_vertex_color(0.0, 0.0),
+            Color32::from_rgb(128, 128, 128),
+            "盘心不是中性灰 128"
+        );
+        assert_eq!(wheel_vertex_color(0.0, 1.0), hue_color(0.0));
+        assert_eq!(wheel_vertex_color(240.0, 1.0), hue_color(240.0));
+        assert_eq!(
+            wheel_vertex_color(120.0, 0.5),
+            Color32::from_rgb(64, 192, 64),
+            "半半径不是逐通道中点"
+        );
+    }
+
+    /// 网格拓扑：顶点数 = (rings+1)×(segments+1)，三角形索引不越界。
+    #[test]
+    fn wheel_mesh_topology_is_closed_and_in_bounds() {
+        let mesh = wheel_mesh(Pos2::new(50.0, 60.0), 40.0, 8, 64);
+        assert_eq!(mesh.vertices.len(), 9 * 65);
+        assert_eq!(mesh.indices.len(), 8 * 64 * 6);
+        assert!(
+            mesh.indices.iter().all(|&i| (i as usize) < mesh.vertices.len()),
+            "索引越界"
+        );
+    }
+
     #[test]
     fn gamma_axis_is_symmetric_and_round_trips() {
         let span = 300.0f32;
@@ -1104,6 +1238,7 @@ mod tests {
                 "curve-tone",
                 "输出 ↑ / 输入 →",
                 Color32::WHITE,
+                Some(&hist),
                 &mut pts,
                 240.0,
                 &mut grab,

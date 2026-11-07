@@ -2842,7 +2842,7 @@ fn hdr_merge_fuses_the_bracket_and_guards_input() {
     let too_few = state
         .run_ui_command(&ctx, "hdr.merge", &json!({"frames": [0], "confirm": true}))
         .unwrap_err();
-    assert!(too_few.contains("至少要 2 帧"), "{too_few}");
+    assert!(too_few.contains("至少需要 2 帧"), "{too_few}");
     assert!(!state.merge_busy, "校验失败不该起任务");
     // 上一轮留下的取消旗（哪怕已经立着）不能传给新任务：共用一根旗时新任务
     // `store(false)` 会复活旧 job，反过来旧旗也会立刻取消新 job。
@@ -2941,7 +2941,7 @@ fn pano_merge_stitches_and_guards_input() {
     let too_few = state
         .run_ui_command(&ctx, "pano.merge", &json!({"frames": [0], "confirm": true}))
         .unwrap_err();
-    assert!(too_few.contains("至少要 2 帧"), "{too_few}");
+    assert!(too_few.contains("至少需要 2 帧"), "{too_few}");
     let out_dir = dir.join("全景");
     let ok = state
         .run_ui_command(
@@ -3039,7 +3039,7 @@ fn stack_merge_writes_one_still_and_guards_input() {
             &json!({"frames": [0], "confirm": true}),
         )
         .unwrap_err();
-    assert!(too_few.contains("至少要 2 帧"), "{too_few}");
+    assert!(too_few.contains("至少需要 2 帧"), "{too_few}");
     let bad_mode = state
         .run_ui_command(
             &ctx,

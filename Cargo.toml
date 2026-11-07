@@ -37,6 +37,14 @@ eframe = { version = "0.37", default-features = false, features = [
     "default_fonts",
 ] }
 rfd = "0.17"
+# 原生窗口句柄（winit 0.30 用的就是 0.6，锁文件里已在，不新增下载）。
+raw-window-handle = "0.6"
+# 直接引用 winit：无边框窗口顶部那条 1px 投影线只有 winit 的
+# `set_undecorated_shadow` 能关。版本跟 eframe 0.37 锁定的 0.30.13 对齐，
+# 同一份 crate 才能拿到同一个窗口类型（不新增下载）。**不带默认特性**：
+# x11/wayland 那几个后端只会在 Linux 上拉一堆新包，Windows 一个都用不到；
+# 这里需要的 `rwh_06` 已由 glutin-winit 打开。
+winit = { version = "0.30.13", default-features = false }
 # 字形轮廓：水印的文字层自己栅格化，不引第二个字体栈（界面那套字体走 epaint，
 # 两边都读 assets/fonts 里的同一份字节）。版本钉在 egui 已带进锁文件的那个上。
 skrifa = "0.44"

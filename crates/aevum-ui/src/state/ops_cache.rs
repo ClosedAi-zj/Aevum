@@ -391,32 +391,107 @@ impl AppState {
         if self.headless {
             return;
         }
-        let Some(seq) = &self.seq else { return };
-        let missing: Vec<(usize, PathBuf)> = (lo..hi.min(seq.len()))
-            .filter(|i| !self.thumbs.contains_key(i) && !self.thumb_pending.contains(i))
-            .take(24)
-            .map(|i| (i, seq.frames[i].path.clone()))
-            .collect();
-        if missing.is_empty() {
+        if self.seq.is_none() {
             return;
         }
-        for (i, _) in &missing {
-            self.thumb_pending.insert(*i);
+        let hi = hi.min(self.frame_count());
+        let params = self.preview_params();
+
+        // 第一段：还没有解码源的帧，读盘解出 128px 预览，顺手按当前参数显影。
+        // 相机配置换了，源也作废——`decode_thumb_source` 的解码口径跟着 profile 走，
+        // 不重解就会拿旧 profile 的像素继续调色。
+        //
+        // Stage one: frames with no decoded source yet get the 128 px preview, developed
+        // with the current parameters on the way out. A camera-profile change invalidates
+        // the source too: `decode_thumb_source` decodes under the profile, so re-grading
+        // old pixels would keep the previous profile's colour.
+        let missing: Vec<(usize, PathBuf)> = {
+            let seq = self.seq.as_ref().expect("上面已判空");
+            (lo..hi)
+                .filter(|i| {
+                    !self.thumb_pending.contains(i)
+                        && self
+                            .thumb_src
+                            .get(i)
+                            .is_none_or(|s| s.profile != params.dcp_profile)
+                })
+                .take(24)
+                .map(|i| (i, seq.frames[i].path.clone()))
+                .collect()
+        };
+        if !missing.is_empty() {
+            for (i, _) in &missing {
+                self.thumb_pending.insert(*i);
+            }
+            let jobs: Vec<(usize, PathBuf, Ev)> = missing
+                .into_iter()
+                .map(|(i, path)| (i, path, self.ev_at(i)))
+                .collect();
+            let params = params.clone();
+            let tx = self.tx.clone();
+            let ctx2 = ctx.clone();
+            thread::spawn(move || {
+                let out: Vec<ThumbMsg> = thumb_pool().install(|| {
+                    jobs.into_par_iter()
+                        .filter_map(|(index, path, gain)| {
+                            let src = decode_thumb_src(&path, &params.dcp_profile)?;
+                            let (image, size) = grade_thumb(&src, &params, gain);
+                            Some(ThumbMsg {
+                                index,
+                                image,
+                                size,
+                                src: Arc::new(src),
+                                grade: params.clone(),
+                            })
+                        })
+                        .collect()
+                });
+                let _ = tx.send(Msg::Thumbs(out));
+                ctx2.request_repaint();
+            });
+        }
+
+        // 第二段：缩略图的参数与画布不一致就重调色。拖推子时先不跟——手指还在
+        // 动，缩略图每帧重排等于拿一批后台任务换一列噪点；松手那一帧自然补上。
+        // 只处理可见区间：滚到哪补到哪，离屏格子的旧色没人看得见，等它进屏再说。
+        //
+        // Stage two: re-grade thumbnails whose parameters differ from the canvas. Not
+        // while dragging -- the value is still moving, and re-grading every frame spends a
+        // batch of jobs for a column of noise; the frame after release catches up. Only the
+        // visible range is handled: offscreen cells are not looked at, so they wait.
+        if ctx.input(|i| i.pointer.any_down()) || self.playing {
+            return;
+        }
+        let stale: Vec<(usize, Arc<ThumbSrc>, Ev)> = (lo..hi)
+            .filter(|i| !self.thumb_pending.contains(i) && !self.thumb_regrade.contains(i))
+            .filter_map(|i| {
+                let thumb = self.thumbs.get(&i)?;
+                let src = self.thumb_src.get(&i)?;
+                (thumb.grade.as_ref() != Some(&params))
+                    .then(|| (i, Arc::clone(src), self.ev_at(i)))
+            })
+            .collect();
+        if stale.is_empty() {
+            return;
+        }
+        for (i, _, _) in &stale {
+            self.thumb_regrade.insert(*i);
         }
         let tx = self.tx.clone();
         let ctx2 = ctx.clone();
         thread::spawn(move || {
             let out: Vec<ThumbMsg> = thumb_pool().install(|| {
-                missing
+                stale
                     .into_par_iter()
-                    .filter_map(|(index, path)| {
-                        let img = metrics::thumbnail(&path, THUMB_SIDE).ok()?;
-                        let size = [img.width(), img.height()];
-                        let image = ColorImage::from_rgba_unmultiplied(
-                            [size[0] as usize, size[1] as usize],
-                            img.as_raw(),
-                        );
-                        Some(ThumbMsg { index, image, size })
+                    .map(|(index, src, gain)| {
+                        let (image, size) = grade_thumb(&src, &params, gain);
+                        ThumbMsg {
+                            index,
+                            image,
+                            size,
+                            src,
+                            grade: params.clone(),
+                        }
                     })
                     .collect()
             });
@@ -481,4 +556,54 @@ impl AppState {
     pub fn thumb(&self, i: usize) -> Option<&Thumb> {
         self.thumbs.get(&i)
     }
+}
+
+/// 解出胶片条用的 128px 显影源（sRGB 编码 f32 [0,1]），与画布同一条解码口径。
+///
+/// 不再像 1.9.7 那样读机身内嵌 JPEG：那张图是相机按 As Shot 出片、自带相机色调曲线，
+/// 同一帧比画布解出的 RAW 亮近一档（128px 均值 78.9 对 62.0，用户 2026-11-07 的
+/// 「小图与大图曝光不同」）。见 [`aevum_core::metrics::decode_thumb_source`]。
+///
+/// Decode the 128 px filmstrip source (sRGB-encoded f32 in [0,1]) through the canvas's
+/// decoding convention. It no longer reads the camera-embedded JPEG, which is the camera's
+/// As Shot rendering with its own tone curve and measured nearly a stop brighter than the
+/// canvas RAW decode (78.9 vs 62.0 mean over 128 px -- the user's 2026-11-07 "small and
+/// large preview differ in exposure"). See
+/// [`aevum_core::metrics::decode_thumb_source`].
+fn decode_thumb_src(path: &std::path::Path, profile: &str) -> Option<ThumbSrc> {
+    let (rgb, w, h) = metrics::decode_thumb_source(path, profile, THUMB_SIDE).ok()?;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    Some(ThumbSrc {
+        rgb,
+        w,
+        h,
+        profile: profile.to_owned(),
+    })
+}
+
+/// 按主画布同一份参数把缩略源显影成贴图。走草图链：128px 上看不出草图省掉的
+/// 空间项，换来的是拖完一根推子后整条胶片条能在一帧内翻新。
+///
+/// Develop the thumbnail source with the same parameters as the canvas. The sketch chain
+/// is used: the spatial terms it skips are invisible at 128 px, and the whole filmstrip
+/// refreshes within a frame after a slider is released.
+fn grade_thumb(src: &ThumbSrc, params: &GradeParams, gain: Ev) -> (ColorImage, [u32; 2]) {
+    let mut rgb = src.rgb.clone();
+    aevum_core::render_sketch(&mut rgb, src.w, src.h, params, gain);
+    let pixels: Vec<egui::Color32> = rgb
+        .par_chunks_exact(3)
+        .map(|c| {
+            egui::Color32::from_rgb(
+                (c[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (c[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (c[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+            )
+        })
+        .collect();
+    (
+        ColorImage::new([src.w, src.h], pixels),
+        [src.w as u32, src.h as u32],
+    )
 }

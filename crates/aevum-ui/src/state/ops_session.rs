@@ -342,7 +342,12 @@ impl AppState {
             Some(list) => list.iter().filter_map(|k| legacy_group_key(k)).collect(),
             None => default_collapsed(),
         };
-        self.panel_solo = s.panel_solo.unwrap_or(true);
+        // `None` = 老设置文件里没有这一项 → 多开（默认）。单开是 ACR 的选项，
+        // 已存盘的明确选择照样尊重。
+        //
+        // `None` = the setting predates this field -> multi-open (the default). Single-open
+        // is an ACR-style option; an explicit saved choice is still honoured.
+        self.panel_solo = s.panel_solo.unwrap_or(false);
         self.win_pos = s.win_pos.unwrap_or_default();
         // 上次检查更新的时刻：`None`（老设置文件没有这一项）等于「从没查过」，
         // 于是首启会静默查一次，正是想要的行为。
@@ -463,7 +468,7 @@ impl AppState {
             tool: Tool::Hand,
             dock_tab: DockTab::Adjust,
             collapsed: default_collapsed(),
-            panel_solo: true,
+            panel_solo: false,
             hdr_preview: false,
             preset_order: default_preset_order(),
             drag_section: None,
@@ -474,6 +479,7 @@ impl AppState {
             notices: Vec::new(),
             sidecar_hint: None,
             measuring: None,
+            cancel_measure: Arc::new(AtomicBool::new(false)),
             params: GradeParams::default(),
             preset: "原始".to_owned(),
             auto_note: None,
@@ -509,10 +515,14 @@ impl AppState {
             bypassed: BTreeSet::new(),
             thumbs: HashMap::new(),
             thumb_pending: HashSet::new(),
+            thumb_src: HashMap::new(),
+            thumb_regrade: HashSet::new(),
             proxies: HashMap::new(),
             proxy_pending: HashSet::new(),
             drag_epoch: 0,
             film_filter_stars: 0,
+            film_filter_flag: 0,
+            film_filter_label: 0,
             plugin_input_scope: 0,
             scroll_to_selected: false,
             ratings: HashMap::new(),
@@ -889,7 +899,11 @@ impl AppState {
         self.analysis = None;
         self.corr.clear();
         self.corr_rgb.clear();
-        self.def_means.clear();
+        // 与 `metrics` 同长：测光分块回包按序号切片写入，长度不对就拼错位。
+        //
+        // Same length as `metrics`: metering chunks are spliced in by index, and a
+        // mismatched length would write into the wrong slots.
+        self.def_means = vec![None; n];
         self.selected = 0;
         self.texture = None;
         self.texture_orig = None;
@@ -986,7 +1000,30 @@ impl AppState {
         let tx = self.tx.clone();
         let ctx2 = ctx.clone();
         let cache_root = root.clone();
+        // 换序列先停掉上一趟测光：千帧的旧活不能和新的一起抢核。
+        //
+        // Stop the previous metering pass first: a thousand old frames must not compete
+        // with the new sequence for cores.
+        self.cancel_measure.store(true, Ordering::SeqCst);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.cancel_measure = Arc::clone(&cancel);
+        // 画面不等测光：首帧参数已经就位，预览现在就能解；先把画面放出来，测光
+        // 在后面一块一块补。此前 `preview_dirty` 只在整条测光跑完时置位，千帧序列
+        // 就变成「载入预览…」一直挂着（用户 2026-11-07 报告）。
+        //
+        // The picture does not wait for metering: the first frame's parameters are in place,
+        // so the preview can decode right now. Show it first; metering catches up chunk by
+        // chunk. Previously `preview_dirty` was only set once the whole pass finished, which
+        // left "loading preview…" on screen for a thousand-frame sequence (user report,
+        // 2026-11-07).
+        self.preview_dirty = true;
         thread::spawn(move || {
+            // 第一包只做元数据：EXIF 是块寻址的，千帧也就几百毫秒，不该陪整条测光
+            // 一起堵在后面——镜头匹配与直方图下那行参数只等它。
+            //
+            // The first package is metadata only: EXIF reads are block-addressed, a few
+            // hundred milliseconds even for a thousand frames, and lens matching plus the
+            // capture line under the histogram only wait for this.
             let exif = aevum_core::exif::read_many(&paths);
             // 竖拍帧的显示尺寸是旋转之后的：EXIF 方向 5~8 交换长短边。
             // `metrics::decode` 对 RAW 同样会转正，所以这条交换三条分支都要吃，
@@ -1035,18 +1072,45 @@ impl AppState {
                 },
                 Some(p) => (image::image_dimensions(p).ok().map(rotated), None),
             };
-            let (metrics, def_means, issues) =
-                aevum_core::measures::measure_sequence(&cache_root, &paths, 512);
             let _ = tx.send(Msg::Loaded(Box::new(Loaded {
                 token,
-                metrics,
-                def_means,
-                issues,
                 resolution,
                 source_note,
                 exif,
             })));
             ctx2.request_repaint();
+
+            // 测光按块回包：每块落一条 `Msg::Measured`，状态栏进度与去闪曲线一路
+            // 跟着长。块大小取 1/16 且落在 8..=192：千帧序列约 16 次回包，几十帧
+            // 的短序列一块就完。
+            //
+            // Metering replies chunk by chunk: each chunk lands one `Msg::Measured`, so the
+            // status-line progress and the deflicker curve grow along the way. Chunk size is
+            // 1/16 of the sequence clamped to 8..=192: about 16 replies for a thousand frames,
+            // and a few dozen frames finish in a single chunk.
+            let n = paths.len();
+            let chunk = n.div_ceil(16).clamp(8, 192).max(1);
+            let mut lo = 0;
+            while lo < n {
+                if cancel.load(Ordering::Relaxed) {
+                    return;
+                }
+                let hi = (lo + chunk).min(n);
+                let (metrics, def_means, issues) = measure_pool().install(|| {
+                    aevum_core::measures::measure_sequence(&cache_root, &paths[lo..hi], 512)
+                });
+                let done = hi == n;
+                let _ = tx.send(Msg::Measured(Box::new(Measured {
+                    token,
+                    lo,
+                    metrics,
+                    def_means,
+                    issues,
+                    done,
+                })));
+                lo = hi;
+                ctx2.request_repaint();
+            }
         });
         // 状态栏留在「正在测量 N 帧…」：这时候测光才刚起跑，先把帧数写在前面
         // 等于告诉用户已经读完了。真正的汇总由 `Msg::Loaded` 落账时替换。
@@ -1063,6 +1127,8 @@ impl AppState {
         self.save_project();
         self.unload_jobs();
         self.reload_token += 1;
+        // 关图时把还在跑的测光停掉：千帧的旧活不该继续吃核。
+        self.cancel_measure.store(true, Ordering::SeqCst);
         self.align_report = None;
         self.align_msg = None;
         self.align_ref = 0;
@@ -1183,6 +1249,8 @@ impl AppState {
         self.preview_inflight = false;
         self.thumbs.clear();
         self.thumb_pending.clear();
+        self.thumb_src.clear();
+        self.thumb_regrade.clear();
         // 播放代理与缩略图同属「这一份序列的衍生物」，换序列一并作废；
         // 拖动世代号也归零，免得上一次拖动的 epoch 漏进新序列的历史合并。
         //
@@ -1336,6 +1404,25 @@ impl AppState {
         self.ratings.values().filter(|v| **v > 0).count()
     }
 
+    /// 胶片条这一帧是否显示：星级 / 旗标 / 色标三条判据同时成立才画。
+    /// 只决定「画不画」，不动真实帧序——播放、导出与缩略图预热仍按真帧号走。
+    ///
+    /// Whether the filmstrip draws this frame: all three criteria (stars, flag, colour
+    /// label) must hold. It only decides visibility and never reorders the sequence --
+    /// playback, export and thumbnail warm-up keep the real frame index.
+    pub fn film_visible(&self, i: usize) -> bool {
+        (self.film_filter_stars == 0 || self.rating_at(i) >= self.film_filter_stars)
+            && (self.film_filter_flag == 0 || self.flag_at(i) == self.film_filter_flag)
+            && (self.film_filter_label == 0 || self.label_at(i) == self.film_filter_label)
+    }
+
+    /// 通过三层筛选的帧数，给头行「已筛选 n / m 帧」用。
+    ///
+    /// Frames surviving all three filters, for the header's "n / m shown" readout.
+    pub fn film_visible_count(&self) -> usize {
+        (0..self.frame_count()).filter(|i| self.film_visible(*i)).count()
+    }
+
     pub fn set_frame(&mut self, i: usize) {
         let n = self.frame_count();
         if n == 0 {
@@ -1472,31 +1559,77 @@ impl AppState {
                         continue;
                     }
                     let Loaded {
-                        metrics,
-                        def_means,
-                        issues,
                         resolution,
                         source_note,
                         exif,
                         ..
                     } = *loaded;
-                    self.metrics = metrics;
-                    self.def_means = def_means;
-                    self.issues = issues;
                     self.resolution = resolution;
                     self.source_note = source_note;
                     self.exif = exif;
                     // 首帧 EXIF 到手就能匹配镜头配置文件：命中折进参数，
                     // 预览标脏，没命中留一行说明。
                     self.match_lens_profile();
-                    self.measuring = None;
+                    // 空序列不会再有测光块，别把「正在测量 0 帧…」挂在状态栏上。
+                    if self.frame_count() == 0 {
+                        self.measuring = None;
+                    }
+                }
+                Msg::Measured(chunk) => {
+                    if chunk.token != self.reload_token {
+                        continue;
+                    }
+                    let Measured {
+                        lo,
+                        metrics,
+                        def_means,
+                        issues,
+                        done,
+                        ..
+                    } = *chunk;
+                    let hi = lo + metrics.len();
+                    if hi > self.metrics.len()
+                        || hi > self.def_means.len()
+                        || metrics.len() != def_means.len()
+                    {
+                        // 长度对不上说明这一包属于另一份帧表（换过序列又换回来）：
+                        // 宁可不落账，也不把数拼错位。
+                        //
+                        // A length mismatch means this package belongs to another frame
+                        // table (switched away and back): skip it rather than splice numbers
+                        // into the wrong slots.
+                        continue;
+                    }
+                    self.metrics[lo..hi].copy_from_slice(&metrics);
+                    self.def_means[lo..hi].copy_from_slice(&def_means);
+                    self.issues
+                        .extend(issues.into_iter().map(|(i, e)| (lo + i, e)));
+                    // 去闪曲线跟着已测的部分走：千帧序列不用等最后一块才看见曲线。
+                    // `recompute_deflicker` 会把预览标脏；但选中的那一帧还没测到时
+                    // 没必要重渲染，先把旗子收回，避免每块都白解一帧整幅画面。
+                    //
+                    // The deflicker curve follows what has been measured so far, so a
+                    // thousand-frame sequence shows it before the last chunk.
+                    // `recompute_deflicker` marks the preview dirty; if the selected frame is
+                    // not in this chunk there is nothing new to show, so put the flag back and
+                    // avoid decoding a full frame per chunk for nothing.
+                    let selected_measured = (lo..hi).contains(&self.selected);
+                    let was_dirty = self.preview_dirty;
                     self.recompute_deflicker();
-                    self.preview_dirty = true;
-                    let valid = self.metrics.iter().filter(|m| m.is_some()).count();
-                    self.status = crate::i18n::tr_fmt(
-                        "{} 帧 · 可读 {} · 缺帧 {}",
-                        &[&self.frame_count(), &valid, &self.issues.len()],
-                    );
+                    self.preview_dirty = was_dirty || selected_measured || done;
+                    if done {
+                        self.measuring = None;
+                        let valid = self.metrics.iter().filter(|m| m.is_some()).count();
+                        self.status = crate::i18n::tr_fmt(
+                            "{} 帧 · 可读 {} · 缺帧 {}",
+                            &[&self.frame_count(), &valid, &self.issues.len()],
+                        );
+                    } else {
+                        self.status = crate::i18n::tr_fmt(
+                            "正在测量 {} 帧… 已测 {}",
+                            &[&self.frame_count(), &hi],
+                        );
+                    }
                 }
                 Msg::Preview(p) => {
                     self.preview_inflight = false;
@@ -1577,6 +1710,8 @@ impl AppState {
                 Msg::Thumbs(items) => {
                     for t in items {
                         self.thumb_pending.remove(&t.index);
+                        self.thumb_regrade.remove(&t.index);
+                        self.thumb_src.insert(t.index, t.src);
                         let tex = ctx.load_texture(
                             format!("thumb.{}", t.index),
                             t.image,
@@ -1587,6 +1722,7 @@ impl AppState {
                             Thumb {
                                 texture: tex,
                                 size: t.size,
+                                grade: Some(t.grade),
                             },
                         );
                     }
@@ -1610,6 +1746,7 @@ impl AppState {
                             Thumb {
                                 texture: tex,
                                 size: t.size,
+                                grade: None,
                             },
                         );
                     }
@@ -1627,6 +1764,7 @@ impl AppState {
                             Thumb {
                                 texture: tex,
                                 size: t.size,
+                                grade: None,
                             },
                         );
                     }

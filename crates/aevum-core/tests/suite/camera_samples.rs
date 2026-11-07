@@ -706,3 +706,64 @@ fn every_camera_sample_matches_the_registered_verdict() {
         }
     }
 }
+
+// ---------------------------------------------------------------- 胶片条与画布同源
+
+/// 胶片条的显影源必须与画布走同一条解码路：128px 与 1600px 的亮度只允许差一点
+/// 采样噪声，不能再出现「机身内嵌 JPEG 比 RAW 亮近一档」那种整档偏差。
+///
+/// # 这条判据钉的是哪一次报障
+///
+/// 2026-11-07 用户报「小图与大图曝光不同」，问「哪个与实图不一样」。定位结果是胶片条
+/// 那一侧：它抓的是机身按 As Shot 出的 8 位 JPEG（同一帧 128px 均值 78.9），画布解
+/// RAW（62.0）。机身 JPEG 是「相机认为的样子」，不是这条显影链的输入。
+///
+/// # 两头都要钉
+///
+/// * 新源必须贴着画布（差值 < 4 个码值）：两边口径再分叉就红；
+/// * 内嵌 JPEG 必须仍然明显更亮（> 10 个码值）：这一半证明「它确实是另一套色调」——
+///   哪天有人把 `thumbnail()` 悄悄换成 RAW 解码，这条判据的前提就没了，也该有人
+///   回来看一眼而不是让它绿着。
+///
+/// The filmstrip source must take the canvas's decoding route: 128 px and 1600 px may
+/// differ by sampling noise only, never by the near-stop gap of the camera's embedded
+/// JPEG (78.9 vs 62.0 mean, the user's 2026-11-07 report). Both ends are pinned: the new
+/// source must stay close to the canvas, and the embedded JPEG must stay clearly brighter,
+/// which is what proves the two are genuinely different tone renderings.
+#[test]
+fn filmstrip_source_shares_the_canvas_tone() {
+    let path = sample_dir().join("PANA1631.RW2");
+    if !path.is_file() {
+        eprintln!("缺样张 {}，跳过", path.display());
+        return;
+    }
+    let mean_f32 = |rgb: &[f32]| {
+        rgb.iter().map(|v| *v as f64).sum::<f64>() / rgb.len() as f64 * 255.0
+    };
+    let (thumb, w, h) = metrics::decode_thumb_source(&path, "", 128)
+        .unwrap_or_else(|e| panic!("胶片条源解码失败：{e}"));
+    assert!(w > 0 && h > 0, "胶片条源尺寸为 0");
+    let (canvas, cw, ch) = metrics::decode_profile_preview(&path, "", 1600)
+        .unwrap_or_else(|e| panic!("画布源解码失败：{e}"));
+    assert!(cw > 0 && ch > 0, "画布源尺寸为 0");
+
+    let (dt, dc) = (mean_f32(&thumb), mean_f32(&canvas));
+    assert!(
+        (dt - dc).abs() < 4.0,
+        "胶片条源均值 {dt:.2} 与画布源 {dc:.2} 差得太多——两边的解码口径又分叉了\
+         （目标：同一套色彩链，只差半尺寸去马赛克的采样）"
+    );
+
+    let embedded = metrics::thumbnail(&path, 128)
+        .unwrap_or_else(|e| panic!("内嵌预览解码失败：{e}"));
+    let de = embedded
+        .pixels()
+        .map(|p| (p[0] as f64 + p[1] as f64 + p[2] as f64) / 3.0)
+        .sum::<f64>()
+        / (embedded.width() as f64 * embedded.height() as f64);
+    assert!(
+        de - dc > 10.0,
+        "内嵌 JPEG 均值 {de:.2} 与画布 {dc:.2} 几乎一样——`thumbnail()` 的取图口径变了，\
+         这条判据「胶片条不能走内嵌 JPEG」的前提没了，请重新确认后再改"
+    );
+}

@@ -73,11 +73,13 @@ dependencies = [
  "eframe",
  "egui",
  "image",
+ "raw-window-handle",
  "rayon",
  "rfd",
  "serde",
  "serde_json",
  "skrifa",
+ "winit",
 ]
 
 [[package]]

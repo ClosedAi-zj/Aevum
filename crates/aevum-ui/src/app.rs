@@ -64,6 +64,11 @@ pub enum Startup {
         plugin: Option<String>,
         /// 截图前打开插件市场窗口，拍标题栏与两栏清单。
         market: bool,
+        /// 截图前给调色盘摆一套演示值：点曲线 + 三枚分级轮 + 几条 HSL，
+        /// 拍 ACR 风调色盘（曲线剪影 / 品字色轮 / 属性页渐变轨）。
+        color: bool,
+        /// 截图前打开「外观与布局」窗口（验浅色主题下的控件配色）。
+        look: bool,
     },
 }
 
@@ -97,6 +102,12 @@ struct Shot {
     plugin: Option<String>,
     /// 截图前打开插件市场窗口。
     market: bool,
+    /// 截图前给调色盘摆演示值（点曲线 / 分级轮 / HSL）。
+    color: bool,
+    /// 截图前打开「外观与布局」窗口（验浅色主题的控件配色）。
+    look: bool,
+    /// 打开外观窗口的时刻：等窗口画稳再截。
+    look_at: Option<Instant>,
     /// 打开市场的时刻：等窗口画稳再截。
     market_at: Option<Instant>,
     /// 插件只应用一次：应用完就没必要再跑一遍。
@@ -234,6 +245,8 @@ impl AevumApp {
                 libstack,
                 plugin,
                 market,
+                color,
+                look,
             } => {
                 // 一次性截图不参与回环控制：避免短暂占用序列的 control.json，
                 // 和已经在跑的 GUI 抢同一份文件。
@@ -273,6 +286,9 @@ impl AevumApp {
                         libstack,
                         plugin,
                         market,
+                        color,
+                        look,
+                        look_at: None,
                         market_at: None,
                         plugin_done: false,
                         plugin_at: None,
@@ -335,6 +351,31 @@ impl AevumApp {
         }
         if self.shot.as_ref().is_some_and(|s| s.edit) {
             self.state.apply_demo_edit();
+        }
+        if self.shot.as_ref().is_some_and(|s| s.color) {
+            // 调色盘取证：点曲线 mode + 一条 S 曲线，三枚轮各摆一份浓度，
+            // HSL 拨三条——截图里渐变轨上的复位点、盘上的把手都有实物可看。
+            self.state.curve_tab = 1;
+            self.state.params.curve_rgb = vec![
+                [0.0, 0.0],
+                [64.0, 48.0],
+                [128.0, 140.0],
+                [192.0, 212.0],
+                [255.0, 255.0],
+            ];
+            self.state.params.grade_mid_h = 35.0;
+            self.state.params.grade_mid_s = 30.0;
+            self.state.params.grade_mid_l = 8.0;
+            self.state.params.grade_sh_h = 220.0;
+            self.state.params.grade_sh_s = 22.0;
+            self.state.params.grade_sh_l = -6.0;
+            self.state.params.grade_hi_h = 45.0;
+            self.state.params.grade_hi_s = 18.0;
+            self.state.params.grade_hi_l = 10.0;
+            self.state.params.hsl_h[0] = -8.0;
+            self.state.params.hsl_s[1] = 18.0;
+            self.state.params.hsl_l[5] = -12.0;
+            self.state.preview_dirty = true;
         }
         if self.shot.as_ref().is_some_and(|s| s.end) {
             self.state.dock_scroll_end = true;
@@ -625,6 +666,20 @@ impl AevumApp {
                 return;
             }
         }
+        // 外观与布局那张：同一套等法——窗口首帧要摆位、控件要落定。
+        if shot.look {
+            self.state.look_open = true;
+            if shot
+                .look_at
+                .is_none_or(|t| t.elapsed() < Duration::from_millis(400))
+            {
+                if shot.look_at.is_none() {
+                    shot.look_at = Some(Instant::now());
+                }
+                ctx.request_repaint_after(Duration::from_millis(80));
+                return;
+            }
+        }
         shot.requested = true;
         let out = shot.out.clone();
         let ctx2 = ctx.clone();
@@ -639,9 +694,137 @@ impl AevumApp {
     }
 }
 
+/// 把「外观 → 圆角」落到系统窗口边界上（Windows）。
+///
+/// egui 只画得到窗口**内部**的像素：外框的直角是系统画的，所以调外观里的圆角时
+/// 窗口四角纹丝不动（用户 2026-11-07 的截图）。这里用 `SetWindowRgn` 把窗口本体
+/// 裁成同半径的圆角矩形，半径取 `theme::radius_window()`（与浮动窗口同源）。
+/// 最大化时恢复整块矩形——系统对最大化的窗口也不做圆角。
+///
+/// The appearance radius only reached pixels *inside* the window; the outer corners are
+/// drawn by the OS, so dragging the radius left the window frame square (user screenshot,
+/// 2026-11-07). `SetWindowRgn` clips the native window to a rounded rect of
+/// `theme::radius_window()` -- the same radius as floating windows. A maximised window
+/// keeps the full rectangle, as the system does.
+#[cfg(windows)]
+fn apply_window_corners(frame: &eframe::Frame, ppp: f32) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use std::sync::Mutex;
+
+    #[link(name = "gdi32")]
+    unsafe extern "system" {
+        fn CreateRoundRectRgn(
+            left: i32,
+            top: i32,
+            right: i32,
+            bottom: i32,
+            ellipse_w: i32,
+            ellipse_h: i32,
+        ) -> *mut core::ffi::c_void;
+    }
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn SetWindowRgn(hwnd: *mut core::ffi::c_void, rgn: *mut core::ffi::c_void, redraw: i32)
+        -> i32;
+    }
+
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: *mut core::ffi::c_void,
+            attr: u32,
+            pv: *const core::ffi::c_void,
+            cb: u32,
+        ) -> i32;
+    }
+
+    let Some(win) = frame.winit_window() else {
+        return;
+    };
+    // 顶部白线的根因在这里：egui-winit 给无边框窗口默认打开 DWM 投影
+    // （`with_undecorated_shadow(true)`），而 winit 自己的文档就写着「打开投影会在
+    // 窗口顶部留下一条 1px 的线」。`DWMWA_BORDER_COLOR` 关不掉它——那是投影的
+    // 上边缘，不是边框颜色。关掉投影即可，只在第一帧发一次（之后每帧重设窗口标志
+    // 会触发 `SetWindowPos`，白闪一下）。
+    //
+    // Root cause of the white top line: egui-winit turns the DWM drop shadow on for
+    // borderless windows (`with_undecorated_shadow(true)`), and winit's own docs say
+    // enabling the shadow "causes a thin 1px line to appear on the top of the window".
+    // `DWMWA_BORDER_COLOR` cannot hide it -- that is the shadow's top edge, not a border
+    // colour. Turning the shadow off fixes it; fire once, as every later call re-applies
+    // the window flags and triggers a `SetWindowPos` flicker.
+    {
+        use std::sync::Once;
+        use winit::platform::windows::WindowExtWindows;
+        static SHADOW_OFF: Once = Once::new();
+        SHADOW_OFF.call_once(|| win.set_undecorated_shadow(false));
+    }
+    let (w, h) = (win.inner_size().width, win.inner_size().height);
+    if w == 0 || h == 0 {
+        return;
+    }
+    let maximized = win.is_maximized() || win.fullscreen().is_some();
+    let r = if maximized {
+        0
+    } else {
+        (theme::radius_window() * ppp).round().max(0.0) as i32
+    };
+    // 缓存上一次的形状：`SetWindowRgn` 每帧重设会强制重排窗口，只在尺寸/圆角
+    // 变化那一帧调用。最大化也在键里——恢复时要换回圆角。
+    //
+    // Cache the last shape: resetting the region every frame forces a window relayout,
+    // so only call on the frame where size or radius changed. Maximise is part of the
+    // key too -- restoring has to bring the rounding back.
+    static LAST: Mutex<Option<(u32, u32, i32)>> = Mutex::new(None);
+    let key = (w, h, r);
+    {
+        let mut last = LAST.lock().unwrap_or_else(|p| p.into_inner());
+        if *last == Some(key) {
+            return;
+        }
+        *last = Some(key);
+    }
+
+    let Ok(handle) = win.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(hwnd) = handle.as_raw() else {
+        return;
+    };
+    unsafe {
+        // Win11 还会给无边框窗口补一圈 1px 的系统描边（浅色主题下是亮的）。投影
+        // 已经在上面的 `set_undecorated_shadow(false)` 里关掉，这里再让描边透明，
+        // 窗口轮廓只由 `SetWindowRgn` 的圆角裁剪和界面自身的镶边负责。
+        //
+        // Windows 11 also paints a 1 px system border around borderless windows (light
+        // in the light theme). The shadow is already gone from the
+        // `set_undecorated_shadow(false)` above; making the border transparent here
+        // leaves the silhouette to the `SetWindowRgn` rounding and the app's own chrome.
+        const DWMWA_BORDER_COLOR: u32 = 34;
+        const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
+        let none = DWMWA_COLOR_NONE;
+        let _ = DwmSetWindowAttribute(
+            hwnd.hwnd.get() as *mut core::ffi::c_void,
+            DWMWA_BORDER_COLOR,
+            &none as *const u32 as *const core::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+        );
+        let rgn = if r > 0 {
+            // 区域右/下边界是开区间：宽高各 +1 才盖满客户区。
+            // The region's right/bottom edges are exclusive: +1 covers the client area.
+            CreateRoundRectRgn(0, 0, w as i32 + 1, h as i32 + 1, r * 2, r * 2)
+        } else {
+            std::ptr::null_mut()
+        };
+        SetWindowRgn(hwnd.hwnd.get() as *mut core::ffi::c_void, rgn, 1);
+    }
+}
+
 impl eframe::App for AevumApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        #[cfg(windows)]
+        apply_window_corners(frame, ctx.pixels_per_point());
         self.boot(&ctx);
         self.state.poll(&ctx);
         self.state.tick(&ctx);
