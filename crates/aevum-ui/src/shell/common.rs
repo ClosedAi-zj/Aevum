@@ -433,11 +433,17 @@ pub(super) fn group_header(
         if rresp.hovered() {
             p.rect_filled(rr, radius_control(), elev_hover());
         }
+        // ACR 极简口径（用户钦定 v3 稿）：复位图标 hover 才显形——组头默认
+        // 只读作「箭头 + 名字 + 眼睛」，改动点与复位都是次级信息。
         icons::paint(
             p,
             rr.shrink(4.0),
             Glyph::Reset,
-            if rresp.hovered() { text() } else { muted() },
+            if rresp.hovered() {
+                text()
+            } else {
+                Color32::TRANSPARENT
+            },
         );
         if rresp.clicked() {
             reset_group(state, key);

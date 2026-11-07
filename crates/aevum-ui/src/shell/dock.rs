@@ -265,6 +265,42 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
     let bins = 128usize;
     let max = h.iter().flatten().copied().max().unwrap_or(0).max(1) as f32;
     let bar_w = rect.width() / bins as f32;
+    // RGB 读数胶囊（ACR 同位：直方图顶部居中）：三通道均值 ×255。
+    // 加权均值：Σ(档位×计数)/Σ计数 → 0..255 的真实平均亮度
+    let means: Vec<f32> = h
+        .iter()
+        .map(|c| {
+            let total: u64 = c.iter().map(|v| u64::from(*v)).sum::<u64>().max(1);
+            let weighted: u64 = c
+                .iter()
+                .enumerate()
+                .map(|(i, v)| u64::from(*v) * i as u64)
+                .sum();
+            weighted as f32 / total as f32
+        })
+        .collect();
+    let cap_text = format!(
+        "R {}  G {}  B {}",
+        means[0].round(),
+        means[1].round(),
+        means[2].round()
+    );
+    {
+        let cap_g = ui.painter().layout_no_wrap(
+            cap_text,
+            egui::FontId::monospace(10.0),
+            Color32::from_rgb(210, 210, 210),
+        );
+        let cs = cap_g.size() + Vec2::new(16.0, 4.0);
+        let cap_r = Rect::from_center_size(Pos2::new(rect.center().x, rect.top() + 8.0), cs);
+        ui.painter()
+            .rect_filled(cap_r, cs.y * 0.5, Color32::from_black_alpha(120));
+        ui.painter().galley(
+            cap_r.left_top() + Vec2::new(8.0, 2.0),
+            cap_g,
+            Color32::from_rgb(210, 210, 210),
+        );
+    }
 
     // 4 个 Mesh 形状（3 通道 + 亮度包络）走缓存（E6）：键 = (hist_version, rect)。
     // 新预览落地时 hist_version 才变；静止悬停帧直接 clone —— Shape::Mesh 持

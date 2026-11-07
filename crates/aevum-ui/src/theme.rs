@@ -272,20 +272,23 @@ struct Ladder {
     dir: f32,
 }
 
+// 2026-11-07 整表上移到 ACR 暖深灰（用户钦定「颜色跟 PS 一样」，复刻稿
+// aevum-acr-replica-v3）：面板系 +3 档（panel 14→17 ≈ #363638 的 L 值），
+// 文字三档同步微调保住 WCAG（dim 59→62：bg 变亮后 4.5:1 的压线判据）。
 const DARK: Ladder = Ladder {
-    surround: 7.2,
-    canvas: 11.0,
-    panel: 14.0,
-    dock: 15.5,
-    chrome: 16.5,
-    bg: 18.2,
-    header: 12.5,
-    elev: 23.0,
-    elev_h: 29.0,
-    field: 12.0,
-    field_hover: 14.6,
-    thumb: 5.5,
-    text: 87.5,
+    surround: 10.0,
+    canvas: 14.0,
+    panel: 17.0,
+    dock: 18.5,
+    chrome: 19.5,
+    bg: 21.0,
+    header: 15.5,
+    elev: 26.0,
+    elev_h: 32.0,
+    field: 15.0,
+    field_hover: 17.6,
+    thumb: 8.5,
+    text: 89.0,
     // 三级字的节奏向 LightCraft Charcoal 看齐（88.6/73.7/55.7）：MUTED 抬到 71.5，
     // 与 DIM 拉开 12.5 档（原 7.5 档贴在一起，标签与辅助字读不出层级）。
     // DIM 不能降——它对 bg(18.2) 的 4.5:1 判据本来就压线（约 4.6），
@@ -296,8 +299,8 @@ const DARK: Ladder = Ladder {
     // read as one level). DIM cannot go lower -- its 4.5:1 ratio against bg(18.2)
     // already sits at the edge (~4.6), so raising MUTED is the only move that
     // satisfies both WCAG and the hierarchy gap.
-    muted: 71.5,
-    dim: 59.0,
+    muted: 73.0,
+    dim: 62.0,
     dir: 1.0,
 };
 
@@ -1788,18 +1791,18 @@ mod token_tests {
     fn dark_default_matches_legacy_tokens() {
         let p = Palette::of(&Appearance::default());
         let cases: [(Color32, u32, &str); 12] = [
-            (p.bg, 0x2E2E30, "BG"),
-            (p.chrome, 0x29292B, "CHROME"),
-            (p.panel, 0x232325, "PANEL"),
-            (p.dock, 0x262628, "DOCK"),
-            (p.header, 0x1F1F21, "HEADER"),
-            (p.surround, 0x121213, "SURROUND"),
-            (p.canvas, 0x1A1A1C, "CANVAS"),
-            (p.elev, 0x3A3A3C, "ELEV"),
-            (p.elev_hover, 0x48484A, "ELEV_HOVER"),
-            (p.field, 0x1E1E20, "FIELD"),
-            (p.text, 0xDEDEDE, "TEXT"),
-            // MUTED 从设计稿 --muted #A8A8AA（66.5）故意抬到 71.5（0xB6B6B8）：
+            (p.bg, 0x363638, "BG"),
+            (p.chrome, 0x323234, "CHROME"),
+            (p.panel, 0x2B2B2D, "PANEL"),
+            (p.dock, 0x2F2F31, "DOCK"),
+            (p.header, 0x28282A, "HEADER"),
+            (p.surround, 0x191919, "SURROUND"),
+            (p.canvas, 0x242426, "CANVAS"),
+            (p.elev, 0x424244, "ELEV"),
+            (p.elev_hover, 0x525254, "ELEV_HOVER"),
+            (p.field, 0x262628, "FIELD"),
+            (p.text, 0xE3E3E3, "TEXT"),
+            // MUTED 从设计稿 --muted #A8A8AA（66.5）故意抬到 71.5（0xBABABC）：
             // 稿里 MUTED→DIM 只差 7.5 档，标签与辅助字读不出层级——这正是
             // 「看起来平」的根源之一。向 LightCraft Charcoal 的三级节奏
             // （88.6/73.7/55.7）看齐后是 87.5/71.5/59。DIM 不动（4.5:1 压线）。
@@ -1808,7 +1811,7 @@ mod token_tests {
             // (0xB6B6B8): the draft's 7.5-step squeeze to DIM read as one level, a
             // root cause of the "flat" look. Aligned to LightCraft Charcoal's rhythm
             // (88.6/73.7/55.7) as 87.5/71.5/59. DIM stays put (its 4.5:1 is at the edge).
-            (p.muted, 0xB6B6B8, "MUTED"),
+            (p.muted, 0xBABABC, "MUTED"),
         ];
         for (got, want, name) in cases {
             for i in 0..3 {
