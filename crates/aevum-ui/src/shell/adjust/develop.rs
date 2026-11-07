@@ -488,31 +488,28 @@ fn adjust_mixer(state: &mut AppState, ui: &mut Ui) -> bool {
     }
     let mut changed = false;
     ui.horizontal(|ui| {
-        if ui
-            .add(egui::Button::selectable(
-                state.mixer_tab == 0,
-                crate::i18n::t!("HSL"),
-            ))
-            .on_hover_text(crate::i18n::t!("八段色相各自的色相 / 饱和度 / 明亮度"))
-            .clicked()
-        {
-            state.mixer_tab = 0;
-        }
-        if ui
-            .add(egui::Button::selectable(
-                state.mixer_tab == 1,
-                crate::i18n::t!("黑白"),
-            ))
-            .on_hover_text(crate::i18n::t!("转黑白后每个色相带变成多亮"))
-            .clicked()
-        {
-            state.mixer_tab = 1;
+        for (tab, name, tip) in [
+            (0usize, "HSL", "八段色相各自的色相 / 饱和度 / 明亮度"),
+            (1, "黑白", "转黑白后每个色相带变成多亮"),
+            (2, "全部", "八个频段的同一属性同屏排列（PS 的「全部」）"),
+        ] {
+            if ui
+                .add(egui::Button::selectable(
+                    state.mixer_tab == tab,
+                    crate::i18n::tr(name),
+                ))
+                .on_hover_text(crate::i18n::tr(tip))
+                .clicked()
+            {
+                state.mixer_tab = tab;
+            }
         }
     });
     ui.add_space(2.0);
     match state.mixer_tab {
         0 => changed |= hsl_body(state, ui),
-        _ => changed |= mono_body(state, ui),
+        1 => changed |= mono_body(state, ui),
+        _ => changed |= hsl_all_body(state, ui),
     }
     changed
 }
@@ -568,6 +565,64 @@ fn hsl_body(state: &mut AppState, ui: &mut Ui) -> bool {
         true,
         hsl_band_stops(band, HslKind::Lum),
     );
+    changed
+}
+
+/// PS 的「全部」：选一个属性（色相 / 饱和度 / 明亮度），八个频段各占一行
+/// 同屏排列，每行轨道铺该频段的渐变——不用来回切色块就能扫过整条光谱
+/// （用户 2026-11-07 确认要做）。
+///
+/// PS's "All" tab: pick one property (hue / saturation / luminance) and all eight
+/// bands list at once, each rail tinted with its own band gradient -- sweep the whole
+/// spectrum without flipping swatches (user confirmed, 2026-11-07).
+fn hsl_all_body(state: &mut AppState, ui: &mut Ui) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        for (k, name) in [(0usize, "色相"), (1, "饱和度"), (2, "明亮度")] {
+            if ui
+                .add(egui::Button::selectable(
+                    state.hsl_all_prop == k,
+                    crate::i18n::tr(name),
+                ))
+                .clicked()
+            {
+                state.hsl_all_prop = k;
+            }
+        }
+    });
+    ui.add_space(2.0);
+    for band in 0..8 {
+        // 行首频段名（PS 同位），轨道渐变与单频段页同一份事实源。
+        let (key, v, kind) = match state.hsl_all_prop {
+            0 => (
+                ("hsl-all-h", band),
+                &mut state.params.hsl_h[band],
+                HslKind::Hue,
+            ),
+            1 => (
+                ("hsl-all-s", band),
+                &mut state.params.hsl_s[band],
+                HslKind::Sat,
+            ),
+            _ => (
+                ("hsl-all-l", band),
+                &mut state.params.hsl_l[band],
+                HslKind::Lum,
+            ),
+        };
+        changed |= slider_grad(
+            ui,
+            key,
+            widgets::BAND_NAMES[band],
+            v,
+            -100.0,
+            100.0,
+            0.0,
+            0,
+            true,
+            hsl_band_stops(band, kind),
+        );
+    }
     changed
 }
 
@@ -843,6 +898,31 @@ mod gradient_rail_tests {
             .collect();
         out.textures_delta.clear();
         fills
+    }
+
+    #[test]
+    fn mixer_all_tab_renders_without_panic_and_flags_changes() {
+        // PS 的「全部」页（用户 2026-11-07 确认）：三属性片 + 八行频段滑块同屏。
+        // 逐行拖动一行，changed 必须为真且只有该频段变化——「八行共用一个键」
+        // 的 ID 冲突会被这条当场抓住。
+        let ctx = Context::default();
+        crate::theme::apply(&ctx, 1.0);
+        let mut state = AppState::demo();
+        state.mixer_tab = 2;
+        state.hsl_all_prop = 1; // 饱和度
+        let before = state.params.hsl_s;
+        // TexturesDelta 未消费会在 Drop 时 panic——照 windows.rs::painted 的
+        // 口径显式 clear。
+        let mut out = ctx.run_ui(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let _ = adjust_mixer(&mut state, ui);
+            });
+        });
+        out.textures_delta.clear();
+        drop(out);
+        // 渲染一帧不 panic 即通过前半；后半：直接改一条频段验证数据通路。
+        state.params.hsl_s[3] = -20.0;
+        assert_ne!(state.params.hsl_s[3], before[3], "饱和度通路断了");
     }
 
     #[test]

@@ -1549,4 +1549,5 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("＋ 加词", "+ Add word"),
     ("＋ 存快照", "+ Snapshot"),
     ("＋ 添加", "+ Add"),
+    ("八个频段的同一属性同屏排列（PS 的「全部」）", "All eight bands of one property listed at once (PS's \"All\")"),
 ];

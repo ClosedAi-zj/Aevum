@@ -688,6 +688,7 @@ impl AppState {
             curve_chan: 0,
             curve_tab: 0,
             mixer_tab: 0,
+            hsl_all_prop: 0,
             curve_grab: None,
             levels_grab: None,
             retime_grab: None,

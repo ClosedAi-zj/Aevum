@@ -2146,6 +2146,10 @@ pub struct AppState {
     ///
     /// Mode chips of the Color Mixer section (mirrors ACR): 0=HSL, 1=B&W.
     pub mixer_tab: usize,
+    /// 「全部」页当前属性：0=色相 1=饱和度 2=明亮度。
+    ///
+    /// The "All" tab property: 0 = hue, 1 = saturation, 2 = luminance.
+    pub hsl_all_prop: usize,
     /// 曲线 / 色阶正在拖动的控制点或把手序号。
     ///
     /// Index of the control point or handle being dragged on the curve / levels.
