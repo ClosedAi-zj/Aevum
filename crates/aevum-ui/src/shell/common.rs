@@ -683,7 +683,6 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // `.slider-row` padding/gap plus `.s-label` and `.s-value` widths. The readout drops
     // from 52 to 44 -- monospace fits a signed three-digit value -- and the 8 px goes to
     // the rail, which is visibly longer in the design.
-    let label_w = label_col_w(ui);
     const VALUE_W: f32 = 44.0;
     // 复位点 5px：设计图 `.slider-row .s-reset{width:5px;height:5px}`。原 14px 是
     // 一个带内边距的点击靶，比设计稿宽 9px，轨道因此短了一截——实测程序轨道
@@ -707,11 +706,11 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // 数值框：右端留出复位点位置，读数右对齐 —— 一列读数的小数点才会落在同一条竖线上。
     // 右侧排布照设计图 DOM 顺序：轨道(flex:1) → 读数(44) → 复位点(5px)，
     // 复位点**在读数之后**，不占轨道宽度。
+    // 两行式（ACR 灵魂，用户拍板）：行1 = 标签+数值框；行2 = 全宽轨道。
+    let l1y = rect.top() + 10.0;
+    let track_y = rect.bottom() - 12.0;
     let field = Rect::from_min_size(
-        Pos2::new(
-            rect.right() - ROW_PAD - RESET_W - VALUE_W,
-            rect.center().y - 10.0,
-        ),
+        Pos2::new(rect.right() - ROW_PAD - VALUE_W, l1y - 10.0),
         Vec2::new(VALUE_W, 20.0),
     );
     // 复位点排在读数右侧：偏离默认值才现形。旧版把它夹在轨道与读数之间，即使参数
@@ -723,12 +722,11 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // the track and the readout, so it reserved 14 px even on untouched parameters and
     // the rail came out visibly shorter than the design.
     let reset = Rect::from_center_size(
-        Pos2::new(rect.right() - ROW_PAD - RESET_W * 0.5, rect.center().y),
+        Pos2::new(rect.right() - ROW_PAD - RESET_W * 0.5, track_y),
         Vec2::splat(RESET_W),
     );
-    let rail_left = rect.left() + ROW_PAD + label_w + 4.0;
-    let rail_right = (field.left() - 8.0).max(rail_left + 1.0);
-    let track_y = rect.center().y;
+    let rail_left = rect.left() + ROW_PAD;
+    let rail_right = (rect.right() - ROW_PAD - 8.0).max(rail_left + 1.0);
     {
         let p = ui.painter();
         if hot_row {
@@ -773,7 +771,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         // 档位存在语言表里（`Catalog::ellipsis_chars`），加语言时由那张表自己声明，
         // 这里不再出现具体语言的名字。
         p.text(
-            Pos2::new(rect.left() + ROW_PAD, rect.center().y),
+            Pos2::new(rect.left() + ROW_PAD, l1y),
             Align2::LEFT_CENTER,
             theme::ellipsis(label, crate::i18n::current().ellipsis_chars()),
             font(SIZE_LABEL),
