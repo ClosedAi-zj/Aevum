@@ -49,6 +49,16 @@ pub enum Glyph {
     ///
     /// The healing brush: a blemish to repair plus a "regenerate" cross.
     Heal,
+    /// 工作流面板：三道长短不一的横杠 + 两枚节点，读作"有先后顺序的几步"。
+    ///
+    /// The workflow panel: three bars of different lengths plus two nodes, reading as
+    /// "several steps in order".
+    Steps,
+    /// 插件：一个插头。插件窗装的是外部扩展，用插头比用拼图块更少歧义。
+    ///
+    /// Plugins: a plug. The plugins window hosts external extensions, and a plug is less
+    /// ambiguous than a puzzle piece.
+    Plug,
 }
 
 fn pt(r: Rect, x: f32, y: f32) -> Pos2 {
@@ -191,6 +201,32 @@ pub fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32) {
             );
             seg(painter, pt(r, 0.3, 0.42), pt(r, 0.58, 0.42), st);
             seg(painter, pt(r, 0.44, 0.28), pt(r, 0.44, 0.56), st);
+        }
+        Glyph::Steps => {
+            // 三条横杠（长→中→短）+ 两个空心节点：一眼是"步骤列表"，不会与「历史」
+            // 的圆弧箭头或「曲线」的波形混。
+            //
+            // Three bars (long, medium, short) plus two hollow nodes: reads as a step list at a
+            // glance and does not collide with History's arc arrow or Curve's waveform.
+            painter.line_segment([pt(r, 0.12, 0.28), pt(r, 0.62, 0.28)], st);
+            painter.line_segment([pt(r, 0.12, 0.5), pt(r, 0.78, 0.5)], st);
+            painter.line_segment([pt(r, 0.12, 0.72), pt(r, 0.52, 0.72)], st);
+            painter.circle_stroke(pt(r, 0.80, 0.28), s * 0.10, st);
+            painter.circle_stroke(pt(r, 0.74, 0.72), s * 0.10, st);
+        }
+        Glyph::Plug => {
+            // 插头：两根插脚 + 一段外壳 + 一根引线。
+            //
+            // A plug: two prongs, a body and a lead.
+            painter.line_segment([pt(r, 0.36, 0.12), pt(r, 0.36, 0.34)], st);
+            painter.line_segment([pt(r, 0.64, 0.12), pt(r, 0.64, 0.34)], st);
+            painter.rect_stroke(
+                Rect::from_min_max(pt(r, 0.22, 0.34), pt(r, 0.78, 0.66)),
+                2.0,
+                st,
+                StrokeKind::Inside,
+            );
+            painter.line_segment([pt(r, 0.5, 0.66), pt(r, 0.5, 0.88)], st);
         }
         Glyph::Heal => {
             // 一颗斑（圆 + 中心点）加一枚右上角的十字：修复画笔的语义是「把这块

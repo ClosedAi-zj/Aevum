@@ -1698,6 +1698,15 @@ pub struct AppState {
     /// new failure.
     error_seen: Option<String>,
     pub show_dock: bool,
+    /// 左侧工作流面板是否展开。
+    ///
+    /// 与 `show_left`（预设与快照浮窗）是两个独立开关：前者是"现在做到哪一步、下一步是什么"，
+    /// 后者是"我存过的预设"。合并成一个会让用户为了看步骤而打开预设列表。
+    ///
+    /// Whether the left workflow panel is expanded. Independent of `show_left` (the presets
+    /// window): one answers "which step am I on, what is next", the other "what have I saved".
+    /// Merging them would force opening a preset list just to see the steps.
+    pub show_flow: bool,
     /// 右侧调整面板宽度（可拖动）。默认 `theme::DOCK_W`，夹在 300–560 之间。
     ///
     /// 面板宽度原本是编译期常量，用户一旦在窄窗里被挤窄就再也调不回来

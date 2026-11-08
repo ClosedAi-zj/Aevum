@@ -572,6 +572,7 @@ impl AppState {
             history: History::new(),
             hist: None,
             show_dock: true,
+            show_flow: false,
             error_modal: None,
             palette_open: false,
             palette_query: String::new(),

@@ -806,13 +806,36 @@ pub const MENU_AREA_W: f32 = 240.0;
 pub const OPTIONS_H: f32 = 40.0;
 pub const TAB_H: f32 = 28.0;
 pub const STATUS_H: f32 = 24.0;
-/// 工具轨宽 48：设计图 `.toolrail{width:48px}`，内放 32×32 的 `.tool-btn`，
-/// 左右各留 8px。原 52 是照旧界面稿的 `--rail-w`，比设计图宽 4px。
+/// 工具轨宽 56：设计图 `.toolrail{width:48px}` 是只有 7 枚工具时的宽度。
 ///
-/// Tool rail 48 px wide, per the design mockup (`.toolrail{width:48px}`), holding 32×32
-/// tool buttons with 8 px on each side. The old 52 followed the legacy mockup's
-/// `--rail-w` and sat 4 px wider than the design.
-pub const TOOL_W: f32 = 48.0;
+/// 这一版轨上要放 15 项（工作流 / 预设 / 蒙版 / 历史 / 图库 / AI / 插件 / 6 枚工具 /
+/// 外观），48px 里放 36 的按钮左右只剩 6px，图标会顶到轨边；56 给到左右各 10px。
+/// 依据是 Photoshop 的单列工具栏：图标条比"刚好装下按钮"略宽，留出点击余量与分组缝。
+///
+/// Tool rail 56 px. The mockup's `.toolrail{width:48px}` was sized for seven tools; this
+/// version carries fifteen (workflow / presets / masks / history / library / AI / plugins /
+/// six tools / appearance), and a 36 px button inside 48 leaves only 6 px a side, so icons
+/// crowd the edge. 56 gives 10 px each side, following Photoshop's single-column tool strip:
+/// slightly wider than the buttons so clicks and group gaps have room.
+pub const TOOL_W: f32 = 56.0;
+/// 轨上按钮的边长：32 在三项组里偏小、在 15 项里又挤，36 是"够点、又不至于让轨变粗"的档。
+///
+/// Rail button edge: 32 reads small in a three-item group and cramped across fifteen
+/// entries; 36 is the size that stays clickable without thickening the rail.
+pub const RAIL_BTN: f32 = 36.0;
+/// 空间不够时的最小按钮边长（= 上一版的大小），只压不改布局。
+///
+/// The smallest button edge when space runs out (the previous version's size); it shrinks
+/// only, never rearranges.
+pub const RAIL_MIN_BTN: f32 = 32.0;
+/// 同组内两项之间的缝。
+///
+/// Gap between two entries of the same group.
+pub const RAIL_GAP: f32 = 4.0;
+/// 组与组之间（含分隔线）的间距。
+///
+/// Spacing between groups, drawn with a divider in the middle.
+pub const RAIL_GROUP_GAP: f32 = 10.0;
 /// 右侧调整面板宽 372：界面稿 `--dock-w`。推子行「标签 76 · 轨道弹性 · 读数 52」
 /// 的排布就是照这个宽度定的，窄一档标签就开始抢轨道的地盘。
 ///

@@ -16,13 +16,13 @@ use super::menu::fit_view;
 use super::menu::menu_item;
 use super::menu::menu_style;
 use crate::icons::{self, Glyph};
-use crate::state::{AppState, Aspect, Module, Tool};
+use crate::state::{AppState, Aspect, DockTab, Module, Tool};
 use crate::theme::{self, *};
 use aevum_core::export::OutputMode;
 use aevum_core::grade::{self, GradeParams};
 use egui::{
-    Align, Align2, Color32, Context, Layout, Pos2, Rect, Response, RichText, Sense, Stroke,
-    StrokeKind, Ui, Vec2,
+    Align, Align2, Color32, Context, Layout, Pos2, Rect, Response, RichText, Sense, Stroke, Ui,
+    Vec2,
 };
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
@@ -655,6 +655,301 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
 
 // ---------------------------------------------------------------- 工具轨
 
+/// 轨上的一项。
+///
+/// 条目表与排布分开：表是静态数据（`rail_items`），排布是纯函数（`rail_layout`），
+/// 绘制只消费排布结果。这样 1280×800 的溢出可以被单测直接量，不必真的开一个窗口。
+///
+/// One entry on the rail. The table is static data (`rail_items`), the arrangement is a pure
+/// function (`rail_layout`), and drawing only consumes the result -- so the 1280x800 overflow
+/// can be measured in a unit test without opening a window.
+#[derive(Clone, Copy)]
+pub(super) struct RailItem {
+    /// 图标。
+    ///
+    /// Glyph drawn for this entry.
+    pub glyph: Glyph,
+    /// 悬停说明（i18n 键）。工具项留空，走 `Tool::hint()`。
+    ///
+    /// Hover text (i18n key). Tool entries leave it empty and use `Tool::hint()`.
+    pub hint: &'static str,
+    /// 分组：0 工作流、1 面板、2 工具、3 轨底。
+    ///
+    /// Group: 0 workflow, 1 panels, 2 tools, 3 rail foot.
+    pub group: u8,
+    pub kind: RailKind,
+}
+
+/// 一项被点击时该做什么。
+///
+/// What a click on the entry does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RailKind {
+    Workflow,
+    Presets,
+    Mask,
+    History,
+    Library,
+    Ai,
+    Plugins,
+    Tool(Tool),
+    Look,
+}
+
+/// 轨的条目表。
+///
+/// 顺序即视觉顺序；`group` 决定分隔线位置。轨底的「外观与布局」也在这张表里（`group: 3`），
+/// 由 `rail_layout` 单独摆到最底部——它不属于流式排布，但**必须**在同一张表里，否则
+/// 「被折叠的项都能从『更多』够到」这条判据会漏掉它。
+///
+/// The rail's entry table. Order is visual order and `group` decides where dividers go. The
+/// bottom "Appearance & layout" lives here too (`group: 3`) and `rail_layout` pins it to the
+/// bottom: it is not part of the flow, but it **must** be in the table or the "every folded
+/// entry stays reachable" fence would miss it.
+pub(super) fn rail_items() -> &'static [RailItem] {
+    const fn it(glyph: Glyph, hint: &'static str, group: u8, kind: RailKind) -> RailItem {
+        RailItem {
+            glyph,
+            hint,
+            group,
+            kind,
+        }
+    }
+    static RAIL: [RailItem; 14] = [
+        it(Glyph::Steps, "工作流面板", 0, RailKind::Workflow),
+        it(Glyph::Sliders, "预设与快照 (Ctrl+K)", 1, RailKind::Presets),
+        it(Glyph::Eye, "蒙版", 1, RailKind::Mask),
+        it(Glyph::History, "历史", 1, RailKind::History),
+        it(Glyph::Folder, "图库", 1, RailKind::Library),
+        it(Glyph::Star, "AI 助手", 1, RailKind::Ai),
+        it(Glyph::Plug, "插件", 1, RailKind::Plugins),
+        it(Glyph::Hand, "", 2, RailKind::Tool(Tool::Hand)),
+        it(Glyph::Zoom, "", 2, RailKind::Tool(Tool::Zoom)),
+        it(Glyph::Heal, "", 2, RailKind::Tool(Tool::Heal)),
+        it(Glyph::Crop, "", 2, RailKind::Tool(Tool::Crop)),
+        it(Glyph::Compare, "", 2, RailKind::Tool(Tool::Compare)),
+        it(Glyph::Grid, "", 2, RailKind::Tool(Tool::Grid)),
+        it(Glyph::Gear, "外观与布局", 3, RailKind::Look),
+    ];
+    &RAIL
+}
+
+/// 一次排布的结果。
+///
+/// The result of one arrangement pass.
+pub(super) struct RailSlots {
+    /// 流里的可见项：`(条目下标, 矩形)`；「更多」按钮不在其中。
+    ///
+    /// Visible flow slots as `(entry index, rect)`; the "more" button is not among them.
+    pub shown: Vec<(usize, Rect)>,
+    /// 「更多」按钮的位置（有折叠时才有）。
+    ///
+    /// Position of the "more" button, present only when the panel group is folded.
+    pub more: Option<Rect>,
+    /// 被折叠进「更多」的条目下标。
+    ///
+    /// Indices of the entries folded into "more".
+    pub folded: Vec<usize>,
+    /// 组分隔线的 y。
+    ///
+    /// Y coordinates of the group separators.
+    pub separators: Vec<f32>,
+    /// 轨底那一枚（外观与布局）的位置。
+    ///
+    /// Position of the foot entry (appearance and layout).
+    pub foot: Option<(usize, Rect)>,
+    /// 本次用的按钮边长。
+    ///
+    /// Button edge length used for this pass.
+    pub btn: f32,
+}
+
+/// 流里的一项：要么是某个条目，要么是「更多」。
+///
+/// One flow slot: either a table entry or the "more" button.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flow {
+    Item(usize),
+    More(u8),
+}
+
+/// 排一次轨。纯函数，不碰 `Ui`、不读状态。
+///
+/// 规则按顺序尝试，取第一个放得下的方案：
+/// 1. 全展开、按钮 36；
+/// 2. 把面板组（group 1）折成一颗「更多」，按钮保持 36；
+/// 3. 按钮压到 32（上一版的大小）——只缩不重排；
+/// 4. 再压 2px 兜底。
+///
+/// **工具组（group 2）永不折叠**：它是每天要点的东西，折进去等于把主要动作藏起来。
+/// 面板组可以折——它们本来就是"一类入口"，折成一颗「更多」仍然一次点开。
+///
+/// Lays the rail out. A pure function: no `Ui`, no state. It tries, in order: everything at
+/// 36 px; fold the panel group into one "more" entry at 36 px; shrink to 32 px (the previous
+/// size) without rearranging; then 2 px tighter as a last resort. The tool group is **never**
+/// folded -- those are the things clicked every day, and folding them hides the main actions.
+/// The panel group may fold: it is a family of entries anyway, and one "more" click still
+/// reaches them.
+pub(super) fn rail_layout(rect: Rect, items: &[RailItem]) -> RailSlots {
+    const PAD: f32 = 8.0;
+    const FOOT_BTN_MIN: f32 = 32.0;
+
+    // 轨底那一枚占掉底部一条，流可用高要减掉它。
+    //
+    // The foot entry owns a strip at the bottom, so the flow loses that height.
+    let avail = (rect.height() - PAD * 2.0 - FOOT_BTN_MIN - RAIL_GAP).max(0.0);
+
+    let flow_of = |fold: bool| -> Vec<Flow> {
+        let mut out = Vec::new();
+        let mut folded_group: Option<u8> = None;
+        for (i, it) in items.iter().enumerate() {
+            if it.group == 3 {
+                continue;
+            }
+            if fold && it.group == 1 {
+                if folded_group != Some(1) {
+                    out.push(Flow::More(1));
+                    folded_group = Some(1);
+                }
+                continue;
+            }
+            out.push(Flow::Item(i));
+        }
+        out
+    };
+
+    let height_of = |flow: &[Flow], btn: f32| -> f32 {
+        let mut h = 0.0;
+        let mut prev_group: Option<u8> = None;
+        for f in flow {
+            let g = match f {
+                Flow::Item(i) => items[*i].group,
+                Flow::More(g) => *g,
+            };
+            if let Some(pg) = prev_group {
+                h += if pg == g { RAIL_GAP } else { RAIL_GROUP_GAP };
+            }
+            h += btn;
+            prev_group = Some(g);
+        }
+        h
+    };
+
+    let tries = [
+        (RAIL_BTN, false),
+        (RAIL_BTN, true),
+        (RAIL_MIN_BTN, true),
+        (RAIL_MIN_BTN - 2.0, true),
+    ];
+    let mut picked = (RAIL_MIN_BTN - 2.0, true);
+    let mut flow = flow_of(true);
+    for (btn, fold) in tries {
+        let f = flow_of(fold);
+        if height_of(&f, btn) <= avail {
+            picked = (btn, fold);
+            flow = f;
+            break;
+        }
+        if (btn, fold) == tries[tries.len() - 1] {
+            flow = f;
+        }
+    }
+    let (btn, _) = picked;
+
+    let mut shown = Vec::new();
+    let mut separators = Vec::new();
+    let mut more = None;
+    let mut folded = Vec::new();
+    let mut y = rect.top() + PAD;
+    let mut prev_group: Option<u8> = None;
+    for f in &flow {
+        let g = match f {
+            Flow::Item(i) => items[*i].group,
+            Flow::More(g) => *g,
+        };
+        if let Some(pg) = prev_group {
+            if pg != g {
+                separators.push(y + RAIL_GROUP_GAP * 0.5);
+                y += RAIL_GROUP_GAP;
+            } else {
+                y += RAIL_GAP;
+            }
+        }
+        let slot = Rect::from_min_size(Pos2::new(rect.center().x - btn * 0.5, y), Vec2::splat(btn));
+        match f {
+            Flow::Item(i) => shown.push((*i, slot)),
+            Flow::More(_) => {
+                more = Some(slot);
+                folded = items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, it)| it.group == 1)
+                    .map(|(i, _)| i)
+                    .collect();
+            }
+        }
+        y += btn;
+        prev_group = Some(g);
+    }
+
+    // 轨底：外观与布局。它不在流里，因此永远可见——这是"工具永不折叠"之外的第二条
+    // 硬约束：设置入口不能因为窗口变矮就消失。
+    //
+    // The foot: Appearance & layout. Not in the flow, so it is always visible -- the second
+    // hard rule besides "tools never fold": the settings entry must not vanish when the window
+    // gets short.
+    let foot_idx = items.iter().position(|it| it.group == 3);
+    let foot = foot_idx.map(|i| {
+        let r = Rect::from_min_size(
+            Pos2::new(
+                rect.center().x - RAIL_MIN_BTN * 0.5,
+                rect.bottom() - PAD - RAIL_MIN_BTN,
+            ),
+            Vec2::splat(RAIL_MIN_BTN),
+        );
+        (i, r)
+    });
+
+    RailSlots {
+        shown,
+        more,
+        folded,
+        separators,
+        foot,
+        btn,
+    }
+}
+
+/// 一项的悬停说明：工具项走 `Tool::hint()`，其余读表。
+///
+/// An entry's tooltip: tools come from `Tool::hint()`, everything else from the table.
+fn item_hint(it: &RailItem) -> &'static str {
+    match it.kind {
+        RailKind::Tool(t) => t.hint(),
+        _ => it.hint,
+    }
+}
+
+/// 这一项是否处于"开"的状态。
+///
+/// Whether the entry reads as "on".
+fn item_active(state: &AppState, kind: RailKind) -> bool {
+    match kind {
+        RailKind::Workflow => state.show_flow,
+        RailKind::Presets => state.show_left,
+        RailKind::Tool(t) => state.tool == t,
+        // 面板类与设置类是"按一下就过去"的动作，没有常驻开态。
+        //
+        // Panel and settings entries are one-shot actions, with no persistent on-state.
+        RailKind::Mask
+        | RailKind::History
+        | RailKind::Library
+        | RailKind::Ai
+        | RailKind::Plugins
+        | RailKind::Look => false,
+    }
+}
+
 pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
     let full = ui.max_rect();
     let p = ui.painter().clone();
@@ -662,100 +957,34 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
         [full.right_top(), full.right_bottom()],
         Stroke::new(1.0, border()),
     );
-    // 轨首一枚「预设与快照」开关：2026-11-04 起预设/快照/副本住浮窗
-    // （docs/界面布局-ACR化-2026-11-04.md §2），ACR 也把它们挂在工具条上而不是
-    // 编辑面板里。它是面板开关不是工具，所以与下面的动手类工具用一道缝隔开。
-    //
-    // The rail starts with a Presets & Snapshots toggle: since 2026-11-04 presets /
-    // snapshots / copies live in a floating window (plan §2), and ACR likewise keeps
-    // them on the tool strip rather than in the edit panel. It is a panel toggle, not a
-    // tool, so a divider separates it from the hands-on tools below.
-    // 工具按钮 32×32：设计图 `.tool-btn{width:32px;height:32px}`，48px 轨宽里
-    // 左右各留 8px。原 36 配的是 52px 轨；轨收窄后按钮必须同步，否则会顶到轨边、
-    // 左右不再对称。
-    //
-    // Tool buttons are 32×32 per the design's `.tool-btn`, centred in the 48 px rail
-    // with 8 px on each side. The old 36 paired with the 52 px rail; once the rail
-    // narrowed the button has to follow or it touches the edge.
-    let size = 32.0;
-    let x = full.left() + (TOOL_W - size) * 0.5;
-    let mut y = full.top() + 8.0;
-    {
-        let rect = Rect::from_min_size(Pos2::new(x, y), Vec2::splat(size));
-        let resp = ui.interact(rect, ui.make_persistent_id("rail-presets"), Sense::click());
-        if state.show_left {
-            p.rect_filled(rect, radius_control(), selected());
-            p.rect_stroke(
-                rect,
-                radius_control(),
-                Stroke::new(1.0, accent()),
-                StrokeKind::Inside,
-            );
-        } else if resp.hovered() {
-            p.rect_filled(rect, radius_control(), elev_hover());
-        }
-        icons::paint(
-            &p,
-            rect.shrink(8.0),
-            Glyph::Sliders,
-            if state.show_left {
-                on_selected()
-            } else if resp.hovered() {
-                text()
-            } else {
-                muted()
-            },
-        );
-        if resp.clicked() {
-            state.show_left = !state.show_left;
-            state.settings_dirty = true;
-        }
-        resp.on_hover_text(crate::i18n::t!("预设与快照 (Ctrl+K)"));
-        y += size + 4.0;
-    }
-    p.line_segment(
-        [
-            Pos2::new(full.left() + 14.0, y - 3.0),
-            Pos2::new(full.right() - 14.0, y - 3.0),
-        ],
-        Stroke::new(1.0, divider()),
-    );
-    y += 6.0;
-    for (i, t) in Tool::ALL.iter().enumerate() {
-        // 查看类（抓手/缩放）与动手类（裁剪/对比/网格）之间留一道缝。
-        if i == 2 {
-            p.line_segment(
-                [
-                    Pos2::new(full.left() + 14.0, y - 3.0),
-                    Pos2::new(full.right() - 14.0, y - 3.0),
-                ],
-                Stroke::new(1.0, divider()),
-            );
-            y += 6.0;
-        }
-        let rect = Rect::from_min_size(Pos2::new(x, y), Vec2::splat(size));
-        let resp = ui.interact(rect, ui.make_persistent_id(("tool", i)), Sense::click());
-        let active = state.tool == *t;
+
+    let items = rail_items();
+    let slots = rail_layout(full, items);
+    let mut click: Option<RailKind> = None;
+    let mut more_resp: Option<egui::Response> = None;
+
+    for (idx, rect) in &slots.shown {
+        let it = &items[*idx];
+        let resp = ui.interact(*rect, ui.make_persistent_id(("rail", *idx)), Sense::click());
+        let active = item_active(state, it.kind);
         if active {
-            p.rect_filled(rect, radius_control(), selected());
-            // 激活指示改左缘 2px 竖条（设计稿态）：整圈 accent 描边在 14 枚工具上
-            // 面积过大，竖条只占 2px 宽、把「哪个工具开着」指得同样清楚，也让
-            // accent 的面积留给焦点环与主行动。
+            p.rect_filled(*rect, radius_control(), selected());
+            // 左缘 2px 竖条：整圈 accent 描边在十几枚图标上面积过大，竖条把"哪个开着"
+            // 指得同样清楚，把 accent 的面积留给焦点环与主行动。
             //
-            // The active marker is a 2 px accent bar on the left edge (design spec):
-            // a full accent outline across 14 tools spends far more area; the bar is
-            // 2 px wide, points just as clearly at the active tool, and leaves accent
-            // for the focus ring and primary actions.
+            // A 2 px accent bar on the left edge: a full outline across a dozen icons spends
+            // far more area; the bar points just as clearly and leaves accent for the focus
+            // ring and primary actions.
             p.rect_filled(
                 Rect::from_min_max(
-                    Pos2::new(rect.left() + 1.0, rect.top() + 7.0),
-                    Pos2::new(rect.left() + 3.0, rect.bottom() - 7.0),
+                    Pos2::new(rect.left() + 1.0, rect.top() + 8.0),
+                    Pos2::new(rect.left() + 3.0, rect.bottom() - 8.0),
                 ),
                 1.0,
                 accent(),
             );
         } else if resp.hovered() {
-            p.rect_filled(rect, radius_control(), elev_hover());
+            p.rect_filled(*rect, radius_control(), elev_hover());
         }
         let color = if active {
             on_selected()
@@ -764,62 +993,135 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
         } else {
             muted()
         };
-        icons::paint(&p, rect.shrink(8.0), t.glyph(), color);
+        icons::paint(&p, rect.shrink(slots.btn * 0.28), it.glyph, color);
         if resp.clicked() {
-            state.set_tool(*t);
-            if *t == Tool::Compare {
+            click = Some(it.kind);
+        }
+        resp.on_hover_text(crate::i18n::tr(item_hint(it)));
+    }
+
+    // 「更多」：面板组折进来时才有。点开是一列带图标的菜单项，与轨上的图标同一套。
+    //
+    // "More": only when the panel group is folded. It opens a column of icon + label rows
+    // using the same glyphs as the rail.
+    if let Some(rect) = slots.more {
+        let resp = ui.interact(rect, ui.make_persistent_id("rail-more"), Sense::click());
+        if resp.hovered() {
+            p.rect_filled(rect, radius_control(), elev_hover());
+        }
+        icons::paint(
+            &p,
+            rect.shrink(slots.btn * 0.28),
+            Glyph::ChevronDown,
+            if resp.hovered() { text() } else { muted() },
+        );
+        more_resp = Some(resp.clone());
+        resp.on_hover_text(crate::i18n::tr("更多面板"));
+    }
+
+    if let (Some(resp), true) = (more_resp.as_ref(), !slots.folded.is_empty()) {
+        let folded = slots.folded.clone();
+        egui::Popup::menu(resp).width(TOOL_W * 2.6).show(|ui| {
+            for idx in &folded {
+                let it = &items[*idx];
+                let row = ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                    icons::paint(&p, r, it.glyph, muted());
+                    ui.label(crate::i18n::tr(item_hint(it)));
+                });
+                if row.response.interact(Sense::click()).clicked() {
+                    click = Some(it.kind);
+                    ui.close();
+                }
+            }
+        });
+    }
+
+    if let Some((idx, rect)) = slots.foot {
+        let it = &items[idx];
+        let resp = ui.interact(rect, ui.make_persistent_id("rail-foot"), Sense::click());
+        if resp.hovered() {
+            p.rect_filled(rect, radius_control(), elev_hover());
+        }
+        icons::paint(
+            &p,
+            rect.shrink(RAIL_MIN_BTN * 0.28),
+            it.glyph,
+            if resp.hovered() { text() } else { muted() },
+        );
+        if resp.clicked() {
+            click = Some(it.kind);
+        }
+        resp.on_hover_text(crate::i18n::tr(item_hint(it)));
+    }
+
+    for y in &slots.separators {
+        p.line_segment(
+            [
+                Pos2::new(full.left() + 14.0, *y),
+                Pos2::new(full.right() - 14.0, *y),
+            ],
+            Stroke::new(1.0, divider()),
+        );
+    }
+
+    if let Some(kind) = click {
+        activate_rail(state, kind);
+    }
+}
+
+/// 点一项之后做什么。
+///
+/// 全部接既有入口：模块切换、dock 页签、浮窗开关——不为轨新造旁路。
+///
+/// What a click does. Everything binds to existing entries (module switch, dock tab, window
+/// toggles); the rail gets no side channel of its own.
+fn activate_rail(state: &mut AppState, kind: RailKind) {
+    match kind {
+        RailKind::Workflow => {
+            state.show_flow = !state.show_flow;
+            state.settings_dirty = true;
+        }
+        RailKind::Presets => {
+            state.show_left = !state.show_left;
+            state.settings_dirty = true;
+        }
+        RailKind::Mask => {
+            // 蒙版住在显影页的调整面板里：跳过去、把那一组展开，有蒙版就选第一枚。
+            //
+            // Masks live in the Develop panel: jump there, open the group, and select the first
+            // mask when one exists.
+            state.module = Module::Develop;
+            state.dock_tab = DockTab::Adjust;
+            state.collapsed.remove("masks");
+            if state.mask_sel.is_none() && !state.params.masks.is_empty() {
+                state.mask_sel = Some(0);
+            }
+        }
+        RailKind::History => {
+            state.show_dock = true;
+            state.dock_tab = DockTab::History;
+        }
+        RailKind::Library => {
+            state.show_dock = true;
+            state.dock_tab = DockTab::Library;
+        }
+        RailKind::Ai => {
+            state.show_dock = true;
+            state.dock_tab = DockTab::Ai;
+        }
+        RailKind::Plugins => state.market_open = true,
+        RailKind::Look => state.look_open = true,
+        RailKind::Tool(t) => {
+            state.set_tool(t);
+            if t == Tool::Compare {
                 state.split = true;
             }
-            if *t == Tool::Grid {
+            if t == Tool::Grid {
                 state.grid = true;
             }
         }
-        resp.on_hover_text(crate::i18n::tr(t.hint()));
-        y += size + 4.0;
     }
-
-    // 轨底只留一枚「前后」：界面稿 .rail-foot 就这一个动作 —— 按住/切换看原图。
-    // 文件夹在「文件」菜单（Ctrl+O），导出在标题栏（导出…），帮助在「帮助」菜单；
-    // 三个入口在这里各开一份，轨就变成了第二排菜单栏。
-    let foot_hint = if state.split {
-        "前后对比：开（\\ 关闭）"
-    } else {
-        "前后对比：关（\\ 开启）"
-    };
-    let foot_rect =
-        Rect::from_min_size(Pos2::new(x, full.bottom() - 8.0 - size), Vec2::splat(size));
-    let resp = ui.interact(
-        foot_rect,
-        ui.make_persistent_id("rail-foot"),
-        Sense::click(),
-    );
-    if state.split {
-        p.rect_filled(foot_rect, radius_control(), selected());
-        p.rect_stroke(
-            foot_rect,
-            radius_control(),
-            Stroke::new(1.0, accent()),
-            StrokeKind::Inside,
-        );
-    } else if resp.hovered() {
-        p.rect_filled(foot_rect, radius_control(), elev());
-    }
-    icons::paint(
-        &p,
-        foot_rect.shrink(8.0),
-        Glyph::Compare,
-        if state.split {
-            on_selected()
-        } else if resp.hovered() {
-            text()
-        } else {
-            muted()
-        },
-    );
-    if resp.clicked() {
-        state.split = !state.split;
-    }
-    resp.on_hover_text(foot_hint);
 }
 
 // ---------------------------------------------------------------- 状态栏
@@ -1048,5 +1350,156 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
             0,
             accent(),
         );
+    }
+}
+
+#[cfg(test)]
+mod rail_tests {
+    use super::*;
+
+    /// 三档窗口下的轨高：36 菜单行 + 40 选项行 + 136 胶片条 + 24 状态栏之后剩下的。
+    ///
+    /// Rail heights at three window sizes: what is left after the 36 px menu row, 40 px
+    /// options bar, 136 px filmstrip and 24 px status bar.
+    const HEIGHTS: [f32; 3] = [764.0, 564.0, 404.0];
+
+    fn rect(h: f32) -> Rect {
+        Rect::from_min_size(Pos2::ZERO, Vec2::new(TOOL_W, h))
+    }
+
+    /// 严重叠：相切（边贴边）不算。
+    ///
+    /// Strict overlap: touching edges do not count.
+    fn overlap(a: Rect, b: Rect) -> bool {
+        a.min.x < b.max.x - 0.5
+            && b.min.x < a.max.x - 0.5
+            && a.min.y < b.max.y - 0.5
+            && b.min.y < a.max.y - 0.5
+    }
+
+    /// 三档窗口下：任何两个槽位都不重叠，且都在轨内。
+    ///
+    /// At all three sizes no two slots overlap and every slot stays inside the rail.
+    ///
+    /// 这条挡的是"功能加了、一半点不到"：14 项 × 40 + 组间在 1280×800 下会溢出，
+    /// 溢出时后面的图标会跑到轨外——开发机 1600×1000 永远够，所以必须在这里量。
+    ///
+    /// This blocks "added the features, half of them unreachable": fourteen entries at 40 px
+    /// plus group gaps overflow at 1280x800, and the overflow runs past the rail. A 1600x1000
+    /// dev machine always fits, so it has to be measured here.
+    #[test]
+    fn rail_slots_never_overlap_at_three_sizes() {
+        let items = rail_items();
+        for h in HEIGHTS {
+            let r = rect(h);
+            let slots = rail_layout(r, items);
+
+            let mut all: Vec<Rect> = slots.shown.iter().map(|(_, s)| *s).collect();
+            if let Some(m) = slots.more {
+                all.push(m);
+            }
+            if let Some((_, f)) = slots.foot {
+                all.push(f);
+            }
+            assert!(!all.is_empty(), "高 {h} 时轨上一个槽位都没有");
+
+            for (i, a) in all.iter().enumerate() {
+                assert!(
+                    a.top() >= r.top() - 0.5 && a.bottom() <= r.bottom() + 0.5,
+                    "高 {h}：槽位 {i}（{a:?}）跑出轨外 {r:?}"
+                );
+                for b in all.iter().skip(i + 1) {
+                    assert!(
+                        !overlap(*a, *b),
+                        "高 {h}：槽位 {a:?} 与 {b:?} 重叠——两个图标会叠在一起、有一个点不到"
+                    );
+                }
+            }
+        }
+    }
+
+    /// 折叠时，被折掉的项必须恰好是面板组全集；不折叠时不许留下「更多」。
+    ///
+    /// When folded, exactly the panel group is folded away; when not folded there must be no
+    /// "more" button left behind.
+    #[test]
+    fn rail_hidden_items_are_all_reachable_via_more() {
+        let items = rail_items();
+        let panel: Vec<usize> = items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| it.group == 1)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(panel.len(), 6, "面板组条目数变了，判据要跟着改");
+
+        for h in HEIGHTS {
+            let slots = rail_layout(rect(h), items);
+            match slots.more {
+                Some(_) => {
+                    assert_eq!(
+                        slots.folded, panel,
+                        "高 {h}：折叠集合不等于面板组——有项被折掉却够不到"
+                    );
+                    // 折掉的项不能在流里同时可见，否则等于没折还多占一颗。
+                    //
+                    // A folded entry must not also be visible in the flow.
+                    for (idx, _) in &slots.shown {
+                        assert!(!panel.contains(idx), "高 {h}：条目 {idx} 既被折叠又可见");
+                    }
+                }
+                None => assert!(
+                    slots.folded.is_empty(),
+                    "高 {h}：没有「更多」按钮却记了折叠项"
+                ),
+            }
+        }
+    }
+
+    /// 轨宽与按钮的关系：左右各留 10px，图标不顶到轨边。
+    ///
+    /// Rail width versus button: 10 px on each side, so icons never touch the rail edge.
+    #[test]
+    fn rail_button_keeps_ten_px_on_each_side() {
+        let side = (TOOL_W - RAIL_BTN) * 0.5;
+        assert!(
+            (side - 10.0).abs() < f32::EPSILON,
+            "轨宽 {TOOL_W} 配按钮 {RAIL_BTN} 时左右只剩 {side}px，图标会顶到轨边"
+        );
+        // 最紧的一档也要留出至少 8px，否则图标与分隔线撞在一起。
+        //
+        // Even the tightest tier keeps at least 8 px, or icons collide with the dividers.
+        let tight = (TOOL_W - RAIL_MIN_BTN) * 0.5;
+        assert!(tight >= 8.0, "最紧一档左右只有 {tight}px，太挤");
+    }
+
+    /// 每项都有图标与说明，图标不重复，说明可读。
+    ///
+    /// Every entry has a glyph and a tooltip; glyphs do not repeat and tooltips are non-empty.
+    #[test]
+    fn every_rail_item_has_a_distinct_glyph_and_tooltip() {
+        let items = rail_items();
+        let mut glyphs = Vec::new();
+        let mut hints = Vec::new();
+        for it in items {
+            assert!(
+                !glyphs.contains(&it.glyph),
+                "图标 {:?} 重复出现——两个不同功能会长得一样",
+                it.glyph
+            );
+            glyphs.push(it.glyph);
+
+            let hint = item_hint(it);
+            assert!(!hint.trim().is_empty(), "条目 {:?} 没有悬停说明", it.glyph);
+            assert!(
+                !hints.contains(&hint),
+                "说明「{hint}」重复——悬停时分不清是哪一项"
+            );
+            hints.push(hint);
+        }
+        // 工具组 6 项 + 面板组 6 项 + 工作流 1 + 外观 1。
+        //
+        // Six tools, six panel entries, one workflow, one appearance.
+        assert_eq!(items.len(), 14, "条目数变了，判据要跟着改");
     }
 }
