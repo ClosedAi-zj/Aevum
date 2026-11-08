@@ -165,6 +165,24 @@ fn run(state: &mut AppState, ctx: &Context, id: &str) -> bool {
         "view-film" => state.show_film = !state.show_film,
         "view-rulers" => state.rulers = !state.rulers,
         "file-export-frame" => state.export_current(ctx),
+        // 四个"缺稳定调用点"的动作，现在都接到公开入口上：
+        // 撤销/重做走命令总线 `run_ui_command`（菜单与页签用的是同一条），
+        // 全部复位走 `reset_params()`（显影面板那颗按钮调的就是它），
+        // 导入走 `open_photos_dialog`，导出走 `run_export`。
+        //
+        // The four actions that "had no stable call site" now bind to public entries:
+        // undo/redo go through the command bus `run_ui_command` (the same one the menu and
+        // tabs use), reset-all through `reset_params()` (what the Develop button calls),
+        // import through `open_photos_dialog`, export through `run_export`.
+        "edit-undo" => {
+            let _ = state.run_ui_command(ctx, "history.undo", &serde_json::json!({}));
+        }
+        "edit-redo" => {
+            let _ = state.run_ui_command(ctx, "history.redo", &serde_json::json!({}));
+        }
+        "edit-reset-all" => state.reset_params(),
+        "file-import" => super::dialogs::open_photos_dialog(state, ctx),
+        "file-export" => state.run_export(ctx),
         "win-look" => state.look_open = true,
         "win-plugins" => state.market_open = true,
         _ => return false,

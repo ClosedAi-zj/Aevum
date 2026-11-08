@@ -57,12 +57,26 @@ or the MCP tool set, so existing projects and presets keep working as-is.
   frames" on the left, cost width, and drowned "clear filters". It appears only when a filter
   is actually narrowing the strip.
 
+### Narrower default parameter panel (interface)
+
+- Default width 372 -> **300 px**. Photoshop's default panel column is about 250-260 px;
+  keeping the 76 px label column and 52 px readout box, 300 is the closest comfortable
+  value, and the canvas gains the difference. The drag floor drops to 280 for those who
+  want it narrower.
+
+### Palette covers edit and file actions
+
+- Adds **undo / redo / reset all / import photos... / export** for twenty actions in total.
+  These were previously noted as "no stable call site"; they now bind to the command bus
+  (undo/redo), `reset_params` (reset all), the import dialog and the export flow -- the same
+  entries the menu and panels already use, not a side channel built for the palette.
+
 ### Known issues
 
 - Code signing is still not done (no certificate); the first-download security prompt is
   expected.
-- The palette does not yet cover undo, reset-all or import/export (no stable call sites yet);
-  planned for a later release.
+- The palette lists twenty actions; parameter-level actions (individual sliders, presets)
+  are not searchable yet.
 
 ## v1.9.7 — 2026-11-05
 

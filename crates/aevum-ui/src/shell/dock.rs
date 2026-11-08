@@ -34,7 +34,7 @@ fn dock_resize_handle(state: &mut AppState, ui: &mut Ui) {
     let side_left = state.layout.dock_side.is_left();
     let full = ui.max_rect();
     const HANDLE_W: f32 = 6.0;
-    const MIN_W: f32 = 300.0;
+    const MIN_W: f32 = 280.0;
     const MAX_W: f32 = 560.0;
     let rect = if side_left {
         Rect::from_min_size(

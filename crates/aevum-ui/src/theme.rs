@@ -819,7 +819,19 @@ pub const TOOL_W: f32 = 48.0;
 /// Right-hand adjustment panel, 372 px (mockup `--dock-w`). The slider row
 /// "label 76 · elastic rail · value 52" is dimensioned for exactly this width; one step
 /// narrower and the label starts eating the rail.
-pub const DOCK_W: f32 = 372.0;
+/// 右侧参数面板默认宽度 300px。
+///
+/// 原先 372 是按「标签 76 + 读数 52 + 轨道」堆出来的上限值，实测偏宽：**
+/// Photoshop 的默认面板列约 250–260px**，我们比它宽出四成，画布被挤。300px 仍能
+/// 放下 76px 标签列、52px 读数框与一条可用的轨道，是三档里最接近 PS 的舒适值。
+///
+/// Default width of the right parameter panel, 300 px.
+///
+/// The old 372 was the maximum the row layout needed (76 px label + 52 px readout +
+/// rail), and measured too wide: Photoshop's default panel column is about 250-260 px, so
+/// we ran ~40% wider and squeezed the canvas. At 300 px the label column, the readout box
+/// and a usable rail still fit, and it is the closest comfortable value to PS.
+pub const DOCK_W: f32 = 300.0;
 /// 最外那条 28px 竖条：网格 / 胶片 / 曲线三个开关，界面稿里是 ⌗ ◐ ◑ 三枚。
 ///
 /// The outermost 28 px vertical strip: grid / filmstrip / curve toggles, drawn as three
