@@ -134,6 +134,34 @@ fn debug_apply_flow(state: &mut AppState) {
     }
 }
 
+/// 首帧打开一扇浮窗：`AEVUM_WINDOW=market|look|presets|about|update`。
+///
+/// 用户两轮截图都报「子窗口太大 / 比例不对」，而 `--shot` 点不了菜单。给一个
+/// 只读钩子，五扇窗在 1280×800 下的真实尺寸才有证据图可比对。
+///
+/// Opens one floating window on the first frame:
+/// `AEVUM_WINDOW=market|look|presets|about|update`. Two rounds of user screenshots
+/// complained about oversized / oddly proportioned windows, and `--shot` cannot click
+/// a menu. This read-only hook makes the real 1280x800 sizes capturable.
+fn debug_apply_window(state: &mut AppState) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Some(raw) = std::env::var_os("AEVUM_WINDOW") else {
+        return;
+    };
+    match raw.to_string_lossy().trim().to_ascii_lowercase().as_str() {
+        "market" | "plugins" => state.market_open = true,
+        "look" => state.look_open = true,
+        "presets" => state.show_left = true,
+        "about" => state.about_open = true,
+        "update" => state.update_open = true,
+        _ => {}
+    }
+}
+
 fn debug_apply_workspace(state: &mut AppState) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static DONE: AtomicBool = AtomicBool::new(false);
@@ -169,6 +197,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // nothing is persisted and nothing enters the project file).
     debug_apply_workspace(state);
     debug_apply_flow(state);
+    debug_apply_window(state);
     debug_export_confirm(&ctx);
     ctx.set_zoom_factor(FONT_ZOOMS[state.font_level.min(FONT_ZOOMS.len() - 1)]);
     // 撤销历史按帧记账：先给这一帧编号，帧末把控件登记过的改动并成一步。

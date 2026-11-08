@@ -16,7 +16,8 @@
 use super::MICRO;
 use crate::state::AppState;
 use crate::theme::{
-    SIZE_BODY, SIZE_SMALL, accent_dim, dim, divider, elev_hover, muted, radius_control, text,
+    MODAL_W_WIDE, SIZE_BODY, SIZE_SMALL, accent_dim, dim, divider, elev_hover, muted,
+    radius_control, text,
 };
 use egui::{Align2, Context, Pos2, Sense, Vec2};
 
@@ -323,7 +324,7 @@ pub(super) fn command_palette(state: &mut AppState, ctx: &Context) {
     let mut fire: Option<&'static str> = None;
 
     let modal = egui::Modal::new(egui::Id::unique("aevum-cmd-palette")).show(ctx, |ui| {
-        ui.set_width(520.0);
+        super::windows::modal_box(ui, MODAL_W_WIDE);
         ui.horizontal(|ui| {
             // 放大镜用自绘线段，不赌字体里有没有图标。
             //

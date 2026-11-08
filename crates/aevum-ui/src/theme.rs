@@ -864,6 +864,84 @@ pub const FLOW_W: f32 = 200.0;
 /// Minimum window width for the workflow panel; below it the panel is forced closed to
 /// protect the canvas area.
 pub const FLOW_MIN_W: f32 = 1180.0;
+
+// ---- 浮窗 / 对话框尺寸 --------------------------------------------------
+// 所有子窗口与 Modal 的尺寸只有这一处口径。以前每个 Window 各写各的 340 / 248 /
+// 430 / 480 / 760，换到 1280×800 或被 egui 记住一次拉大的尺寸就顶出视口，
+// 用户 2026-11-07 连着两轮截图报「子窗口怎么这么大」。
+//
+// One source for every floating window and modal size. Each Window used to carry its
+// own 340 / 248 / 430 / 480 / 760, so a remembered size on a 1280x800 screen ran off
+// the viewport -- exactly what the user's two screenshot rounds reported.
+pub const WIN_MAX_W_FRAC: f32 = 0.92;
+pub const WIN_MAX_H_FRAC: f32 = 0.88;
+pub const WIN_MAX_W: f32 = 860.0;
+pub const WIN_MAX_H: f32 = 700.0;
+pub const WIN_MARKET_W: f32 = 760.0;
+pub const WIN_MARKET_H: f32 = 520.0;
+pub const WIN_MARKET_MIN_W: f32 = 560.0;
+pub const WIN_MARKET_MIN_H: f32 = 360.0;
+pub const WIN_LOOK_W: f32 = 340.0;
+pub const WIN_LOOK_H: f32 = 560.0;
+pub const WIN_LOOK_MIN_W: f32 = 316.0;
+pub const WIN_PRESETS_W: f32 = 248.0;
+pub const WIN_PRESETS_H: f32 = 480.0;
+pub const WIN_ABOUT_W: f32 = 430.0;
+pub const WIN_ABOUT_H: f32 = 480.0;
+pub const WIN_UPDATE_W: f32 = 480.0;
+pub const WIN_UPDATE_H: f32 = 420.0;
+pub const WIN_UPDATE_MIN_W: f32 = 420.0;
+pub const WIN_UPDATE_MIN_H: f32 = 300.0;
+/// Modal 最高占视口的 62%：再高就把整张照片都盖住了，用户无从判断"这个确认
+/// 会不会毁掉我刚调的色"。
+///
+/// A modal may cover at most 62% of the viewport: any taller hides the whole photo and
+/// the user cannot judge whether confirming will ruin the grade they just made.
+pub const MODAL_MAX_H_FRAC: f32 = 0.62;
+pub const MODAL_W_NARROW: f32 = 430.0;
+pub const MODAL_W_WIDE: f32 = 520.0;
+
+/// 可缩放浮窗的上界：按视口算，再夹一层绝对值。
+///
+/// Upper bound of a resizable window: viewport-derived, then capped by an absolute.
+pub fn win_max(vp: Vec2) -> Vec2 {
+    Vec2::new(
+        (vp.x * WIN_MAX_W_FRAC).min(WIN_MAX_W),
+        (vp.y * WIN_MAX_H_FRAC).min(WIN_MAX_H),
+    )
+}
+
+/// 默认尺寸不能比上界大，也不能比下限小。
+///
+/// A default size must stay inside the bounds.
+pub fn win_default(size: Vec2, vp: Vec2) -> Vec2 {
+    let m = win_max(vp);
+    Vec2::new(size.x.min(m.x), size.y.min(m.y))
+}
+
+/// 最小尺寸同样要跟着视口收，否则 1280×800 下「最小 560×360」本身就越界。
+///
+/// A minimum size has to shrink with the viewport too, or "min 560x360" itself
+/// overflows on a 1280x800 screen.
+pub fn win_min(size: Vec2, vp: Vec2) -> Vec2 {
+    let m = win_max(vp);
+    Vec2::new(size.x.min(m.x), size.y.min(m.y))
+}
+
+/// Modal 宽度也按视口收一档（左右各留 24px）。
+///
+/// Modal width is clamped to the viewport as well (24 px on each side).
+pub fn modal_width(w: f32, vp_w: f32) -> f32 {
+    w.min((vp_w - 48.0).max(200.0))
+}
+
+/// Modal 高度上限。
+///
+/// Modal height cap.
+pub fn modal_max_h(vp_h: f32) -> f32 {
+    (vp_h * MODAL_MAX_H_FRAC).max(200.0)
+}
+
 /// 右侧参数面板默认宽度 300px。
 ///
 /// 原先 372 是按「标签 76 + 读数 52 + 轨道」堆出来的上限值，实测偏宽：**
@@ -2133,5 +2211,89 @@ mod font_tests {
             missing.len(),
             &missing[..missing.len().min(8)]
         );
+    }
+}
+
+/// 浮窗尺寸的契约：比例、视口夹取、Modal 高度上限。
+///
+/// Floating-window size contracts: aspect ratios, viewport clamping and the modal cap.
+#[cfg(test)]
+mod window_size_tests {
+    use super::*;
+
+    /// 两类窗口的比例：横向对话框接近 4:3~3:2，竖向窄面板是 1:2 左右的柱形。
+    /// 混着来就会出现「同一排窗口有的像纸条、有的像横幅」。
+    ///
+    /// Two classes of window: landscape dialogs near 4:3-3:2, and tall narrow panels
+    /// around 1:2. Mixing them freely is what produced "some look like strips, some
+    /// like banners" on one screen.
+    #[test]
+    fn window_aspect_ratios_stay_in_their_class() {
+        for (w, h) in [
+            (WIN_MARKET_W, WIN_MARKET_H),
+            (WIN_ABOUT_W, WIN_ABOUT_H),
+            (WIN_UPDATE_W, WIN_UPDATE_H),
+        ] {
+            let r = w / h;
+            assert!((0.85..=1.75).contains(&r), "横向窗比例 {r} 跑偏：{w}×{h}");
+        }
+        for (w, h) in [(WIN_LOOK_W, WIN_LOOK_H), (WIN_PRESETS_W, WIN_PRESETS_H)] {
+            let r = w / h;
+            assert!((0.40..=0.70).contains(&r), "窄面板比例 {r} 跑偏：{w}×{h}");
+        }
+    }
+
+    /// 五扇窗在 1280×800 与 1600×1000 下都放得下，且默认值不比上界大。
+    ///
+    /// All five windows fit at both 1280x800 and 1600x1000, and no default exceeds
+    /// the viewport-derived upper bound.
+    #[test]
+    fn every_window_fits_1280x800_and_1600x1000() {
+        let sizes = [
+            (WIN_MARKET_W, WIN_MARKET_H),
+            (WIN_LOOK_W, WIN_LOOK_H),
+            (WIN_PRESETS_W, WIN_PRESETS_H),
+            (WIN_ABOUT_W, WIN_ABOUT_H),
+            (WIN_UPDATE_W, WIN_UPDATE_H),
+        ];
+        for vp in [Vec2::new(1280.0, 800.0), Vec2::new(1600.0, 1000.0)] {
+            let m = win_max(vp);
+            assert!(m.x <= vp.x * WIN_MAX_W_FRAC + 1e-3);
+            assert!(m.y <= vp.y * WIN_MAX_H_FRAC + 1e-3);
+            for (w, h) in sizes {
+                let d = win_default(Vec2::new(w, h), vp);
+                assert!(d.x <= m.x && d.y <= m.y, "{w}×{h} 在 {vp:?} 越界：{d:?}");
+                assert!(d.x >= 1.0 && d.y >= 1.0);
+            }
+        }
+        // 极窄视口：上界先跟着收，默认值不得反超。
+        //
+        // A tiny viewport: the bound shrinks first and defaults must not overshoot it.
+        let small = Vec2::new(700.0, 500.0);
+        let m = win_max(small);
+        assert_eq!(m.x, 700.0 * WIN_MAX_W_FRAC);
+        assert!(win_default(Vec2::new(WIN_MARKET_W, WIN_MARKET_H), small).x <= m.x);
+    }
+
+    /// Modal 永远不超过视口的 62%，宽度也留出 24px 边距。
+    ///
+    /// A modal never exceeds 62% of the viewport, and leaves a 24 px side margin.
+    #[test]
+    fn modals_cap_height_and_width() {
+        for h in [600.0, 800.0, 1000.0, 2000.0] {
+            let cap = modal_max_h(h);
+            assert!(cap <= h * MODAL_MAX_H_FRAC + 1e-3, "高 {h}：上限 {cap}");
+        }
+        // 小视口的 200px 地板是为了不让内容被压成一条缝，但仍不得超过视口。
+        //
+        // The 200 px floor on tiny viewports keeps content readable without exceeding it.
+        assert_eq!(modal_max_h(800.0), 800.0 * MODAL_MAX_H_FRAC);
+        // 0.62 是产品口径（用户要看得到照片再确认），常量被顺手改大也要红。
+        //
+        // 0.62 is the product rule (the user must still see the photo before confirming);
+        // raising the constant casually must turn this red.
+        assert!(modal_max_h(800.0) <= 800.0 * 0.62 + 1e-3);
+        assert_eq!(modal_width(MODAL_W_WIDE, 1280.0), MODAL_W_WIDE);
+        assert!(modal_width(MODAL_W_WIDE, 500.0) <= 500.0 - 48.0 + 1e-3);
     }
 }

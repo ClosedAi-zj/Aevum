@@ -68,6 +68,19 @@ fn restored_pos(state: &AppState, ctx: &Context, key: &str, fallback: Pos2, assu
     }
 }
 
+/// 所有 Modal 的统一尺寸入口：宽度走主题常量并按视口夹取，高度不超过视口 62%。
+/// 四个 Modal（命令面板 / 回滚 / 错误 / 导出确认）必须都过这里，否则又会各自
+/// 写死一个宽度，换到窄屏就顶出去。
+///
+/// One sizing entry for every modal: width from a theme constant clamped to the
+/// viewport, height capped at 62% of it. All four modals (palette / rollback / error /
+/// export confirm) go through here; a private width would drift out on a narrow screen.
+pub(super) fn modal_box(ui: &mut Ui, width: f32) {
+    let vp = ui.ctx().input(|i| i.viewport_rect());
+    ui.set_width(theme::modal_width(width, vp.width()));
+    ui.set_max_height(theme::modal_max_h(vp.height()));
+}
+
 /// 把浮窗这一帧的位置记下来（拖动中不记，见 `AppState::note_win_pos`）。
 ///
 /// Record where the window sits this frame (skipped while dragging, see
@@ -292,16 +305,17 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
     // remembered 1080 px slab runs past the right edge and the list column gets clipped by
     // the screen edge (user screenshot, second round on 2026-11-07).
     let vp = ctx.input(|i| i.viewport_rect());
-    let max_w = (vp.width() * 0.92).min(860.0);
-    let max_h = (vp.height() * 0.88).min(700.0);
-    let default_w = 760.0f32.min(max_w);
-    let default_h = 520.0f32.min(max_h);
+    let bounds = theme::win_max(vp.size());
+    let max_w = bounds.x;
+    let max_h = bounds.y;
+    let default_size = theme::win_default(Vec2::new(WIN_MARKET_W, WIN_MARKET_H), vp.size());
+    let min_size = theme::win_min(Vec2::new(WIN_MARKET_MIN_W, WIN_MARKET_MIN_H), vp.size());
     let win = egui::Window::new(crate::i18n::t!("插件"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_size(Vec2::new(default_w, default_h))
-        .min_size(Vec2::new(560.0f32.min(max_w), 360.0f32.min(max_h)))
+        .default_size(default_size)
+        .min_size(min_size)
         // 上界也要给：可缩放窗口的尺寸由 egui 记住，一旦被拉到整屏宽度，下次打开
         // 还是那条大板子、内容全挤在左上角（用户 2026-11-07 截图）。夹住上界，
         // 用户仍可自由调小。
@@ -323,7 +337,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
             theme::soft_rule(ui.painter(), head.left(), head.right(), head.top());
             // 定住下限：`default_size` 只是建议，内容一少窗口就缩成一团，
             // 列表只剩三行可见 —— 那时候滚动条比窗口还长。窗口的 min_size
-            // 已经兜底（620×380），不再用 set_min_size 硬顶内容高度——那会
+            // 已经兜底（560×360），不再用 set_min_size 硬顶内容高度——那会
             // 把缩放手柄顶死，窗口拉不大也收不小。
             let body_h = ui.available_height() - 4.0;
             ui.horizontal_top(|ui| {
@@ -898,313 +912,339 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
         state,
         ctx,
         WIN_LOOK,
-        ctx.input(|i| i.viewport_rect()).right_top() - Vec2::new(354.0, -52.0),
-        Vec2::new(340.0, 560.0),
+        ctx.input(|i| i.viewport_rect()).right_top() - Vec2::new(WIN_LOOK_W + 14.0, -52.0),
+        Vec2::new(WIN_LOOK_W, WIN_LOOK_H),
     );
     let win = egui::Window::new(crate::i18n::t!("外观与布局"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
-        .default_width(340.0)
+        .default_width(WIN_LOOK_W)
         .default_pos(pos)
         // 与插件市场同一个标题栏口径：深色底、无高亮描边。
         .title_frame(title_frame())
+        .max_height(
+            theme::win_default(
+                Vec2::new(WIN_LOOK_W, WIN_LOOK_H),
+                ctx.input(|i| i.viewport_rect()).size(),
+            )
+            .y,
+        )
         .show(ctx, |ui| {
-            // 定宽而不是让内容撑：锚在右上时，egui 会按内容回缩，回缩到比一行控件
-            // 还窄就会把左边的选项挤到窗口外面去。
-            ui.set_min_width(316.0);
-            ui.spacing_mut().item_spacing = Vec2::new(6.0, 5.0);
-
-            look_section(ui, "语言 / Language");
-            ui.horizontal_wrapped(|ui| {
-                // 选项来自注册表，不逐个列语言：「加一种语言只改 CATALOGS 一行」这条
-                // 承诺在这里兑现——下面是它唯一的使用者，写法对语言数量一无所知。
-                //
-                // Options come from the registry rather than an explicit list, so the
-                // promise "adding a language means one line in CATALOGS" holds here:
-                // this is its only consumer, and it knows nothing about the count.
-                for p in crate::i18n::LangPref::all() {
-                    // 「跟随系统」是唯一需要翻译的一项；其余用各自语言自己的写法，
-                    // 不翻 —— 只会英文的人要能认出那一项。
-                    //
-                    // 语言自称必须绕开 tr()：那是「这个语言怎么称呼自己」，不是界面文案。
-                    // 走 tr() 会被 i18n 覆盖率判据记成缺译（英文界面上「中文」本就该是汉字）。
-                    //
-                    // "跟随系统" is the only translated entry; the rest use each language's own
-                    // endonym so an English-only reader can still find it.
-                    //
-                    // Endonyms must bypass tr(): they name the language itself, not UI copy.
-                    // Routing them through tr() is recorded as a missing translation, because
-                    // "中文" is meant to stay in Han characters even in English mode.
-                    let system_label = crate::i18n::t!("跟随系统");
-                    let (name, translate): (&str, bool) = match p {
-                        crate::i18n::LangPref::System => (system_label, true),
-                        crate::i18n::LangPref::Fixed(l) => (l.label(), false),
-                    };
-                    let hit = if translate {
-                        bar_chip(ui, name, state.lang == p).clicked()
-                    } else {
-                        bar_chip_verbatim(ui, name, state.lang == p).clicked()
-                    };
-                    if hit && state.lang != p {
-                        state.lang = p;
-                        // 立即生效：之后的绘制就走新语言。落盘交给帧末那条统一路径
-                        // （见函数末尾），这里不自己写文件。
-                        crate::i18n::set(p.resolve());
-                    }
-                }
-            });
-
-            look_section(ui, "明暗");
-            ui.horizontal_wrapped(|ui| {
-                for m in crate::settings::THEME_ORDER {
-                    if ui
-                        .selectable_label(state.appearance.theme == m, m.cn())
-                        .clicked()
-                    {
-                        state.appearance.theme = m;
-                    }
-                }
-            });
-
-            look_section(ui, "皮肤 · 中性色倾向");
-            ui.horizontal_wrapped(|ui| {
-                for skin in Skin::ALL {
-                    if ui
-                        .selectable_label(state.appearance.skin == skin, skin.cn())
-                        .clicked()
-                    {
-                        state.appearance.skin = skin;
-                    }
-                }
-            });
-
-            look_section(ui, "主色");
-            ui.horizontal_wrapped(|ui| {
-                for (h, s, l, name) in theme::ACCENT_PRESETS {
-                    let col = theme::hsl(h, s, l);
-                    let active = (state.appearance.accent_h - h).abs() < 1.0
-                        && (state.appearance.accent_s - s).abs() < 2.0
-                        && (state.appearance.accent_l - l).abs() < 2.0;
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
-                    let c = rect.center();
-                    ui.painter().circle_filled(c, 9.0, col);
-                    if active {
-                        ui.painter()
-                            .circle_stroke(c, 11.0, Stroke::new(1.5, text()));
-                    }
-                    if resp.clicked() {
-                        state.appearance.accent_h = h;
-                        state.appearance.accent_s = s;
-                        state.appearance.accent_l = l;
-                    }
-                    resp.on_hover_text(name);
-                }
-                // 任意取色：给的是 RGB，换算成 HSL 再存，深浅档仍能由参数派生。
-                let mut rgb = theme::accent_rgb();
-                if ui.color_edit_button_srgb(&mut rgb).changed() {
-                    let (h, s, l) = theme::rgb_to_hsl(rgb[0], rgb[1], rgb[2]);
-                    state.appearance.accent_h = h;
-                    state.appearance.accent_s = s;
-                    state.appearance.accent_l = l;
-                }
-            });
-
-            // 界面明暗微调（自定义外观）：只偏移背景族，文字三档不动——
-            // 文字跟着漂，这个滑块就变成对比度旋钮（见 theme.rs Palette::of）。
+            // 外观窗有十几节，内容自然高度能顶满整屏（用户 2026-11-07 截图：
+            // 窗口从 y=0 一直压到底部胶片条）。把正文放进带上限的滚动区，
+            // 窗口高度就固定在这一档，换小屏也跟着收。
             //
-            // Interface brightness trim (custom appearance): shifts the background
-            // family only; the three text steps stay put, otherwise this slider would
-            // become a contrast knob (see Palette::of in theme.rs).
-            look_section(ui, "界面明暗微调");
-            // 七档离散量用 chip 行（-3..+3）：这行原来是全应用唯一一处 egui 原生
-            // Slider（宽 200 写死、灰轨白钮），与自绘滑块两套语言——用户截图圈名
-            // 「颜色/样式不统一」。chips 让档位一目了然，读数并入选中态，归零点档 0。
-            //
-            // The seven discrete steps become a chip row (-3..+3): this was the only
-            // stock egui Slider left in the app (hard-coded 200 px, grey rail, white
-            // knob) -- a second control language (user-flagged). Chips make the steps
-            // legible; the readout is the selected chip, tapping 0 zeroes it.
-            ui.horizontal_wrapped(|ui| {
-                for off in -3..=3 {
-                    let label = format!("{off:+}");
-                    if bar_chip(ui, &label, state.appearance.gray_offset == off).clicked() {
-                        state.appearance.gray_offset = off;
+            // The appearance window has a dozen sections and its natural height can fill
+            // the entire screen (user screenshot: it ran from y=0 down to the filmstrip).
+            // A capped scroll area keeps the window at this height and shrinks with the
+            // viewport.
+            let look_h = theme::win_default(
+                Vec2::new(WIN_LOOK_W, WIN_LOOK_H),
+                ctx.input(|i| i.viewport_rect()).size(),
+            )
+            .y;
+            let look_cap = (look_h - 104.0).max(200.0);
+            egui::ScrollArea::vertical()
+                .max_height(look_cap)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    // 定宽而不是让内容撑：锚在右上时，egui 会按内容回缩，回缩到比一行控件
+                    // 还窄就会把左边的选项挤到窗口外面去。
+                    ui.set_min_width(WIN_LOOK_MIN_W);
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 5.0);
+
+                    look_section(ui, "语言 / Language");
+                    ui.horizontal_wrapped(|ui| {
+                        // 选项来自注册表，不逐个列语言：「加一种语言只改 CATALOGS 一行」这条
+                        // 承诺在这里兑现——下面是它唯一的使用者，写法对语言数量一无所知。
+                        //
+                        // Options come from the registry rather than an explicit list, so the
+                        // promise "adding a language means one line in CATALOGS" holds here:
+                        // this is its only consumer, and it knows nothing about the count.
+                        for p in crate::i18n::LangPref::all() {
+                            // 「跟随系统」是唯一需要翻译的一项；其余用各自语言自己的写法，
+                            // 不翻 —— 只会英文的人要能认出那一项。
+                            //
+                            // 语言自称必须绕开 tr()：那是「这个语言怎么称呼自己」，不是界面文案。
+                            // 走 tr() 会被 i18n 覆盖率判据记成缺译（英文界面上「中文」本就该是汉字）。
+                            //
+                            // "跟随系统" is the only translated entry; the rest use each language's own
+                            // endonym so an English-only reader can still find it.
+                            //
+                            // Endonyms must bypass tr(): they name the language itself, not UI copy.
+                            // Routing them through tr() is recorded as a missing translation, because
+                            // "中文" is meant to stay in Han characters even in English mode.
+                            let system_label = crate::i18n::t!("跟随系统");
+                            let (name, translate): (&str, bool) = match p {
+                                crate::i18n::LangPref::System => (system_label, true),
+                                crate::i18n::LangPref::Fixed(l) => (l.label(), false),
+                            };
+                            let hit = if translate {
+                                bar_chip(ui, name, state.lang == p).clicked()
+                            } else {
+                                bar_chip_verbatim(ui, name, state.lang == p).clicked()
+                            };
+                            if hit && state.lang != p {
+                                state.lang = p;
+                                // 立即生效：之后的绘制就走新语言。落盘交给帧末那条统一路径
+                                // （见函数末尾），这里不自己写文件。
+                                crate::i18n::set(p.resolve());
+                            }
+                        }
+                    });
+
+                    look_section(ui, "明暗");
+                    ui.horizontal_wrapped(|ui| {
+                        for m in crate::settings::THEME_ORDER {
+                            if ui
+                                .selectable_label(state.appearance.theme == m, m.cn())
+                                .clicked()
+                            {
+                                state.appearance.theme = m;
+                            }
+                        }
+                    });
+
+                    look_section(ui, "皮肤 · 中性色倾向");
+                    ui.horizontal_wrapped(|ui| {
+                        for skin in Skin::ALL {
+                            if ui
+                                .selectable_label(state.appearance.skin == skin, skin.cn())
+                                .clicked()
+                            {
+                                state.appearance.skin = skin;
+                            }
+                        }
+                    });
+
+                    look_section(ui, "主色");
+                    ui.horizontal_wrapped(|ui| {
+                        for (h, s, l, name) in theme::ACCENT_PRESETS {
+                            let col = theme::hsl(h, s, l);
+                            let active = (state.appearance.accent_h - h).abs() < 1.0
+                                && (state.appearance.accent_s - s).abs() < 2.0
+                                && (state.appearance.accent_l - l).abs() < 2.0;
+                            let (rect, resp) =
+                                ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
+                            let c = rect.center();
+                            ui.painter().circle_filled(c, 9.0, col);
+                            if active {
+                                ui.painter()
+                                    .circle_stroke(c, 11.0, Stroke::new(1.5, text()));
+                            }
+                            if resp.clicked() {
+                                state.appearance.accent_h = h;
+                                state.appearance.accent_s = s;
+                                state.appearance.accent_l = l;
+                            }
+                            resp.on_hover_text(name);
+                        }
+                        // 任意取色：给的是 RGB，换算成 HSL 再存，深浅档仍能由参数派生。
+                        let mut rgb = theme::accent_rgb();
+                        if ui.color_edit_button_srgb(&mut rgb).changed() {
+                            let (h, s, l) = theme::rgb_to_hsl(rgb[0], rgb[1], rgb[2]);
+                            state.appearance.accent_h = h;
+                            state.appearance.accent_s = s;
+                            state.appearance.accent_l = l;
+                        }
+                    });
+
+                    // 界面明暗微调（自定义外观）：只偏移背景族，文字三档不动——
+                    // 文字跟着漂，这个滑块就变成对比度旋钮（见 theme.rs Palette::of）。
+                    //
+                    // Interface brightness trim (custom appearance): shifts the background
+                    // family only; the three text steps stay put, otherwise this slider would
+                    // become a contrast knob (see Palette::of in theme.rs).
+                    look_section(ui, "界面明暗微调");
+                    // 七档离散量用 chip 行（-3..+3）：这行原来是全应用唯一一处 egui 原生
+                    // Slider（宽 200 写死、灰轨白钮），与自绘滑块两套语言——用户截图圈名
+                    // 「颜色/样式不统一」。chips 让档位一目了然，读数并入选中态，归零点档 0。
+                    //
+                    // The seven discrete steps become a chip row (-3..+3): this was the only
+                    // stock egui Slider left in the app (hard-coded 200 px, grey rail, white
+                    // knob) -- a second control language (user-flagged). Chips make the steps
+                    // legible; the readout is the selected chip, tapping 0 zeroes it.
+                    ui.horizontal_wrapped(|ui| {
+                        for off in -3..=3 {
+                            let label = format!("{off:+}");
+                            if bar_chip(ui, &label, state.appearance.gray_offset == off).clicked() {
+                                state.appearance.gray_offset = off;
+                            }
+                        }
+                        if state.appearance.gray_offset != 0 {
+                            ui.add_space(4.0);
+                            if bar_chip(ui, "归零", false).clicked() {
+                                state.appearance.gray_offset = 0;
+                            }
+                        }
+                    });
+                    if state.appearance.gray_offset.abs() > 2 {
+                        ui.label(
+                            RichText::new(crate::i18n::t!("对比度可能不足，部分文字可读性下降"))
+                                .size(SIZE_SMALL)
+                                .color(warn()),
+                        );
                     }
-                }
-                if state.appearance.gray_offset != 0 {
-                    ui.add_space(4.0);
-                    if bar_chip(ui, "归零", false).clicked() {
+                    // 恢复默认：强调色回专业深蓝、明暗偏移归零（皮肤与主题留在原处，
+                    // 那是两套独立偏好，一键重置不该顺手改掉）。
+                    //
+                    // Reset: accent back to the professional blue and the trim back to zero.
+                    // Skin and theme are left alone -- they are independent preferences and a
+                    // one-click reset should not quietly change them.
+                    if bar_chip(ui, "恢复默认强调色与明暗", false).clicked() {
+                        state.appearance.accent_h = 210.0;
+                        state.appearance.accent_s = 100.0;
+                        state.appearance.accent_l = 44.5;
                         state.appearance.gray_offset = 0;
                     }
-                }
-            });
-            if state.appearance.gray_offset.abs() > 2 {
-                ui.label(
-                    RichText::new(crate::i18n::t!("对比度可能不足，部分文字可读性下降"))
-                        .size(SIZE_SMALL)
-                        .color(warn()),
-                );
-            }
-            // 恢复默认：强调色回专业深蓝、明暗偏移归零（皮肤与主题留在原处，
-            // 那是两套独立偏好，一键重置不该顺手改掉）。
-            //
-            // Reset: accent back to the professional blue and the trim back to zero.
-            // Skin and theme are left alone -- they are independent preferences and a
-            // one-click reset should not quietly change them.
-            if bar_chip(ui, "恢复默认强调色与明暗", false).clicked() {
-                state.appearance.accent_h = 210.0;
-                state.appearance.accent_s = 100.0;
-                state.appearance.accent_l = 44.5;
-                state.appearance.gray_offset = 0;
-            }
 
-            look_section(ui, "外壳");
-            look_row(
-                ui,
-                "平台",
-                state.appearance.os,
-                &[
-                    (platform::OsChoice::Auto, "跟随系统"),
-                    (platform::OsChoice::Win, "Windows"),
-                    (platform::OsChoice::Mac, "macOS"),
-                ],
-                |v| state.appearance.os = v,
-            );
+                    look_section(ui, "外壳");
+                    look_row(
+                        ui,
+                        "平台",
+                        state.appearance.os,
+                        &[
+                            (platform::OsChoice::Auto, "跟随系统"),
+                            (platform::OsChoice::Win, "Windows"),
+                            (platform::OsChoice::Mac, "macOS"),
+                        ],
+                        |v| state.appearance.os = v,
+                    );
 
-            look_section(ui, "形状与字号");
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [52.0, 20.0],
-                    egui::Label::new(
-                        RichText::new(crate::i18n::t!("圆角"))
-                            .size(SIZE_LABEL)
-                            .color(dim()),
-                    ),
-                );
-                ui.add(
-                    egui::Slider::new(&mut state.appearance.radius, 0.0..=16.0)
-                        .max_decimals(0)
-                        .suffix(" px"),
-                );
-            });
-            // 密度：只动调整面板的行高，外壳骨架高度不跟——那是界面稿钉死的。
-            let mut density = state.appearance.density;
-            look_row(
-                ui,
-                "密度",
-                density,
-                &[
-                    (theme::Density::Compact, "紧凑"),
-                    (theme::Density::Standard, "标准"),
-                    (theme::Density::Loose, "宽松"),
-                ],
-                |v| density = v,
-            );
-            state.appearance.density = density;
-            let mut level = state.font_level;
-            look_row(
-                ui,
-                "字号",
-                level,
-                &[(0, "小"), (1, "标准"), (2, "大"), (3, "特大")],
-                |v| level = v,
-            );
-            if level != state.font_level {
-                state.font_level = level;
-                theme::set_fonts(ctx); // 字号档位变了才重装字体
-            }
-
-            look_section(ui, "布局");
-            // 工作区放在预设之上：它调的是"这一趟活要多大地方"，比"状态栏在上还是在下"
-            // 更高一层。三个值都能反推（右栏宽 + 胶片条 + 密度），拖一下宽度就变
-            // "自定义"——不假装还停在某个工作区。
-            //
-            // The workspace sits above the presets: it answers "how much room does this job
-            // need", a level up from "is the status bar on top". All three reverse-match
-            // (dock width + filmstrip + density), so a drag turns it into "custom" rather
-            // than pretending to still be one of them.
-            look_row(
-                ui,
-                "工作区",
-                crate::layout::Workspace::of(state.layout, state.dock_w),
-                &[
-                    (Some(crate::layout::Workspace::Sequence), "序列"),
-                    (Some(crate::layout::Workspace::Develop), "调色"),
-                    (Some(crate::layout::Workspace::Render), "成片"),
-                ],
-                |w| {
-                    if let Some(w) = w {
-                        state.apply_workspace(w);
+                    look_section(ui, "形状与字号");
+                    ui.horizontal(|ui| {
+                        ui.add_sized(
+                            [52.0, 20.0],
+                            egui::Label::new(
+                                RichText::new(crate::i18n::t!("圆角"))
+                                    .size(SIZE_LABEL)
+                                    .color(dim()),
+                            ),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut state.appearance.radius, 0.0..=16.0)
+                                .max_decimals(0)
+                                .suffix(" px"),
+                        );
+                    });
+                    // 密度：只动调整面板的行高，外壳骨架高度不跟——那是界面稿钉死的。
+                    let mut density = state.appearance.density;
+                    look_row(
+                        ui,
+                        "密度",
+                        density,
+                        &[
+                            (theme::Density::Compact, "紧凑"),
+                            (theme::Density::Standard, "标准"),
+                            (theme::Density::Loose, "宽松"),
+                        ],
+                        |v| density = v,
+                    );
+                    state.appearance.density = density;
+                    let mut level = state.font_level;
+                    look_row(
+                        ui,
+                        "字号",
+                        level,
+                        &[(0, "小"), (1, "标准"), (2, "大"), (3, "特大")],
+                        |v| level = v,
+                    );
+                    if level != state.font_level {
+                        state.font_level = level;
+                        theme::set_fonts(ctx); // 字号档位变了才重装字体
                     }
-                },
-            );
-            let preset = state.layout.highlighted_preset(state.dock_w);
-            look_row(
-                ui,
-                "预设",
-                preset,
-                &[
-                    (Some(crate::layout::LayoutPreset::Classic), "经典"),
-                    (Some(crate::layout::LayoutPreset::Focus), "专注"),
-                    (Some(crate::layout::LayoutPreset::Min), "极简"),
-                ],
-                |p| {
-                    if let Some(p) = p {
-                        state.layout = state.layout.with_preset(p);
-                    }
-                },
-            );
-            look_row(
-                ui,
-                "信息密度",
-                state.layout.dense,
-                &[(false, "标准"), (true, "紧凑")],
-                |v| state.layout.dense = v,
-            );
-            look_row(
-                ui,
-                "状态栏",
-                state.layout.status,
-                &[
-                    (StatusSlot::Bottom, "底部"),
-                    (StatusSlot::Top, "顶部"),
-                    (StatusSlot::Hidden, "隐藏"),
-                ],
-                |v| state.layout.status = v,
-            );
-            look_row(
-                ui,
-                "工具轨",
-                state.layout.rail,
-                &[
-                    (crate::layout::Side::Left, "左"),
-                    (crate::layout::Side::Right, "右"),
-                ],
-                |v| state.layout.rail = v,
-            );
-            look_row(
-                ui,
-                "调整面板",
-                state.layout.dock_side,
-                &[
-                    (crate::layout::Side::Right, "右"),
-                    (crate::layout::Side::Left, "左"),
-                ],
-                |v| state.layout.dock_side = v,
-            );
-            look_row(
-                ui,
-                "胶片条",
-                state.layout.film,
-                &[
-                    (crate::layout::FilmSlot::Shown, "显示"),
-                    (crate::layout::FilmSlot::Hidden, "隐藏"),
-                ],
-                |v| state.layout.film = v,
-            );
 
-            ui.add_space(8.0);
+                    look_section(ui, "布局");
+                    // 工作区放在预设之上：它调的是"这一趟活要多大地方"，比"状态栏在上还是在下"
+                    // 更高一层。三个值都能反推（右栏宽 + 胶片条 + 密度），拖一下宽度就变
+                    // "自定义"——不假装还停在某个工作区。
+                    //
+                    // The workspace sits above the presets: it answers "how much room does this job
+                    // need", a level up from "is the status bar on top". All three reverse-match
+                    // (dock width + filmstrip + density), so a drag turns it into "custom" rather
+                    // than pretending to still be one of them.
+                    look_row(
+                        ui,
+                        "工作区",
+                        crate::layout::Workspace::of(state.layout, state.dock_w),
+                        &[
+                            (Some(crate::layout::Workspace::Sequence), "序列"),
+                            (Some(crate::layout::Workspace::Develop), "调色"),
+                            (Some(crate::layout::Workspace::Render), "成片"),
+                        ],
+                        |w| {
+                            if let Some(w) = w {
+                                state.apply_workspace(w);
+                            }
+                        },
+                    );
+                    let preset = state.layout.highlighted_preset(state.dock_w);
+                    look_row(
+                        ui,
+                        "预设",
+                        preset,
+                        &[
+                            (Some(crate::layout::LayoutPreset::Classic), "经典"),
+                            (Some(crate::layout::LayoutPreset::Focus), "专注"),
+                            (Some(crate::layout::LayoutPreset::Min), "极简"),
+                        ],
+                        |p| {
+                            if let Some(p) = p {
+                                state.layout = state.layout.with_preset(p);
+                            }
+                        },
+                    );
+                    look_row(
+                        ui,
+                        "信息密度",
+                        state.layout.dense,
+                        &[(false, "标准"), (true, "紧凑")],
+                        |v| state.layout.dense = v,
+                    );
+                    look_row(
+                        ui,
+                        "状态栏",
+                        state.layout.status,
+                        &[
+                            (StatusSlot::Bottom, "底部"),
+                            (StatusSlot::Top, "顶部"),
+                            (StatusSlot::Hidden, "隐藏"),
+                        ],
+                        |v| state.layout.status = v,
+                    );
+                    look_row(
+                        ui,
+                        "工具轨",
+                        state.layout.rail,
+                        &[
+                            (crate::layout::Side::Left, "左"),
+                            (crate::layout::Side::Right, "右"),
+                        ],
+                        |v| state.layout.rail = v,
+                    );
+                    look_row(
+                        ui,
+                        "调整面板",
+                        state.layout.dock_side,
+                        &[
+                            (crate::layout::Side::Right, "右"),
+                            (crate::layout::Side::Left, "左"),
+                        ],
+                        |v| state.layout.dock_side = v,
+                    );
+                    look_row(
+                        ui,
+                        "胶片条",
+                        state.layout.film,
+                        &[
+                            (crate::layout::FilmSlot::Shown, "显示"),
+                            (crate::layout::FilmSlot::Hidden, "隐藏"),
+                        ],
+                        |v| state.layout.film = v,
+                    );
+                });
+            ui.add_space(6.0);
             soft_sep(ui);
             ui.horizontal(|ui| {
                 if ui
@@ -1272,14 +1312,14 @@ pub(super) fn presets_window(state: &mut AppState, ctx: &Context) {
         ctx,
         WIN_PRESETS,
         Pos2::new(60.0, 96.0),
-        Vec2::new(248.0, 480.0),
+        Vec2::new(WIN_PRESETS_W, WIN_PRESETS_H),
     );
     let win = egui::Window::new(crate::i18n::t!("预设与快照"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_width(248.0)
-        .default_height(480.0)
+        .default_width(WIN_PRESETS_W)
+        .default_height(WIN_PRESETS_H)
         .default_pos(pos)
         .title_frame(title_frame())
         .show(ctx, |ui| {
@@ -1450,14 +1490,14 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
         state,
         ctx,
         WIN_ABOUT,
-        ctx.input(|i| i.viewport_rect()).center() - Vec2::new(215.0, 160.0),
-        Vec2::new(430.0, 480.0),
+        ctx.input(|i| i.viewport_rect()).center() - Vec2::new(WIN_ABOUT_W * 0.5, 160.0),
+        Vec2::new(WIN_ABOUT_W, WIN_ABOUT_H),
     );
     let win = egui::Window::new(crate::i18n::t!("快捷键与关于"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
-        .default_width(430.0)
+        .default_width(WIN_ABOUT_W)
         .default_pos(pos)
         .title_frame(title_frame())
         .show(ctx, |ui| {
@@ -1572,15 +1612,20 @@ pub(super) fn update_window(state: &mut AppState, ctx: &Context) {
         state,
         ctx,
         WIN_UPDATE,
-        ctx.input(|i| i.viewport_rect()).center() - Vec2::new(240.0, 210.0),
-        Vec2::new(480.0, 420.0),
+        ctx.input(|i| i.viewport_rect()).center() - Vec2::new(WIN_UPDATE_W * 0.5, 210.0),
+        Vec2::new(WIN_UPDATE_W, WIN_UPDATE_H),
     );
+    let vp = ctx.input(|i| i.viewport_rect());
+    let default_size = theme::win_default(Vec2::new(WIN_UPDATE_W, WIN_UPDATE_H), vp.size());
+    let min_size = theme::win_min(Vec2::new(WIN_UPDATE_MIN_W, WIN_UPDATE_MIN_H), vp.size());
     let win = egui::Window::new(crate::i18n::t!("检查更新"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_size(Vec2::new(480.0, 420.0))
-        .min_size(Vec2::new(420.0, 300.0))
+        .default_size(default_size)
+        .min_size(min_size)
+        .max_width(theme::win_max(vp.size()).x)
+        .max_height(theme::win_max(vp.size()).y)
         .default_pos(pos)
         .title_frame(title_frame())
         .show(ctx, |ui| {
@@ -1629,7 +1674,7 @@ pub(super) fn update_window(state: &mut AppState, ctx: &Context) {
                         .size(SIZE_SMALL)
                         .color(dim()),
                 );
-                let cap = (ctx.input(|i| i.viewport_rect()).height() * 0.5).max(80.0);
+                let cap = (theme::win_max(vp.size()).y * 0.5).max(80.0);
                 egui::ScrollArea::vertical()
                     .max_height(cap)
                     .auto_shrink([false, true])
@@ -1791,7 +1836,7 @@ pub(super) fn rollback_window(state: &mut AppState, ctx: &Context) {
     let mut cancel = false;
     let mut go = false;
     let modal = egui::Modal::new(egui::Id::unique("aevum-rollback-confirm")).show(ctx, |ui| {
-        ui.set_width(430.0);
+        modal_box(ui, MODAL_W_NARROW);
         ui.label(
             RichText::new(crate::i18n::t!("回滚到上一版"))
                 .size(SIZE_BODY)
@@ -1933,7 +1978,7 @@ pub(super) fn error_dialog(state: &mut AppState, ctx: &egui::Context) {
     };
     let mut close = false;
     let modal = egui::Modal::new(egui::Id::unique("aevum-error-dialog")).show(ctx, |ui| {
-        ui.set_width(520.0);
+        modal_box(ui, MODAL_W_WIDE);
         ui.horizontal(|ui| {
             // danger 色的小圆点：不用图标字体，也不需要额外资源。
             let (rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 10.0), Sense::hover());
@@ -2056,7 +2101,7 @@ pub fn confirm_export_modal(
     let mut cancel = false;
     let mut go = false;
     let modal = egui::Modal::new(egui::Id::unique("aevum-export-confirm")).show(ui.ctx(), |ui| {
-        ui.set_width(430.0);
+        modal_box(ui, MODAL_W_NARROW);
         ui.label(
             RichText::new(crate::i18n::t!("导出参数"))
                 .font(font(SIZE_BODY))

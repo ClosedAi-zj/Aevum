@@ -1081,3 +1081,69 @@ fn flow_ui_is_wired_into_the_shell() {
         "帧首的布局开关自动收账没接上"
     );
 }
+
+/// 子窗口 / Modal 的尺寸不许再就地写数字：全部走 `theme::WIN_*` / `MODAL_*`
+/// 与那几个纯函数，否则 1280×800 下又会顶出视口。
+///
+/// Window and modal sizes must not be written as local numbers any more: every one goes
+/// through `theme::WIN_*` / `MODAL_*` and the pure helpers, or it drifts off a 1280x800
+/// viewport again.
+#[test]
+fn window_sizes_come_from_theme() {
+    const CALLS: &[&str] = &[
+        ".default_width(",
+        ".default_height(",
+        ".default_size(",
+        ".min_size(",
+        ".max_width(",
+        ".max_height(",
+        ".set_width(",
+        ".set_min_width(",
+        ".set_max_height(",
+    ];
+    for rel in ["shell/windows.rs", "shell/palette.rs"] {
+        for (i, line) in read_clean(rel).lines().enumerate() {
+            if !CALLS.iter().any(|c| line.contains(c)) {
+                continue;
+            }
+            // 按钮自己的行高（`.min_size(Vec2::new(0.0, 26.0))`）不是浮窗尺寸，
+            // 不该被窗口判据管；窗口的 min_size 一律走 `theme::win_min(...)`。
+            //
+            // A button's row height is not a window size; window minimums always come
+            // from `theme::win_min(...)`.
+            if line.contains(".min_size(Vec2::new(0.0,") {
+                continue;
+            }
+            let code = line.split("//").next().unwrap_or(line);
+            let numeric = code
+                .as_bytes()
+                .windows(3)
+                .any(|w| w[0].is_ascii_digit() && w[1] == b'.' && w[2].is_ascii_digit());
+            assert!(!numeric, "{rel}:{} 又写死了尺寸：{}", i + 1, code.trim());
+        }
+    }
+    // 四个 Modal 都要过 modal_box，才能统一拿到 62% 高度上限。
+    //
+    // All four modals must go through modal_box to get the 62% height cap.
+    let windows = read_clean("shell/windows.rs");
+    assert_eq!(
+        windows.matches("modal_box(ui, ").count(),
+        3,
+        "windows.rs 里应当有三处 Modal 走 modal_box"
+    );
+    let palette = read_clean("shell/palette.rs");
+    assert_eq!(
+        palette.matches("windows::modal_box(ui, ").count(),
+        1,
+        "命令面板也要走 modal_box"
+    );
+    let theme = read_clean("theme.rs");
+    assert!(
+        theme.contains("pub const MODAL_MAX_H_FRAC") && theme.contains("pub fn modal_max_h"),
+        "Modal 高度上限没进 theme.rs"
+    );
+    assert!(
+        theme.contains("pub fn win_max") && theme.contains("pub fn win_default"),
+        "视口夹取没进 theme.rs"
+    );
+}
