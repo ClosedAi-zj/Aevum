@@ -479,7 +479,6 @@ impl AppState {
             for (i, _) in &missing {
                 self.thumb_pending.insert(*i);
             }
-            let missing_idx: Vec<usize> = missing.iter().map(|(i, _)| *i).collect();
             let jobs: Vec<(usize, PathBuf, Ev)> = missing
                 .into_iter()
                 .map(|(i, path)| (i, path, self.ev_at(i)))
