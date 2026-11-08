@@ -64,6 +64,13 @@ fn main() -> ExitCode {
     let mut open: Option<PathBuf> = None;
     let mut demo = false;
     let mut shot: Option<PathBuf> = None;
+    // 截图尺寸：默认 1600×1000（设计稿口径）。给一个可覆盖的口子是为了量窄窗行为
+    // —— 1280×800 时工具轨要折叠、步骤条要压缩，这些在 1600 下永远看不到。
+    //
+    // Screenshot size, 1600x1000 by default (the mockup canvas). The override exists so
+    // narrow-window behaviour is measurable: at 1280x800 the tool rail folds and the step bar
+    // compacts, none of which is visible at 1600.
+    let mut win_size: [f32; 2] = [1600.0, 1000.0];
     let mut module: Option<Module> = None;
     let mut selftest = false;
     let mut bench_ui = false;
@@ -156,6 +163,13 @@ fn main() -> ExitCode {
                 Some(path) => shot = Some(PathBuf::from(path)),
                 None => {
                     warn!("--shot 需要一个输出路径");
+                    return ExitCode::from(2);
+                }
+            },
+            "--size" => match args.next().and_then(|v| parse_size(&v.to_string_lossy())) {
+                Some(wh) => win_size = wh,
+                None => {
+                    warn!("--size 需要 WxH，例如 --size 1280x800");
                     return ExitCode::from(2);
                 }
             },
@@ -276,7 +290,7 @@ fn main() -> ExitCode {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1600.0, 1000.0])
+            .with_inner_size(win_size)
             .with_min_inner_size([1180.0, 760.0])
             .with_decorations(false)
             .with_resizable(true)
@@ -459,6 +473,21 @@ fn window_icon() -> egui::IconData {
 /// with "only 0-5". It surfaced only when the screenshot regression needed that page -- which
 /// happens to be where the "focus-merge group truncated on the left" item gets reviewed, so
 /// being unable to reach it meant a false pass.
+/// 解析 `--size WxH`（也接受大小写 x 与全角 ×）。
+///
+/// Parse `--size WxH` (accepts `x`, `X` and the full-width `×`).
+fn parse_size(s: &str) -> Option<[f32; 2]> {
+    let s = s.replace(['×', 'X'], "x");
+    let (w, h) = s.split_once('x')?;
+    let w: f32 = w.trim().parse().ok()?;
+    let h: f32 = h.trim().parse().ok()?;
+    // 太小的窗口没有意义（面板加起来就超过它了），直接拒绝而不是给出诡异的截图。
+    //
+    // Tiny windows are meaningless (the panels alone exceed them): reject rather than emit a
+    // nonsense screenshot.
+    (w >= 900.0 && h >= 600.0).then_some([w, h])
+}
+
 fn parse_module(name: &str) -> Option<Module> {
     Module::from_name(name)
 }

@@ -118,6 +118,13 @@ docs/*
 # tag, so it is allowed through; the `*` also matches `.en`.
 !docs/依赖许可说明*.md
 
+# `--shot` / 自检打开样张时，程序会把当前工程状态写回样张目录；这份文件是运行产物，
+# 不是素材（同目录下 measures.json 与缩略图才是入库的样张基准，保持跟踪）。
+# Opening a sample in --shot / selftest writes the live project state back into the sample
+# directory. That file is runtime output, not an asset (the tracked measures.json and
+# thumbnail in the same directory are the sample baseline and stay tracked).
+samples/cc0/**/.aevum/project.json
+
 # 相机样张：来源部分不明、体积大（164 MB / 10 个文件），不入库（换机需手动拷）。
 # 清单与校验值见 samples/cameras/README.md。注意白名单必须先忽略目录内容、再放行
 # README——顺序反了 `!` 就不生效。`.aevum/` 是缩略图缓存，一并挡掉。
