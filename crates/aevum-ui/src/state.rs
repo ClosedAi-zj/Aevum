@@ -56,6 +56,7 @@ use serde_json::{Value, json};
 use crate::control::{self, ControlEvent, ControlFile, ControlServer};
 use crate::history::{self, History, Snapshot};
 use crate::icons::Glyph;
+use crate::shell::flow::FlowTask;
 
 pub const PREVIEW_SIDE: u32 = 1600;
 /// 草图贴图的长边：全量预览的一半，也是首屏真正要的那一档。
@@ -1707,6 +1708,17 @@ pub struct AppState {
     /// window): one answers "which step am I on, what is next", the other "what have I saved".
     /// Merging them would force opening a preset list just to see the steps.
     pub show_flow: bool,
+    /// 当前选中的工作流（延时 / 单张修图 / 多帧合成）。用户手选，不跟着模块跳。
+    ///
+    /// The selected workflow (timelapse / single-photo / multi-frame merge). Chosen by the
+    /// user; it does not follow the active module.
+    pub flow_task: FlowTask,
+    /// 上一帧的布局开关快照。帧首比对一次就自动置 `settings_dirty`，免得每个
+    /// 新增的开关赋值点都要记得手工标脏（漏一处就"重启后又不记得了"）。
+    ///
+    /// Last frame's layout switches. Diffing once at frame start marks `settings_dirty`
+    /// automatically, so a new toggle site cannot forget to persist itself.
+    layout_switches: (bool, bool, bool, &'static str),
     /// 右侧调整面板宽度（可拖动）。默认 `theme::DOCK_W`，夹在 300–560 之间。
     ///
     /// 面板宽度原本是编译期常量，用户一旦在窄窗里被挤窄就再也调不回来

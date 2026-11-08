@@ -152,6 +152,22 @@ pub struct Settings {
     /// second click within 25 hours must really go out, or "clicking does nothing" reads
     /// as a bug.
     pub last_update_check: Option<u64>,
+    /// 三个常驻面板 / 浮窗的显示开关。`None` = 老设置文件没有这一节，按首启默认
+    /// （右坞开、工作流面板关、预设浮窗关）读取。
+    ///
+    /// Visibility of the three resident panels / windows. `None` means an older settings
+    /// file without this section: fall back to the fresh-launch defaults (dock on,
+    /// workflow panel off, presets window off).
+    pub show_dock: Option<bool>,
+    pub show_flow: Option<bool>,
+    pub show_left: Option<bool>,
+    /// 用户手选的工作流 key（`timelapse` / `develop` / `merge`）。坏 key 在
+    /// `adopt_settings` 里回落默认，不让手改过的文件把界面带进不存在的模式。
+    ///
+    /// The user-selected workflow key (`timelapse` / `develop` / `merge`). A bad key
+    /// falls back to the default in `adopt_settings`, so a hand-edited file cannot drag
+    /// the UI into a mode that does not exist.
+    pub flow_task: Option<String>,
 }
 
 /// 合并面板滑杆参数的落盘形状。字段与 `AppState` 的 `hdr_` / `stack_` / `tb_` /

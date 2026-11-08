@@ -1045,3 +1045,39 @@ fn canvas_gap_has_one_source() {
         "shell 里出现了第二处 10px，呼吸带不再单源"
     );
 }
+
+/// 流程化界面必须真的挂到外壳上：标题栏步骤条 + 左侧面板 + 落盘开关，
+/// 少一处就是「按钮点了没反应」。
+///
+/// The workflow UI must actually be wired into the shell: title-bar step bar, left panel
+/// and persisted switches. Missing any one of them reads as "clicking does nothing".
+#[test]
+fn flow_ui_is_wired_into_the_shell() {
+    let shell = read_clean("shell/mod.rs");
+    assert!(
+        shell.contains("flow_panel::flow_panel_visible")
+            && shell.contains("flow_panel::flow_panel("),
+        "左侧工作流面板没有挂进 shell 的区域装配"
+    );
+    let menu = read_clean("shell/menu.rs");
+    assert!(menu.contains("flow::step_bar("), "标题栏没有挂步骤条");
+    let theme = read_clean("theme.rs");
+    for k in ["STEP_H", "FLOW_W", "FLOW_MIN_W"] {
+        assert!(
+            theme.contains(&format!("pub const {k}")),
+            "流程尺寸 {k} 没进 theme.rs"
+        );
+    }
+    let settings = read_clean("settings.rs");
+    for k in ["show_dock", "show_flow", "show_left", "flow_task"] {
+        assert!(
+            settings.contains(&format!("pub {k}:")),
+            "设置项 {k} 没进 settings.json 的形状"
+        );
+    }
+    let session = read_clean("state/ops_session.rs");
+    assert!(
+        session.contains("layout_switches") && session.contains("self.settings_dirty = true"),
+        "帧首的布局开关自动收账没接上"
+    );
+}

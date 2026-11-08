@@ -323,6 +323,14 @@ impl AppState {
             // The timestamp of the last update check; the silent check's 24-hour
             // throttle hangs off exactly this field.
             last_update_check: self.last_update_check,
+            // 面板开关与工作流选择：帧首的布局快照负责置脏，这里只管收账。
+            //
+            // Panel visibility and the workflow choice: the frame-start layout snapshot
+            // marks these dirty, this only collects them.
+            show_dock: Some(self.show_dock),
+            show_flow: Some(self.show_flow),
+            show_left: Some(self.show_left),
+            flow_task: Some(self.flow_task.key().to_owned()),
             // 合并参数是全局偏好：结果态（*_last / *_error / 预览纹理）不进来。
             merge: crate::settings::MergeParams {
                 hdr_around: self.hdr_around,
@@ -379,6 +387,25 @@ impl AppState {
         // is wanted.
         self.last_update_check = s.last_update_check;
         self.hdr_preview = s.hdr_preview.unwrap_or(false);
+        // 面板开关：`None`（老文件）落首启默认；与 `new()` 的初值必须一致，
+        // 否则"老用户升级后界面突然多/少一块"。
+        //
+        // Panel switches: `None` (older file) lands on the fresh-launch defaults, which
+        // must match `new()` or an upgrade would silently add/remove a panel.
+        self.show_dock = s.show_dock.unwrap_or(true);
+        self.show_flow = s.show_flow.unwrap_or(false);
+        self.show_left = s.show_left.unwrap_or(false);
+        self.flow_task = s
+            .flow_task
+            .as_deref()
+            .and_then(crate::shell::flow::FlowTask::parse)
+            .unwrap_or_default();
+        self.layout_switches = (
+            self.show_dock,
+            self.show_flow,
+            self.show_left,
+            self.flow_task.key(),
+        );
         self.preset_order = normalise_preset_order(&s.preset_order.unwrap_or_default());
         // 合并参数是全局偏好：坏 key / 越界值当场夹回默认，不让手改过的
         // settings.json 把首轮合成带进一个不存在的模式。
@@ -573,6 +600,8 @@ impl AppState {
             hist: None,
             show_dock: true,
             show_flow: false,
+            flow_task: crate::shell::flow::FlowTask::default(),
+            layout_switches: (true, false, false, "timelapse"),
             error_modal: None,
             palette_open: false,
             palette_query: String::new(),
@@ -583,14 +612,13 @@ impl AppState {
             dock_w: crate::theme::DOCK_W,
             // 「预设与快照」浮窗默认关：它悬浮在画布上，开屏即开正好压住主图
             // （用户 2026-11-06 的模块截图里它都盖着画布左上）。入口仍在工具轨
-            // 图标与「视图」菜单；该字段不进 settings.json，这只改首启/重置的
-            // 默认态，会话内开关照旧。
+            // 图标与「视图」菜单；开关随 settings.json 落盘，首启/重置才用默认值。
             //
             // The Presets & Snapshots window defaults to closed: it floats over the
             // canvas and opened right on top of the image at startup (the user's
             // 2026-11-06 module screenshots show it covering the canvas). Entries stay
-            // on the rail icon and the View menu; the field is not persisted in
-            // settings.json, so this only changes the fresh/reset default.
+            // on the rail icon and the View menu; the toggle is persisted in
+            // settings.json, so this default only applies to a fresh/reset state.
             show_left: false,
             show_strip: true,
             snapshots: Vec::new(),
@@ -1600,6 +1628,25 @@ impl AppState {
     }
 
     pub fn poll(&mut self, ctx: &Context) {
+        // 布局开关的自动收账：`show_dock` / `show_flow` / `show_left` / `flow_task`
+        // 散在菜单、工具轨、浮窗等十来处赋值，逐个记得置 `settings_dirty` 早晚会漏。
+        // 帧首比对一次就够——改动发生在上一帧的 ui()，下一帧 tick() 写盘，用户无感。
+        //
+        // Automatic persistence of layout switches: those four fields are assigned from a
+        // dozen places (menus, rail, floating windows), and remembering to flag
+        // `settings_dirty` at each one will eventually be missed. One diff at frame start
+        // is enough -- the change happened in last frame's ui(), and tick() writes it on
+        // the next frame without the user noticing.
+        let switches = (
+            self.show_dock,
+            self.show_flow,
+            self.show_left,
+            self.flow_task.key(),
+        );
+        if switches != self.layout_switches {
+            self.layout_switches = switches;
+            self.settings_dirty = true;
+        }
         // 先把异步回调攒下的失败抬成 `error`（截图保存这类「命令先 OK、结果晚到」的
         // 路径），下一帧 `sync_error_dialog` 会把它变成弹窗。
         //

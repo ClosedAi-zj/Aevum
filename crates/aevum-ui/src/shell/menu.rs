@@ -485,6 +485,26 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         },
     );
 
+    // 流程步骤条：占菜单行里工作区胶囊与主按钮之间的空白，不新增一行。
+    // 三套步骤集由用户手选，状态全部从当前工程派生（见 shell/flow.rs）。
+    //
+    // Workflow step bar: takes the empty slice of the menu row between the workspace
+    // capsule and the primary button, without adding a row. Three hand-authored step
+    // sets are picked by the user; states derive entirely from the current project
+    // (see shell/flow.rs).
+    let flow_x0 = ws_x + ws_w + 14.0;
+    let flow_x1 = zone_right - export_w - 40.0;
+    if flow_x1 > flow_x0 {
+        super::flow::step_bar(
+            state,
+            ui,
+            Rect::from_min_max(
+                Pos2::new(flow_x0, mid - STEP_H * 0.5),
+                Pos2::new(flow_x1, mid + STEP_H * 0.5),
+            ),
+        );
+    }
+
     window_buttons(ui, ctx, full);
 }
 

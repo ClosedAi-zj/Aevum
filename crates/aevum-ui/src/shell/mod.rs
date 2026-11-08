@@ -42,6 +42,8 @@ mod chrome;
 mod common;
 mod dialogs;
 mod dock;
+pub(crate) mod flow;
+mod flow_panel;
 mod library;
 mod markdown;
 mod mask;
@@ -104,6 +106,34 @@ fn debug_export_confirm(ctx: &egui::Context) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aevum-export-pending"), kind));
 }
 
+/// 首帧挂上工作流面板：`AEVUM_FLOW=1` 展开，`=develop|merge|timelapse` 同时选流程。
+///
+/// `--shot` 点不了左轨按钮，这面板与三套步骤条否则永远进不了截图回归。只读环境
+/// 变量，不落盘、不进工程。
+///
+/// Mounts the workflow panel on the first frame: `AEVUM_FLOW=1` expands it, and
+/// `=develop|merge|timelapse` also selects a flow. `--shot` cannot click rail buttons,
+/// so without this hook neither the panel nor the three step sets would ever appear in
+/// screenshot regression. Reads the environment only; nothing is persisted.
+fn debug_apply_flow(state: &mut AppState) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Some(raw) = std::env::var_os("AEVUM_FLOW") else {
+        return;
+    };
+    let v = raw.to_string_lossy().trim().to_ascii_lowercase();
+    if v.is_empty() || matches!(v.as_str(), "0" | "off" | "false") {
+        return;
+    }
+    state.show_flow = true;
+    if let Some(t) = flow::FlowTask::parse(&v) {
+        state.flow_task = t;
+    }
+}
+
 fn debug_apply_workspace(state: &mut AppState) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static DONE: AtomicBool = AtomicBool::new(false);
@@ -138,6 +168,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // same class of hook as `AEVUM_PALETTE` and `AEVUM_DBG_RECT` (reads the environment only;
     // nothing is persisted and nothing enters the project file).
     debug_apply_workspace(state);
+    debug_apply_flow(state);
     debug_export_confirm(&ctx);
     ctx.set_zoom_factor(FONT_ZOOMS[state.font_level.min(FONT_ZOOMS.len() - 1)]);
     // 撤销历史按帧记账：先给这一帧编号，帧末把控件登记过的改动并成一步。
@@ -267,6 +298,24 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .frame(egui::Frame::NONE.fill(dock()))
             .show(root, |ui| dock_panel(state, ui));
     }
+    // 5 工作流面板：最后声明，所以贴着画布（同侧先声明的在外）。窄窗强制收起；
+    // 没导入序列时不收起——面板会给出「导入照片…」，不能点了开关却什么都没有。
+    //
+    // 5 Workflow panel: declared last so it sits next to the canvas (on the same side the
+    // first declaration is outermost). Forced closed on narrow windows, but **not** when
+    // no sequence is loaded -- the panel then offers "Import photos...", because a toggle
+    // that visibly does nothing is a silent failure.
+    if flow_panel::flow_panel_visible(state, full.width()) {
+        egui::Panel::left("flow-panel")
+            .exact_size(FLOW_W)
+            .resizable(false)
+            .frame(
+                egui::Frame::NONE
+                    .fill(dock())
+                    .inner_margin(egui::Margin::symmetric(10, 6)),
+            )
+            .show(root, |ui| flow_panel::flow_panel(state, ui, &ctx));
+    }
 
     // 画布右边界按已知的右侧面板宽度夹一次：切模块时 dock 内容一换，egui 的
     // Panel 会用它记着的「上次宽度」去缩剩余区，而面板自己的 rect 已经是
@@ -310,11 +359,12 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // of the sliders (measured on the English Merge module, 2026-11-05: 86 px of
     // overflow). Handing CentralPanel a computed max_rect keeps it off the panel no
     // matter how long the panel's content gets.
-    let centre = crate::layout::centre_rect(full, root.available_rect_before_wrap(), insets);
+    let available = root.available_rect_before_wrap();
+    let centre = crate::layout::centre_rect(full, available, insets);
     let mut centre_ui = root.new_child(egui::UiBuilder::new().max_rect(centre).id_salt("centre"));
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(surround()))
-        .show(&mut centre_ui, |ui| canvas_panel(state, ui, insets.1));
+        .show(&mut centre_ui, |ui| canvas_panel(state, ui, insets.right));
 
     // 面板与画布之间那条呼吸带：与画布同底色的中性灰，面板内缘压一根发丝线。
     // 只画在文档区高度内，不越过菜单行 / 选项栏 / 底部胶片条。
@@ -322,7 +372,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // The gutter between dock and canvas: neutral surround grey with a hairline on the
     // dock's inner edge. Drawn only across the document area, never over the menu row,
     // options bar or bottom filmstrip.
-    if let Some((band, line_x)) = crate::layout::canvas_gutter(full, centre, insets, state.dock_w) {
+    if let Some((band, line_x)) = crate::layout::canvas_gutter(available, centre, insets) {
         let p = root.painter().clone();
         p.rect_filled(band, 0.0, surround());
         let x = line_x.round() + 0.5;

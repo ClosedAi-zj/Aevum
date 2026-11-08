@@ -59,6 +59,69 @@ fn missing_collapsed_field_falls_back_to_defaults() {
     assert_eq!(s.collapsed, default_collapsed());
 }
 
+/// 三个面板开关与工作流选择要能过一遍 settings.json：此前 `show_left` /
+/// `show_dock` 的注释声称落盘、实际没落，重启就回默认（用户「变不回去了」的同类）。
+///
+/// The three panel switches and the workflow choice must survive a settings.json round
+/// trip. Their comments claimed persistence that did not exist, so a restart reset them.
+#[test]
+fn panel_switches_and_workflow_survive_a_settings_round_trip() {
+    let mut a = AppState::new();
+    a.show_dock = false;
+    a.show_flow = true;
+    a.show_left = true;
+    a.flow_task = crate::shell::flow::FlowTask::Merge;
+
+    let saved = a.settings();
+    assert_eq!(saved.show_dock, Some(false));
+    assert_eq!(saved.show_flow, Some(true));
+    assert_eq!(saved.show_left, Some(true));
+    assert_eq!(saved.flow_task.as_deref(), Some("merge"));
+
+    let json = serde_json::to_string(&saved).expect("序列化设置");
+    let back: crate::settings::Settings = serde_json::from_str(&json).expect("解析设置");
+    let mut b = AppState::new();
+    b.adopt_settings(back);
+    assert!(!b.show_dock);
+    assert!(b.show_flow);
+    assert!(b.show_left);
+    assert_eq!(b.flow_task, crate::shell::flow::FlowTask::Merge);
+
+    // 老文件缺这一节：三项回首启默认，坏 key 回落默认工作流。
+    //
+    // An older file without the section: defaults on all three, and a bad key falls back
+    // to the default workflow.
+    let old: crate::settings::Settings =
+        serde_json::from_str(r#"{"font_level":1,"flow_task":"no-such-workflow"}"#).unwrap();
+    let mut c = AppState::new();
+    c.adopt_settings(old);
+    assert!(c.show_dock);
+    assert!(!c.show_flow);
+    assert!(!c.show_left);
+    assert_eq!(c.flow_task, crate::shell::flow::FlowTask::default());
+}
+
+/// 帧首比对会自动置脏：新增赋值点不必记得手工标 `settings_dirty`。
+///
+/// The frame-start diff marks settings dirty automatically, so a new assignment site does
+/// not have to remember to flag it by hand.
+#[test]
+fn changing_a_layout_switch_marks_settings_dirty_on_the_next_poll() {
+    let ctx = egui::Context::default();
+    let mut a = AppState::new();
+    a.settings_dirty = false;
+    a.poll(&ctx);
+    assert!(!a.settings_dirty, "没改任何开关就不该写盘");
+
+    a.show_flow = true;
+    a.poll(&ctx);
+    assert!(a.settings_dirty, "改了工作流面板开关却没置脏");
+
+    a.settings_dirty = false;
+    a.poll(&ctx);
+    assert!(!a.settings_dirty, "同一状态不该每帧反复写盘");
+}
+
 /// 反过来：用户亲手把每一组都点开（空列表）是明确表态，默认态不许覆盖他。
 #[test]
 fn explicit_all_open_is_respected() {

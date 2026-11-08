@@ -849,6 +849,21 @@ pub const RAIL_GROUP_GAP: f32 = 10.0;
 /// surround colour plus a hairline on the panel's inner edge restores the hierarchy.
 /// This value is added exactly once, in `layout::canvas_insets`; nothing else adds it.
 pub const CANVAS_GAP: f32 = 10.0;
+/// 标题栏里流程步骤条的高度：比菜单行矮 6px，不与窗口拖拽区抢垂直空间。
+///
+/// Height of the workflow step bar in the title bar: 6 px shorter than the menu row so
+/// it does not steal vertical room from the window drag zone.
+pub const STEP_H: f32 = 22.0;
+/// 左侧工作流面板宽度：只放当前步的 3–5 个动作，再宽就开始吃画布。
+///
+/// Width of the left workflow panel: just enough for the current step's 3-5 actions;
+/// wider starts eating the canvas.
+pub const FLOW_W: f32 = 200.0;
+/// 工作流面板的最小窗口宽度：低于这个值强制收起，保住画布的可用面积。
+///
+/// Minimum window width for the workflow panel; below it the panel is forced closed to
+/// protect the canvas area.
+pub const FLOW_MIN_W: f32 = 1180.0;
 /// 右侧参数面板默认宽度 300px。
 ///
 /// 原先 372 是按「标签 76 + 读数 52 + 轨道」堆出来的上限值，实测偏宽：**

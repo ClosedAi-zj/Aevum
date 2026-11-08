@@ -344,79 +344,115 @@ impl Layout {
 
 // ---------------------------------------------------------------- 画布让位
 
-/// 画布左右各要让出多少：侧栏宽度 + 一条固定呼吸带。
+/// 画布让位量：左 / 右各让多少，以及其中属于呼吸带的那一段。
 ///
-/// 这是 `CANVAS_GAP` 唯一被加进去的地方。中央面板、画布浮层、面板内缘发丝线都从
-/// 这组数字反推，谁再自己 `+ 10` 就会在拖宽面板时多出一条缝——判据
-/// `ui_tokens::canvas_gap_has_one_source` 盯的就是这件事。
+/// `gap` 是同一个 `CANVAS_GAP` 的副本。中央区与呼吸带都读它，谁也不许自己
+/// 再写一遍 `+ 10`——判据 `ui_tokens::canvas_gap_has_one_source` 盯的就是这件事。
 ///
-/// How much the canvas yields on the left and right: side panel width plus one fixed
-/// breathing band. This is the only place `CANVAS_GAP` is added. The centre panel, canvas
-/// overlays and the hairline on the panel's inner edge all derive from these numbers;
-/// a second `+ 10` anywhere would open an extra seam when the panel is dragged wider
+/// Canvas insets: how much is yielded on the left and right, plus the slice that is the
+/// breathing band. `gap` carries the single `CANVAS_GAP` value; the centre rect and the
+/// gutter both read it, and nothing adds `+ 10` a second time
 /// (`ui_tokens::canvas_gap_has_one_source` watches for exactly that).
-pub fn canvas_insets(show_dock: bool, dock_left: bool, dock_w: f32) -> (f32, f32) {
-    if !show_dock {
-        return (0.0, 0.0);
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasInsets {
+    pub left: f32,
+    pub right: f32,
+    pub gap: f32,
+}
+
+impl CanvasInsets {
+    /// 坞在哪一侧；没显示坞时两侧都不留呼吸带。
+    ///
+    /// Which side the dock is on; with no dock neither side gets a gutter.
+    pub fn dock_left(&self) -> bool {
+        self.left > 0.0
     }
-    let inset = dock_w.max(0.0) + crate::theme::CANVAS_GAP;
-    if dock_left {
-        (inset, 0.0)
-    } else {
-        (0.0, inset)
+
+    pub fn has_dock(&self) -> bool {
+        self.left > 0.0 || self.right > 0.0
     }
 }
 
-/// 中央区矩形：从 egui 报的剩余区出发，按已知让位量钉死左右边界。
+/// 画布让位量的唯一出口：`CANVAS_GAP` 只在这里被加一次。
 ///
-/// egui 的 Panel 会用它记住的「上次宽度」缩剩余区，而面板自己的 rect 已经按
-/// `exact_size` 走，两者会连着几十帧对不上。以整窗边界和布局常量为准，画布就
-/// 永远压不到面板上。
+/// The single source of canvas insets: `CANVAS_GAP` is added exactly here, once.
+pub fn canvas_insets(show_dock: bool, dock_left: bool, dock_w: f32) -> CanvasInsets {
+    let gap = crate::theme::CANVAS_GAP;
+    if !show_dock {
+        return CanvasInsets {
+            left: 0.0,
+            right: 0.0,
+            gap,
+        };
+    }
+    let inset = dock_w.max(0.0) + gap;
+    if dock_left {
+        CanvasInsets {
+            left: inset,
+            right: 0.0,
+            gap,
+        }
+    } else {
+        CanvasInsets {
+            left: 0.0,
+            right: inset,
+            gap,
+        }
+    }
+}
+
+/// 中央区矩形：从 egui 报的剩余区出发，在**有坞的那一侧**再让出一条呼吸带。
 ///
-/// The centre rectangle: start from the remainder egui reports, then pin the left and
-/// right edges from the known insets. egui's Panel shrinks the remainder using a
-/// remembered width while its own rect already honours `exact_size`, so the two disagree
-/// for dozens of frames. Deriving from the window edges and layout constants keeps the
-/// canvas off the panel permanently.
-pub fn centre_rect(full: Rect, available: Rect, insets: (f32, f32)) -> Rect {
+/// 只按 `full` 边界算会漏掉同侧还有别的面板的情况：左坞 + 左工具轨时，
+/// `available.min.x` 已经把两栏都扣掉了，拿 `full.left() + dock_w` 去夹反而比
+/// 剩余区还小，呼吸带就消失。所以主锚点是 `available`，`full` 只作第二道保险
+/// ——egui 的 Panel 会用它记住的「上次宽度」缩剩余区，与自己的 `exact_size`
+/// 连着几十帧对不上，整窗边界能把画布拉回真实位置。
+///
+/// The centre rectangle: from the remainder egui reports, yield one gutter on the side
+/// that has a dock. Using only `full` misses the case where other panels share that side
+/// (left dock + left tool rail): `available.min.x` has already removed both, so clamping
+/// to `full.left() + dock_w` is smaller than the remainder and the gutter vanishes.
+/// `available` is therefore the primary anchor and `full` only a second guard -- egui's
+/// Panel shrinks the remainder with a remembered width while its own rect honours
+/// `exact_size`, so the two disagree for dozens of frames and the window edge pulls the
+/// canvas back.
+pub fn centre_rect(full: Rect, available: Rect, insets: CanvasInsets) -> Rect {
     let mut r = available;
-    r.min.x = r.min.x.max(full.left() + insets.0);
-    r.max.x = r.max.x.min(full.right() - insets.1).max(r.min.x + 1.0);
+    if insets.left > 0.0 {
+        r.min.x = (r.min.x + insets.gap).max(full.left() + insets.left);
+    }
+    if insets.right > 0.0 {
+        r.max.x = (r.max.x - insets.gap)
+            .min(full.right() - insets.right)
+            .max(r.min.x + 1.0);
+    }
     r
 }
 
-/// 呼吸带：`(带矩形, 发丝线所在的 x)`；没有侧栏时返回 `None`。
+/// 呼吸带：`(带矩形, 发丝线所在的 x)`；没有坞时返回 `None`。
 ///
-/// 带宽不写死——由让位量减去侧栏宽度得到，所以面板拖宽时带宽恒为常量、位置跟着走。
-/// `vertical` 只取上下边界：呼吸带只存在于文档区，不越过菜单行与底部胶片条。
+/// 带就取「egui 剩余区内缘 → 中央区边缘」那一段，所以同侧还有工具轨 / 工作流面板
+/// 时位置照样对；带宽恒为 `insets.gap`。上下只取文档区，不越过菜单行与胶片条。
 ///
 /// The gutter: `(band rect, x of the hairline)`, or `None` when no dock is shown.
-/// The width is not hardcoded -- it is the inset minus the dock width, so dragging the
-/// panel keeps the band a constant width and moves it along. `vertical` supplies only
-/// the top and bottom: the gutter belongs to the document area, not the menu row or the
-/// bottom filmstrip.
-pub fn canvas_gutter(
-    full: Rect,
-    vertical: Rect,
-    insets: (f32, f32),
-    dock_w: f32,
-) -> Option<(Rect, f32)> {
-    let (x0, x1, line_x) = if insets.0 > 0.0 {
-        let edge = full.left() + dock_w;
-        (edge, full.left() + insets.0, edge)
-    } else if insets.1 > 0.0 {
-        let edge = full.right() - dock_w;
-        (full.right() - insets.1, edge, edge)
-    } else {
-        return None;
-    };
-    if x1 <= x0 {
+/// It is exactly the slice between the remainder's inner edge and the centre rect, so
+/// a tool rail or workflow panel on the same side cannot shift it; the width stays
+/// `insets.gap`. Vertically it covers only the document area, never the menu row or
+/// filmstrip.
+pub fn canvas_gutter(available: Rect, centre: Rect, insets: CanvasInsets) -> Option<(Rect, f32)> {
+    if !insets.has_dock() {
         return None;
     }
-    let band = Rect::from_min_max(
-        Pos2::new(x0, vertical.top()),
-        Pos2::new(x1, vertical.bottom()),
-    );
+    let (x0, x1, line_x) = if insets.dock_left() {
+        (available.min.x, centre.min.x, available.min.x)
+    } else {
+        (centre.max.x, available.max.x, available.max.x)
+    };
+    if x1 - x0 < 0.5 {
+        return None;
+    }
+    let band = Rect::from_min_max(Pos2::new(x0, centre.top()), Pos2::new(x1, centre.bottom()));
     Some((band, line_x))
 }
 
@@ -504,53 +540,62 @@ mod tests {
             (true, true, (300.0 + gap, 0.0)),
         ];
         for (show, left, want) in cases {
-            assert_eq!(
-                canvas_insets(show, left, 300.0),
-                want,
-                "show={show} left={left}"
-            );
+            let got = canvas_insets(show, left, 300.0);
+            assert_eq!((got.left, got.right), want, "show={show} left={left}");
+            assert_eq!(got.gap, gap);
+            assert_eq!(got.has_dock(), show);
         }
         // 拖宽面板：让位量跟着涨，呼吸带本身不涨。
         //
         // Drag the panel wider: the inset grows with it, the gutter itself does not.
-        assert_eq!(canvas_insets(true, false, 420.0).1, 420.0 + gap);
+        assert_eq!(canvas_insets(true, false, 420.0).right, 420.0 + gap);
     }
 
-    /// 呼吸带恒为 10px，贴着面板内缘，且不越过文档区上下边界。
+    /// 呼吸带恒为 10px，贴着面板内缘，同侧还有别的面板时位置照样对。
     ///
-    /// The gutter is always 10 px, sits against the panel's inner edge, and never crosses
-    /// the document area's top or bottom.
+    /// The gutter is always 10 px against the panel's inner edge, and stays correct when
+    /// other panels share that side.
     #[test]
     fn canvas_gutter_tracks_the_dock_on_both_sides() {
         let full = win();
-        let vertical = Rect::from_min_max(Pos2::new(0.0, 80.0), Pos2::new(1280.0, 620.0));
-        for (left, want_edge) in [(false, 980.0), (true, 300.0)] {
-            let insets = canvas_insets(true, left, 300.0);
+        let v_top = 80.0;
+        let v_bottom = 620.0;
+        for (left, extra_left) in [(false, 0.0), (true, 0.0), (true, 256.0), (false, 56.0)] {
+            let dock_w = 300.0;
+            let insets = canvas_insets(true, left, dock_w);
+            // egui 声明完所有侧栏之后的剩余区：extra_left 模拟同侧的工具轨/工作流面板。
+            let available = Rect::from_min_max(
+                Pos2::new(
+                    full.left() + if left { dock_w + extra_left } else { 0.0 },
+                    v_top,
+                ),
+                Pos2::new(
+                    full.right() - if left { 0.0 } else { dock_w + extra_left },
+                    v_bottom,
+                ),
+            );
+            let centre = centre_rect(full, available, insets);
             let (band, line_x) =
-                canvas_gutter(full, vertical, insets, 300.0).expect("有面板就该有呼吸带");
+                canvas_gutter(available, centre, insets).expect("有坞就该有呼吸带");
             assert!(
                 (band.width() - crate::theme::CANVAS_GAP).abs() < 1e-4,
-                "{band:?}"
+                "left={left} extra={extra_left}: {band:?}"
             );
-            assert!(
-                (line_x - want_edge).abs() < 1e-4,
-                "left={left} line_x={line_x}"
-            );
-            assert_eq!(band.top(), vertical.top());
-            assert_eq!(band.bottom(), vertical.bottom());
+            assert_eq!(band.top(), v_top);
+            assert_eq!(band.bottom(), v_bottom);
             if left {
-                assert_eq!(band.left(), want_edge);
+                assert!((band.left() - available.min.x).abs() < 1e-4);
+                assert!((line_x - available.min.x).abs() < 1e-4);
+                assert!((band.right() - centre.min.x).abs() < 1e-4);
             } else {
-                assert_eq!(band.right(), want_edge);
+                assert!((band.right() - available.max.x).abs() < 1e-4);
+                assert!((line_x - available.max.x).abs() < 1e-4);
+                assert!((band.left() - centre.max.x).abs() < 1e-4);
             }
-            // 面板拖宽后带宽不变，只是整体平移。
-            //
-            // After widening the panel the band keeps its width and just slides along.
-            let wide = canvas_gutter(full, vertical, canvas_insets(true, left, 420.0), 420.0)
-                .expect("宽面板也该有呼吸带");
-            assert!((wide.0.width() - crate::theme::CANVAS_GAP).abs() < 1e-4);
         }
-        assert!(canvas_gutter(full, vertical, (0.0, 0.0), 300.0).is_none());
+        let none = canvas_insets(false, false, 300.0);
+        let available = Rect::from_min_max(Pos2::new(0.0, v_top), Pos2::new(1280.0, v_bottom));
+        assert!(canvas_gutter(available, available, none).is_none());
     }
 
     /// 中央区在四种组合下都不越过面板内缘，且至少留 1px 可用宽。
@@ -589,6 +634,9 @@ mod tests {
                 assert!(
                     (r.right() - (full.right() - dock_w - crate::theme::CANVAS_GAP)).abs() < 1e-4
                 );
+            }
+            if !show {
+                assert_eq!(r, available, "没有坞时不该动剩余区");
             }
         }
     }
