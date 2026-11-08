@@ -491,8 +491,8 @@ impl AppState {
                 // 逐张上屏：解一张发一张，胶片条「加载到哪张哪张显现」，
                 // 不再攒一整批突然蹦出来；每张都叫醒一次重绘。失败帧同样
                 // 即时回报，pending 不堵。
-                for ((index, path, gain), _) in missing_idx.iter().zip(jobs.iter()) {
-                    let (index, path, gain) = (*index, &path.1, *gain);
+                for (index, path, gain) in jobs.iter() {
+                    let (index, path, gain) = (*index, path, *gain);
                     match decode_thumb_src(path, &params.dcp_profile) {
                         Some(src) => {
                             let (image, size) = grade_thumb(&src, &params, gain);
