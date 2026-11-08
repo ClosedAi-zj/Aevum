@@ -3297,6 +3297,32 @@ fn render_full_file(job: FrameExport<'_>) -> Result<(), String> {
         .map(|_| ())
 }
 
+/// 单帧导出的默认落点：`out_dir` 为空时落到 `<序列根>/成片`。
+///
+/// 抽成纯函数是为了能被判据直接量：路径规则一旦退回去（比如又带上保存对话框的
+/// 返回值、或者丢掉了 `_graded` 后缀），`tests/suite/export_path.rs` 会当场红。
+/// 这也是批量导出一直在用的口径（`run_export` 的 `out_root`），两条路必须一致，
+/// 否则"批量导到 A、单帧导到 B"这种事会悄悄回来。
+///
+/// Where a single-frame export lands by default: `<sequence root>/成片` when `out_dir` is
+/// empty. A pure function so the fence can measure it directly -- if the rule regresses (a
+/// dialog return value sneaks back in, or the `_graded` suffix disappears) the test goes red.
+/// It is the same rule batch export already uses (`out_root` in `run_export`); the two must
+/// agree, or "batch goes to A, single frame goes to B" would quietly return.
+pub fn auto_frame_dst(
+    out_dir: &std::path::Path,
+    seq_root: &std::path::Path,
+    stem: &str,
+    format: StillFormat,
+) -> std::path::PathBuf {
+    let dir = if out_dir.as_os_str().is_empty() {
+        seq_root.join("成片")
+    } else {
+        out_dir.to_path_buf()
+    };
+    force_container(dir.join(format!("{stem}_graded.{}", format.ext())), format)
+}
+
 /// 对话框里的文件名和面板选的容器对齐：编码器看的是字节不是后缀，
 /// 用户手输 `.jpg` 而面板开着 PNG 时，落盘的仍是 PNG，后缀不能骗人。
 fn force_container(path: PathBuf, format: StillFormat) -> PathBuf {
@@ -4676,6 +4702,9 @@ mod bypass_tests;
 #[cfg(test)]
 #[path = "state/tests/command_tests.rs"]
 mod command_tests;
+#[cfg(test)]
+#[path = "state/tests/export_write_tests.rs"]
+mod export_write_tests;
 #[cfg(test)]
 #[path = "state/tests/focus_align_wiring_tests.rs"]
 mod focus_align_wiring_tests;

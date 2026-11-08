@@ -110,7 +110,109 @@ impl AppState {
         }
     }
 
+    /// 导出当前帧：**写到默认输出目录，全程不弹系统对话框**。
+    ///
+    /// 此前这里直接开 `rfd::FileDialog::save_file()`，而它既不带 `set_directory`、也不读
+    /// 用户在导出对话框里刚选过的 `render_out_dir` —— 于是"先选目录、再选文件名"，前一次
+    /// 的选择被整个丢掉（用户 2026-11-08 反馈"点导出弹两下文件框"，根因就在这里）。
+    /// 批量导出 `run_export` 从来就不问路径，单帧没有理由问：目录即输出，文件名按
+    /// `{帧名}_graded.{扩展名}` 生成，遵守"同名跳过"。
+    ///
+    /// 想放到别处走 [`Self::export_current_as`]——那是唯一保留的保存对话框。
+    ///
+    /// Exports the current frame **into the output directory, with no system dialog**.
+    ///
+    /// It used to open `rfd::FileDialog::save_file()` without `set_directory` and without
+    /// reading `render_out_dir`, which the user had just picked in the export dialog -- so the
+    /// user chose a folder, then had to choose a file, and the first choice was thrown away
+    /// (user report, 2026-11-08: "clicking export pops two file dialogs"). Batch export never
+    /// asked for a path; a single frame has no reason to. The directory is the output and the
+    /// name is `{frame stem}_graded.{ext}`, honouring "skip existing".
+    ///
+    /// Use [`Self::export_current_as`] to put it elsewhere -- the one remaining save dialog.
     pub fn export_current(&mut self, ctx: &Context) {
+        let Some(dst) = self.auto_frame_path() else {
+            return;
+        };
+        self.export_current_to(ctx, dst);
+    }
+
+    /// 「另存为…」：唯一会弹系统保存框的单帧导出。
+    ///
+    /// 起始目录就是面板上的输出目录——这一步是本轮修掉的另一半：旧代码不设起始目录，
+    /// 对话框每次都从系统默认位置打开，用户得重新找一遍刚才选过的文件夹。
+    ///
+    /// Save-as: the only single-frame path that opens a system save dialog. It starts in the
+    /// panel's output directory -- the other half of this fix, since the old code set no
+    /// starting directory and every dialog opened somewhere the user had to navigate back from.
+    pub fn export_current_as(&mut self, ctx: &Context) {
+        let Some(dst) = self.pick_frame_path() else {
+            return;
+        };
+        self.export_current_to(ctx, dst);
+    }
+
+    /// 默认落点：`render_out_dir`（空则 `<序列根>/成片`）+ `{帧名}_graded.{ext}`。
+    ///
+    /// `None` = 这一下不该导出（已在导出中 / 没有帧 / 同名文件存在且开着"跳过同名"）。
+    ///
+    /// The default destination: `render_out_dir` (else `<sequence root>/成片`) plus
+    /// `{stem}_graded.{ext}`. `None` means there is nothing to do (already exporting, no frame,
+    /// or the file exists while "skip existing" is on).
+    pub(crate) fn auto_frame_path(&mut self) -> Option<std::path::PathBuf> {
+        if self.export_busy {
+            return None;
+        }
+        let seq = self.seq.as_ref()?;
+        let frame = seq.frames.get(self.selected)?;
+        let stem = std::path::Path::new(&frame.name)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "frame".to_owned());
+        let dst = crate::state::auto_frame_dst(
+            &self.render_out_dir,
+            &seq.root,
+            &stem,
+            self.render_format,
+        );
+        if self.render_resume && dst.exists() {
+            self.status = crate::i18n::tr_fmt("{} 已存在，按「跳过同名」略过", &[&dst.display()]);
+            return None;
+        }
+        Some(dst)
+    }
+
+    /// 让用户挑一个落点；起始目录跟着面板走。
+    ///
+    /// Ask the user for a destination, starting in the panel's output directory.
+    fn pick_frame_path(&mut self) -> Option<std::path::PathBuf> {
+        let seq = self.seq.as_ref()?;
+        let frame = seq.frames.get(self.selected)?;
+        let stem = std::path::Path::new(&frame.name)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "frame".to_owned());
+        let dir = if self.render_out_dir.as_os_str().is_empty() {
+            seq.root.join("成片")
+        } else {
+            self.render_out_dir.clone()
+        };
+        // 局部变量不能叫 `format`：它会把 `format!` 宏遮住，报"expected value, found macro"。
+        //
+        // The local must not be named `format`: it shadows the `format!` macro.
+        let still = self.render_format;
+        let picked = rfd::FileDialog::new()
+            .set_directory(&dir)
+            .set_file_name(format!("{stem}_graded.{}", still.ext()))
+            .add_filter(still.cn(), &[still.ext()])
+            .save_file()?;
+        Some(force_container(picked, still))
+    }
+
+    /// 真正落盘：两条入口共用这一段，避免"另存为"和"默认导出"各写一套。
+    ///
+    /// The actual write, shared by both entries so "save as" and "default export" cannot drift.
+    fn export_current_to(&mut self, ctx: &Context, path: std::path::PathBuf) {
         if self.export_busy {
             return;
         }
@@ -118,22 +220,22 @@ impl AppState {
         let Some(frame) = seq.frames.get(self.selected) else {
             return;
         };
-        let stem = std::path::Path::new(&frame.name)
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "frame".to_owned());
-        let format = self.render_format;
-        let Some(picked) = rfd::FileDialog::new()
-            .set_file_name(format!("{stem}_graded.{}", format.ext()))
-            .add_filter(format.cn(), &[format.ext()])
-            .save_file()
-        else {
+        // 目录可能还不存在（用户第一次导出到某个新文件夹）：先建出来，否则编码器报的是
+        // 一个和"目录不存在"无关的错，用户看不出该做什么。
+        //
+        // The directory may not exist yet (first export into a new folder): create it first,
+        // otherwise the encoder reports something unrelated to "no such directory".
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.error = Some(crate::i18n::tr_fmt("建不了输出目录：{}", &[&e]));
             return;
-        };
-        let path = force_container(picked, format);
+        }
         self.export_busy = true;
-        self.status =
-            crate::i18n::tr_fmt("正在导出当前帧（{}）…", &[&crate::i18n::tr(format.cn())]);
+        self.status = crate::i18n::tr_fmt(
+            "正在导出当前帧（{}）…",
+            &[&crate::i18n::tr(self.render_format.cn())],
+        );
         let params = self.params.clone();
         let gain = self.ev_at(self.selected);
         // 导出按画幅比例裁：面板上的取景框就是最终画面，对齐裁切照旧先叠一层。

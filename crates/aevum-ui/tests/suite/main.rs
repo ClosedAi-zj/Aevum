@@ -25,6 +25,7 @@ mod common;
 mod deflicker_align;
 mod delivery_panel;
 mod dock_fit;
+mod export_path;
 mod i18n_coverage;
 mod i18n_errors;
 mod i18n_literals;
