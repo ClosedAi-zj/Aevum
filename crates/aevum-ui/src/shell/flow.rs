@@ -344,7 +344,7 @@ pub fn derived_current(state: &AppState, task: FlowTask) -> usize {
     step_states(state, task)
         .iter()
         .position(|s| *s == StepState::Current)
-        .unwrap_or(task.steps().len() - 1)
+        .unwrap_or_else(|| task.steps().len().saturating_sub(1))
 }
 
 /// 下一步要做什么。全部就绪时返回 `None`（最后一步永远不"就绪"，所以通常不会发生）。

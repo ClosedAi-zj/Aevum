@@ -109,10 +109,27 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
         } else if resp.hovered() {
             p.rect_filled(r, radius_control(), elev_hover());
         }
+        // 页签文字按**实测宽度**截断：窄坞（280px）下英文 "Keyframes" 会压到
+        // 相邻页签上；而三个汉字实际放得下，按字符数估算会误截成「关…」。
+        //
+        // Truncate by **measured width**: on a 280 px dock the English "Keyframes"
+        // bleeds into the next tab, while three CJK glyphs do fit -- a char-count
+        // estimate wrongly cuts "关键帧" down to "关…".
+        let full = crate::i18n::tr(tab.cn());
+        let avail = (r.width() - 6.0).max(1.0);
+        let measured = p
+            .layout_no_wrap(full.to_owned(), font(SIZE_SMALL), text())
+            .size()
+            .x;
+        let label = if measured <= avail {
+            full.to_owned()
+        } else {
+            crate::theme::ellipsis(full, ((avail / SIZE_SMALL) as usize).max(1))
+        };
         p.text(
             r.center(),
             Align2::CENTER_CENTER,
-            crate::i18n::tr(tab.cn()),
+            label,
             font(SIZE_SMALL),
             if active {
                 on_selected()

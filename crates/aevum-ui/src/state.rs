@@ -1530,7 +1530,15 @@ pub struct AppState {
     /// Last thumbnail-trim instant: a throttle, so we do not sort a thousand-plus keys
     /// every frame.
     pub(crate) thumb_trim_at: Option<std::time::Instant>,
-    thumb_pending: HashSet<usize>,
+    /// 缩略图解码在飞的帧 → 派发时刻。带时间戳是为了自愈：线程若中途
+    /// panic，剩余帧会永远留在集合里、永不重试（胶片条永久空白）。超过
+    /// `PENDING_TIMEOUT` 的条目视为僵尸，下一帧强制重新派发。
+    ///
+    /// In-flight thumbnail decodes -> dispatch instant. The timestamp is the self-heal
+    /// path: if the worker thread panics midway, the remaining frames would stay in the
+    /// set forever and never retry (a permanently blank strip). Entries older than
+    /// `PENDING_TIMEOUT` are treated as zombies and re-dispatched on the next frame.
+    thumb_pending: HashMap<usize, std::time::Instant>,
     /// 缩略图的解码源（见 [`ThumbSrc`]）：只给「参数变了重调色」用，不参与绘制。
     ///
     /// Decoded thumbnail sources (see [`ThumbSrc`]): only for re-grading when parameters
@@ -1540,7 +1548,11 @@ pub struct AppState {
     ///
     /// Frames whose re-grade is in flight: no duplicate queueing until the batch returns,
     /// so a slider drag cannot pile up jobs.
-    thumb_regrade: HashSet<usize>,
+    /// 缩略图重调色在飞的帧 → 派发时刻（同 `thumb_pending` 的超时自愈口径）。
+    ///
+    /// In-flight thumbnail re-grades -> dispatch instant (same timeout self-heal as
+    /// `thumb_pending`).
+    thumb_regrade: HashMap<usize, std::time::Instant>,
     /// 播放用的较大尺寸代理纹理（纯内存，不落盘、不进 Snapshot）。播放态画布吃这一档，
     /// 暂停后回全质量；纹理名用 `proxy.{i}`，与 128px 的 `thumb.{i}` 分开。
     ///
@@ -1551,7 +1563,13 @@ pub struct AppState {
     /// 正在后台取代理的帧号，避免重复排队。
     ///
     /// Frames whose proxy is being fetched, so we do not queue twice.
-    pub proxy_pending: HashSet<usize>,
+    /// 播放代理在飞的帧 → 派发时刻。解码失败的帧永远不会出现在回包里，
+    /// 没有时间戳就会永久卡住，该帧播放时便一直退回低清缩略图。
+    ///
+    /// In-flight playback proxies -> dispatch instant. A failed decode never shows up in
+    /// the reply, so without a timestamp that frame stays stuck and keeps falling back to
+    /// the low-res thumbnail during playback.
+    pub proxy_pending: HashMap<usize, std::time::Instant>,
     /// 当前裁剪拖动的世代号（纯内存）。`crop_begin` 递增置位、`crop_end` 清零；
     /// 历史合并据此把「同一次拖动内即使手停很久」的连续改动并成一步，详见
     /// [`crate::history`]。0 = 不在拖动中。
@@ -1654,7 +1672,11 @@ pub struct AppState {
     /// view).
     pub lib_meta_open: bool,
     pub lib_thumbs: HashMap<PathBuf, Thumb>,
-    lib_thumb_pending: HashSet<PathBuf>,
+    /// 图库缩略图在飞的路径 → 派发时刻（与其他三处缓存同一套超时自愈口径）。
+    ///
+    /// In-flight library thumbnails -> dispatch instant (same timeout self-heal as the
+    /// other three caches).
+    lib_thumb_pending: HashMap<PathBuf, std::time::Instant>,
     /// 撤销 / 重做历史；只收参数类写入，见 [`history`]。
     ///
     /// Undo / redo history; accepts parameter-class writes only, see [`history`].

@@ -748,9 +748,16 @@ pub(super) enum RailHalf {
 /// `tool_rail` read the same slice by index.
 pub(super) fn rail_items_half(half: RailHalf) -> &'static [RailItem] {
     let all = rail_items();
+    // 切点按 group 边界算，不写死 7：表里增删任意一项都不会静默把工具混进
+    // 上半轨。表本身保证 group 单调不减（判据里也钉着这一点）。
+    //
+    // The split point comes from the group boundary, not a hard-coded 7: adding or
+    // removing a table entry can never silently smuggle a tool into the upper rail.
+    // The table itself keeps `group` non-decreasing (a test pins that too).
+    let split = all.iter().position(|it| it.group >= 2).unwrap_or(all.len());
     match half {
-        RailHalf::Panels => &all[..7],
-        RailHalf::Tools => &all[7..],
+        RailHalf::Panels => &all[..split],
+        RailHalf::Tools => &all[split..],
     }
 }
 
@@ -979,10 +986,14 @@ fn item_active(state: &AppState, kind: RailKind) -> bool {
 pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui, half: RailHalf, on_left: bool) {
     let full = ui.max_rect();
     let p = ui.painter().clone();
-    // 边框与强调条永远朝画布：左轨在右缘，右轨在左缘。
+    // 边框与激活条永远朝「内侧」：左轨取右缘，右轨取左缘。左轨右邻是
+    // 画布（或工作流面板），右轨左邻是参数坞——两种情形都在分界处画线，
+    // 窗口外缘不留线。
     //
-    // The border and the active bar always face the canvas: a left rail uses its right
-    // edge, a right rail its left edge.
+    // The border and the active bar always face inward: a left rail uses its right edge,
+    // a right rail its left edge. The left rail's neighbour is the canvas (or the flow
+    // panel); the right rail's is the dock -- both get the divider at the seam, and the
+    // outer window edge stays clean.
     let (edge_a, edge_b) = if on_left {
         (full.right_top(), full.right_bottom())
     } else {
@@ -1400,8 +1411,15 @@ mod rail_tests {
     /// the foot only on the lower half, and the tool group never folds.
     #[test]
     fn rail_halves_split_every_entry_once() {
+        let all = rail_items();
+        assert!(
+            all.windows(2).all(|w| w[0].group <= w[1].group),
+            "轨条目表的 group 必须单调不减，否则切点会把工具混进上半轨"
+        );
         let panels = rail_items_half(RailHalf::Panels);
         let tools = rail_items_half(RailHalf::Tools);
+        assert!(panels.iter().all(|i| i.group <= 1));
+        assert!(tools.iter().all(|i| i.group >= 2));
         assert_eq!(panels.len(), 7, "上半应有 7 枚");
         assert_eq!(tools.len(), 7, "下半应有 7 枚");
         assert_eq!(panels.len() + tools.len(), rail_items().len());

@@ -119,60 +119,18 @@ pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         });
     });
     ui.add_space(4.0);
-    // 五步全程摆出来，点哪步看哪步：选中态走 display_step（点选优先、未选
-    // 回落派生当前步），✓ 是派生进度，不因点选撒谎。单张没有这一段。
+    // 步骤导航只在顶栏（横向页签），面板不再重复一列竖排步骤——两处列同一套
+    // 步骤是用户 2026-11-09 明确指出的重复。面板这里只留「当前段说明 + 动作」。
     //
-    // All steps stay visible; clicking one shows it. The highlight follows
-    // display_step (an explicit click wins, otherwise the derived current step), while
-    // ✓ remains the derived progress and never lies because of a click. Single photos
-    // get none of this.
-    let states = flow::step_states(state, task);
-    if !single {
-        ui.add_space(2.0);
-    }
-    for (i, s) in steps
-        .iter()
-        .enumerate()
-        .take(if single { 0 } else { steps.len() })
-    {
-        let marker = match states[i] {
-            flow::StepState::Ready => "✓",
-            flow::StepState::Current => "●",
-            flow::StepState::Todo => "○",
-        };
-        let label = format!("{marker}  {}", crate::i18n::tr(s.label));
-        let resp = ui.selectable_label(i == current, RichText::new(label).size(SIZE_BODY));
-        let info = match states[i] {
-            flow::StepState::Ready => crate::i18n::tr("输入已就绪"),
-            flow::StepState::Current => crate::i18n::tr("下一步"),
-            flow::StepState::Todo => crate::i18n::tr("尚未开始"),
-        };
-        let resp = resp.on_hover_text(format!("{} · {}", crate::i18n::tr(s.label), info));
-        if resp.clicked() {
-            state.flow_step = Some(i);
-            state.set_module(s.module);
-        }
-    }
-    if !single {
-        ui.add_space(6.0);
-        ui.label(
-            RichText::new(format!(
-                "{}/{}  {}",
-                current + 1,
-                steps.len(),
-                crate::i18n::tr(step.label)
-            ))
-            .size(SIZE_BODY)
-            .color(text()),
-        );
-        ui.add_space(2.0);
-    } else {
+    // Step navigation lives in the top bar only (horizontal tabs); the panel no longer
+    // repeats the same steps as a vertical list -- exactly the duplication the user
+    // called out. The panel keeps the current phase's description and actions.
+    if single {
         ui.label(
             RichText::new(crate::i18n::tr("单张照片不需要流程，下面的动作直接用"))
                 .size(SIZE_LABEL)
                 .color(dim()),
         );
-        ui.add_space(2.0);
     }
     ui.add_space(2.0);
     rule(
@@ -346,6 +304,50 @@ pub(super) fn step_visual(
     }
 }
 
+/// 步骤栏的横向尺寸：段间距、段高、点击区下限、理想段宽、右侧计数占位。
+///
+/// Step-bar metrics: gap, segment height, minimum tap target, ideal segment width and
+/// the counter slot on the right.
+const STEP_GAP: f32 = 6.0;
+const STEP_BAR_H: f32 = 28.0;
+const STEP_MIN_TAP: f32 = 44.0;
+const STEP_IDEAL_W: f32 = 116.0;
+const STEP_COUNTER_W: f32 = 34.0;
+
+/// 按可用宽度算每段宽与是否进紧凑模式。空间不足时先放弃「理想宽度」，
+/// 再放弃「44px 点击区下限」，最后才允许段宽继续缩——宁可点击区变小，
+/// 也不许把最后一段挤出屏幕。
+///
+/// 物理下限 `step_min_width(n)`：计数槽 + 全部段间距 + 每段至少 1px。
+/// 容器比它还窄时，任何排布都放不下（egui 会裁切），这不是溢出，是空间不够。
+///
+/// Segment width and compact flag from the available width. When space runs out we give
+/// up the ideal width first, then the 44 px tap floor, and only then shrink further -- a
+/// smaller tap target beats pushing the last segment off screen.
+///
+/// Physical floor `step_min_width(n)`: counter slot + all gaps + 1 px per segment. Below
+/// that nothing fits (egui clips); that is a lack of space, not an overflow bug.
+pub(super) fn step_metrics(avail_w: f32, n: usize) -> (f32, bool) {
+    if n == 0 {
+        return (STEP_IDEAL_W, false);
+    }
+    let raw = (avail_w - STEP_COUNTER_W - STEP_GAP * (n as f32 + 1.0)) / n as f32;
+    let per = if raw >= STEP_MIN_TAP {
+        raw.min(STEP_IDEAL_W)
+    } else {
+        raw.max(1.0)
+    };
+    (per, per < 96.0)
+}
+
+/// 一排步骤放得下的最小容器宽度：计数槽 + 全部段间距 + 每段 1px。
+///
+/// The narrowest container that can hold a step row: counter slot + all gaps + 1 px per
+/// segment.
+pub(super) fn step_min_width(n: usize) -> f32 {
+    STEP_COUNTER_W + STEP_GAP * (n as f32 + 1.0) + n as f32
+}
+
 pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
     let task = state.flow_task;
     let steps = task.steps();
@@ -360,19 +362,19 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
     // right. Narrow windows shrink to a 44 px minimum tap target, hiding the index and
     // truncating the label while hover still shows the full name. Step order and click
     // behaviour are unchanged.
-    const GAP: f32 = 6.0;
-    const BAR_H: f32 = 28.0;
-    const MIN_TAP: f32 = 44.0;
-    const IDEAL_W: f32 = 116.0;
-    const COUNTER_W: f32 = 34.0;
     let n = steps.len();
     let full_w = ui.available_width();
-    let per = ((full_w - COUNTER_W - GAP * (n as f32 + 1.0)) / n as f32).clamp(MIN_TAP, IDEAL_W);
-    let compact = per < 96.0;
+    let (per, compact) = step_metrics(full_w, n);
+    // 连「计数槽 + 间距」都放不下时，把右下角的 n/N 让出来给步骤本身：
+    // 少一个读数，好过把最后一段挤到屏幕外。
+    //
+    // When even the counter slot plus gaps do not fit, give the n/N readout up so the
+    // steps themselves keep their room -- one missing readout beats an off-screen segment.
+    let show_counter = full_w >= step_min_width(n);
 
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = GAP;
+        ui.spacing_mut().item_spacing.x = STEP_GAP;
         for (i, s) in steps.iter().enumerate() {
             let done = states[i] == flow::StepState::Ready;
             let name = crate::i18n::tr(s.label);
@@ -390,8 +392,8 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
             } else {
                 label
             };
-            let rect = Rect::from_min_size(ui.cursor().left_top(), Vec2::new(per, BAR_H));
-            ui.allocate_space(Vec2::new(per, BAR_H));
+            let rect = Rect::from_min_size(ui.cursor().left_top(), Vec2::new(per, STEP_BAR_H));
+            ui.allocate_space(Vec2::new(per, STEP_BAR_H));
             let resp = ui.interact(rect, ui.make_persistent_id(("flow-tab", i)), Sense::click());
             let v = step_visual(
                 done,
@@ -447,13 +449,15 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
                 state.set_module(s.module);
             }
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                RichText::new(format!("{}/{}", current + 1, steps.len()))
-                    .size(SIZE_SMALL)
-                    .color(muted()),
-            );
-        });
+        if show_counter {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!("{}/{}", current + 1, steps.len()))
+                        .size(SIZE_SMALL)
+                        .color(muted()),
+                );
+            });
+        }
     });
     ui.add_space(2.0);
 }
@@ -527,6 +531,37 @@ mod tests {
         );
     }
 
+    /// 步骤栏尺寸：任何可用宽下总宽都不超出可用宽；宽窗取理想宽，
+    /// 极窄时先丢理想宽、再丢 44px 点击区下限，绝不把最后一段挤出屏幕。
+    ///
+    /// Step-bar metrics: the total never exceeds the available width at any size; wide
+    /// windows use the ideal width, and very narrow ones give up the ideal width first,
+    /// then the 44 px tap floor -- never pushing the last segment off screen.
+    #[test]
+    fn step_metrics_never_overflow_the_available_width() {
+        for n in 1..=6usize {
+            for avail in [0.0f32, 40.0, 120.0, 300.0, 600.0, 900.0, 1600.0] {
+                let (per, compact) = step_metrics(avail, n);
+                assert!(per > 0.0, "n={n} avail={avail} 段宽必须为正");
+                assert_eq!(compact, per < 96.0, "紧凑阈值与段宽不一致");
+                // 低于物理下限时放不下是空间问题，不是溢出 bug；只要求不 panic。
+                if avail < step_min_width(n) {
+                    continue;
+                }
+                let total = per * n as f32 + STEP_GAP * (n as f32 + 1.0) + STEP_COUNTER_W;
+                assert!(
+                    total <= avail + 0.01,
+                    "n={n} avail={avail} 总宽 {total} 溢出可用宽"
+                );
+            }
+        }
+        // 宽窗：理想宽封顶，不会无限拉长。
+        let (wide, _) = step_metrics(3000.0, 3);
+        assert!((wide - STEP_IDEAL_W).abs() < 0.01, "宽窗应封顶在理想宽");
+        // 空步骤：不 panic，给理想宽。
+        assert_eq!(step_metrics(800.0, 0).0, STEP_IDEAL_W);
+    }
+
     /// 只调样式的契约：步骤顺序、点击写入、状态派生、模块跳转四件事原样保留。
     ///
     /// The style-only contract: step order, click write, state derivation and module
@@ -543,8 +578,8 @@ mod tests {
         );
         assert_eq!(
             code.matches("state.flow_step = Some(i);").count(),
-            2,
-            "点击写入手选态的路径数变了"
+            1,
+            "点击写入手选态应只剩顶栏一条"
         );
         assert!(
             code.contains("state.set_module(s.module);"),
@@ -581,11 +616,12 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .unwrap_or("");
-        // 两条写入都是合法点击路径：面板里的步骤行 + 顶部的 LapseOne 式标签。
+        // 唯一写入口是顶部页签：左侧面板的竖排步骤列表已删（与顶栏重复，
+        // 用户 2026-11-09 明确指认）。写入数回到 1 就是去重生效的证据。
         assert_eq!(
             code.matches("state.flow_step = Some(i);").count(),
-            2,
-            "手选写入（面板行 + 顶部标签）数量变了"
+            1,
+            "手选写入应只剩顶部页签一条"
         );
         // 两条清零都是合法语义：切任务换一套步骤、底部「下一步」回到派生主线。
         assert_eq!(

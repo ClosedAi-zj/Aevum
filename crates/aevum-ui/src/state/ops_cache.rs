@@ -11,6 +11,25 @@
 
 use super::*;
 
+/// 在飞标记的存活上限：派发超过这个时间还没回包（线程 panic、任务丢失、
+/// 解码静默失败），就当作僵尸清掉，让下一帧重新派发。三处缓存
+/// （缩略图 / 重调色 / 播放代理）共用这一个口径。
+///
+/// How long an in-flight marker may live: past this without a reply (thread panic, lost
+/// job, silent decode failure) it counts as a zombie and is dropped so the next frame
+/// re-dispatches. All three caches (thumbnails / re-grades / proxies) share this rule.
+const IN_FLIGHT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 清掉超时的在飞标记，返回被清掉的条数。
+///
+/// Drops expired in-flight markers and returns how many were removed.
+fn expire_in_flight(map: &mut HashMap<usize, std::time::Instant>) -> usize {
+    let now = std::time::Instant::now();
+    let before = map.len();
+    map.retain(|_, at| now.duration_since(*at) < IN_FLIGHT_TIMEOUT);
+    before - map.len()
+}
+
 impl AppState {
     // ------------------------------------------------------------- 三层缓存取值
 
@@ -409,7 +428,15 @@ impl AppState {
     /// ones farthest from the current frame are evicted; textures go with their handles.
     /// The visible window rebuilds every frame, so eviction is invisible. Runs at most
     /// every two seconds -- sorting a thousand keys per frame was the stutter.
-    fn trim_thumbs(&mut self) {
+    /// `anchor` 是当前可见窗口的中心帧，不是 `selected`：胶片条可以滚到离
+    /// 选中帧很远的地方，拿 selected 当锚会把**正在看的**格子当远帧淘汰掉，
+    /// 滚动时每两秒重解码一遍可见区，正是卡顿的来源。
+    ///
+    /// `anchor` is the centre of the visible window, not `selected`: the strip can be
+    /// scrolled far from the selected frame, and anchoring on `selected` would evict the
+    /// cells the user is looking at -- re-decoding the visible range every two seconds
+    /// while scrolling, which is exactly the stutter.
+    fn trim_thumbs(&mut self, anchor: usize) {
         const THUMB_CACHE_MAX: usize = 1024;
         const TRIM_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
         let now = std::time::Instant::now();
@@ -423,7 +450,7 @@ impl AppState {
         if self.thumb_src.len() <= THUMB_CACHE_MAX && self.thumbs.len() <= THUMB_CACHE_MAX {
             return;
         }
-        let cur = self.selected as isize;
+        let cur = anchor as isize;
         let mut by_distance: Vec<usize> = self.thumb_src.keys().copied().collect();
         by_distance.sort_by_key(|i| (cur - *i as isize).abs());
         let excess = self.thumb_src.len().saturating_sub(THUMB_CACHE_MAX);
@@ -449,8 +476,12 @@ impl AppState {
         if self.seq.is_none() {
             return;
         }
-        self.trim_thumbs();
         let hi = hi.min(self.frame_count());
+        // 锚点取夹取后的可见窗口中心：未夹的 hi 可能超出帧数，距离排序会偏。
+        //
+        // Anchor on the clamped window centre: an unclamped hi can overshoot the frame
+        // count and skew the distance ordering.
+        self.trim_thumbs(lo + hi.saturating_sub(lo) / 2);
         let params = self.preview_params();
 
         // 第一段：还没有解码源的帧，读盘解出 128px 预览，顺手按当前参数显影。
@@ -461,11 +492,19 @@ impl AppState {
         // with the current parameters on the way out. A camera-profile change invalidates
         // the source too: `decode_thumb_source` decodes under the profile, so re-grading
         // old pixels would keep the previous profile's colour.
+        // 僵尸 pending 自愈：派发超过 10 秒还没回包（线程 panic、任务丢失），
+        // 视为僵尸清掉，下一帧重新派发；否则这些帧永远不再重试。
+        //
+        // Zombie-pending self-heal: anything dispatched over ten seconds ago (thread
+        // panic, lost job) is dropped so the next frame re-dispatches it; otherwise
+        // those frames would never be retried.
+        expire_in_flight(&mut self.thumb_pending);
+
         let missing: Vec<(usize, PathBuf)> = {
             let seq = self.seq.as_ref().expect("上面已判空");
             (lo..hi)
                 .filter(|i| {
-                    !self.thumb_pending.contains(i)
+                    !self.thumb_pending.contains_key(i)
                         && self
                             .thumb_src
                             .get(i)
@@ -476,8 +515,9 @@ impl AppState {
                 .collect()
         };
         if !missing.is_empty() {
+            let dispatched = std::time::Instant::now();
             for (i, _) in &missing {
-                self.thumb_pending.insert(*i);
+                self.thumb_pending.insert(*i, dispatched);
             }
             let jobs: Vec<(usize, PathBuf, Ev)> = missing
                 .into_iter()
@@ -524,8 +564,9 @@ impl AppState {
         if ctx.input(|i| i.pointer.any_down()) || self.playing {
             return;
         }
+        expire_in_flight(&mut self.thumb_regrade);
         let stale: Vec<(usize, Arc<ThumbSrc>, Ev)> = (lo..hi)
-            .filter(|i| !self.thumb_pending.contains(i) && !self.thumb_regrade.contains(i))
+            .filter(|i| !self.thumb_pending.contains_key(i) && !self.thumb_regrade.contains_key(i))
             .filter_map(|i| {
                 let thumb = self.thumbs.get(&i)?;
                 let src = self.thumb_src.get(&i)?;
@@ -535,8 +576,9 @@ impl AppState {
         if stale.is_empty() {
             return;
         }
+        let regrade_at = std::time::Instant::now();
         for (i, _, _) in &stale {
-            self.thumb_regrade.insert(*i);
+            self.thumb_regrade.insert(*i, regrade_at);
         }
         let tx = self.tx.clone();
         let ctx2 = ctx.clone();
@@ -580,17 +622,19 @@ impl AppState {
         if self.headless {
             return;
         }
+        expire_in_flight(&mut self.proxy_pending);
         let Some(seq) = &self.seq else { return };
         let missing: Vec<(usize, PathBuf)> = (lo..hi.min(seq.len()))
-            .filter(|i| !self.proxies.contains_key(i) && !self.proxy_pending.contains(i))
+            .filter(|i| !self.proxies.contains_key(i) && !self.proxy_pending.contains_key(i))
             .take(24)
             .map(|i| (i, seq.frames[i].path.clone()))
             .collect();
         if missing.is_empty() {
             return;
         }
+        let proxy_at = std::time::Instant::now();
         for (i, _) in &missing {
-            self.proxy_pending.insert(*i);
+            self.proxy_pending.insert(*i, proxy_at);
         }
         let tx = self.tx.clone();
         let ctx2 = ctx.clone();

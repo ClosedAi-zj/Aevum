@@ -11,6 +11,21 @@
 
 use super::*;
 
+/// 图库缩略图在飞标记的存活上限——与 `ops_cache` 的三处缓存同一口径
+/// （10 秒没回包就重新派发）。
+///
+/// Lifetime cap for in-flight library thumbnails -- the same rule the three caches in
+/// `ops_cache` use (re-dispatch when nothing comes back within ten seconds).
+const LIB_IN_FLIGHT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 清掉超时的图库缩略图在飞标记。
+///
+/// Drops expired in-flight library-thumbnail markers.
+fn expire_lib_in_flight(map: &mut HashMap<PathBuf, std::time::Instant>) {
+    let now = std::time::Instant::now();
+    map.retain(|_, at| now.duration_since(*at) < LIB_IN_FLIGHT_TIMEOUT);
+}
+
 impl AppState {
     // ---------------------------------------------------------------- 图库
 
@@ -582,9 +597,15 @@ impl AppState {
         if self.headless {
             return;
         }
+        // 僵尸自愈：派发超时的路径视为丢失，允许重新派发（否则解码失败一次
+        // 就永远没有缩略图）。
+        //
+        // Zombie self-heal: paths dispatched too long ago count as lost and may be
+        // re-dispatched -- otherwise one failed decode means no thumbnail forever.
+        expire_lib_in_flight(&mut self.lib_thumb_pending);
         let mut missing: Vec<PathBuf> = Vec::new();
         for path in paths {
-            if self.lib_thumbs.contains_key(&path) || self.lib_thumb_pending.contains(&path) {
+            if self.lib_thumbs.contains_key(&path) || self.lib_thumb_pending.contains_key(&path) {
                 continue;
             }
             missing.push(path);
@@ -595,8 +616,9 @@ impl AppState {
         if missing.is_empty() {
             return;
         }
+        let dispatched = std::time::Instant::now();
         for p in &missing {
-            self.lib_thumb_pending.insert(p.clone());
+            self.lib_thumb_pending.insert(p.clone(), dispatched);
         }
         let tx = self.tx.clone();
         let ctx2 = ctx.clone();
