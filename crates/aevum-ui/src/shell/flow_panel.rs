@@ -285,14 +285,29 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
+        // LapseOne 分段式：每段「编号 + 名称」的胶囊，激活段强调色填充、
+        // 完成段带 ✓、未到段灰字——三种状态一眼可分，不再是三枚裸文字。
         for (i, s) in steps.iter().enumerate() {
-            let marker = match states[i] {
-                flow::StepState::Ready => "✓ ",
-                flow::StepState::Current => "● ",
-                flow::StepState::Todo => "○ ",
+            let done = states[i] == flow::StepState::Ready;
+            let label = if done {
+                format!("✓ {}  {}", i + 1, crate::i18n::tr(s.label))
+            } else {
+                format!("{}  {}", i + 1, crate::i18n::tr(s.label))
             };
-            let label = format!("{marker}{}", crate::i18n::tr(s.label));
-            let resp = ui.selectable_label(i == current, RichText::new(label).size(SIZE_BODY));
+            let active = i == current;
+            let text_c = if active {
+                on_selected()
+            } else if done {
+                text()
+            } else {
+                muted()
+            };
+            let resp = ui.add(
+                egui::Button::new(RichText::new(label).size(SIZE_BODY).color(text_c))
+                    .fill(if active { accent() } else { elev() })
+                    .corner_radius(radius_control())
+                    .min_size(Vec2::new(0.0, 24.0)),
+            );
             let info = match states[i] {
                 flow::StepState::Ready => crate::i18n::tr("输入已就绪"),
                 flow::StepState::Current => crate::i18n::tr("下一步"),
