@@ -566,17 +566,32 @@ fn lib_row_menu(
     //
     // LapseOne's core move: drop any sequence into the batch render queue.
     if ui.button(crate::i18n::t!("加入渲染队列")).clicked() {
-        let target = if f.path.is_dir() {
-            Some(f.path.clone())
-        } else {
-            f.path.parent().map(|p| p.to_path_buf())
-        };
-        let r = target
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(|p| state.add_root_to_queue(&p))
-            .unwrap_or_else(|| Err("这个条目没有可入队的序列目录".to_owned()));
-        if let Err(e) = r {
-            state.error = Some(e);
+        // 勾选多行 = 批量入队：每行的序列目录各入一段，重复目录只入一次。
+        let mut targets: Vec<PathBuf> = Vec::new();
+        for &frame in frames {
+            if let Some(e) = state.lib_entries.get(root).and_then(|m| m.get(frame)) {
+                let dir = if e.path.is_dir() {
+                    e.path.clone()
+                } else {
+                    e.path.parent().map(|p| p.to_path_buf()).unwrap_or_default()
+                };
+                if !dir.as_os_str().is_empty() && !targets.contains(&dir) {
+                    targets.push(dir);
+                }
+            }
+        }
+        if targets.is_empty() {
+            targets.push(f.path.clone());
+        }
+        let mut errs = 0usize;
+        for dir in &targets {
+            if let Err(e) = state.add_root_to_queue(dir) {
+                errs += 1;
+                state.error = Some(e);
+            }
+        }
+        if errs == 0 {
+            state.status = crate::i18n::tr_fmt("已加入队列：{} 段", &[&targets.len()]);
         }
         ui.close();
     }

@@ -1225,6 +1225,16 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                     );
                     look_row(
                         ui,
+                        "工具轨",
+                        state.layout.rail,
+                        &[
+                            (crate::layout::Side::Right, "右"),
+                            (crate::layout::Side::Left, "左"),
+                        ],
+                        |v| state.layout.rail = v,
+                    );
+                    look_row(
+                        ui,
                         "调整面板",
                         state.layout.dock_side,
                         &[
