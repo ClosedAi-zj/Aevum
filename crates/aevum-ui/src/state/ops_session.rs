@@ -601,6 +601,7 @@ impl AppState {
             hist: None,
             show_dock: true,
             show_flow: false,
+            flow_step: None,
             flow_task: crate::shell::flow::FlowTask::default(),
             layout_switches: (true, false, false, "timelapse"),
             error_modal: None,

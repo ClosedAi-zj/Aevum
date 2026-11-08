@@ -356,6 +356,31 @@ pub fn step_states(state: &AppState, task: FlowTask) -> Vec<StepState> {
         .collect()
 }
 
+/// 界面上应当高亮/展示哪一步：用户点选优先，没点选就跟随派生的当前步。
+/// 步骤条与工作流面板都走这一个口径，两边永远不会各说各话。
+///
+/// Which step the UI highlights/shows: an explicit click wins, otherwise follow the
+/// derived current step. Both the step bar and the workflow panel go through this one
+/// function, so they can never disagree.
+pub fn display_step(state: &AppState, task: FlowTask) -> usize {
+    let n = task.steps().len();
+    state
+        .flow_step
+        .filter(|i| *i < n)
+        .unwrap_or_else(|| derived_current(state, task))
+}
+
+/// 派生的当前步：第一个输入没就绪的步骤（全就绪时停在最后一步）。
+///
+/// The derived current step: the first one whose input is not ready (stops at the last
+/// step when everything is ready).
+pub fn derived_current(state: &AppState, task: FlowTask) -> usize {
+    step_states(state, task)
+        .iter()
+        .position(|s| *s == StepState::Current)
+        .unwrap_or(task.steps().len() - 1)
+}
+
 /// 下一步要做什么。全部就绪时返回 `None`（最后一步永远不"就绪"，所以通常不会发生）。
 ///
 /// The next action, or `None` when everything is ready (the last step never reads as
@@ -494,6 +519,7 @@ pub fn step_bar(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     tr.clone().on_hover_text(crate::i18n::tr("切换工作流"));
     if let Some(t) = flow_task_menu(&tr) {
         state.flow_task = t;
+        state.flow_step = None;
     }
 
     let mut x = task_rect.right() + 8.0;
@@ -512,7 +538,7 @@ pub fn step_bar(state: &mut AppState, ui: &mut Ui, rect: Rect) {
             Sense::click(),
         );
         let st = states[i];
-        if st == StepState::Current {
+        if i == display_step(state, task) {
             p.rect_filled(chip, radius_control(), selected());
         } else if resp.hovered() {
             p.rect_filled(chip, radius_control(), elev_hover());
@@ -563,6 +589,7 @@ pub fn step_bar(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         resp.clone()
             .on_hover_text(format!("{} · {}", crate::i18n::tr(step.label), info));
         if resp.clicked() {
+            state.flow_step = Some(i);
             jump = Some(step.module);
         }
         x += per;
@@ -593,6 +620,11 @@ pub fn step_bar(state: &mut AppState, ui: &mut Ui, rect: Rect) {
             );
             resp.clone().on_hover_text(crate::i18n::tr("跳到这一步"));
             if resp.clicked() {
+                // 「下一步」是回到主线的入口：清掉手选，让高亮回到派生进度。
+                //
+                // "Next" is the way back to the main line: drop the manual pick so the
+                // highlight returns to the derived progress.
+                state.flow_step = None;
                 jump = Some(step.module);
             }
         }
@@ -690,6 +722,54 @@ mod tests {
             let used = f.shown as f32 * per + if f.next { NEXT_MIN_W } else { 0.0 };
             assert!(used <= w + per, "宽 {w}：排布用了 {used}，会溢出（{f:?}）");
         }
+    }
+
+    /// 高亮必须响应点击：用户点谁，步骤条和工作流面板就展示谁；没点选才回落到
+    /// 派生进度。回归锚：用户实测「只有对齐是蓝色，点击谁都不变」。
+    ///
+    /// The highlight must respond to clicks: whichever step the user clicks is the one
+    /// both the bar and the panel show; without a pick they follow the derived progress.
+    /// Regression anchor: user measured "only Align is blue and clicking does nothing".
+    #[test]
+    fn display_step_follows_the_clicked_step() {
+        let mut state = AppState::new();
+        // 未点选：跟随派生（空工程 = 第一步）。
+        assert_eq!(display_step(&state, FlowTask::Merge), 0);
+        // 点了「调色」（索引 3）：高亮与面板都必须跟着走。
+        state.flow_step = Some(3);
+        assert_eq!(display_step(&state, FlowTask::Merge), 3);
+        // 点「去闪」（索引 1）：跟着走。
+        state.flow_step = Some(1);
+        assert_eq!(display_step(&state, FlowTask::Merge), 1);
+        // 「下一步」清掉手选：回到派生主线。
+        state.flow_step = None;
+        assert_eq!(display_step(&state, FlowTask::Merge), 0);
+        // 越界防御（切换工作流漏清也不至于 panic）：回落派生。
+        state.flow_step = Some(99);
+        assert_eq!(display_step(&state, FlowTask::Merge), 0);
+    }
+
+    /// 点「下一步」与切换工作流都会清手选——这是两条清零路径，漏一条高亮就钉死。
+    ///
+    /// Both "next" and switching workflows clear the manual pick; miss either and the
+    /// highlight gets stuck forever.
+    #[test]
+    fn clearing_paths_for_the_manual_pick_exist_in_source() {
+        // 只数产品代码段，别把本测试的源文自己算进去。
+        //
+        // Count only the product half of the file, not this test's own text.
+        let src = include_str!("flow.rs");
+        let code = src.split("#[cfg(test)]").next().unwrap_or("");
+        assert_eq!(
+            code.matches("state.flow_step = None;").count(),
+            2,
+            "「下一步」与切换工作流这两条清零路径缺了一条"
+        );
+        assert_eq!(
+            code.matches("state.flow_step = Some(i);").count(),
+            1,
+            "步骤芯片的点击写入手选态不见了"
+        );
     }
 
     #[test]

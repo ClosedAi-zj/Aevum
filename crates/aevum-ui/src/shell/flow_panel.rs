@@ -63,10 +63,7 @@ fn run_action(state: &mut AppState, ctx: &Context, a: StepAction) {
 pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let task = state.flow_task;
     let steps = task.steps();
-    let current = flow::step_states(state, task)
-        .iter()
-        .position(|s| *s == flow::StepState::Current)
-        .unwrap_or(steps.len() - 1);
+    let current = flow::display_step(state, task);
     let step = &steps[current];
     let has_frames = state.frame_count() > 0;
 

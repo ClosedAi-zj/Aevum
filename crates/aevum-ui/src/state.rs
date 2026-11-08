@@ -1708,6 +1708,13 @@ pub struct AppState {
     /// window): one answers "which step am I on, what is next", the other "what have I saved".
     /// Merging them would force opening a preset list just to see the steps.
     pub show_flow: bool,
+    /// 用户在步骤条里点选的步骤（0 基）。视图状态，不是进度——高亮与工作流面板
+    /// 跟随它；`None` 表示跟随派生的当前步。点「下一步」或切换工作流时清掉。
+    ///
+    /// The step the user clicked in the step bar (0-based). View state, not progress:
+    /// the highlight and the workflow panel follow it; `None` means "follow the derived
+    /// current step". Cleared by "next" or when switching workflows.
+    pub flow_step: Option<usize>,
     /// 当前选中的工作流（延时 / 单张修图 / 多帧合成）。用户手选，不跟着模块跳。
     ///
     /// The selected workflow (timelapse / single-photo / multi-frame merge). Chosen by the
