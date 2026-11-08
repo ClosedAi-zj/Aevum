@@ -714,8 +714,11 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // rail to the next label. The reference pitch is 31 px, but this dark panel with
     // full-width rails read cramped at the reference rhythm (user feedback, 2026-11-07);
     // a 38 px pitch breathes.
-    const L1_Y: f32 = 9.0;
-    const TRACK_Y: f32 = 26.0;
+    // 节距接回密度档（评审发现：两行式重构曾写死 34px，外观面板的
+    // 紧凑/标准/宽松对滑块静默失效——「不能动功能」红线）。三档节距 =
+    // row_h + 6：紧凑 34 / 标准 38 / 宽松 46；行内两线随节距比例定位。
+    let pitch = row_h() + 6.0;
+    let (l1_y, track_y) = (pitch * 0.26, pitch * 0.74);
     // 标签 13 / 读数 11 / 组标题 14：PS 参考图的字号阶梯——参数名比读数大一档，
     // 读数收在框里做次级信息；三档都用 13 会让整列读起来一样重。
     //
@@ -728,14 +731,14 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     let tip = crate::i18n::tr(tip);
 
     let (rect, row_resp) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::hover());
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), pitch), Sense::hover());
     let hot_row = ui.rect_contains_pointer(rect);
     let changed_now = (*v - default).abs() > 1e-9;
 
     // 两行：首行放标签与读数框，第二行是通栏轨道。
     // First line holds the label and readout box; the second the full-width rail.
-    let l1y = rect.top() + L1_Y;
-    let track_y = rect.top() + TRACK_Y;
+    let l1y = rect.top() + l1_y;
+    let track_y = rect.top() + track_y;
     // 右侧一列：读数框贴右缘（与组头眼睛、混色器频段框同一竖线），复位点收在
     // 框**左侧**的槽里，悬停才显形。
     //
