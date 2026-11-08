@@ -1125,17 +1125,27 @@ fn window_sizes_come_from_theme() {
     // 四个 Modal 都要过 modal_box，才能统一拿到 62% 高度上限。
     //
     // All four modals must go through modal_box to get the 62% height cap.
+    // windows 两处（回滚 / 错误）+ 命令面板一处 + 导出对话框一处 = 四个 Modal 全走同一条。
+    //
+    // Two in windows (rollback / error) + the palette + the export dialog: all four modals
+    // go through the same entry.
     let windows = read_clean("shell/windows.rs");
     assert_eq!(
         windows.matches("modal_box(ui, ").count(),
-        3,
-        "windows.rs 里应当有三处 Modal 走 modal_box"
+        2,
+        "windows.rs 里应当有两处 Modal 走 modal_box"
     );
     let palette = read_clean("shell/palette.rs");
     assert_eq!(
         palette.matches("windows::modal_box(ui, ").count(),
         1,
         "命令面板也要走 modal_box"
+    );
+    let dlg = read_clean("shell/export_dialog.rs");
+    assert_eq!(
+        dlg.matches("modal_box(ui, ").count(),
+        1,
+        "导出对话框也要走 modal_box"
     );
     let theme = read_clean("theme.rs");
     assert!(
@@ -1145,5 +1155,44 @@ fn window_sizes_come_from_theme() {
     assert!(
         theme.contains("pub fn win_max") && theme.contains("pub fn win_default"),
         "视口夹取没进 theme.rs"
+    );
+}
+
+/// 导出确认必须挂在独立的三栏模块里：PS 的导出是「范围 / 格式 / 摘要」并排读的，
+/// 塞回 windows.rs 的单列表单就会退回"盲签"。
+///
+/// The export confirmation must live in its own three-column module: PS reads scope,
+/// format and summary side by side, and folding it back into a single-column form in
+/// windows.rs would return to signing blind.
+#[test]
+fn export_dialog_is_the_three_column_mount() {
+    let dlg = read_clean("shell/export_dialog.rs");
+    for k in [
+        "pub fn confirm_export_modal",
+        "fn scope_column(",
+        "fn format_column(",
+        "fn summary_column(",
+        "MODAL_W_EXPORT",
+    ] {
+        assert!(dlg.contains(k), "export_dialog.rs 缺 {k}");
+    }
+    assert_eq!(
+        dlg.matches("column(ui, COL_").count(),
+        3,
+        "三栏少了一栏，摘要就没了"
+    );
+    assert!(
+        !read_clean("shell/windows.rs").contains("confirm_export_modal"),
+        "导出确认还留在 windows.rs，旧的单列表单仍在被使用"
+    );
+    let shell = read_clean("shell/mod.rs");
+    assert!(
+        shell.contains("export_dialog::export_confirm_window"),
+        "导出确认没挂回帧尾"
+    );
+    let theme = read_clean("theme.rs");
+    assert!(
+        theme.contains("pub const MODAL_W_EXPORT"),
+        "导出框宽度没进 theme.rs"
     );
 }

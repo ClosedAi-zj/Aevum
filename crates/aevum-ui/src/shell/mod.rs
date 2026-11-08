@@ -42,6 +42,7 @@ mod chrome;
 mod common;
 mod dialogs;
 mod dock;
+mod export_dialog;
 pub(crate) mod flow;
 mod flow_panel;
 mod library;
@@ -428,7 +429,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // hide behind a panel.
     update_window(state, &ctx);
     rollback_window(state, &ctx);
-    export_confirm_window(state, &ctx, full);
+    export_dialog::export_confirm_window(state, &ctx, full);
     // 错误弹窗排在最后：它是对「刚才那次操作失败」的确认，必须压住其它浮窗。
     //
     // The error dialog draws last: it acknowledges a failed action and must sit above
@@ -443,84 +444,6 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     window_resize(root, &ctx, full);
 
     state.ensure_preview(&ctx);
-}
-
-// ---------------------------------------------------------------- 导出确认
-
-/// 导出参数确认框的挂载点：只有点了导出按钮（`aevum-export-pending` 置位）才出现。
-///
-/// 用户在这里改完范围 / 目录 / 格式 / 覆盖策略并点「开始导出」，才把选择写回
-/// `AppState` 并真正跑导出；取消不碰任何参数、不产生任何文件。
-///
-/// 为什么不在按钮里直接弹：按钮在滚动面板里，面板每帧重画，Modal 挂在帧尾才不会
-/// 被面板裁剪或重复创建。
-///
-/// Mount point for the export confirmation: it only appears after an export button sets
-/// `aevum-export-pending`.
-///
-/// The choice is written back into `AppState` and the export runs only after the user
-/// presses "Start export"; cancel touches nothing and produces no file.
-///
-/// Why not show it inside the button: the button lives in a scrolling panel that repaints
-/// every frame, so mounting the modal at frame end keeps it from being clipped or created
-/// twice.
-fn export_confirm_window(state: &mut AppState, ctx: &egui::Context, full: egui::Rect) {
-    use windows::ExportChoice;
-
-    let pending: Option<u8> = ctx.data(|d| d.get_temp(egui::Id::unique("aevum-export-pending")));
-    let Some(kind) = pending else {
-        return;
-    };
-    // 上一次点的是「整段导出」还是「导出当前帧」。
-    //
-    // Whether the last click meant "export the sequence" or "export the current frame".
-    let current_frame_only = kind == 2;
-
-    let (choice, closed) = {
-        // Modal 需要一个 Ui；借一个零尺寸的临时 Ui，它只往 ctx 上挂浮层。
-        //
-        // The modal needs a Ui; a zero-sized scratch Ui only mounts the overlay on the ctx.
-        let mut scratch = egui::Ui::new(
-            ctx.clone(),
-            egui::Id::unique("aevum-export-confirm-host"),
-            egui::UiBuilder::new().max_rect(full),
-        );
-        windows::confirm_export_modal(&mut scratch, state, current_frame_only)
-    };
-    // 取消（或已确认）都要把 pending 清掉，否则弹窗再也关不掉。
-    // Cancel (or a completed confirm) must clear the pending flag, or the modal never closes.
-    if closed {
-        ctx.data_mut(|d| d.remove::<u8>(egui::Id::unique("aevum-export-pending")));
-    }
-
-    if let Some(ExportChoice {
-        out_dir,
-        format_depth,
-        overwrite,
-        ..
-    }) = choice
-    {
-        // 把用户的选择写回导出参数：目录、格式、覆盖策略三项是面板里已有的字段，
-        // 这里只做赋值，不新增第二套导出配置。
-        //
-        // Write the choice back into the existing export fields: directory, format and
-        // overwrite policy already exist on the panel; this only assigns them.
-        if !out_dir.trim().is_empty() {
-            state.render_out_dir = std::path::PathBuf::from(out_dir);
-        }
-        if let Some(f) = aevum_core::export::StillFormat::ALL
-            .into_iter()
-            .find(|f| f.key() == format_depth)
-        {
-            state.render_format = f;
-        }
-        state.render_resume = overwrite == 2;
-        if current_frame_only {
-            state.export_current(ctx);
-        } else {
-            state.run_export(ctx);
-        }
-    }
 }
 
 // ---------------------------------------------------------------- 画布辅看浮层

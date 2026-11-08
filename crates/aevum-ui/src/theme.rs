@@ -899,6 +899,11 @@ pub const WIN_UPDATE_MIN_H: f32 = 300.0;
 /// the user cannot judge whether confirming will ruin the grade they just made.
 pub const MODAL_MAX_H_FRAC: f32 = 0.62;
 pub const MODAL_W_NARROW: f32 = 430.0;
+/// 三栏导出对话框的宽度：范围 / 格式 / 摘要三栏并排才读得完。
+///
+/// Width of the three-column export dialog; only this wide can the scope, format and
+/// summary columns sit side by side.
+pub const MODAL_W_EXPORT: f32 = 860.0;
 pub const MODAL_W_WIDE: f32 = 520.0;
 
 /// 可缩放浮窗的上界：按视口算，再夹一层绝对值。
