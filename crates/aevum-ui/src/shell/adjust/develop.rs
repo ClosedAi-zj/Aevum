@@ -919,9 +919,18 @@ fn camera_profile_row(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
     } else {
         crate::i18n::tr("未套用").to_owned()
     };
-    ui.horizontal(|ui| {
+    // 一行塞「标签 + 名称 + 三颗按钮」在 300px 面板里必然溢出，把「清除」顶出右缘
+    // （用户 2026-11-08 截图）。改成：名称单行截断占满余宽，按钮自动落到下一行。
+    //
+    // Fitting label + name + three buttons on one row cannot work in a 300 px panel and
+    // pushed "clear" past the right edge. The name now truncates to one line and the
+    // buttons wrap onto the next row.
+    ui.horizontal_wrapped(|ui| {
         ui.label(crate::i18n::t!("相机配置"));
-        ui.label(egui::RichText::new(theme::ellipsis(&dcp_shown, 18)).weak());
+        ui.add(
+            egui::Label::new(egui::RichText::new(theme::ellipsis(&dcp_shown, 18)).weak())
+                .truncate(),
+        );
         if ui
             .button(crate::i18n::t!("自动"))
             .on_hover_text(crate::i18n::t!("按首帧 EXIF 机型在 DCP 目录里找配置（优先 Adobe Standard）。\nDCP 只接 RAW/DNG：相机原始数据才需要矩阵与曲线，\nJPEG/TIFF 已经是成品色彩。"))
@@ -965,10 +974,14 @@ pub(super) fn lens_profile_body(state: &mut AppState, ctx: &Context, ui: &mut Ui
         Some(c) => format!("{}（{} · {:.0}mm）", c.profile, c.lens, c.focal35_mm),
         None => crate::i18n::tr("未套用").to_owned(),
     };
-    ui.horizontal(|ui| {
+    // 与相机配置行同一口径：名称截断 + 按钮换行，避免在窄面板里顶出右缘。
+    //
+    // Same rule as the camera-profile row: truncate the name and let the buttons wrap.
+    ui.horizontal_wrapped(|ui| {
         ui.label(crate::i18n::t!("镜头配置"));
-        ui.label(
-            egui::RichText::new(theme::ellipsis(&lcp_shown, 22)).weak(),
+        ui.add(
+            egui::Label::new(egui::RichText::new(theme::ellipsis(&lcp_shown, 22)).weak())
+                .truncate(),
         );
         if ui
             .button(crate::i18n::t!("自动"))

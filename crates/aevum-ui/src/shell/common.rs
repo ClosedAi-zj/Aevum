@@ -698,7 +698,12 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // 5 px per the design's `.slider-row .s-reset{width:5px;height:5px}`. The hit area
     // is widened through the `ui.interact` rect instead of by reserving layout width.
     const RESET_W: f32 = 5.0;
-    const ROW_PAD: f32 = 6.0;
+    // 行内左右留白 10px（原 6）：ACR 的读数框离面板右缘有明显呼吸区，6px 让数字
+    // 贴着边线，读起来像被裁（用户 2026-11-08 截图）。
+    //
+    // Row padding 10 px (was 6): ACR leaves visible breathing room between the readout box
+    // and the panel edge; at 6 px the numbers looked clipped.
+    const ROW_PAD: f32 = 10.0;
     // 两行排布：首行中线 9px（标签与读数框），轨道中线 26px，行高 34——标签与轨道
     // 之间留 17px，轨道与下一行标签之间留 21px。参考图是 31px 节距，但实测这套
     // 深色 + 通栏轨道的组合按参考节距排下来太挤（用户 2026-11-07 实机反馈），
