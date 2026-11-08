@@ -1661,6 +1661,25 @@ pub struct AppState {
     /// dismissed in place), while this is the dialog that must be seen once. A failure may
     /// not slip by in the status bar, and certainly not only in the console.
     pub error_modal: Option<String>,
+    /// 命令面板是否打开（`Ctrl+K`）。
+    ///
+    /// 纯会话态，不落盘：面板开着重启没有意义，反而会挡住第一眼看到的画面。
+    ///
+    /// Whether the command palette is open (`Ctrl+K`). Session only -- reopening the app
+    /// with a palette on screen would have no meaning and would cover the first glance.
+    pub palette_open: bool,
+    /// 面板里的搜索串。
+    ///
+    /// The palette's search string.
+    pub palette_query: String,
+    /// 当前高亮行（命中列表的下标）。
+    ///
+    /// Index of the highlighted row in the hit list.
+    pub palette_sel: usize,
+    /// 刚打开的那一帧要把焦点交给输入框，之后不再抢。
+    ///
+    /// True for the frame the palette opened, so focus is handed to the field exactly once.
+    pub palette_fresh: bool,
     /// 异步回调里的失败（截图保存这类「命令先返回、结果晚到」的路径）。
     ///
     /// 命令已经 `Ok` 返回，错误只能在回调线程里产生，那里拿不到 `&mut AppState`。

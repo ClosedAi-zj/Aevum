@@ -46,6 +46,7 @@ mod library;
 mod markdown;
 mod mask;
 mod menu;
+mod palette;
 mod tabs;
 mod timeline;
 mod toolbar;
@@ -282,6 +283,12 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     //
     // The error dialog draws last: it acknowledges a failed action and must sit above
     // everything else.
+    // 命令面板压在普通浮窗之上、错误弹窗之下：它能跳到任何窗口，
+    // 但不该盖住"刚才那步失败了"这句话。
+    //
+    // The palette sits above ordinary windows and below the error dialog: it can reach any
+    // window, but must not cover "the last step failed".
+    palette::command_palette(state, &ctx);
     error_dialog(state, &ctx);
     window_resize(root, &ctx, full);
 
