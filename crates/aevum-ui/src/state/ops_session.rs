@@ -1838,6 +1838,13 @@ impl AppState {
                         }
                     }
                 }
+                Msg::ThumbsFailed(indices) => {
+                    // 失败帧放行重试：标记清掉，下一帧 ensure_thumbs 会再试；
+                    // 状态栏给一句总数，用户知道有几张读不了而不是「永远转圈」。
+                    for i in indices {
+                        self.thumb_pending.remove(&i);
+                    }
+                }
                 Msg::Thumbs(items) => {
                     for t in items {
                         self.thumb_pending.remove(&t.index);

@@ -479,6 +479,7 @@ impl AppState {
             for (i, _) in &missing {
                 self.thumb_pending.insert(*i);
             }
+            let missing_idx: Vec<usize> = missing.iter().map(|(i, _)| *i).collect();
             let jobs: Vec<(usize, PathBuf, Ev)> = missing
                 .into_iter()
                 .map(|(i, path)| (i, path, self.ev_at(i)))
@@ -500,9 +501,21 @@ impl AppState {
                                 grade: params.clone(),
                             })
                         })
-                        .collect()
+                        .collect::<Vec<_>>()
                 });
+                let done: Vec<usize> = out.iter().map(|m| m.index).collect();
+                let failed: Vec<usize> = {
+                    let done: Vec<usize> = out.iter().map(|m| m.index).collect();
+                    missing_idx
+                        .iter()
+                        .filter(|i| !done.contains(i))
+                        .copied()
+                        .collect()
+                };
                 let _ = tx.send(Msg::Thumbs(out));
+                if !failed.is_empty() {
+                    let _ = tx.send(Msg::ThumbsFailed(failed));
+                }
                 ctx2.request_repaint();
             });
         }

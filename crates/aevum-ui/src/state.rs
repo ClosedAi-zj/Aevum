@@ -1062,6 +1062,11 @@ enum Msg {
     Measured(Box<Measured>),
     Preview(Box<PreviewMsg>),
     Thumbs(Vec<ThumbMsg>),
+    /// 解码失败的帧：清掉 pending 标记并计数，失败帧不许把重试通道堵死。
+    ///
+    /// Frames that failed to decode: clear their pending flags and count them, so one
+    /// bad file never deadlocks the retry channel.
+    ThumbsFailed(Vec<usize>),
     /// 播放代理回包（[`PROXY_SIDE`] 长边），与胶片条缩略图分开落账。
     ///
     /// Playback-proxy reply ([`PROXY_SIDE`] long edge), recorded separately from the
