@@ -85,11 +85,12 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
 
     // 面板页签用下划线而不是分段胶囊：一条 HEADER 上排六个名字，
     // 选中项靠白字 + 2px 强调线认，和 PS 的调板页签同一套读法。
+    // 页签靠右缘排（用户 2026-11-09）：右缘留给 ×，页签从右往左铺。
     let seg_w = (full.width() - 52.0) / DockTab::ALL.len() as f32;
     for (i, tab) in DockTab::ALL.iter().enumerate() {
         let r = Rect::from_min_size(
             Pos2::new(
-                strip.left() + 6.0 + i as f32 * seg_w + 1.0,
+                strip.right() - 52.0 - (DockTab::ALL.len() - i) as f32 * seg_w + 1.0,
                 strip.top() + 4.0,
             ),
             Vec2::new(seg_w - 2.0, strip.height() - 8.0),
