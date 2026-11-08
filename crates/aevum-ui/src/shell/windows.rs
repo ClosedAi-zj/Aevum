@@ -2010,9 +2010,20 @@ pub struct ExportChoice {
 ///
 /// Derive the form's initial values from the current export settings (neutral defaults
 /// where a value cannot be read; never unwrap).
-fn default_export_choice(state: &AppState) -> ExportChoice {
+/// 确认框的初值。
+///
+/// `current_frame_only` 来自"用户点的是哪个按钮"：点「导出当前帧」时范围必须预选
+/// **当前帧**，否则表单写着「整个序列」而实际只导一帧——用户按下去之前看到的信息
+/// 与将要发生的事不符，这是最伤信任的一类不一致（2026-11-08 复现）。
+///
+/// Initial values for the dialog. `current_frame_only` comes from which button the user
+/// pressed: after "export current frame" the scope must be preselected to **current frame**,
+/// otherwise the form says "whole sequence" while only one frame will be written -- the
+/// form disagreeing with what is about to happen, which is the least trustworthy kind of
+/// inconsistency (reproduced 2026-11-08).
+fn default_export_choice(state: &AppState, current_frame_only: bool) -> ExportChoice {
     ExportChoice {
-        scope: "all".to_owned(),
+        scope: if current_frame_only { "current" } else { "all" }.to_owned(),
         out_dir: state.render_out_dir.display().to_string(),
         format_depth: state.render_format.key().to_owned(),
         overwrite: if state.render_resume { 2 } else { 0 },
@@ -2034,11 +2045,12 @@ fn default_export_choice(state: &AppState) -> ExportChoice {
 pub fn confirm_export_modal(
     ui: &mut egui::Ui,
     state: &mut AppState,
+    current_frame_only: bool,
 ) -> (Option<ExportChoice>, bool) {
     let form_id = egui::Id::unique("aevum-export-confirm-form");
     let mut form = match ui.ctx().data_mut(|d| d.get_temp::<ExportChoice>(form_id)) {
         Some(saved) => saved,
-        None => default_export_choice(state),
+        None => default_export_choice(state, current_frame_only),
     };
 
     let mut cancel = false;
@@ -2050,6 +2062,40 @@ pub fn confirm_export_modal(
                 .font(font(SIZE_BODY))
                 .color(text()),
         );
+        // 一句话交代「这一下会产出什么」：几帧、多大、多少帧率、什么格式。
+        // 此前这个框只有一张参数表单——用户按下去之前最想知道的四件事一件都没写，
+        // 于是"确认"变成了"盲签"（2026-11-08 复现）。
+        //
+        // One line says what this will actually produce: how many frames, what size, what
+        // frame rate, which format. The dialog used to be a bare form -- the four things a
+        // user wants before pressing the button were all missing, which turned "confirm" into
+        // signing blind (reproduced 2026-11-08).
+        let frames = match form.scope.as_str() {
+            // 「当前帧」与单选语义下的「选中帧」都是 1 帧；只有「整个序列」才走全量。
+            //
+            // "Current" and the single-selection reading of "selected" are one frame; only
+            // "whole sequence" counts them all.
+            "current" | "selected" => 1,
+            _ => state.frame_count(),
+        };
+        let (ow, oh) = if state.output_w > 0 && state.output_h > 0 {
+            (state.output_w, state.output_h)
+        } else {
+            state.resolution.unwrap_or((0, 0))
+        };
+        let fmt = aevum_core::export::StillFormat::ALL
+            .into_iter()
+            .find(|f| f.key() == form.format_depth)
+            .map_or_else(|| form.format_depth.clone(), |f| f.cn().to_owned());
+        let summary = if frames > 1 {
+            crate::i18n::tr_fmt(
+                "{} 帧 · {} × {} · {} fps · {}",
+                &[&frames, &ow, &oh, &format!("{}", state.output_fps), &fmt],
+            )
+        } else {
+            crate::i18n::tr_fmt("{} 帧 · {} × {} · {}", &[&frames, &ow, &oh, &fmt])
+        };
+        ui.label(RichText::new(summary).font(mono(SIZE_SMALL)).color(muted()));
         ui.add_space(8.0);
 
         ui.horizontal_wrapped(|ui| {
@@ -2331,6 +2377,31 @@ mod update_window_tests {
             "弹窗没有把错误正文画出来：\n{text}"
         );
         assert!(text.contains("知道了"), "弹窗缺少确认按钮：\n{text}");
+    }
+
+    /// 点「导出当前帧」时，确认框的范围必须预选「当前帧」。
+    ///
+    /// 这条钉的是"表单说的"与"实际做的"一致：初版无论点哪个按钮都把范围设成
+    /// 「整个序列」，于是点「导出当前帧」弹出的框写着要导全段，按下去却只出一帧
+    /// （2026-11-08 用 `AEVUM_EXPORT_CONFIRM=current` 出图复现，两张图字节相同）。
+    ///
+    /// After "export current frame" the dialog must preselect "current frame". This pins the
+    /// form against the action: the first version always defaulted to "whole sequence", so the
+    /// dialog said one thing and the export did another (reproduced 2026-11-08 with
+    /// `AEVUM_EXPORT_CONFIRM=current` -- two captures were byte-identical).
+    #[test]
+    fn export_dialog_preselects_current_frame() {
+        let state = AppState::demo();
+        assert_eq!(
+            default_export_choice(&state, true).scope,
+            "current",
+            "「导出当前帧」的确认框没有预选当前帧——表单与实际行为不符"
+        );
+        assert_eq!(
+            default_export_choice(&state, false).scope,
+            "all",
+            "整段导出应当预选整个序列"
+        );
     }
 
     /// 回滚确认框要真的上屏，并且按钮文案在。

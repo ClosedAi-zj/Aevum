@@ -180,6 +180,8 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("{} 同时给了：变速曲线只能选一种写法（speed 全程一个倍速 / keys 多点曲线 / ease 缓入缓出）", "{} given together: describe the speed curve one way only (speed for a constant rate / keys for a multi-point curve / ease for ease-in-out)"),
     ("{} 处", "{} issues"),
     ("{} 已取消", "{} cancelled"),
+    ("{} 帧 · {} × {} · {}", "{} frames · {} × {} · {}"),
+    ("{} 帧 · {} × {} · {} fps · {}", "{} frames · {} × {} · {} fps · {}"),
     ("{} 帧 · {} 秒", "{} frames · {} s"),
     ("{} 帧 · 可读 {}", "{} frames · {} readable"),
     ("{} 帧 · 可读 {} · 缺帧 {}", "{} frames · {} readable · {} missing"),

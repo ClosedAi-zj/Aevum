@@ -78,6 +78,32 @@ const UV: Rect = Rect {
 /// 首帧应用一次 `AEVUM_WORKSPACE`（见 `ui()` 里的说明）。
 ///
 /// Apply `AEVUM_WORKSPACE` once, on the first frame (see the note in `ui()`).
+/// 首帧挂上导出确认窗：`AEVUM_EXPORT_CONFIRM=1`（整段）/ `=current`（当前帧）。
+///
+/// 这个窗口只有点了「导出」才会出现，`--shot` 点不了按钮，所以它一直是截图回归的
+/// 死角——用户在 2026-11-08 报告的「点击导出有问题」正是发生在这一段。钩子把 pending
+/// 标记直接摆上去（与按钮点击写的是同一个 `Id`），窗口就能被拍下来比对。
+///
+/// Mounts the export confirmation on the first frame: `AEVUM_EXPORT_CONFIRM=1` (whole
+/// sequence) or `=current` (current frame). The dialog only appears after clicking export,
+/// which `--shot` cannot do, so it stayed outside screenshot regression -- exactly the area
+/// the user reported problems in on 2026-11-08. The hook sets the same `Id` the button sets.
+fn debug_export_confirm(ctx: &egui::Context) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Some(raw) = std::env::var_os("AEVUM_EXPORT_CONFIRM") else {
+        return;
+    };
+    let kind: u8 = match raw.to_string_lossy().trim().to_ascii_lowercase().as_str() {
+        "current" | "frame" | "2" => 2,
+        _ => 1,
+    };
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aevum-export-pending"), kind));
+}
+
 fn debug_apply_workspace(state: &mut AppState) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static DONE: AtomicBool = AtomicBool::new(false);
@@ -112,6 +138,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // same class of hook as `AEVUM_PALETTE` and `AEVUM_DBG_RECT` (reads the environment only;
     // nothing is persisted and nothing enters the project file).
     debug_apply_workspace(state);
+    debug_export_confirm(&ctx);
     ctx.set_zoom_factor(FONT_ZOOMS[state.font_level.min(FONT_ZOOMS.len() - 1)]);
     // 撤销历史按帧记账：先给这一帧编号，帧末把控件登记过的改动并成一步。
     state.history.begin_frame();
@@ -366,7 +393,7 @@ fn export_confirm_window(state: &mut AppState, ctx: &egui::Context, full: egui::
             egui::Id::unique("aevum-export-confirm-host"),
             egui::UiBuilder::new().max_rect(full),
         );
-        windows::confirm_export_modal(&mut scratch, state)
+        windows::confirm_export_modal(&mut scratch, state, current_frame_only)
     };
     // 取消（或已确认）都要把 pending 清掉，否则弹窗再也关不掉。
     // Cancel (or a completed confirm) must clear the pending flag, or the modal never closes.
