@@ -10,7 +10,7 @@
 //! dock tab, export confirmation). Actions that need footage are visibly disabled with a
 //! reason when no sequence is loaded -- no silent no-ops.
 
-use egui::{Context, RichText, Ui, Vec2};
+use egui::{Color32, Context, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
 
 use super::flow::{self, StepAction};
 use crate::state::AppState;
@@ -282,32 +282,64 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
     let steps = task.steps();
     let states = flow::step_states(state, task);
     let current = flow::display_step(state, task);
+    let p = ui.painter().clone();
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        // LapseOne 分段式：每段「编号 + 名称」的胶囊，激活段强调色填充、
-        // 完成段带 ✓、未到段灰字——三种状态一眼可分，不再是三枚裸文字。
+        // LapseOne 式页签：纯文字 + 编号，激活段 2px 强调色下划线，完成段
+        // 小 ✓，未到段灰字；段间发丝线分隔。不用胶囊底——整条都是底色时
+        // 每个胶囊再铺一层底就是"补丁摞补丁"。
+        let bar_top = ui.cursor().top();
+        let bar_h = 28.0;
         for (i, s) in steps.iter().enumerate() {
             let done = states[i] == flow::StepState::Ready;
             let label = if done {
-                format!("✓ {}  {}", i + 1, crate::i18n::tr(s.label))
+                format!("✓ {}", crate::i18n::tr(s.label))
             } else {
                 format!("{}  {}", i + 1, crate::i18n::tr(s.label))
             };
             let active = i == current;
+            let galley =
+                ui.painter()
+                    .layout_no_wrap(label.clone(), font(SIZE_BODY), Color32::WHITE);
+            let w = galley.size().x + 20.0;
+            let rect = Rect::from_min_size(ui.cursor().left_top(), Vec2::new(w, bar_h));
+            ui.allocate_space(Vec2::new(w, bar_h));
+            let resp = ui.interact(rect, ui.make_persistent_id(("flow-tab", i)), Sense::click());
+            if active {
+                p.rect_filled(rect, 0.0, Color32::TRANSPARENT);
+                p.rect_filled(
+                    Rect::from_min_size(
+                        rect.left_bottom() + Vec2::new(6.0, bar_h - 2.0),
+                        Vec2::new(w - 12.0, 2.0),
+                    ),
+                    1.0,
+                    accent(),
+                );
+            } else if resp.hovered() {
+                p.rect_filled(rect, radius_control(), elev_hover());
+            }
             let text_c = if active {
-                on_selected()
-            } else if done {
                 text()
+            } else if done {
+                dim()
             } else {
                 muted()
             };
-            let resp = ui.add(
-                egui::Button::new(RichText::new(label).size(SIZE_BODY).color(text_c))
-                    .fill(if active { accent() } else { elev() })
-                    .corner_radius(radius_control())
-                    .min_size(Vec2::new(0.0, 24.0)),
+            p.galley(
+                rect.left_top() + Vec2::new(10.0, (bar_h - galley.size().y) * 0.5),
+                galley,
+                text_c,
             );
+            if i + 1 < steps.len() {
+                p.line_segment(
+                    [
+                        Pos2::new(rect.right() + 4.0, bar_top + 6.0),
+                        Pos2::new(rect.right() + 4.0, bar_top + bar_h - 6.0),
+                    ],
+                    Stroke::new(1.0, divider()),
+                );
+            }
             let info = match states[i] {
                 flow::StepState::Ready => crate::i18n::tr("输入已就绪"),
                 flow::StepState::Current => crate::i18n::tr("下一步"),
