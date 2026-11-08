@@ -307,6 +307,29 @@ impl Layout {
         LayoutPreset::ALL.into_iter().find(|p| p.layout() == probe)
     }
 
+    /// 面板上该高亮哪个预设：**工作区命中时不亮任何预设**。
+    ///
+    /// 原因是两个控件会互相矛盾：调色工作区的版面就是「无胶片条 + 底部状态栏」，
+    /// 那正好也是「专注」预设在版面维度上的样子，于是同一屏里「工作区 = 调色」和
+    /// 「预设 = 专注」同时亮着，用户不知道该信哪个。工作区一旦命中，它已经把当前
+    /// 布局说清楚了，预设行就该熄灭（等同"自定义"）；工作区不命中时预设照常反推。
+    ///
+    /// Which preset the panel should light up: **none while a workspace matches**.
+    ///
+    /// The two controls would otherwise contradict each other: the Develop workspace's
+    /// arrangement is exactly "no filmstrip + bottom status bar", which is also what the Focus
+    /// preset looks like on the arrangement axis, so one screen would show both "workspace =
+    /// Develop" and "preset = Focus" lit. Once a workspace matches it already describes the
+    /// layout, so the preset row goes dark (the same reading as "custom"); otherwise presets
+    /// reverse-match as before.
+    pub fn highlighted_preset(&self, dock_w: f32) -> Option<LayoutPreset> {
+        if Workspace::of(*self, dock_w).is_some() {
+            None
+        } else {
+            self.preset()
+        }
+    }
+
     pub fn with_preset(self, p: LayoutPreset) -> Self {
         // 预设只覆盖它自己声明的那几项，其余保持用户当前选择。
         let base = p.layout();
@@ -325,6 +348,40 @@ mod tests {
     #[test]
     fn default_is_classic() {
         assert_eq!(Layout::default().preset(), Some(LayoutPreset::Classic));
+    }
+
+    /// 工作区命中时预设行必须熄灭，否则同一屏两个控件都说"当前是我"。
+    ///
+    /// A matched workspace must darken the preset row, or one screen has two controls both
+    /// claiming to be current.
+    #[test]
+    fn a_matched_workspace_suppresses_the_preset_highlight() {
+        // 调色工作区的版面（无胶片条 + 底部状态栏）在版面维度上恰好等于「专注」。
+        //
+        // The Develop workspace's arrangement is exactly what Focus looks like.
+        let layout = Layout {
+            film: FilmSlot::Hidden,
+            ..Layout::default()
+        };
+        assert_eq!(layout.preset(), Some(LayoutPreset::Focus));
+        assert_eq!(
+            Workspace::of(layout, 340.0),
+            Some(Workspace::Develop),
+            "调色工作区没有反推出来"
+        );
+        assert_eq!(
+            layout.highlighted_preset(340.0),
+            None,
+            "工作区命中时预设行仍亮着——同一屏两个控件会互相矛盾"
+        );
+        // 拖一下宽度就离开工作区，此时预设应当照常反推。
+        //
+        // Nudge the width out of the workspace and presets match again.
+        assert_eq!(
+            layout.highlighted_preset(300.0),
+            Some(LayoutPreset::Focus),
+            "离开工作区后预设应当恢复反推"
+        );
     }
 
     #[test]

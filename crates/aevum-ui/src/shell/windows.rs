@@ -1139,7 +1139,7 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                     }
                 },
             );
-            let preset = state.layout.preset();
+            let preset = state.layout.highlighted_preset(state.dock_w);
             look_row(
                 ui,
                 "预设",
