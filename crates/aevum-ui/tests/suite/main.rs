@@ -29,6 +29,7 @@ mod i18n_coverage;
 mod i18n_errors;
 mod i18n_literals;
 mod mcp_routes_contract;
+mod palette_actions;
 mod perf_budget;
 mod preview_budget;
 mod readme_shots;

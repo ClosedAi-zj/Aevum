@@ -133,6 +133,127 @@ impl LayoutPreset {
     }
 }
 
+/// 工作布局：按"现在在干什么"一次性把几处尺寸摆好。
+///
+/// **和 [`LayoutPreset`] 是两件事，别合并：**
+///
+/// * `LayoutPreset` 回答"版面形状是什么"——状态栏在上还是在下、胶片条有没有。它靠
+///   `preset()` 反推当前配置属于哪个预设，用户动一项就熄灭，这是对的。
+/// * `Workspace` 回答"这一趟活要什么尺寸"。它**只应用一次**，之后用户拖宽、开关胶片
+///   条都不会让它熄灭——因为"我选的是调色工作区"这句话在用户拖了一下宽度之后依然
+///   成立。这正是 Photoshop 工作区的语义，也是为什么它不参与反推。
+///
+/// 为什么不做"调色 = 独立界面"：参数栈、撤销历史、三级缓存、XMP、导出预设全部要
+/// 分叉，收益只有"新手第一屏更简单"，而这一层已经拿到了同样的收益。
+///
+/// 为什么不动左工具轨与坞页签：那两处藏起来就是删功能入口。工作区只调尺寸，不动
+/// 可达性——这条是硬约束。
+///
+/// Task workspaces: set a few sizes once, for what you are doing right now.
+///
+/// **Distinct from [`LayoutPreset`] on purpose:**
+///
+/// * `LayoutPreset` answers "what shape is the arrangement" -- status bar top or bottom,
+///   filmstrip present or not. It reverse-matches through `preset()` and goes dark as soon
+///   as the user changes one axis, which is correct.
+/// * `Workspace` answers "what sizes does this job need". It applies **once**; dragging the
+///   panel wider or toggling the filmstrip afterwards does not clear it, because "I am in the
+///   Develop workspace" is still true after a drag. That is Photoshop's reading of a
+///   workspace, and the reason it takes no part in reverse matching.
+///
+/// Why not "colours as a separate interface": the parameter stack, undo history, the three
+/// cache tiers, XMP and export presets would all fork, to buy only a simpler first screen --
+/// which this layer already delivers.
+///
+/// Why the left tool rail and the dock tabs are untouched: hiding those removes entry points,
+/// which is deleting features. A workspace only adjusts sizes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Workspace {
+    /// 序列：右栏收窄（这条路看的是帧列表与评级），胶片条要有，参数按紧凑排。
+    #[default]
+    Sequence,
+    /// 调色：画面最大化（胶片条收起）、右栏给到 340，组头保持 32px 标准档。
+    Develop,
+    /// 成片：回到常规宽度与胶片条，交付参数要能一眼扫完。
+    Render,
+}
+
+impl Workspace {
+    pub const ALL: [Workspace; 3] = [Self::Sequence, Self::Develop, Self::Render];
+
+    pub fn cn(self) -> &'static str {
+        match self {
+            Self::Sequence => "序列",
+            Self::Develop => "调色",
+            Self::Render => "成片",
+        }
+    }
+
+    /// 这个工作区要的右栏宽度。
+    ///
+    /// 序列收窄：那一路读的是帧列表、缺帧与评级，参数只是顺手改；调色放宽到 340：
+    /// 一边看曲线一边拖推子，300 在 1600 宽的窗口里紧；成片回到默认 300。
+    ///
+    /// The dock width this workspace wants. Sequence narrows it (that path reads frame lists,
+    /// gaps and ratings, with parameters secondary); Develop widens it to 340 because 300 is
+    /// cramped when reading a curve while dragging a fader; Render returns to the 300 default.
+    pub fn dock_w(self) -> f32 {
+        match self {
+            Self::Sequence => 280.0,
+            Self::Develop => 340.0,
+            Self::Render => 300.0,
+        }
+    }
+
+    pub fn film(self) -> FilmSlot {
+        match self {
+            Self::Sequence | Self::Render => FilmSlot::Shown,
+            Self::Develop => FilmSlot::Hidden,
+        }
+    }
+
+    /// 参数组头的密度档。
+    ///
+    /// 序列与成片都走紧凑：这两条路读的是列表与交付参数，一屏能多看见一行比行距
+    /// 舒展更要紧。调色走标准 32px——那一路一直在读曲线与推子，行距本身是判断依据。
+    ///
+    /// 三档刻意都**不等于默认组合**（300 / 胶片条 / 标准档），这样"刚打开、还没选过
+    /// 工作区"时三个按钮都不亮，与 [`LayoutPreset`] 的语义一致：亮 = 当前布局确实是
+    /// 它。手动拖宽之后也会熄灭，那就是"自定义"，比一直假装还是某个工作区诚实。
+    ///
+    /// Group-header density. Sequence and Render go compact (they read lists and delivery
+    /// settings, where one more visible row beats roomier spacing); Develop stays at the
+    /// standard 32 px because that path reads curves and faders where row spacing is itself
+    /// information. None of the three equals the default combination (300 / filmstrip shown /
+    /// standard), so a fresh start has no workspace lit -- the same reading as
+    /// [`LayoutPreset`]: lit means the current layout really is that one, and a manual drag
+    /// turns it off, which is an honest "custom".
+    pub fn dense(self) -> bool {
+        match self {
+            Self::Sequence | Self::Render => true,
+            Self::Develop => false,
+        }
+    }
+
+    /// 当前布局正好是哪个工作区；都不是就当"自定义"。
+    ///
+    /// 判据只用三件能被反推的量：右栏宽、胶片条、密度。模块**不**参与——工作区会把
+    /// 模块切过去，但用户在模块间来回走是常态，把它算进去会让按钮每次换页都熄灭。
+    ///
+    /// Which workspace the current layout is, or `None` for a custom one. Only the three
+    /// reverse-matchable quantities count: dock width, filmstrip, density. The module is
+    /// **not** part of it -- the workspace switches the module once, but hopping between
+    /// modules is normal and counting it would darken the button on every switch.
+    pub fn of(layout: Layout, dock_w: f32) -> Option<Workspace> {
+        Workspace::ALL.into_iter().find(|w| {
+            layout.film == w.film()
+                && layout.dense == w.dense()
+                && (dock_w - w.dock_w()).abs() < 0.5
+        })
+    }
+}
+
 /// 布局参数：落盘就是 `settings.json` 里的 `layout` 段。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

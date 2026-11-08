@@ -303,6 +303,17 @@ impl AppState {
             return;
         }
         let sketch = dragging;
+        // 已经有画面（贴图在手上）才敢用全分辨率出草图：那时解码缓存是热的，多出的
+        // 只是调色那一遍的像素量，而画质和松手后的全量一致——拖动期间不再糊。
+        // 一帧都还没出来的时候（冷首屏）仍旧减分辨率抢时间，那是唯一值得拿清晰度
+        // 换延迟的时刻。
+        //
+        // Full-resolution sketches are only allowed once a picture is on screen: the decode
+        // cache is warm then, the only extra cost is grading more pixels, and the result
+        // matches the full frame in sharpness -- no more blur while dragging. With nothing on
+        // screen yet (cold first screen) the resolution is still halved to win latency, which
+        // is the only moment trading sharpness for time is worth it.
+        let decode_half = sketch && self.texture.is_none();
         let want_original = self.split;
         let Some(path) = self
             .seq
@@ -363,6 +374,7 @@ impl AppState {
                 framing,
                 view,
                 sketch,
+                decode_half,
                 want_original,
                 hdr_fold,
             ) {

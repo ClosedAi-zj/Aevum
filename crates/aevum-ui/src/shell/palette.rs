@@ -40,6 +40,27 @@ struct Action {
 /// Only actions that really run are listed: one dead row costs more trust than ten
 /// missing ones.
 const ACTIONS: &[Action] = &[
+    // 工作区排在最前：它回答"接下来在什么布局里干活"，比"去哪个模块"高一层。
+    //
+    // Workspaces come first: "what layout am I working in" is a level above "which module".
+    Action {
+        id: "ws-sequence",
+        name: "工作区：序列",
+        hint: "视图",
+        keys: "",
+    },
+    Action {
+        id: "ws-develop",
+        name: "工作区：调色",
+        hint: "视图",
+        keys: "",
+    },
+    Action {
+        id: "ws-render",
+        name: "工作区：成片",
+        hint: "视图",
+        keys: "",
+    },
     Action {
         id: "mod-seq",
         name: "序列",
@@ -130,6 +151,42 @@ const ACTIONS: &[Action] = &[
         hint: "窗口",
         keys: "",
     },
+    // 编辑与文件这几条的分发早就在 `run` 里了，表里却一直缺——等于只接线没接灯：
+    // 分支能跑，面板里搜不到。补上之后 23 条动作才与 `run` 一一对应。
+    //
+    // The dispatch for these edit/file entries has been in `run` for a while but the table
+    // never listed them -- wired but no light: the branches ran, the palette could not find
+    // them. With these, all 23 entries line up with `run`.
+    Action {
+        id: "edit-undo",
+        name: "撤销",
+        hint: "编辑",
+        keys: "Ctrl+Z",
+    },
+    Action {
+        id: "edit-redo",
+        name: "重做",
+        hint: "编辑",
+        keys: "Ctrl+Shift+Z",
+    },
+    Action {
+        id: "edit-reset-all",
+        name: "全部复位",
+        hint: "编辑",
+        keys: "",
+    },
+    Action {
+        id: "file-import",
+        name: "导入照片…",
+        hint: "文件",
+        keys: "Ctrl+I",
+    },
+    Action {
+        id: "file-export",
+        name: "导出…",
+        hint: "文件",
+        keys: "Ctrl+E",
+    },
 ];
 
 /// 命中过滤：中文按子串，英文按动作 id 的子串，另外允许匹配分类名。
@@ -152,6 +209,15 @@ fn matched(a: &Action, q: &str) -> bool {
 fn run(state: &mut AppState, ctx: &Context, id: &str) -> bool {
     use crate::state::Module;
     match id {
+        // 工作区：一次把右栏宽、胶片条、密度摆好并切模块。排在模块之前，
+        // 因为"接下来在什么布局里干活"比"去哪个页面"高一级。
+        //
+        // Workspaces: dock width, filmstrip and density in one go, plus the module. Listed
+        // before the module switches because "what layout am I working in" is a level above
+        // "which page".
+        "ws-sequence" => state.apply_workspace(crate::layout::Workspace::Sequence),
+        "ws-develop" => state.apply_workspace(crate::layout::Workspace::Develop),
+        "ws-render" => state.apply_workspace(crate::layout::Workspace::Render),
         "mod-seq" => state.module = Module::Sequence,
         "mod-deflicker" => state.module = Module::Deflicker,
         "mod-develop" => state.module = Module::Develop,

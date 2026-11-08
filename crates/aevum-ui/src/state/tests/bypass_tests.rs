@@ -265,6 +265,7 @@ fn the_preview_job_renders_the_bypassed_params() {
         false,
         false,
         false,
+        false,
     )
     .expect("直渲基准");
     assert_eq!(got.graded.size, want.0.size, "预览尺寸与直渲不一致");
@@ -297,6 +298,7 @@ fn the_preview_job_renders_the_bypassed_params() {
         None,
         Framing::default(),
         None,
+        false,
         false,
         false,
         false,

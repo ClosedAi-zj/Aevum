@@ -23,6 +23,12 @@ fn render(path: &std::path::Path, sketch: bool) -> PreviewParts {
         Framing::default(),
         None,
         sketch,
+        // 测试按原口径：草图 = 半尺寸。真实拖动走全分辨率，见
+        // `ensure_preview` 的 `decode_half`。
+        //
+        // The test keeps the original reading: sketch means half size. Real dragging uses
+        // full resolution -- see `decode_half` in `ensure_preview`.
+        sketch,
         false,
         false,
     )
@@ -85,6 +91,7 @@ fn hdr_inspection_survives_the_whole_preview_path() {
             None,
             false,
             false,
+            false,
             fold,
         )
         .expect("渲染预览")
@@ -125,12 +132,95 @@ fn preview_straighten_rotates_the_pixels_it_shows() {
         false,
         false,
         false,
+        false,
     )
     .expect("渲染拉直预览");
     assert_eq!(size, [9, 9]);
     let bright = |x: usize, y: usize| graded.pixels[y * 9 + x].r() > 200;
     assert!(bright(4, 2), "中心右边的点该转到上方");
     assert!(!bright(6, 4), "原来的位置不该还留着白的");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 拖动草图**必须与全量同分辨率**；冷首屏仍必须走半尺寸快路。
+///
+/// 这两条是一对，缺一条就会退回去：曾经「草图」把所有省法绑在一个布尔上，拖动期间
+/// 画布拿到 800px 贴图放大到 1600 逻辑宽，用户看到的就是糊（2026-11-08 实测反馈）。
+/// 现在 `sketch`（减 pass）与 `decode_half`（减分辨率）分开，**只有一帧画面都还没
+/// 出来时才减分辨率**——那一次值得拿清晰度换延迟，之后一秒都不该再换。
+///
+/// 判据用像素尺寸说话，不看时间：1200×900 的源在全量档解成 1200×900、半尺寸档解成
+/// 800×600，两个数字必须分别落在它们该在的地方。
+///
+/// A drag sketch **must keep the full resolution**; a cold first screen must still take the
+/// half-size fast route. These two are a pair -- dropping one lets the old behaviour come
+/// back, where "sketch" carried every shortcut on one boolean and a drag showed an 800 px
+/// texture stretched to a 1600 px logical width (user report, 2026-11-08). `sketch` (fewer
+/// passes) and `decode_half` (fewer pixels) are separate now, and pixels are only dropped
+/// while nothing is on screen yet. The assertion speaks in pixel sizes, not timings: a
+/// 1200x900 source decodes to 1200x900 in the full tier and 800x600 in the half tier.
+#[test]
+fn a_drag_sketch_keeps_full_resolution() {
+    let dir = temp_dir("drag-sharp");
+    let path = dir.join("frame.png");
+    let mut img = image::RgbImage::new(1200, 900);
+    for (x, y, px) in img.enumerate_pixels_mut() {
+        // 有横向渐变，后面若要比清晰度也有东西可比。
+        //
+        // A horizontal ramp, so a sharpness comparison has something to work with.
+        *px = image::Rgb([(x % 256) as u8, (y % 256) as u8, 96]);
+    }
+    img.save(&path).expect("写测试图");
+
+    // 量的是**贴图自身的像素尺寸**（`graded.size`），不是返回值里那个 `size`：
+    // 后者是全量逻辑尺寸，半尺寸草图也报同一个数（画布要按它铺满），拿它断言看不出
+    // 分辨率差别——第一版就是这么假绿的。
+    //
+    // This measures the **texture's own pixel size** (`graded.size`), not the returned
+    // `size`: the latter is the logical full size and a half-size sketch reports the same
+    // number (the canvas lays out against it), so asserting on it cannot see the difference --
+    // the first cut of this test was falsely green for exactly that reason.
+    let render = |sketch: bool, decode_half: bool| {
+        render_preview_file(
+            &path,
+            &GradeParams::default(),
+            Ev::NONE,
+            None,
+            None,
+            Framing::default(),
+            None,
+            sketch,
+            decode_half,
+            false,
+            false,
+        )
+        .expect("渲染预览")
+        .0
+        .size
+    };
+
+    let full = render(false, false);
+    // 拖动：减 pass 不减分辨率 —— 与全量同样大小，画布上不会糊。
+    //
+    // Drag: fewer passes, same resolution -- the same size as the full frame, so nothing blurs.
+    assert_eq!(
+        render(true, false),
+        full,
+        "拖动草图的像素尺寸必须与全量一致，否则画布上是放大的糊图"
+    );
+
+    // 冷首屏：减分辨率抢时间。这一档不许被上面那条改掉。只要求「真的小了」，
+    // 不绑具体的减半算法（RAW 走传感器一半再缩，位图直接缩一半，两者数值不同）。
+    //
+    // Cold first screen: halve the pixels to win latency. The check above must not erase this.
+    // It only requires "actually smaller" and does not pin the exact halving route (RAW halves
+    // the sensor then scales, a bitmap halves directly -- the two give different numbers).
+    let cold = render(true, true);
+    assert!(
+        cold[0] < full[0] && cold[1] < full[1],
+        "冷首屏草图没有走半尺寸快路：{cold:?} 不小于全量 {full:?}"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -158,6 +248,7 @@ fn preview_view_pushes_in_the_pixels_it_shows() {
             w: 0.5,
             h: 0.5,
         }),
+        false,
         false,
         false,
         false,

@@ -2693,9 +2693,32 @@ fn render_preview_file(
     framing: Framing,
     view: Option<Viewfinder>,
     sketch: bool,
+    decode_half: bool,
     want_original: bool,
     hdr_fold: bool,
 ) -> Result<PreviewParts, String> {
+    // 两件事必须分开，别再绑成一个 `sketch`：
+    //
+    // * `sketch`   —— **减 pass**：跳过降噪/锐化/清晰度/纹理这些最贵的空间算子。
+    // * `decode_half` —— **减分辨率**：按 `SKETCH_SIDE`（800px）解码，省一半像素。
+    //
+    // 绑在一起时，拖动期间画布拿到的是 800px 贴图放大到 1600 逻辑宽，看起来就是糊的
+    // （用户 2026-11-08 实测：「滑动调色条时照片会模糊，这里不能这样」）。减分辨率
+    // 只在**一帧画面都还没有**的时候划算——那是首屏抢时间；一旦已经在看图，模糊比
+    // 慢一拍更刺眼，此时减 pass 不减分辨率：清晰度不变，只是细节略简化，松手补全量。
+    //
+    // Two things must stay separate instead of riding on one `sketch` flag:
+    //
+    // * `sketch`      -- fewer passes: skip the expensive spatial operators (denoise,
+    //                   sharpening, clarity, texture).
+    // * `decode_half` -- fewer pixels: decode at `SKETCH_SIDE` (800 px).
+    //
+    // Tied together, a drag showed an 800 px texture stretched to a 1600 px logical width,
+    // which simply looks blurry (user report, 2026-11-08: "the photo blurs while I drag the
+    // slider, that cannot happen"). Dropping resolution only pays off when there is no
+    // picture on screen yet -- that is first-screen latency. Once the user is looking at the
+    // image, blur is worse than one slower frame, so keep the resolution and only cut passes.
+
     // 基准开着的时候把解码与调色各量一段（见 `PreviewPhases`）；关着时这里只是一次
     // relaxed 原子读，热路径上没有别的代价。
     //
@@ -2704,14 +2727,18 @@ fn render_preview_file(
     let trace = PREVIEW_TRACE_ON.load(Ordering::Relaxed);
     let t0 = Instant::now();
     let stamp = source_stamp(path);
-    let (mut buf, w, h, full) = decoded_preview_source(path, stamp, sketch, &params.dcp_profile)?;
+    let (mut buf, w, h, full) =
+        decoded_preview_source(path, stamp, decode_half, &params.dcp_profile)?;
     let decode_dt = t0.elapsed();
     let (fw, fh) = full;
     let scale = match full_size {
         Some((img_w, _)) if img_w > 0 => fw as f64 / img_w as f64,
         _ => 1.0,
     };
-    // 取景按全分辨率预览算；草图贴图只有一半大，画布那边仍按这个逻辑尺寸铺满。
+    // 取景按全分辨率预览算；半尺寸草图只有一半大，画布那边仍按这个逻辑尺寸铺满。
+    //
+    // Framing is computed against the full preview; a half-size sketch is only half as large
+    // and the canvas still lays it out at this logical size.
     let crop = crop.and_then(|c| scale_crop(c, scale, fw, fh));
     let mut framing = framing;
     framing.off = [framing.off[0] * scale, framing.off[1] * scale];
@@ -2721,7 +2748,7 @@ fn render_preview_file(
         None
     } else if let Some(hit) = cached_original(path, stamp, crop, framing, &params.dcp_profile) {
         Some(hit)
-    } else if !sketch && params.dcp_profile.is_empty() {
+    } else if !decode_half && params.dcp_profile.is_empty() {
         Some(cropped_original(path, stamp, crop, framing, &buf, w, h, ""))
     } else {
         // 分屏的「原图」要和调色图走同一个相机配置：DCP 之前的像素是相机线性
@@ -2738,16 +2765,16 @@ fn render_preview_file(
             &params.dcp_profile,
         ))
     };
-    // 草图坐标 = 全量坐标 × (草图边长 / 全量边长)。不能写死 0.5：草图按 `SKETCH_SIDE`
-    // 解码，边长比是算出来的（1600×1067 的草图是 800×533，比正好 0.5；小图原样不减半，
-    // 比就是 1.0）。取景框与位移必须按这个比换算，否则松手换全量时构图会跳。
+    // 半尺寸草图的坐标 = 全量坐标 × (草图边长 / 全量边长)。不能写死 0.5：半尺寸按
+    // `SKETCH_SIDE` 解码，边长比是算出来的（1600×1067 的草图是 800×533，比正好 0.5；
+    // 小图原样不减半，比就是 1.0）。取景框与位移必须按这个比换算，否则松手换全量时
+    // 构图会跳。全分辨率草图这一项恒为 1.0，走同一条路不需要特例。
     //
-    // Sketch coordinates are full coordinates times (sketch side / full side). The ratio is
-    // computed rather than pinned at 0.5: the sketch decodes at `SKETCH_SIDE`, so for a
-    // 1600x1067 preview it is 800x533 (exactly 0.5) while a picture small enough not to be
-    // scaled keeps 1.0. Framing and offset must follow it or the composition jumps when the
-    // full frame replaces the sketch.
-    let (crop, framing) = if sketch {
+    // Half-size sketch coordinates are full coordinates times (sketch side / full side). The
+    // ratio is computed rather than pinned at 0.5: the half decode uses `SKETCH_SIDE`, so a
+    // 1600x1067 preview becomes 800x533 (exactly 0.5) while a picture small enough not to be
+    // scaled keeps 1.0. A full-resolution sketch keeps 1.0 and needs no special case.
+    let (crop, framing) = if decode_half {
         let k = w as f64 / fw.max(1) as f64;
         (
             crop.and_then(|c| scale_crop(c, k, w, h)),
@@ -3035,6 +3062,11 @@ pub(crate) fn render_preview_for_bench(
         None,
         Framing::default(),
         None,
+        sketch,
+        // 基准量的是**冷首屏**：草图按半尺寸解，这才是要卡的延迟口径。
+        //
+        // The benchmark measures the **cold first screen**: the sketch decodes at half size,
+        // which is the latency this is meant to bound.
         sketch,
         false,
         false,

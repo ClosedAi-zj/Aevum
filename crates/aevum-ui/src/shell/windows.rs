@@ -1116,6 +1116,29 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
             }
 
             look_section(ui, "布局");
+            // 工作区放在预设之上：它调的是"这一趟活要多大地方"，比"状态栏在上还是在下"
+            // 更高一层。三个值都能反推（右栏宽 + 胶片条 + 密度），拖一下宽度就变
+            // "自定义"——不假装还停在某个工作区。
+            //
+            // The workspace sits above the presets: it answers "how much room does this job
+            // need", a level up from "is the status bar on top". All three reverse-match
+            // (dock width + filmstrip + density), so a drag turns it into "custom" rather
+            // than pretending to still be one of them.
+            look_row(
+                ui,
+                "工作区",
+                crate::layout::Workspace::of(state.layout, state.dock_w),
+                &[
+                    (Some(crate::layout::Workspace::Sequence), "序列"),
+                    (Some(crate::layout::Workspace::Develop), "调色"),
+                    (Some(crate::layout::Workspace::Render), "成片"),
+                ],
+                |w| {
+                    if let Some(w) = w {
+                        state.apply_workspace(w);
+                    }
+                },
+            );
             let preset = state.layout.preset();
             look_row(
                 ui,

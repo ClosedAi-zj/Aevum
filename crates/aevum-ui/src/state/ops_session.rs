@@ -12,6 +12,28 @@
 use super::*;
 
 impl AppState {
+    /// 应用一个工作区：一次把右栏宽、胶片条、密度摆好，并切到对应模块。
+    ///
+    /// 这是**一次性动作**，不建立持续状态：之后拖宽、开关胶片条都只是"自定义"，
+    /// 不需要回头改工作区的选择，也不该弹回去。模块映射放在这里而不是
+    /// `layout`：布局层不认识模块，让它认识就等于把两层搅在一起。
+    ///
+    /// Applies a workspace: dock width, filmstrip and density in one go, plus the module.
+    ///
+    /// A **one-shot action**, not a mode: dragging the width or toggling the filmstrip
+    /// afterwards is simply "custom" and nothing springs back. The module mapping lives here
+    /// rather than in `layout` because the layout layer does not know about modules, and
+    /// teaching it would tangle the two layers.
+    pub fn apply_workspace(&mut self, w: crate::layout::Workspace) {
+        self.dock_w = w.dock_w();
+        self.layout.film = w.film();
+        self.layout.dense = w.dense();
+        self.module = match w {
+            crate::layout::Workspace::Sequence => Module::Sequence,
+            crate::layout::Workspace::Develop => Module::Develop,
+            crate::layout::Workspace::Render => Module::Render,
+        };
+    }
     /// 把「这一帧新出现的错误」抬成弹窗。
     ///
     /// 全仓有四十余处 `state.error = Some(...)`（导入、导出、相机/镜头配置、插件、

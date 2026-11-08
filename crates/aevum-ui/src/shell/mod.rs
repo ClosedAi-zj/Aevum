@@ -75,12 +75,43 @@ const UV: Rect = Rect {
     max: Pos2::new(1.0, 1.0),
 };
 
+/// 首帧应用一次 `AEVUM_WORKSPACE`（见 `ui()` 里的说明）。
+///
+/// Apply `AEVUM_WORKSPACE` once, on the first frame (see the note in `ui()`).
+fn debug_apply_workspace(state: &mut AppState) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Some(raw) = std::env::var_os("AEVUM_WORKSPACE") else {
+        return;
+    };
+    let raw = raw.to_string_lossy();
+    let w = match raw.trim().to_ascii_lowercase().as_str() {
+        "序列" | "sequence" | "seq" => crate::layout::Workspace::Sequence,
+        "调色" | "develop" => crate::layout::Workspace::Develop,
+        "成片" | "render" => crate::layout::Workspace::Render,
+        _ => return,
+    };
+    state.apply_workspace(w);
+}
+
 pub fn ui(state: &mut AppState, root: &mut Ui) {
     // 每帧第一件事：把 core 压下的告警搬进状态栏。护带目录写不进去这类事
     // 必须在用户点保存之前就看见——晚一帧，可能已经点下去了。
     state.drain_notices();
     let ctx = root.ctx().clone();
     let full = root.max_rect();
+    // 调试钩子：`AEVUM_WORKSPACE=序列|调色|成片` 在首帧应用一次工作区。
+    // `--shot` 点不了按钮，三档布局因此没法出证据图；这与 `AEVUM_PALETTE`、
+    // `AEVUM_DBG_RECT` 是同一类用途（只读环境变量，不落盘、不进工程）。
+    //
+    // Debug hook: `AEVUM_WORKSPACE=sequence|develop|render` applies a workspace on the first
+    // frame. `--shot` cannot click, so the three layouts could not be captured otherwise --
+    // same class of hook as `AEVUM_PALETTE` and `AEVUM_DBG_RECT` (reads the environment only;
+    // nothing is persisted and nothing enters the project file).
+    debug_apply_workspace(state);
     ctx.set_zoom_factor(FONT_ZOOMS[state.font_level.min(FONT_ZOOMS.len() - 1)]);
     // 撤销历史按帧记账：先给这一帧编号，帧末把控件登记过的改动并成一步。
     state.history.begin_frame();
