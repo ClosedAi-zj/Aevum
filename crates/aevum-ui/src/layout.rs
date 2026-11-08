@@ -281,7 +281,7 @@ impl Default for Layout {
     fn default() -> Self {
         Self {
             status: StatusSlot::Bottom,
-            rail: Side::Left,
+            rail: Side::Right,
             dock_side: Side::Right,
             film: FilmSlot::Shown,
             dense: false,
