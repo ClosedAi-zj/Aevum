@@ -67,9 +67,9 @@ pub(super) fn handle_input(state: &mut AppState, ctx: &Context) {
         ctx.input(|i| (i.modifiers.command, i.modifiers.alt, i.modifiers.shift));
     if ctrl && ctx.input(|i| i.key_pressed(Key::O)) {
         if shift {
-            open_photos_dialog(state, ctx);
+            open_photos_dialog(state);
         } else {
-            open_dialog(state, ctx);
+            open_dialog(state);
         }
         return;
     }
@@ -606,11 +606,11 @@ pub(super) fn menu_sep(ui: &mut Ui) {
 fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     menu_style(ui);
     if menu_item(ui, "打开序列…", "Ctrl+O") {
-        open_dialog(state, ctx);
+        open_dialog(state);
         ui.close();
     }
     if menu_item(ui, "导入照片…", "Ctrl+⇧+O") {
-        open_photos_dialog(state, ctx);
+        open_photos_dialog(state);
         ui.close();
     }
     if menu_item(ui, "重新扫描", "F5") {

@@ -145,11 +145,45 @@ impl AppState {
     /// Save-as: the only single-frame path that opens a system save dialog. It starts in the
     /// panel's output directory -- the other half of this fix, since the old code set no
     /// starting directory and every dialog opened somewhere the user had to navigate back from.
-    pub fn export_current_as(&mut self, ctx: &Context) {
-        let Some(dst) = self.pick_frame_path() else {
+    pub fn export_current_as(&mut self) {
+        let Some(seq) = self.seq.as_ref() else {
             return;
         };
-        self.export_current_to(ctx, dst);
+        let Some(frame) = seq.frames.get(self.selected) else {
+            return;
+        };
+        let stem = std::path::Path::new(&frame.name)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "frame".to_owned());
+        let dir = if self.render_out_dir.as_os_str().is_empty() {
+            seq.root.join("成片")
+        } else {
+            self.render_out_dir.clone()
+        };
+        // 局部变量不能叫 `format`：它会把 `format!` 宏遮住，报"expected value, found macro"。
+        //
+        // The local must not be named `format`: it shadows the `format!` macro.
+        let still = self.render_format;
+        // 容器随请求一起带走：对话框在别的线程上跑，回来时面板可能已经换档，
+        // 后缀必须以「用户按下那一刻」选的容器为准。
+        //
+        // The container travels with the request: the dialog runs on another thread and the
+        // panel may have changed by the time it returns, so the extension follows the
+        // container chosen at press time.
+        self.dialog_still = Some(still);
+        self.request_dialog(
+            crate::state::ops_dialog::DialogPurpose::SaveFrameAs,
+            crate::state::ops_dialog::DialogMode::Save {
+                file_name: format!("{stem}_graded.{}", still.ext()),
+            },
+            Some(crate::state::ops_dialog::DialogFilter {
+                name: still.cn(),
+                exts: vec![still.ext()],
+            }),
+            Some(dir),
+            Some(still.ext()),
+        );
     }
 
     /// 默认落点：`render_out_dir`（空则 `<序列根>/成片`）+ `{帧名}_graded.{ext}`。
@@ -182,37 +216,10 @@ impl AppState {
         Some(dst)
     }
 
-    /// 让用户挑一个落点；起始目录跟着面板走。
-    ///
-    /// Ask the user for a destination, starting in the panel's output directory.
-    fn pick_frame_path(&mut self) -> Option<std::path::PathBuf> {
-        let seq = self.seq.as_ref()?;
-        let frame = seq.frames.get(self.selected)?;
-        let stem = std::path::Path::new(&frame.name)
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "frame".to_owned());
-        let dir = if self.render_out_dir.as_os_str().is_empty() {
-            seq.root.join("成片")
-        } else {
-            self.render_out_dir.clone()
-        };
-        // 局部变量不能叫 `format`：它会把 `format!` 宏遮住，报"expected value, found macro"。
-        //
-        // The local must not be named `format`: it shadows the `format!` macro.
-        let still = self.render_format;
-        let picked = rfd::FileDialog::new()
-            .set_directory(&dir)
-            .set_file_name(format!("{stem}_graded.{}", still.ext()))
-            .add_filter(still.cn(), &[still.ext()])
-            .save_file()?;
-        Some(force_container(picked, still))
-    }
-
     /// 真正落盘：两条入口共用这一段，避免"另存为"和"默认导出"各写一套。
     ///
     /// The actual write, shared by both entries so "save as" and "default export" cannot drift.
-    fn export_current_to(&mut self, ctx: &Context, path: std::path::PathBuf) {
+    pub(crate) fn export_current_to(&mut self, ctx: &Context, path: std::path::PathBuf) {
         if self.export_busy {
             return;
         }

@@ -204,6 +204,11 @@ impl AevumApp {
     pub fn new(cc: &eframe::CreationContext<'_>, startup: Startup) -> Self {
         // 偏好先于界面：先在全局装好参数，再按它装字体与 Visuals，
         // 否则首帧会闪一下默认深色再跳成用户选的那套。
+        // 属主句柄先于一切对话框：十个系统对话框都要靠它弹在主窗口上。
+        //
+        // The parent handle comes before any dialog: all ten system dialogs need it to
+        // pop up over the main window.
+        crate::win_parent::init(cc);
         let saved = crate::settings::load();
         // 语言必须早于任何一次绘制：晚一帧设，首帧就会用错语言画一遍再跳回来。
         // 这条也在 `theme::apply` 之前——字体回退链与语言无关，但文案宽度会影响

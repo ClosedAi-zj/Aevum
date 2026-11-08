@@ -248,7 +248,7 @@ fn run(state: &mut AppState, ctx: &Context, id: &str) -> bool {
             let _ = state.run_ui_command(ctx, "history.redo", &serde_json::json!({}));
         }
         "edit-reset-all" => state.reset_params(),
-        "file-import" => super::dialogs::open_photos_dialog(state, ctx),
+        "file-import" => super::dialogs::open_photos_dialog(state),
         "file-export" => state.run_export(ctx),
         "win-look" => state.look_open = true,
         "win-plugins" => state.market_open = true,

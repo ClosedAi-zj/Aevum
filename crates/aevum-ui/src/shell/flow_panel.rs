@@ -43,7 +43,7 @@ fn needs_frames(a: StepAction) -> bool {
 /// Action dispatch: existing entry points only, no side channel for this panel.
 fn run_action(state: &mut AppState, ctx: &Context, a: StepAction) {
     match a {
-        StepAction::Import => super::dialogs::open_photos_dialog(state, ctx),
+        StepAction::Import => super::dialogs::open_photos_dialog(state),
         StepAction::Rescan => super::dialogs::rescan(state, ctx),
         StepAction::Goto(m) => state.set_module(m),
         StepAction::Dock(t) => {

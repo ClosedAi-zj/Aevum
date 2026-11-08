@@ -503,6 +503,7 @@ impl AppState {
     pub fn new() -> Self {
         let (tx, rx) = channel();
         let (control_tx, control_rx) = channel();
+        let (dialog_tx, dialog_rx) = channel();
         let mut s = Self {
             seq: None,
             metrics: Vec::new(),
@@ -610,6 +611,11 @@ impl AppState {
             async_errors: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             error_seen: None,
             dock_w: crate::theme::DOCK_W,
+            dialog_queue: Default::default(),
+            dialog_in_flight: false,
+            dialog_tx: dialog_tx.clone(),
+            dialog_rx,
+            dialog_still: None,
             // 「预设与快照」浮窗默认关：它悬浮在画布上，开屏即开正好压住主图
             // （用户 2026-11-06 的模块截图里它都盖着画布左上）。入口仍在工具轨
             // 图标与「视图」菜单；开关随 settings.json 落盘，首启/重置才用默认值。
@@ -1628,6 +1634,13 @@ impl AppState {
     }
 
     pub fn poll(&mut self, ctx: &Context) {
+        // 对话框中枢先于一切输入处理：上一帧入队的弹窗现在就要起飞，
+        // 后台线程带回的结果要在这一帧落到 state 上。
+        //
+        // The dialog hub runs before any input handling: a dialog queued last frame
+        // takes off now, and replies from the worker thread land on state this frame.
+        self.spawn_pending_dialog(ctx);
+        self.drain_dialog_replies(ctx);
         // 布局开关的自动收账：`show_dock` / `show_flow` / `show_left` / `flow_task`
         // 散在菜单、工具轨、浮窗等十来处赋值，逐个记得置 `settings_dirty` 早晚会漏。
         // 帧首比对一次就够——改动发生在上一帧的 ui()，下一帧 tick() 写盘，用户无感。

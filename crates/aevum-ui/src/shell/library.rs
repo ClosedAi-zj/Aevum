@@ -111,9 +111,14 @@ fn roots_view(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 "把一个素材目录加进图库（清单存到漫游配置目录，跨会话常驻）"
             ))
             .clicked()
-            && let Some(dir) = rfd::FileDialog::new().pick_folder()
         {
-            state.lib_add(&dir);
+            state.request_dialog(
+                crate::state::ops_dialog::DialogPurpose::LibraryAdd,
+                crate::state::ops_dialog::DialogMode::Folder,
+                None,
+                None,
+                None,
+            );
         }
     });
     ui.add_space(4.0);

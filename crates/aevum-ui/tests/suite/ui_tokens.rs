@@ -1196,3 +1196,74 @@ fn export_dialog_is_the_three_column_mount() {
         "导出框宽度没进 theme.rs"
     );
 }
+
+/// 系统对话框必须带属主窗口：2026-11-08 实测无属主时对话框弹到另一台显示器、
+/// 主窗口在对话框打开期间被整个隐藏。裸 `rfd::FileDialog::new()` 只许出现在
+/// `win_parent.rs` 的构造器里。
+///
+/// System dialogs must carry an owner window: measured on 2026-11-08, a parentless
+/// dialog landed on another monitor and the main window was hidden while it was open.
+/// A bare `rfd::FileDialog::new()` is allowed only inside the `win_parent.rs`
+/// constructor.
+#[test]
+fn every_file_dialog_carries_the_window_owner() {
+    let mut files = Vec::new();
+    rs_files(&src_dir(), &mut files);
+    assert!(files.len() > 20, "源码目录没扫到东西，路径口径变了");
+    for path in &files {
+        let raw = std::fs::read_to_string(path).expect("读源码");
+        let clean = without_line_comments(&raw);
+        let hits = clean.matches("rfd::FileDialog::new()").count();
+        if hits == 0 {
+            continue;
+        }
+        let name = path.to_string_lossy().replace('\\', "/");
+        assert!(
+            name.ends_with("win_parent.rs"),
+            "{name} 里还有 {hits} 处裸 rfd::FileDialog::new()——没有属主，对话框会弹到别的显示器并藏起主窗口"
+        );
+    }
+    let parent = read_clean("win_parent.rs");
+    assert!(
+        parent.contains("pub fn file_dialog()") && parent.contains("set_parent"),
+        "win_parent.rs 没提供带属主的构造器"
+    );
+    let app = read_clean("app.rs");
+    assert!(
+        app.contains("win_parent::init("),
+        "属主句柄没在启动时初始化"
+    );
+    // rfd 的四个同步取值方法只许在对话框中枢的工作线程里出现：任何一处跑到
+    // `App::ui` 调用栈上，主窗口就会在弹窗期间被藏起来（2026-11-08 实测）。
+    //
+    // rfd's four blocking getters may appear only inside the hub's worker thread; one
+    // call on the `App::ui` stack hides the main window while the dialog is open
+    // (measured 2026-11-08).
+    for path in &files {
+        let raw = std::fs::read_to_string(path).expect("读源码");
+        let clean = without_line_comments(&raw);
+        let name = path.to_string_lossy().replace('\\', "/");
+        for token in [
+            ".pick_file()",
+            ".pick_files()",
+            ".pick_folder()",
+            ".save_file()",
+        ] {
+            let hits = clean.matches(token).count();
+            if hits == 0 {
+                continue;
+            }
+            assert!(
+                name.ends_with("ops_dialog.rs"),
+                "{name} 里出现了 {token}——对话框跑到 UI 线程上了，主窗口会被藏起来"
+            );
+        }
+    }
+    let hub = read_clean("state/ops_dialog.rs");
+    assert!(
+        hub.contains("pub(crate) fn request_dialog(")
+            && hub.contains("fn spawn_pending_dialog(")
+            && hub.contains("fn drain_dialog_replies("),
+        "对话框中枢缺入队 / 起飞 / 收账三件套"
+    );
+}

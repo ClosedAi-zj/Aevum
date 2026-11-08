@@ -29,6 +29,7 @@ pub mod shell;
 pub mod state;
 pub mod theme;
 pub mod widgets;
+pub mod win_parent;
 
 pub use app::{AevumApp, Startup};
 pub use bench_ui::{BenchRow, bench_ui, bench_ui_rows};

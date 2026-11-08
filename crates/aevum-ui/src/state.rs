@@ -1731,6 +1731,23 @@ pub struct AppState {
     /// runtime and is changed by the drag handle on the panel's inner edge; session only,
     /// not persisted.
     pub dock_w: f32,
+    /// 对话框中枢：待弹队列、在弹标记、结果通道，见 `ops_dialog`。
+    ///
+    /// Dialog hub: queue, in-flight flag and the reply channel; see `ops_dialog`.
+    pub(crate) dialog_queue: std::collections::VecDeque<crate::state::ops_dialog::DialogRequest>,
+    pub(crate) dialog_in_flight: bool,
+    pub(crate) dialog_tx: std::sync::mpsc::Sender<(
+        crate::state::ops_dialog::DialogPurpose,
+        Option<crate::state::ops_dialog::DialogPick>,
+    )>,
+    pub(crate) dialog_rx: std::sync::mpsc::Receiver<(
+        crate::state::ops_dialog::DialogPurpose,
+        Option<crate::state::ops_dialog::DialogPick>,
+    )>,
+    /// 「另存为」入队时选定的容器：后缀以按下那一刻为准。
+    ///
+    /// The container fixed at "save as" enqueue time; the extension follows it.
+    pub(crate) dialog_still: Option<aevum_core::export::StillFormat>,
     /// 「预设与快照」浮窗（预设 / 快照 / 调色副本）开没开。字段名沿用旧左栏
     /// （`show_left`）——settings.json 的键没变，老用户的开关状态照常读回；
     /// 2026-11-04 起它不再是常驻侧栏而是浮窗（docs/界面布局-ACR化-2026-11-04.md §2）。
@@ -2586,6 +2603,7 @@ mod ops_command;
 mod ops_copy;
 mod ops_crop;
 mod ops_demo;
+pub(crate) mod ops_dialog;
 mod ops_export_run;
 mod ops_export_write;
 mod ops_library;
@@ -4723,6 +4741,9 @@ mod bypass_tests;
 #[cfg(test)]
 #[path = "state/tests/command_tests.rs"]
 mod command_tests;
+#[cfg(test)]
+#[path = "state/tests/dialog_tests.rs"]
+mod dialog_tests;
 #[cfg(test)]
 #[path = "state/tests/export_write_tests.rs"]
 mod export_write_tests;

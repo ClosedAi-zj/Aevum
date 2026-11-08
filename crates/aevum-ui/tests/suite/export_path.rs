@@ -100,39 +100,43 @@ fn auto_frame_path_lands_in_render_out_dir() {
     assert_eq!(got.extension().and_then(|e| e.to_str()), Some("jpg"));
 }
 
-/// 生产代码里**只能有一个**保存对话框，且它属于「另存为」。
+/// 生产代码里**只能有一个**保存对话框，且它属于「另存为」，跑在中枢的工作线程上。
 ///
 /// `export_current` 那条默认路径一旦再开对话框，用户就会重新掉进"弹两下"的坑里。
-/// 判据只看一处文件：单帧导出的实现文件。
+/// 2026-11-08 起对话框由 `state/ops_dialog` 中枢在后台线程统一弹出，所以栅栏
+/// 挪到两处：实现文件里 0 处 save_file（默认路径绝不弹框），中枢里恰好 1 处
+/// 且绑在 `SaveFrameAs` 上（「另存为」的唯一出口）。
 ///
-/// Production code may contain **exactly one** save dialog, and it belongs to "save as".
-/// If the default path opens one again, the two-dialog trap is back. The fence only looks at
-/// the one file that implements single-frame export.
+/// Production code may contain **exactly one** save dialog, and it belongs to "save as",
+/// running on the hub's worker thread. If the default path opens one again, the two-dialog
+/// trap is back. Since 2026-11-08 dialogs are shown by the `state/ops_dialog` hub on a
+/// worker thread, so the fence moved to two places: zero `save_file` in the implementation
+/// file (the default path never prompts) and exactly one in the hub, tied to `SaveFrameAs`.
 #[test]
 fn single_frame_export_never_prompts_for_a_path() {
     let src = clean("state/ops_export_write.rs");
-
     let calls = src.matches(".save_file()").count();
     assert_eq!(
-        calls, 1,
-        "单帧导出里有 {calls} 处 save_file：默认路径不许弹保存框，只允许「另存为」一处"
+        calls, 0,
+        "单帧导出的实现文件里出现了 {calls} 处 save_file：默认路径不许弹保存框"
     );
-
-    // 那一处必须落在 pick_frame_path 里，也就是「另存为」的路径。
+    // 起始目录仍然必须设置：否则对话框每次从系统默认位置打开。
     //
-    // That one call must sit inside `pick_frame_path` -- the save-as path.
-    let pick = src
-        .find("fn pick_frame_path")
-        .expect("找不到 pick_frame_path：另存为的入口被删了？");
-    let call = src.find(".save_file()").expect("上面刚数到 1 处");
-    assert!(
-        call > pick,
-        "保存对话框不在 pick_frame_path 里——默认导出路径又开始弹框了"
-    );
-
-    // 起始目录必须设置：否则对话框每次从系统默认位置打开，用户得重新找一遍。
-    //
-    // The starting directory must be set, or every dialog opens somewhere the user has to
+    // The start folder must still be set, or every dialog opens somewhere the user has to
     // navigate away from.
-    assert!(src.contains(".set_directory("), "另存为没有设置起始目录");
+    assert!(
+        src.contains("start_dir") || src.contains("render_out_dir"),
+        "另存为的起始目录不见了"
+    );
+
+    let hub = clean("state/ops_dialog.rs");
+    assert_eq!(
+        hub.matches(".save_file()").count(),
+        1,
+        "全程序只允许中枢里这一处保存对话框"
+    );
+    assert!(
+        hub.contains("SaveFrameAs"),
+        "中枢的保存对话框没绑在「另存为」（SaveFrameAs）上"
+    );
 }

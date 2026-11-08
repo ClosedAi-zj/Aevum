@@ -141,13 +141,7 @@ fn ctx_seg(ui: &mut Ui, name: &str, note: &str, warn: Option<String>) {
 ///
 /// 上圆角、贴着顶栏底线 —— PS 的做法：文件名从标题栏搬回画布正上方，
 /// 标题栏才腾得出来只放菜单。
-pub(super) fn doc_tab(
-    state: &mut AppState,
-    p: &egui::Painter,
-    ui: &mut Ui,
-    ctx: &Context,
-    rect: Rect,
-) {
+pub(super) fn doc_tab(state: &mut AppState, p: &egui::Painter, ui: &mut Ui, rect: Rect) {
     let has_seq = state.seq.is_some();
     let resp = ui.interact(rect, ui.make_persistent_id("doc-tab"), Sense::click());
     let fill = theme::overlay_white(header(), if has_seq { 20 } else { 14 });
@@ -210,7 +204,7 @@ pub(super) fn doc_tab(
         }
         cr.on_hover_text(crate::i18n::t!("关闭当前文档"));
     } else if resp.clicked() {
-        open_dialog(state, ctx);
+        open_dialog(state);
     }
 }
 
@@ -235,7 +229,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         Vec2::new(208.0, theme::TL_HD_H),
     );
     let tab_painter = ui.painter().clone();
-    doc_tab(state, &tab_painter, ui, ctx, tab_rect);
+    doc_tab(state, &tab_painter, ui, tab_rect);
 
     ui.horizontal_centered(|ui| {
         ui.add_space(208.0 + 10.0);

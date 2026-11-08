@@ -372,18 +372,14 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                 )
                 .wrap(),
             );
-            if bar_button(ui, "选择输出目录…").clicked()
-                && let Some(dir) = rfd::FileDialog::new()
-                    .set_directory(
-                        state
-                            .seq
-                            .as_ref()
-                            .map(|s| s.root.clone())
-                            .unwrap_or_default(),
-                    )
-                    .pick_folder()
-            {
-                state.render_out_dir = dir;
+            if bar_button(ui, "选择输出目录…").clicked() {
+                state.request_dialog(
+                    crate::state::ops_dialog::DialogPurpose::RenderOutDir,
+                    crate::state::ops_dialog::DialogMode::Folder,
+                    None,
+                    state.seq.as_ref().map(|s| s.root.clone()),
+                    None,
+                );
             }
         }
     }
@@ -441,20 +437,17 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                     theme::ellipsis(&picked, 24)
                 };
                 ui.horizontal(|ui| {
-                    if bar_button(ui, "选择图片…").clicked()
-                        && let Some(path) = rfd::FileDialog::new()
-                            .add_filter("图片", &["png", "jpg", "jpeg", "webp", "tif", "tiff"])
-                            .set_directory(
-                                state
-                                    .seq
-                                    .as_ref()
-                                    .map(|s| s.root.clone())
-                                    .unwrap_or_default(),
-                            )
-                            .pick_file()
-                    {
-                        state.render_watermark.image = path;
-                        history::note("render.watermark.image", "水印图片");
+                    if bar_button(ui, "选择图片…").clicked() {
+                        state.request_dialog(
+                            crate::state::ops_dialog::DialogPurpose::WatermarkImage,
+                            crate::state::ops_dialog::DialogMode::File,
+                            Some(crate::state::ops_dialog::DialogFilter {
+                                name: "图片",
+                                exts: vec!["png", "jpg", "jpeg", "webp", "tif", "tiff"],
+                            }),
+                            state.seq.as_ref().map(|s| s.root.clone()),
+                            None,
+                        );
                     }
                     ui.label(RichText::new(shown).size(SIZE_SMALL).color(dim()));
                 });
@@ -829,19 +822,24 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
             )
             .wrap(),
         );
-        if bar_button(ui, "选择成片位置…").clicked()
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("视频", &["mp4", "mov", "mkv"])
-                .set_file_name(
-                    state
+        if bar_button(ui, "选择成片位置…").clicked() {
+            state.request_dialog(
+                crate::state::ops_dialog::DialogPurpose::RenderVideoOut,
+                crate::state::ops_dialog::DialogMode::Save {
+                    file_name: state
                         .render_video_out
                         .file_name()
                         .and_then(|s| s.to_str())
-                        .unwrap_or("成片.mp4"),
-                )
-                .save_file()
-        {
-            state.render_video_out = path;
+                        .unwrap_or("成片.mp4")
+                        .to_owned(),
+                },
+                Some(crate::state::ops_dialog::DialogFilter {
+                    name: "视频",
+                    exts: vec!["mp4", "mov", "mkv"],
+                }),
+                state.seq.as_ref().map(|s| s.root.clone()),
+                None,
+            );
         }
     }
     if group_header(ui, state, "render-export", "导出", false) {

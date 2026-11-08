@@ -465,10 +465,10 @@ fn adjust_look(state: &mut AppState, ui: &mut Ui) -> bool {
         kv(ui, "当前", theme::ellipsis(&name, 26), text());
     }
     if import {
-        import_look_dialog(state, ui.ctx());
+        import_look_dialog(state);
     }
     if export {
-        export_look_dialog(state, ui.ctx());
+        export_look_dialog(state);
     }
     if drop && !path.is_empty() {
         state.params.look_cube = String::new();
@@ -941,15 +941,17 @@ fn camera_profile_row(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
                 state.error = Some(crate::i18n::tr_fmt("匹配相机配置失败：{}", &[&e]));
             }
         }
-        if ui.button(crate::i18n::t!("选文件")).clicked()
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("相机配置", &["dcp"])
-                .pick_file()
-        {
-            let args = serde_json::json!({"kind":"dcp","path": path.display().to_string()});
-            if let Err(e) = state.run_ui_command(ctx, "profile.set", &args) {
-                state.error = Some(crate::i18n::tr_fmt("套用相机配置失败：{}", &[&e]));
-            }
+        if ui.button(crate::i18n::t!("选文件")).clicked() {
+            state.request_dialog(
+                crate::state::ops_dialog::DialogPurpose::PickDcp,
+                crate::state::ops_dialog::DialogMode::File,
+                Some(crate::state::ops_dialog::DialogFilter {
+                    name: "相机配置",
+                    exts: vec!["dcp"],
+                }),
+                None,
+                None,
+            );
         }
         if dcp_active && ui.button(crate::i18n::t!("清除")).clicked() {
             let args = serde_json::json!({"kind":"dcp","clear":true});
@@ -993,15 +995,17 @@ pub(super) fn lens_profile_body(state: &mut AppState, ctx: &Context, ui: &mut Ui
                 state.error = Some(crate::i18n::tr_fmt("匹配镜头配置失败：{}", &[&e]));
             }
         }
-        if ui.button(crate::i18n::t!("选文件")).clicked()
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("镜头配置", &["lcp"])
-                .pick_file()
-        {
-            let args = serde_json::json!({"kind":"lcp","path": path.display().to_string()});
-            if let Err(e) = state.run_ui_command(ctx, "profile.set", &args) {
-                state.error = Some(crate::i18n::tr_fmt("套用镜头配置失败：{}", &[&e]));
-            }
+        if ui.button(crate::i18n::t!("选文件")).clicked() {
+            state.request_dialog(
+                crate::state::ops_dialog::DialogPurpose::PickLcp,
+                crate::state::ops_dialog::DialogMode::File,
+                Some(crate::state::ops_dialog::DialogFilter {
+                    name: "镜头配置",
+                    exts: vec!["lcp"],
+                }),
+                None,
+                None,
+            );
         }
         if state.params.lcp_profile.is_some() && ui.button(crate::i18n::t!("清除")).clicked() {
             let args = serde_json::json!({"kind":"lcp","clear":true});

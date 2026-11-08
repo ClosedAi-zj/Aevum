@@ -1285,7 +1285,6 @@ fn draw_rulers(
 }
 
 fn empty_state(state: &mut AppState, ui: &mut Ui, content: Rect) {
-    let ctx = ui.ctx().clone();
     let p = ui.painter().clone();
     let area = Rect::from_center_size(content.center(), Vec2::new(420.0, 236.0));
     theme::dashed_rect(&p, area, border_strong(), 6.0);
@@ -1333,7 +1332,7 @@ fn empty_state(state: &mut AppState, ui: &mut Ui, content: Rect) {
         on_accent(),
     );
     if resp.clicked() {
-        open_dialog(state, &ctx);
+        open_dialog(state);
     }
     // 单张照片是一等公民，不该藏在二级菜单里：空状态直接给一个入口。
     let photo_btn = Rect::from_center_size(
@@ -1367,7 +1366,7 @@ fn empty_state(state: &mut AppState, ui: &mut Ui, content: Rect) {
         if presp.hovered() { text() } else { muted() },
     );
     if presp.clicked() {
-        open_photos_dialog(state, &ctx);
+        open_photos_dialog(state);
     }
 }
 

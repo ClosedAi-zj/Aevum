@@ -85,7 +85,7 @@ pub struct ExportChoice {
 /// otherwise the form says "whole sequence" while only one frame will be written -- the
 /// form disagreeing with what is about to happen, which is the least trustworthy kind of
 /// inconsistency (reproduced 2026-11-08).
-fn default_export_choice(state: &AppState, current_frame_only: bool) -> ExportChoice {
+pub(crate) fn default_export_choice(state: &AppState, current_frame_only: bool) -> ExportChoice {
     ExportChoice {
         scope: if current_frame_only { "current" } else { "all" }.to_owned(),
         out_dir: state.render_out_dir.display().to_string(),
@@ -127,13 +127,30 @@ pub fn confirm_export_modal(
                 .color(text()),
         );
         ui.add_space(2.0);
+        let mut pick_dir = false;
         ui.horizontal(|ui| {
-            column(ui, COL_SCOPE_W, |ui| scope_column(ui, &mut form));
+            column(ui, COL_SCOPE_W, |ui| {
+                scope_column(ui, &mut form, &mut pick_dir)
+            });
             ui.add_space(COL_GAP);
             column(ui, COL_FORMAT_W, |ui| format_column(ui, &mut form));
             ui.add_space(COL_GAP);
             column(ui, COL_SUMMARY_W, |ui| summary_column(ui, state, &form));
         });
+        // 选目录的请求在这里发起：scope_column 只拿到不可变的 form，写请求
+        // 必须回到持有 &mut state 的这一层。
+        //
+        // The pick-folder request is issued here: scope_column only gets an immutable
+        // borrow of the form, so the mutable-state work returns to this level.
+        if pick_dir {
+            state.request_dialog(
+                crate::state::ops_dialog::DialogPurpose::ExportFormDir,
+                crate::state::ops_dialog::DialogMode::Folder,
+                None,
+                None,
+                None,
+            );
+        }
         ui.add_space(8.0);
         soft_sep(ui);
         ui.add_space(6.0);
@@ -183,7 +200,7 @@ fn column(ui: &mut Ui, w: f32, body: impl FnOnce(&mut Ui)) {
 /// 左栏：导出范围 + 目标目录。
 ///
 /// Left column: export scope and destination folder.
-fn scope_column(ui: &mut Ui, form: &mut ExportChoice) {
+fn scope_column(ui: &mut Ui, form: &mut ExportChoice, pick_dir: &mut bool) {
     section_head(ui, "范围");
     ui.horizontal_wrapped(|ui| {
         for (value, label) in [
@@ -199,10 +216,8 @@ fn scope_column(ui: &mut Ui, form: &mut ExportChoice) {
     ui.add_space(10.0);
     section_head(ui, "去向");
     ui.horizontal(|ui| {
-        if bar_button(ui, crate::i18n::t!("选择…")).clicked()
-            && let Some(dir) = rfd::FileDialog::new().pick_folder()
-        {
-            form.out_dir = dir.display().to_string();
+        if bar_button(ui, crate::i18n::t!("选择…")).clicked() {
+            *pick_dir = true;
         }
     });
     ui.add(

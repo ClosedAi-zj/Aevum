@@ -42,7 +42,7 @@ mod chrome;
 mod common;
 mod dialogs;
 mod dock;
-mod export_dialog;
+pub(crate) mod export_dialog;
 pub(crate) mod flow;
 mod flow_panel;
 mod library;
@@ -144,6 +144,29 @@ fn debug_apply_flow(state: &mut AppState) {
 /// `AEVUM_WINDOW=market|look|presets|about|update`. Two rounds of user screenshots
 /// complained about oversized / oddly proportioned windows, and `--shot` cannot click
 /// a menu. This read-only hook makes the real 1280x800 sizes capturable.
+/// 首帧弹一次「打开照片」对话框：`AEVUM_OPEN_PHOTOS=1`。
+///
+/// 十个系统对话框全部跑在 UI 线程上（winit 事件处理内重入），2026-11-08 用户
+/// 实测点「打开照片」后主窗口被压成一条。没有这个钩子就无法在自动化里触发它
+/// ——对话框只有真的弹出来，窗口矩形才能量。
+///
+/// Opens the "open photos" dialog once on the first frame: `AEVUM_OPEN_PHOTOS=1`.
+/// The dialog runs on the hub's worker thread, so the main window stays visible and
+/// interactive the whole time -- exactly the state that used to break (2026-11-08).
+/// Without this hook the automation cannot trigger a system dialog at all: only a
+/// really-open dialog lets the window rectangle be measured.
+fn debug_open_photos(state: &mut AppState) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    if std::env::var_os("AEVUM_OPEN_PHOTOS").is_none() {
+        return;
+    }
+    dialogs::open_photos_dialog(state);
+}
+
 fn debug_apply_window(state: &mut AppState) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static DONE: AtomicBool = AtomicBool::new(false);
@@ -200,6 +223,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     debug_apply_flow(state);
     debug_apply_window(state);
     debug_export_confirm(&ctx);
+    debug_open_photos(state);
     ctx.set_zoom_factor(FONT_ZOOMS[state.font_level.min(FONT_ZOOMS.len() - 1)]);
     // 撤销历史按帧记账：先给这一帧编号，帧末把控件登记过的改动并成一步。
     state.history.begin_frame();
