@@ -488,34 +488,29 @@ impl AppState {
             let tx = self.tx.clone();
             let ctx2 = ctx.clone();
             thread::spawn(move || {
-                let out: Vec<ThumbMsg> = thumb_pool().install(|| {
-                    jobs.into_par_iter()
-                        .filter_map(|(index, path, gain)| {
-                            let src = decode_thumb_src(&path, &params.dcp_profile)?;
+                // 逐张上屏：解一张发一张，胶片条「加载到哪张哪张显现」，
+                // 不再攒一整批突然蹦出来；每张都叫醒一次重绘。失败帧同样
+                // 即时回报，pending 不堵。
+                for ((index, path, gain), _) in missing_idx.iter().zip(jobs.iter()) {
+                    let (index, path, gain) = (*index, &path.1, *gain);
+                    match decode_thumb_src(path, &params.dcp_profile) {
+                        Some(src) => {
                             let (image, size) = grade_thumb(&src, &params, gain);
-                            Some(ThumbMsg {
+                            let _ = tx.send(Msg::Thumbs(vec![ThumbMsg {
                                 index,
                                 image,
                                 size,
                                 src: Arc::new(src),
                                 grade: params.clone(),
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                });
-                let failed: Vec<usize> = {
-                    let done: Vec<usize> = out.iter().map(|m| m.index).collect();
-                    missing_idx
-                        .iter()
-                        .filter(|i| !done.contains(i))
-                        .copied()
-                        .collect()
-                };
-                let _ = tx.send(Msg::Thumbs(out));
-                if !failed.is_empty() {
-                    let _ = tx.send(Msg::ThumbsFailed(failed));
+                            }]));
+                            ctx2.request_repaint();
+                        }
+                        None => {
+                            let _ = tx.send(Msg::ThumbsFailed(vec![index]));
+                            ctx2.request_repaint();
+                        }
+                    }
                 }
-                ctx2.request_repaint();
             });
         }
 

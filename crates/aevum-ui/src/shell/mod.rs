@@ -345,21 +345,25 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // 竖条（网格 / 胶片 / 曲线）已移入画布右下浮层，这里不再占一列，
     // 右坞因此直接贴到窗口右缘。
     //
-    // The rail (grid / film / curves) now floats on the canvas, so no column is
-    // reserved here and the dock reaches the window edge.
-    if state.show_dock && !dock_left {
-        egui::Panel::right("dock")
-            .exact_size(state.dock_w)
-            .resizable(false)
-            .frame(egui::Frame::NONE.fill(dock()))
-            .show(root, |ui| dock_panel(state, ui));
-    }
+    // 工具轨在最右缘（用户 2026-11-08）：同侧面板先声明贴边后声明向内，
+    // 所以「轨先、坞后」= 轨贴窗口边、坞挨着画布。
+    //
+    // The rail sits at the far right edge (user, 2026-11-08): same-side panels stack
+    // edge-first in declaration order, so "rail first, dock second" puts the rail on the
+    // window edge and the dock next to the canvas.
     if !rail_left {
         egui::Panel::right("tool-rail")
             .exact_size(TOOL_W)
             .resizable(false)
             .frame(egui::Frame::NONE.fill(chrome()))
             .show(root, |ui| tool_rail(state, ui));
+    }
+    if state.show_dock && !dock_left {
+        egui::Panel::right("dock")
+            .exact_size(state.dock_w)
+            .resizable(false)
+            .frame(egui::Frame::NONE.fill(dock()))
+            .show(root, |ui| dock_panel(state, ui));
     }
     if rail_left {
         egui::Panel::left("tool-rail")
