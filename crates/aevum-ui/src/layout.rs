@@ -501,9 +501,9 @@ mod tests {
 
     #[test]
     fn changing_one_axis_drops_the_preset() {
-        // 默认 rail 已在右（用户 2026-11-08），偏离轴换成 dock_side。
+        // 默认 rail 已在右（用户 2026-11-08），偏离轴换成状态栏位置。
         let l = Layout {
-            dock_side: Side::Right,
+            status: StatusSlot::Top,
             ..Layout::default()
         };
         assert_eq!(l.preset(), None);
