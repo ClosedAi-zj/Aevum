@@ -728,6 +728,32 @@ pub(super) fn rail_items() -> &'static [RailItem] {
     &RAIL
 }
 
+/// 工具轨的两半：上是「工作流 / 面板入口」，下是「工具组 / 轨底设置」。
+/// 用户 2026-11-09 要求两半分居窗口左右，别挤在同一侧。
+///
+/// The two halves of the tool rail: the upper half holds workflow / panel entries, the
+/// lower half holds tools / the rail foot. The user (2026-11-09) wants them on opposite
+/// window edges instead of stacked on one side.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RailHalf {
+    Panels,
+    Tools,
+}
+
+/// 半轨的条目切片：0..7 是上半（group 0/1），7..14 是下半（group 2/3）。
+/// 只切不改表，14 项一项不丢；`rail_layout` / `tool_rail` 都按下标读同一份切片。
+///
+/// The half-table slices: 0..7 is the upper half (groups 0/1), 7..14 the lower half
+/// (groups 2/3). Slicing -- not rewriting -- keeps all 14 entries; `rail_layout` and
+/// `tool_rail` read the same slice by index.
+pub(super) fn rail_items_half(half: RailHalf) -> &'static [RailItem] {
+    let all = rail_items();
+    match half {
+        RailHalf::Panels => &all[..7],
+        RailHalf::Tools => &all[7..],
+    }
+}
+
 /// 一次排布的结果。
 ///
 /// The result of one arrangement pass.
@@ -791,7 +817,13 @@ pub(super) fn rail_layout(rect: Rect, items: &[RailItem]) -> RailSlots {
     // 轨底那一枚占掉底部一条，流可用高要减掉它。
     //
     // The foot entry owns a strip at the bottom, so the flow loses that height.
-    let avail = (rect.height() - PAD * 2.0 - FOOT_BTN_MIN - RAIL_GAP).max(0.0);
+    let has_foot = items.iter().any(|it| it.group == 3);
+    let foot_reserve = if has_foot {
+        FOOT_BTN_MIN + RAIL_GAP
+    } else {
+        0.0
+    };
+    let avail = (rect.height() - PAD * 2.0 - foot_reserve).max(0.0);
 
     let flow_of = |fold: bool| -> Vec<Flow> {
         let mut out = Vec::new();
@@ -944,15 +976,21 @@ fn item_active(state: &AppState, kind: RailKind) -> bool {
     }
 }
 
-pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
+pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui, half: RailHalf, on_left: bool) {
     let full = ui.max_rect();
     let p = ui.painter().clone();
-    p.line_segment(
-        [full.right_top(), full.right_bottom()],
-        Stroke::new(1.0, border()),
-    );
+    // 边框与强调条永远朝画布：左轨在右缘，右轨在左缘。
+    //
+    // The border and the active bar always face the canvas: a left rail uses its right
+    // edge, a right rail its left edge.
+    let (edge_a, edge_b) = if on_left {
+        (full.right_top(), full.right_bottom())
+    } else {
+        (full.left_top(), full.left_bottom())
+    };
+    p.line_segment([edge_a, edge_b], Stroke::new(1.0, border()));
 
-    let items = rail_items();
+    let items = rail_items_half(half);
     let slots = rail_layout(full, items);
     let mut click: Option<RailKind> = None;
     let mut more_resp: Option<egui::Response> = None;
@@ -969,10 +1007,15 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui) {
             // A 2 px accent bar on the left edge: a full outline across a dozen icons spends
             // far more area; the bar points just as clearly and leaves accent for the focus
             // ring and primary actions.
+            let (bx0, bx1) = if on_left {
+                (rect.right() - 3.0, rect.right() - 1.0)
+            } else {
+                (rect.left() + 1.0, rect.left() + 3.0)
+            };
             p.rect_filled(
                 Rect::from_min_max(
-                    Pos2::new(rect.left() + 1.0, rect.top() + 8.0),
-                    Pos2::new(rect.left() + 3.0, rect.bottom() - 8.0),
+                    Pos2::new(bx0, rect.top() + 8.0),
+                    Pos2::new(bx1, rect.bottom() - 8.0),
                 ),
                 1.0,
                 accent(),
@@ -1350,6 +1393,28 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
 #[cfg(test)]
 mod rail_tests {
     use super::*;
+
+    /// 两半分居左右：各 7 枚、合计 14 枚不丢，轨底只在下半，工具组永不折叠。
+    ///
+    /// The two halves live on opposite edges: seven each, all fourteen accounted for,
+    /// the foot only on the lower half, and the tool group never folds.
+    #[test]
+    fn rail_halves_split_every_entry_once() {
+        let panels = rail_items_half(RailHalf::Panels);
+        let tools = rail_items_half(RailHalf::Tools);
+        assert_eq!(panels.len(), 7, "上半应有 7 枚");
+        assert_eq!(tools.len(), 7, "下半应有 7 枚");
+        assert_eq!(panels.len() + tools.len(), rail_items().len());
+        assert!(panels.iter().all(|i| i.group <= 1), "上半只放工作流/面板组");
+        assert!(tools.iter().all(|i| i.group >= 2), "下半只放工具组/轨底");
+        assert!(!panels.iter().any(|i| i.group == 3), "轨底不在上半");
+        assert!(tools.iter().any(|i| i.group == 3), "轨底必须在下半");
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(TOOL_W, 800.0));
+        let slots = rail_layout(rect, tools);
+        assert_eq!(slots.shown.len(), 6, "6 枚工具全部常显");
+        assert!(slots.more.is_none(), "工具组不许折进「更多」");
+        assert!(slots.foot.is_some(), "外观与布局仍在下半轨底");
+    }
 
     /// 三档窗口下的轨高：36 菜单行 + 40 选项行 + 136 胶片条 + 24 状态栏之后剩下的。
     ///

@@ -21,7 +21,7 @@ use self::timeline::timeline;
 use self::toolbar::options_bar;
 use self::toolbar::status_bar;
 use self::toolbar::status_bar_needed;
-use self::toolbar::tool_rail;
+use self::toolbar::{RailHalf, tool_rail};
 use self::windows::about_window;
 use self::windows::error_dialog;
 use self::windows::look_window;
@@ -336,28 +336,30 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .show(root, |ui| timeline(state, ui, &ctx));
     }
 
-    // 4 侧栏。同一侧"先声明的在外"，所以顺序就是由外到内：
-    //   右：28px 竖条 → 调整面板 → 工具轨；左：反过来。预设/快照/副本 2026-11-04
-    //   起改走「预设与快照」浮窗（presets_window），左栏不再有常驻面板。
+    // 4 侧栏。同一侧「先声明的在外」，顺序即由外到内。
+    // 工具轨拆成两根（用户 2026-11-09）：上半「工作流 / 面板入口」靠右缘、
+    // 下半「工具组 / 轨底设置」靠左缘，两侧各 7 枚，视觉对称。
+    // 「外观与布局 → 工具轨 右/左」整体镜像这两根轨。
+    //
+    // 4 Side panels: on one side the first declaration is outermost. The tool rail splits
+    // into two (user, 2026-11-09): the upper workflow / panel entries at the right edge,
+    // the lower tools / foot at the left edge -- seven entries each, symmetric. The
+    // appearance window's "tool rail right/left" mirrors both.
     let rail_left = layout.rail.is_left();
     let dock_left = layout.dock_side.is_left();
+    let panels_on_right = !rail_left;
 
-    // 竖条（网格 / 胶片 / 曲线）已移入画布右下浮层，这里不再占一列，
-    // 右坞因此直接贴到窗口右缘。
-    //
-    // 工具轨在最右缘（用户 2026-11-08）：同侧面板先声明贴边后声明向内，
-    // 所以「轨先、坞后」= 轨贴窗口边、坞挨着画布。
-    //
-    // The rail sits at the far right edge (user, 2026-11-08): same-side panels stack
-    // edge-first in declaration order, so "rail first, dock second" puts the rail on the
-    // window edge and the dock next to the canvas.
-    if !rail_left {
-        egui::Panel::right("tool-rail")
-            .exact_size(TOOL_W)
-            .resizable(false)
-            .frame(egui::Frame::NONE.fill(chrome()))
-            .show(root, |ui| tool_rail(state, ui));
-    }
+    // 右缘：贴边的那一根先声明，坞再向内叠。
+    let (right_id, right_half) = if panels_on_right {
+        ("rail-panels", RailHalf::Panels)
+    } else {
+        ("rail-tools", RailHalf::Tools)
+    };
+    egui::Panel::right(right_id)
+        .exact_size(TOOL_W)
+        .resizable(false)
+        .frame(egui::Frame::NONE.fill(chrome()))
+        .show(root, |ui| tool_rail(state, ui, right_half, false));
     if state.show_dock && !dock_left {
         egui::Panel::right("dock")
             .exact_size(state.dock_w)
@@ -365,13 +367,18 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .frame(egui::Frame::NONE.fill(dock()))
             .show(root, |ui| dock_panel(state, ui));
     }
-    if rail_left {
-        egui::Panel::left("tool-rail")
-            .exact_size(TOOL_W)
-            .resizable(false)
-            .frame(egui::Frame::NONE.fill(chrome()))
-            .show(root, |ui| tool_rail(state, ui));
-    }
+
+    // 左缘：另一根贴边；左坞与工作流面板依次向内。
+    let (left_id, left_half) = if panels_on_right {
+        ("rail-tools", RailHalf::Tools)
+    } else {
+        ("rail-panels", RailHalf::Panels)
+    };
+    egui::Panel::left(left_id)
+        .exact_size(TOOL_W)
+        .resizable(false)
+        .frame(egui::Frame::NONE.fill(chrome()))
+        .show(root, |ui| tool_rail(state, ui, left_half, true));
     if state.show_dock && dock_left {
         egui::Panel::left("dock")
             .exact_size(state.dock_w)
