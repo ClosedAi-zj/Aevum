@@ -503,7 +503,6 @@ impl AppState {
                         })
                         .collect::<Vec<_>>()
                 });
-                let done: Vec<usize> = out.iter().map(|m| m.index).collect();
                 let failed: Vec<usize> = {
                     let done: Vec<usize> = out.iter().map(|m| m.index).collect();
                     missing_idx
