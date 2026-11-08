@@ -1059,8 +1059,29 @@ fn flow_ui_is_wired_into_the_shell() {
             && shell.contains("flow_panel::flow_panel("),
         "左侧工作流面板没有挂进 shell 的区域装配"
     );
+    // 2026-11-08 用户裁决：标题栏步骤条撤除——单张不该有步骤仪式，延时的
+    // 步骤列表住进工作流面板。
+    //
+    // User decision 2026-11-08: the title-bar step bar is gone; the step list lives in
+    // the workflow panel.
     let menu = read_clean("shell/menu.rs");
-    assert!(menu.contains("flow::step_bar("), "标题栏没有挂步骤条");
+    assert!(!menu.contains("flow::step_bar("), "标题栏不该再挂步骤条");
+    let panel = read_clean("shell/flow_panel.rs");
+    assert!(
+        panel.contains("flow::step_states")
+            && panel.contains("flow::display_step")
+            && panel.contains("flow::next_step"),
+        "工作流面板没接步骤派生三件套"
+    );
+    let flow = read_clean("shell/flow.rs");
+    assert!(
+        !flow.contains("pub fn step_bar"),
+        "step_bar 应当随标题栏步骤条一起删除"
+    );
+    assert!(
+        !flow.contains("FlowTask::Develop]"),
+        "单张修图不该出现在 ALL 里"
+    );
     let theme = read_clean("theme.rs");
     for k in ["STEP_H", "FLOW_W", "FLOW_MIN_W"] {
         assert!(

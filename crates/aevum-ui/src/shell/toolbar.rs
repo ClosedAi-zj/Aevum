@@ -495,7 +495,7 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                         }
                     });
                 if bar_primary(ui, "导出当前帧").clicked() {
-                    state.export_current(ctx);
+                    state.request_export_confirm(ctx, true);
                 }
             }
             Module::Audio => {

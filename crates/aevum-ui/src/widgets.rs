@@ -358,17 +358,23 @@ pub fn grade_wheel(
         r_disc,
         Stroke::new(1.0, Color32::from_rgb(0x2C, 0x2C, 0x2C)),
     );
-    // 把手：浓度 0 时落在盘心，读作「中性」；有浓度才往外走。
+    // 把手：ACR 同款白点——近白填充 + 深描边 + 落影，中性（浓度 0）时也醒目地
+    // 停在盘心，悬停/拖动再放大一档。用户实测 5px 灰点在彩色盘面上根本看不见。
+    //
+    // Handle: ACR-style white dot -- near-white fill, dark stroke, drop shadow. It stays
+    // clearly visible at the centre when neutral, and grows a notch on hover/drag; the
+    // user could not see the old 5 px grey dot on the coloured disc at all.
     let a = *hue * std::f64::consts::PI / 180.0;
     let rr = r_disc * (*amount as f32 / 100.0).clamp(0.0, 1.0);
     let k = Pos2::new(c.x + rr * (a as f32).cos(), c.y - rr * (a as f32).sin());
-    p.circle_filled(k + Vec2::new(0.0, 1.0), 5.0, Color32::from_black_alpha(70));
-    p.circle_filled(k, 5.0, Color32::from_rgb(0x9A, 0x9A, 0x9A));
-    p.circle_stroke(
-        k,
-        5.0,
-        Stroke::new(2.0, Color32::from_rgb(0x4B, 0x4B, 0x4B)),
-    );
+    let hk = if wresp.hovered() || wresp.dragged() {
+        8.0
+    } else {
+        6.5
+    };
+    p.circle_filled(k + Vec2::new(0.0, 1.5), hk, Color32::from_black_alpha(90));
+    p.circle_filled(k, hk, Color32::from_rgb(0xEE, 0xEE, 0xEE));
+    p.circle_stroke(k, hk, Stroke::new(2.0, Color32::from_rgb(0x2E, 0x2E, 0x2E)));
     // 明度轨：暗 → 中灰 → 亮 三段渐变（拍板 #2E2E2E / #8C8C8C / #E8E8E8），
     // 中点 = 0。24 片插值铺 4px 高的轨，接缝不可见。
     let rail = Rect::from_min_max(

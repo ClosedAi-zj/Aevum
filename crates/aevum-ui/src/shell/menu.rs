@@ -108,7 +108,7 @@ pub(super) fn handle_input(state: &mut AppState, ctx: &Context) {
             state.save_project();
         }
         if ctx.input(|i| i.key_pressed(Key::E)) {
-            state.export_current(ctx);
+            state.request_export_confirm(ctx, false);
         }
         if ctx.input(|i| i.key_pressed(Key::W)) {
             state.close();
@@ -396,7 +396,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let do_export = er.clicked();
     er.on_hover_text(crate::i18n::t!("导出当前序列 / 照片（Ctrl+E）"));
     if do_export {
-        state.export_current(ctx);
+        state.request_export_confirm(ctx, false);
     }
 
     // 设置齿轮：外观/布局/语言的唯一常驻入口。此前只有「视图 → 外观与布局…」
@@ -484,26 +484,6 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             );
         },
     );
-
-    // 流程步骤条：占菜单行里工作区胶囊与主按钮之间的空白，不新增一行。
-    // 三套步骤集由用户手选，状态全部从当前工程派生（见 shell/flow.rs）。
-    //
-    // Workflow step bar: takes the empty slice of the menu row between the workspace
-    // capsule and the primary button, without adding a row. Three hand-authored step
-    // sets are picked by the user; states derive entirely from the current project
-    // (see shell/flow.rs).
-    let flow_x0 = ws_x + ws_w + 14.0;
-    let flow_x1 = zone_right - export_w - 40.0;
-    if flow_x1 > flow_x0 {
-        super::flow::step_bar(
-            state,
-            ui,
-            Rect::from_min_max(
-                Pos2::new(flow_x0, mid - STEP_H * 0.5),
-                Pos2::new(flow_x1, mid + STEP_H * 0.5),
-            ),
-        );
-    }
 
     window_buttons(ui, ctx, full);
 }
@@ -640,7 +620,7 @@ fn file_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     menu_sep(ui);
     if menu_item_enabled(ui, "导出当前帧…", "Ctrl+E", has_seq) {
-        state.export_current(ctx);
+        state.request_export_confirm(ctx, true);
         ui.close();
     }
     menu_sep(ui);
@@ -690,7 +670,7 @@ fn edit_menu(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     menu_sep(ui);
     let has_seq = state.seq.is_some();
     if menu_item_enabled(ui, "导出当前帧…", "Ctrl+E", has_seq) {
-        state.export_current(ctx);
+        state.request_export_confirm(ctx, true);
         ui.close();
     }
 }

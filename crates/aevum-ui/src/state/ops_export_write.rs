@@ -137,6 +137,19 @@ impl AppState {
         self.export_current_to(ctx, dst);
     }
 
+    /// 挂上导出确认框（三栏参数弹窗），真正导出等用户按「开始导出」才跑。
+    /// 所有导出入口——标题栏按钮、Ctrl+E、菜单、工具条——都走这里，参数
+    /// （范围 / 目录 / 格式 / 覆盖）不再被入口偷偷定死。
+    ///
+    /// Mounts the export confirmation (the three-column dialog); the export itself only
+    /// runs when the user presses "Start export". Every entry point -- the title-bar
+    /// button, Ctrl+E, the menus, the toolbar -- goes through here, so scope / folder /
+    /// format / overwrite are never silently decided by the entry point.
+    pub fn request_export_confirm(&self, ctx: &Context, current_frame_only: bool) {
+        let kind: u8 = if current_frame_only { 2 } else { 1 };
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aevum-export-pending"), kind));
+    }
+
     /// 「另存为…」：唯一会弹系统保存框的单帧导出。
     ///
     /// 起始目录就是面板上的输出目录——这一步是本轮修掉的另一半：旧代码不设起始目录，
