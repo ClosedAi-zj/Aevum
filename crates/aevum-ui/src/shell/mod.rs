@@ -281,7 +281,12 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // Top step bar (LapseOne-style): only for multi-frame sequences; single photos and
     // empty projects have no flow. Declared after the options bar, so it stacks right
     // beneath it.
-    if state.show_flow && state.frame_count() > 1 {
+    // 常显：LapseOne 的顶部标签就是主导航，不藏在面板开关里（用户实测
+    // show_flow 关着时「什么都没有」）。
+    //
+    // Always on: the LapseOne-style tabs ARE the primary navigation, never hidden
+    // behind the panel switch (user measured "nothing is there" while show_flow was off).
+    if state.frame_count() > 1 {
         egui::Panel::top("flow-top")
             .exact_size(30.0)
             .frame(egui::Frame::NONE.fill(header()).inner_margin(egui::Margin {
