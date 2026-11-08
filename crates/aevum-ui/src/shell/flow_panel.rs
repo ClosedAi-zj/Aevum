@@ -58,12 +58,30 @@ fn run_action(state: &mut AppState, ctx: &Context, a: StepAction) {
     }
 }
 
+/// 单张模式的一排直通动作：没有流程，只有去处（用户 2026-11-08：单张与延时分开）。
+///
+/// Flat actions for single-photo mode: no ceremony, just destinations.
+static SINGLE_PHOTO_ACTIONS: &[StepAction] = &[
+    StepAction::Import,
+    StepAction::Goto(crate::state::Module::Develop),
+    StepAction::Presets,
+    StepAction::Look,
+    StepAction::ExportConfirm,
+];
+
 pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let task = state.flow_task;
     let steps = task.steps();
     let current = flow::display_step(state, task);
     let step = &steps[current];
     let has_frames = state.frame_count() > 0;
+    // 单张（≤1 帧）不走流程：步骤列表与任务切换都藏起来，只给一排直通动作。
+    // 导入第二张后自动回到流程模式，不需要任何开关。
+    //
+    // A single photo (<=1 frame) skips the flow: the step list and the task picker hide,
+    // leaving one flat row of actions. Loading a second frame returns to flow mode
+    // automatically -- no switch to flip.
+    let single = state.frame_count() <= 1;
 
     ui.add_space(6.0);
     ui.horizontal(|ui| {
@@ -79,27 +97,44 @@ pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             }
             close.on_hover_text(crate::i18n::tr("收起工作流面板"));
             // 任务切换住在这里：标题栏不再画步骤条（用户 2026-11-08——单张
-            // 不该有步骤仪式，延时的步骤也不该占标题栏）。
+            // 不该有步骤仪式，延时的步骤也不该占标题栏）。单张时只给静态标签。
             //
-            // The task picker lives here: no step bar in the title bar any more.
-            let pick = ui
-                .small_button(crate::i18n::tr(task.label()))
-                .on_hover_text(crate::i18n::tr("切换工作流"));
-            if let Some(t) = flow_task_menu(&pick) {
-                state.flow_task = t;
-                state.flow_step = None;
+            // The task picker lives here: no step bar in the title bar any more. Single
+            // photos get a plain label instead.
+            if single {
+                ui.label(
+                    RichText::new(crate::i18n::tr("单张修图"))
+                        .size(SIZE_LABEL)
+                        .color(muted()),
+                );
+            } else {
+                let pick = ui
+                    .small_button(crate::i18n::tr(task.label()))
+                    .on_hover_text(crate::i18n::tr("切换工作流"));
+                if let Some(t) = flow_task_menu(&pick) {
+                    state.flow_task = t;
+                    state.flow_step = None;
+                }
             }
         });
     });
     ui.add_space(4.0);
     // 五步全程摆出来，点哪步看哪步：选中态走 display_step（点选优先、未选
-    // 回落派生当前步），✓ 是派生进度，不因点选撒谎。
+    // 回落派生当前步），✓ 是派生进度，不因点选撒谎。单张没有这一段。
     //
-    // All five steps stay visible; clicking one shows it. The highlight follows
+    // All steps stay visible; clicking one shows it. The highlight follows
     // display_step (an explicit click wins, otherwise the derived current step), while
-    // ✓ remains the derived progress and never lies because of a click.
+    // ✓ remains the derived progress and never lies because of a click. Single photos
+    // get none of this.
     let states = flow::step_states(state, task);
-    for (i, s) in steps.iter().enumerate() {
+    if !single {
+        ui.add_space(2.0);
+    }
+    for (i, s) in steps
+        .iter()
+        .enumerate()
+        .take(if single { 0 } else { steps.len() })
+    {
         let marker = match states[i] {
             flow::StepState::Ready => "✓",
             flow::StepState::Current => "●",
@@ -118,18 +153,27 @@ pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             state.set_module(s.module);
         }
     }
-    ui.add_space(6.0);
-    ui.label(
-        RichText::new(format!(
-            "{}/{}  {}",
-            current + 1,
-            steps.len(),
-            crate::i18n::tr(step.label)
-        ))
-        .size(SIZE_BODY)
-        .color(text()),
-    );
-    ui.add_space(2.0);
+    if !single {
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(format!(
+                "{}/{}  {}",
+                current + 1,
+                steps.len(),
+                crate::i18n::tr(step.label)
+            ))
+            .size(SIZE_BODY)
+            .color(text()),
+        );
+        ui.add_space(2.0);
+    } else {
+        ui.label(
+            RichText::new(crate::i18n::tr("单张照片不需要流程，下面的动作直接用"))
+                .size(SIZE_LABEL)
+                .color(dim()),
+        );
+        ui.add_space(2.0);
+    }
     ui.add_space(2.0);
     rule(
         ui.painter(),
@@ -141,15 +185,20 @@ pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     ui.add_space(10.0);
 
     // 步骤说明固定占两到三行，动作列表从同一高度开始，切步骤时按钮不会跳位。
+    // 单张没有步骤，也就没有说明。
     //
     // The step description occupies a stable block so the action rows do not jump when
-    // the user switches steps.
-    ui.label(
-        RichText::new(crate::i18n::tr(step.hint))
-            .size(SIZE_LABEL)
-            .color(muted()),
-    );
-    ui.add_space(10.0);
+    // the user switches steps. Single photos have no steps, hence no description.
+    if !single {
+        ui.label(
+            RichText::new(crate::i18n::tr(step.hint))
+                .size(SIZE_LABEL)
+                .color(muted()),
+        );
+        ui.add_space(10.0);
+    } else {
+        ui.add_space(6.0);
+    }
 
     if !has_frames {
         ui.label(
@@ -161,7 +210,11 @@ pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
 
     let mut clicked = None;
-    for a in step.actions {
+    for a in if single {
+        SINGLE_PHOTO_ACTIONS
+    } else {
+        step.actions
+    } {
         let enabled = has_frames || !needs_frames(*a);
         let label = a.label();
         let resp = ui.add_enabled(
@@ -180,12 +233,15 @@ pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
 
     // 回到主线：「下一步」清掉手选、跳到派生的当前步。步骤列表允许用户
-    // 随便看，这里永远提供一条回主线的路。
+    // 随便看，这里永远提供一条回主线的路。单张没有流程，也就没有这一颗。
     //
     // Back to the main line: "next" drops the manual pick and jumps to the derived
-    // current step. The list is free browsing; this is always the way home.
-    ui.add_space(6.0);
-    if let Some(next) = flow::next_step(state, task) {
+    // current step. The list is free browsing; this is always the way home. Single
+    // photos have no flow, hence no button.
+    if !single {
+        ui.add_space(6.0);
+    }
+    if !single && let Some(next) = flow::next_step(state, task) {
         let back = format!(
             "{}  →",
             crate::i18n::tr_fmt("下一步：{}", &[&crate::i18n::tr(next.label)])

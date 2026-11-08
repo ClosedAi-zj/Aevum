@@ -143,39 +143,22 @@ pub struct Step {
 
 use StepAction as A;
 
-static TIMELAPSE: [Step; 5] = [
+static TIMELAPSE: [Step; 3] = [
     Step {
-        label: "导入序列",
+        label: "序列管理",
         module: Module::Sequence,
         check: StepCheck::Frames,
-        hint: "把同一趟拍的照片放进一个目录，序列按文件名排序。",
+        hint: "导入与整理这一趟照片：去闪、对齐都在这一段做完，序列按文件名排序。",
         actions: &[
             A::Import,
             A::Rescan,
             A::Goto(Module::Sequence),
-            A::Dock(DockTab::Info),
-        ],
-    },
-    Step {
-        label: "去闪",
-        module: Module::Deflicker,
-        check: StepCheck::Deflick,
-        hint: "读每帧亮度，压掉光圈/快门跳变带来的整体明暗闪烁。",
-        actions: &[
             A::Goto(Module::Deflicker),
-            A::Dock(DockTab::Keys),
-            A::Rescan,
+            A::Goto(Module::Frame),
         ],
     },
     Step {
-        label: "对齐",
-        module: Module::Frame,
-        check: StepCheck::Aligned,
-        hint: "估计帧间位移；三脚架被碰过、或是手持延时，先对齐再谈裁剪。",
-        actions: &[A::Goto(Module::Frame), A::Dock(DockTab::Info), A::Reset],
-    },
-    Step {
-        label: "调色",
+        label: "调色与修复",
         module: Module::Develop,
         check: StepCheck::Graded,
         hint: "影调、白平衡、曲线与局部蒙版都作用在整个序列上。",
@@ -187,7 +170,7 @@ static TIMELAPSE: [Step; 5] = [
         ],
     },
     Step {
-        label: "成片",
+        label: "导出视频",
         module: Module::Render,
         check: StepCheck::Never,
         hint: "选范围、格式与目录，然后导出；运镜/变速/水印仍在右坞。",
@@ -381,7 +364,7 @@ mod tests {
     fn every_flow_in_the_picker_is_wired_and_ends_in_an_action() {
         for t in FlowTask::ALL {
             let steps = t.steps();
-            assert_eq!(steps.len(), 5, "{:?} 的步骤数变了", t);
+            assert!((3..=5).contains(&steps.len()), "{:?} 的步骤数变了", t);
             assert_eq!(steps.last().map(|s| s.check), Some(StepCheck::Never));
             for s in steps {
                 assert!(!s.label.is_empty());
@@ -423,7 +406,7 @@ mod tests {
         let state = AppState::new();
         for t in FlowTask::ALL {
             let states = step_states(&state, t);
-            assert_eq!(states.len(), 5);
+            assert_eq!(states.len(), t.steps().len());
             // 空工程：第一步就没就绪，后面全是"尚未开始"。
             assert_eq!(states[0], StepState::Current);
             assert!(states[1..].iter().all(|s| *s == StepState::Todo));

@@ -18,7 +18,13 @@ impl AppState {
     /// synthetic metering.
     pub fn demo() -> Self {
         use aevum_core::sequence::Frame;
-        let n = 48usize;
+        // `AEVUM_DEMO_FRAMES=1` 给单帧演示态：单张模式的截图回归靠它。
+        //
+        // `AEVUM_DEMO_FRAMES=1` yields a one-frame demo: the single-photo mode's
+        // screenshot regression depends on it.
+        let n = std::env::var_os("AEVUM_DEMO_FRAMES")
+            .and_then(|v| v.to_str().and_then(|s| s.parse::<usize>().ok()))
+            .map_or(48usize, |n| n.clamp(1, 48));
         let frames: Vec<Frame> = (0..n)
             .map(|i| Frame {
                 index: i,

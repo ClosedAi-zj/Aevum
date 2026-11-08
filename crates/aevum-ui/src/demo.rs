@@ -15,9 +15,22 @@ const H: u32 = 720;
 const COUNT: u32 = 48;
 
 pub fn ensure_demo() -> Result<PathBuf, String> {
-    let dir = std::env::temp_dir().join("aevum_studio_demo");
+    // 单帧演示用独立目录：共享目录里躺着全量 48 张旧图，序列加载按目录
+    // 通配，少创建几张挡不住它们混进来。
+    //
+    // The single-frame demo gets its own directory: the shared one still holds the full
+    // 48 old frames and the loader globs the directory, so creating fewer does not keep
+    // them out.
+    let count = std::env::var_os("AEVUM_DEMO_FRAMES")
+        .and_then(|v| v.to_str().and_then(|s| s.parse::<u32>().ok()))
+        .map_or(COUNT, |n| n.clamp(1, COUNT));
+    let dir = std::env::temp_dir().join(if count == COUNT {
+        "aevum_studio_demo"
+    } else {
+        "aevum_studio_demo_single"
+    });
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    for i in 0..COUNT {
+    for i in 0..count {
         let path = dir.join(format!("demo_{i:04}.jpg"));
         if path.exists() {
             continue;
