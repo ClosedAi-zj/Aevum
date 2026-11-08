@@ -15,6 +15,55 @@ implementation details, test suites and golden data do not belong here.
 
 ---
 
+## v1.10.0 — 2026-11-08
+
+Feature release: it settles three things at once -- findability, visibility and flow. The
+work is layout-level only; no contract changes to project files, presets, the command line
+or the MCP tool set, so existing projects and presets keep working as-is.
+
+### Command palette (new)
+
+- `Ctrl+K` (`⌘K` on macOS) opens a palette that matches on the Chinese name, the action id,
+  the category or the shortcut; `↑↓` to select, Enter to run, `Esc` to close. Fifteen actions
+  to start: the seven modules, compare, grid, luminance curve, filmstrip, rulers, export
+  current frame, appearance & layout, plugins.
+- Why it matters next to Photoshop / Lightroom: their commands live in nested menus, so you
+  must already know where something is; the palette only asks what you want. Only actions
+  that really run are listed -- no placeholders.
+
+### Top chrome folded into two rows (interface)
+
+- The document tab and the frame-size / mask-count / undo readouts moved out of their own row
+  above the canvas into the tool options bar. The top goes from three rows to two and the
+  image gains 28 px of height. Nothing was removed; things moved closer to the hand.
+
+### Canvas overlay toggles (interface)
+
+- Grid / filmstrip / luminance-curve moved from a narrow rail on the window's right edge to a
+  solid overlay at the canvas's bottom-right corner. The parameter panel now reaches the
+  window edge instead of being cut off by a strip; the toggles stay within reach and their
+  owner is obvious (they control what is layered on the canvas, not what is being edited).
+  The overlay is opaque on purpose: letting the image through would bias tone judgements.
+
+### Optional panel density (interface)
+
+- Appearance & layout > Layout > UI density adds **standard / compact**: parameter group
+  headers at 32 px or 28 px. Compact fits one more parameter row per screen. The choice does
+  not affect which layout preset is considered active.
+
+### Filmstrip filter readout no longer repeats itself (interface)
+
+- With no filter active the strip no longer shows "x of N frames" -- it duplicated the "N
+  frames" on the left, cost width, and drowned "clear filters". It appears only when a filter
+  is actually narrowing the strip.
+
+### Known issues
+
+- Code signing is still not done (no certificate); the first-download security prompt is
+  expected.
+- The palette does not yet cover undo, reset-all or import/export (no stable call sites yet);
+  planned for a later release.
+
 ## v1.9.7 — 2026-11-05
 
 Patch release: ships the close-out hardening that followed v1.9.6, and is the first real tag
