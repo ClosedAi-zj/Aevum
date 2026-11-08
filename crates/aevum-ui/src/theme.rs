@@ -836,12 +836,19 @@ pub const RAIL_GAP: f32 = 4.0;
 ///
 /// Spacing between groups, drawn with a divider in the middle.
 pub const RAIL_GROUP_GAP: f32 = 10.0;
-/// 右侧调整面板宽 372：界面稿 `--dock-w`。推子行「标签 76 · 轨道弹性 · 读数 52」
-/// 的排布就是照这个宽度定的，窄一档标签就开始抢轨道的地盘。
+/// 画布与侧栏之间的呼吸带宽度。
 ///
-/// Right-hand adjustment panel, 372 px (mockup `--dock-w`). The slider row
-/// "label 76 · elastic rail · value 52" is dimensioned for exactly this width; one step
-/// narrower and the label starts eating the rail.
+/// 面板与画布直接贴边时，推子的轨道与图像边只差一根描边，眼睛会把两者连成一片；
+/// 留一条与画布底色相同的中性灰带，再在面板内缘压一根发丝线，层级就分开了。
+/// 这个数只在 `layout::canvas_insets` 里加一次，别处不许再 `+ 10`。
+///
+/// Breathing room between the canvas and a side panel.
+///
+/// With the panel flush against the canvas, only one stroke separates a slider rail from
+/// the image edge and the two read as a single surface. A neutral band in the canvas
+/// surround colour plus a hairline on the panel's inner edge restores the hierarchy.
+/// This value is added exactly once, in `layout::canvas_insets`; nothing else adds it.
+pub const CANVAS_GAP: f32 = 10.0;
 /// 右侧参数面板默认宽度 300px。
 ///
 /// 原先 372 是按「标签 76 + 读数 52 + 轨道」堆出来的上限值，实测偏宽：**

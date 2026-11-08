@@ -271,15 +271,15 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // 画布右边界按已知的右侧面板宽度夹一次：切模块时 dock 内容一换，egui 的
     // Panel 会用它记着的「上次宽度」去缩剩余区，而面板自己的 rect 已经是
     // `exact_size`，两者会连着几十帧对不上（画布因此压在 dock 页签上，见判据
-    // `ui_tokens::text_never_overlaps_in_any_module`）。布局常量就摆在这里，
+    // `ui_tokens::text_never_overlaps_in_any_module`）。让位量集中在 `layout.rs`，
     // 用它算边界比依赖第三方内部状态稳。
     //
     // Clamp the canvas right edge from the known right-hand panel widths: switching
     // modules swaps the dock content, and egui's Panel shrinks the remainder using the
     // width it remembers while its own rect already honours `exact_size`, so the two
     // disagree for tens of frames (the canvas ends up sitting on the dock tabs -- see
-    // `text_never_overlaps_in_any_module`). The layout constants are right here, and
-    // deriving the edge from them beats depending on a third party's internal state.
+    // `text_never_overlaps_in_any_module`). The insets live in `layout.rs`, and deriving
+    // the edge from them beats depending on a third party's internal state.
     // 内侧那一侧要按 `layout.dock_side` 算：右坞时夹右边、左坞时夹左边。老写法
     // 一律当右边算，用户把面板摆到左边（布局预设允许，且会落盘）画布就凭空少
     // 372px，右半边留白。
@@ -288,36 +288,49 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // right dock, the left edge for a left one. The old code always clamped the right,
     // so moving the panes to the left (a persisted layout choice) stole 372 px from the
     // canvas and left a blank band on the right.
-    let strip_w = 0.0;
-    let dock_w = if state.show_dock { state.dock_w } else { 0.0 };
-    let right_inset = strip_w + if dock_left { 0.0 } else { dock_w };
-    let left_inset = if dock_left { dock_w } else { 0.0 };
-    // 中间区自己也得钉住：`right_inset` 只交代画布**内部**怎么排，管不了
+    // 画布让位量只有一个来源：`layout::canvas_insets`（面板宽 + 10px 呼吸带）。
+    // 中央面板、画布内部排布、呼吸带绘制全部从这两个数反推，不许再各自加一次 10。
+    //
+    // The canvas insets have a single source: `layout::canvas_insets` (panel width plus
+    // the gutter). The centre panel, the canvas' own layout and the gutter painting all
+    // derive from these two numbers; nothing adds the 10 a second time.
+    let insets = crate::layout::canvas_insets(state.show_dock, dock_left, state.dock_w);
+    // 中间区自己也得钉住：`insets` 只交代画布**内部**怎么排，管不了
     // CentralPanel 占多宽。而 CentralPanel 拿的是「所有面板之后剩下的空间」——
-    // 右坞内容一旦比 372 宽，egui 会把面板 rect 整体往右推（`set_rect_size` 保
+    // 右坞内容一旦比面板宽，egui 会把面板 rect 整体往右推（`set_rect_size` 保
     // 右边界），剩下的空间就伸进面板里，画布底色盖掉页签与推子左缘（2026-11-05
     // 合成模块英文界面实测：溢出 86px）。给 CentralPanel 一个算出来的 max_rect，
     // 它就永远压不到面板上，不管面板内容多长。
     //
-    // The centre area needs pinning too: `right_inset` only says how the canvas lays
+    // The centre area needs pinning too: `insets` only says how the canvas lays
     // itself out, not how wide CentralPanel may be, and CentralPanel takes whatever is
-    // left after all panels. Let the dock content exceed 372 px and egui pushes the
-    // panel rect right (`set_rect_size` keeps the right edge), the remainder then spills
-    // into the panel, and the canvas fill paints over the tabs and the left edge of the
-    // sliders (measured on the English Merge module, 2026-11-05: 86 px of overflow).
-    // Handing CentralPanel a computed max_rect keeps it off the panel no matter how long
-    // the panel's content gets.
-    let mut centre = root.available_rect_before_wrap();
-    centre.min.x = centre.min.x.max(full.left() + left_inset);
-    centre.max.x = centre
-        .max
-        .x
-        .min(full.right() - right_inset)
-        .max(centre.min.x + 1.0);
+    // left after all panels. Let the dock content exceed the panel width and egui pushes
+    // the panel rect right (`set_rect_size` keeps the right edge), the remainder then
+    // spills into the panel, and the canvas fill paints over the tabs and the left edge
+    // of the sliders (measured on the English Merge module, 2026-11-05: 86 px of
+    // overflow). Handing CentralPanel a computed max_rect keeps it off the panel no
+    // matter how long the panel's content gets.
+    let centre = crate::layout::centre_rect(full, root.available_rect_before_wrap(), insets);
     let mut centre_ui = root.new_child(egui::UiBuilder::new().max_rect(centre).id_salt("centre"));
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(surround()))
-        .show(&mut centre_ui, |ui| canvas_panel(state, ui, right_inset));
+        .show(&mut centre_ui, |ui| canvas_panel(state, ui, insets.1));
+
+    // 面板与画布之间那条呼吸带：与画布同底色的中性灰，面板内缘压一根发丝线。
+    // 只画在文档区高度内，不越过菜单行 / 选项栏 / 底部胶片条。
+    //
+    // The gutter between dock and canvas: neutral surround grey with a hairline on the
+    // dock's inner edge. Drawn only across the document area, never over the menu row,
+    // options bar or bottom filmstrip.
+    if let Some((band, line_x)) = crate::layout::canvas_gutter(full, centre, insets, state.dock_w) {
+        let p = root.painter().clone();
+        p.rect_filled(band, 0.0, surround());
+        let x = line_x.round() + 0.5;
+        p.line_segment(
+            [Pos2::new(x, band.top()), Pos2::new(x, band.bottom())],
+            Stroke::new(1.0, border()),
+        );
+    }
 
     state.history_commit();
     // 新错误抬成弹窗：四十余处 `state.error = Some(...)` 靠这一处统一兜住。

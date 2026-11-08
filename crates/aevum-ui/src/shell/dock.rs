@@ -22,12 +22,12 @@ use egui::{Align2, Color32, Pos2, Rect, ScrollArea, Sense, Shape, Stroke, Ui, Ui
 /// 面板宽度可拖：在内缘挂一条 6px 的手柄，左右拖改 `state.dock_w`。
 ///
 /// 手柄落在面板**内侧**那条边（右坞是左缘，左坞是右缘），拖动方向按侧别取反；
-/// 宽度夹在 300–560：低于 300，推子行的「标签 76 + 读数 44」会把轨道吃光；高于
+/// 宽度夹在 280–560：低于 280，推子行的「标签 76 + 读数 44」会把轨道吃光；高于
 /// 560，画布被挤成一条。悬停/拖动时光标变横向量尺，用户才知道这里能拖。
 ///
 /// The panel width is draggable: a 6 px handle sits on the panel's inner edge (left edge
 /// for a right dock, right edge for a left one) and drag direction flips with the side.
-/// Width is clamped to 300-560: below 300 the slider row's "label 76 + value 44" eats the
+/// Width is clamped to 280-560: below 280 the slider row's "label 76 + value 44" eats the
 /// rail; above 560 the canvas is squeezed into a strip. The cursor becomes a horizontal
 /// resize arrow so the affordance is discoverable.
 fn dock_resize_handle(state: &mut AppState, ui: &mut Ui) {

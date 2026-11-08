@@ -982,3 +982,66 @@ fn look_window_uses_warn_once_for_the_contrast_warning() {
         "外观窗出现了 {n} 处 warn()——警示色只许用于明暗微调的对比度警告，多了就是第二套装饰色"
     );
 }
+
+/// 画布呼吸带只有一个来源：`theme::CANVAS_GAP` 定义一次，且只在
+/// `layout::canvas_insets` 里被加一次。
+///
+/// 这条挡的是「同一条缝在不同地方各加一遍」：拖宽面板时中央区会少 10px、
+/// 画布内部浮层又多让 10px，两条边就对不齐，而这种偏差只在窄窗 + 左坞的组合里
+/// 看得出来。`shell/mod.rs` 必须消费那个纯函数，不许自己再算一遍。
+///
+/// The canvas gutter has one source: `theme::CANVAS_GAP` is defined once and added
+/// exactly once, in `layout::canvas_insets`. This blocks the same seam being added twice
+/// in different places -- widening the dock would then cost the centre 10 px while the
+/// canvas overlays yielded another 10, and the two edges would disagree only in the
+/// narrow-window + left-dock combination. `shell/mod.rs` has to consume the pure
+/// function instead of recomputing the insets.
+#[test]
+fn canvas_gap_has_one_source() {
+    const NAME: &str = "CANVAS_GAP";
+    let mut defs = 0usize;
+    let mut uses = Vec::new();
+    let mut files = Vec::new();
+    rs_files(&src_dir(), &mut files);
+    assert!(files.len() > 20, "源码目录没扫到东西，路径口径变了");
+    for path in &files {
+        let raw = std::fs::read_to_string(path).expect("读源码");
+        let clean = without_line_comments(&raw);
+        // 单元测试里也会引用常量做断言，那不是生产代码的「第二个来源」。
+        //
+        // Unit tests reference the constant too; those are not a second source in
+        // production code.
+        let code = clean.split("#[cfg(test)]").next().unwrap_or(&clean);
+        for (pos, _) in code.match_indices(NAME) {
+            let line = code[..pos].lines().last().unwrap_or("");
+            if line.contains("pub const") {
+                defs += 1;
+            } else {
+                uses.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    assert_eq!(
+        defs, 1,
+        "CANVAS_GAP 必须只在 theme.rs 定义一次，实测 {defs} 次"
+    );
+    assert_eq!(
+        uses.len(),
+        1,
+        "CANVAS_GAP 只许在 canvas_insets 里加一次，实际出现在 {uses:?}"
+    );
+    assert!(
+        uses[0].ends_with("layout.rs"),
+        "唯一的使用点应当是 layout.rs，实际是 {}",
+        uses[0]
+    );
+    let shell = read_clean("shell/mod.rs");
+    assert!(
+        shell.contains("canvas_insets(") && shell.contains("centre_rect("),
+        "shell 必须消费 layout 的让位量与中央区计算，不许就地再算"
+    );
+    assert!(
+        !shell.contains("+ 10.0") && !shell.contains("+ CANVAS_GAP"),
+        "shell 里出现了第二处 10px，呼吸带不再单源"
+    );
+}
