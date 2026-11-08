@@ -48,6 +48,7 @@ impl AppState {
         };
         if self.mask_drag.is_some_and(|(i, _)| i == index) {
             self.mask_drag = None;
+            self.mask_move_anchor = None;
         }
         if self.mask_paint.is_some_and(|(i, _)| i == index) {
             self.mask_paint = None;
@@ -97,6 +98,7 @@ impl AppState {
         }
         if self.mask_drag.is_some_and(|(i, _)| i == index) {
             self.mask_drag = None;
+            self.mask_move_anchor = None;
         }
         self.masks_changed();
         Some(added)
@@ -128,6 +130,7 @@ impl AppState {
         }
         if self.mask_drag.is_some_and(|(i, _)| i == index) {
             self.mask_drag = None;
+            self.mask_move_anchor = None;
         }
         self.masks_changed();
         true

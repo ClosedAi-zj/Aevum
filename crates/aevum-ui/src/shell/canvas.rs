@@ -185,6 +185,10 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
                 if let Some((comp, handle)) = mask_hit_any(geos, img, gw, gh, pos, comp_cur) {
                     state.mask_comp = comp;
                     state.mask_drag = Some((sel, handle));
+                } else if let Some(snap) = super::mask::mask_body_geo(state, img, pos) {
+                    // 抓在形状主体上：整体移动，不平移图片（LR 同款手感）。
+                    state.mask_drag = Some((sel, super::mask::HANDLE_MOVE));
+                    state.mask_move_anchor = Some((pos, snap));
                 }
             }
         }
@@ -275,6 +279,8 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
                         None => &[],
                     };
                     mask_hit_any(geos, img, gw, gh, pos, comp_cur)
+                        .map(|_| ())
+                        .or_else(|| super::mask::mask_body_geo(state, img, pos).map(|_| ()))
                 })
                 .is_some();
             if over {

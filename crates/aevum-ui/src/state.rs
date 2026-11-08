@@ -2139,10 +2139,17 @@ pub struct AppState {
     /// The shape being edited inside the selected mask group (0-based); returns to the first
     /// when the group changes.
     pub mask_comp: usize,
-    /// 正在拖动的 (蒙版序号, 手柄 0/1)。
+    /// 正在拖动的 (蒙版序号, 手柄 0/1)。手柄 2 = 整体移动（抓在形状主体上）。
     ///
-    /// The (mask index, handle 0/1) currently being dragged.
+    /// The (mask index, handle 0/1) currently being dragged. Handle 2 = move the whole
+    /// shape (grabbed on its body).
     pub mask_drag: Option<(usize, u8)>,
+    /// 整体移动的锚点：(按下时指针, 按下时的四个端点坐标)。拖动 = 快照 + 位移，
+    /// 松手即弃；手柄拖动不走这里。
+    ///
+    /// Anchor for whole-shape moves: (pointer at press, the four endpoint coords at
+    /// press). Drag = snapshot + delta, dropped on release; handle drags bypass it.
+    pub mask_move_anchor: Option<(egui::Pos2, [f64; 4])>,
     /// 正在涂抹的画笔笔画：(蒙版序号, 形状序号)。松手结束，一笔进一步历史。
     ///
     /// The brush stroke being painted: (mask index, shape index). Ends on mouse release;

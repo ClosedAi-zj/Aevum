@@ -227,6 +227,29 @@ fn wheel_mesh(c: Pos2, radius: f32, rings: usize, segments: usize) -> egui::Mesh
 /// disc runs from neutral grey 128 at the centre to full saturation at the rim;
 /// the handle is 10 px `#9A9A9A` inside a 2 px `#4B4B4B` ring. Double-click the
 /// disc to reset the wheel, double-click the rail to zero the lift.
+/// 盘面坐标 → (色相, 浓度)。半径超出盘面时贴着盘缘取方向——拖出盘外不丢点。
+/// 纯函数：单击与拖动共用，单测直接量。
+///
+/// Disc offset to (hue, amount). Past the rim the direction is kept with the radius
+/// clamped, so dragging outside never loses the point. Pure: shared by click and drag,
+/// measured directly in unit tests.
+fn wheel_point(d: Vec2, r_disc: f32) -> (f64, f64) {
+    // 盘缘内取实长，出盘贴缘；盘径下限 1 防零除。守卫只有这一道，
+    // 判据的变异验证才打得穿。
+    //
+    // Real length inside the rim, clamped to it outside; the 1 px floor avoids division
+    // by zero. This is the single guard, so the acceptance mutation can bite.
+    let r_disc = r_disc.max(1.0);
+    let clamped = d.length().min(r_disc);
+    // 屏幕 y 向下，取负让色相逆时针增长；与绘制用的 (cos a, -sin a) 同一口径。
+    let hue = (-(d.y as f64))
+        .atan2(d.x as f64)
+        .to_degrees()
+        .rem_euclid(360.0);
+    let amount = (clamped / r_disc) as f64 * 100.0;
+    (hue, amount)
+}
+
 pub fn grade_wheel(
     ui: &mut Ui,
     id: &'static str,
@@ -288,19 +311,20 @@ pub fn grade_wheel(
     );
 
     let mut changed = false;
-    if let Some(pt) = wresp.interact_pointer_pos().filter(|_| wresp.dragged()) {
+    // PS 手感两条：单击盘面直接把点放到那里；拖出盘外点贴着盘缘继续跟随方向，
+    // 不会「拖丢」。拖动与单击共用 wheel_point 的同一套换算。
+    //
+    // Two PS-feel rules: a click places the point right there; dragging past the rim
+    // keeps the point riding the rim in the drag direction instead of getting lost.
+    if let Some(pt) = wresp
+        .interact_pointer_pos()
+        .filter(|_| wresp.dragged() || wresp.clicked())
+    {
         let d = pt - c;
-        let r = (d.x * d.x + d.y * d.y).sqrt();
-        if r <= r_disc + 4.0 {
-            // 屏幕 y 向下，取负让色相逆时针增长；与绘制用的
-            // (cos a, -sin a) 同一口径，拖到哪把手就在哪。
-            *hue = (-(d.y as f64))
-                .atan2(d.x as f64)
-                .to_degrees()
-                .rem_euclid(360.0);
-            *amount = (r / r_disc.max(1.0)).clamp(0.0, 1.0) as f64 * 100.0;
-            changed = true;
-        }
+        let (h, a) = wheel_point(d, r_disc);
+        *hue = h;
+        *amount = a;
+        changed = true;
     }
     if wresp.double_clicked() && active {
         *hue = 0.0;
@@ -308,7 +332,10 @@ pub fn grade_wheel(
         *lift = 0.0;
         changed = true;
     }
-    if let Some(pt) = rresp.interact_pointer_pos().filter(|_| rresp.dragged()) {
+    if let Some(pt) = rresp
+        .interact_pointer_pos()
+        .filter(|_| rresp.dragged() || rresp.clicked())
+    {
         let half = (rail_rect.width() * 0.5).max(1.0);
         let v = ((pt.x - rail_rect.center().x) as f64 / half as f64 * 100.0).clamp(-100.0, 100.0);
         if (*lift - v).abs() > 1e-9 {
@@ -1102,6 +1129,34 @@ pub fn levels_strip(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 色轮换算的 PS 手感：盘内按方向定位；盘外贴缘不丢点；盘心即中性。
+    /// 回归锚：用户要求「学 PS，移动一个点进行调节」。
+    ///
+    /// The wheel mapping's PS feel: inside, position follows the direction; outside,
+    /// the point rides the rim; the centre is neutral. Regression anchor: the user asked
+    /// for "learn from PS -- move one point to adjust".
+    #[test]
+    fn wheel_point_places_clamps_and_neutralises() {
+        let r = 46.0;
+        // 盘心：浓度 0（中性），色相任意但为 0。
+        let (h, a) = wheel_point(Vec2::ZERO, r);
+        assert!(a.abs() < 1e-9, "盘心必须是中性浓度");
+        assert!(h.abs() < 1e-9);
+        // 正右方：色相 0、浓度满。
+        let (h, a) = wheel_point(Vec2::new(r, 0.0), r);
+        assert!(h.abs() < 1e-6 && (a - 100.0).abs() < 1e-6);
+        // 正上方（屏幕 y 向下 → 色相 90）。
+        let (h, a) = wheel_point(Vec2::new(0.0, -r), r);
+        assert!((h - 90.0).abs() < 1e-6 && (a - 100.0).abs() < 1e-6);
+        // 拖出盘外：贴缘、方向保留（这是「不丢点」的关键）。
+        let (h, a) = wheel_point(Vec2::new(0.0, -3.0 * r), r);
+        assert!((h - 90.0).abs() < 1e-6, "出盘后方向不许翻转");
+        assert!((a - 100.0).abs() < 1e-6, "出盘后浓度贴缘");
+        // 半径方向 45°：色相 45。
+        let (h, _) = wheel_point(Vec2::new(r, -r) * (r / (r * r * 2.0).sqrt()), r);
+        assert!((h - 45.0).abs() < 1e-6, "对角线方向色相 {h}");
+    }
 
     #[test]
     fn curve_grid_midline_is_the_major_stroke() {

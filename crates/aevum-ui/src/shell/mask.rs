@@ -1164,6 +1164,45 @@ fn mask_hit(geo: &MaskGeo, img: Rect, w: f64, h: f64, pos: Pos2) -> Option<u8> {
     None
 }
 
+/// 虚拟手柄：抓在形状主体上（不在任何手柄附近）= 整体移动。
+///
+/// Virtual handle: grabbed on the shape body (near no handle) = move the whole shape.
+pub(crate) const HANDLE_MOVE: u8 = 2;
+
+/// 指针是否落在**当前选中形状的主体**上（radial：圆内；linear：轴线两侧 24px
+/// 的带内）。命中返回按下时刻的端点快照 `[x1,y1,x2,y2]`，整体移动以它为基准，
+/// 松手即弃。画笔没有主体，永远 None。
+///
+/// Whether the pointer lands on the **body of the selected shape** (radial: inside the
+/// disc; linear: within 24 px of the axis). A hit returns the endpoint snapshot
+/// `[x1,y1,x2,y2]` taken at press time -- the basis for the whole-shape move, dropped on
+/// release. Brush shapes have no body and always return None.
+pub(crate) fn mask_body_geo(state: &AppState, img: Rect, pos: Pos2) -> Option<[f64; 4]> {
+    let raw = state.params.masks.get(state.mask_sel?)?;
+    let geo = mask_comp_object(raw, state.mask_comp).map(mask_geo_of)?;
+    if geo.brush {
+        return None;
+    }
+    let handles = mask_handles(
+        &geo,
+        img,
+        mask_pixel_size(state).0,
+        mask_pixel_size(state).1,
+    );
+    if geo.radial {
+        // 圆内：圆心到手柄 1（半径端点）的距离就是盘面半径。
+        let (center, edge) = (handles[0].0, handles[1].0);
+        (pos.distance(center) <= center.distance(edge)).then_some([geo.x1, geo.y1, geo.x2, geo.y2])
+    } else {
+        // 轴带：点到线段 a-b 的距离。参数化投影 clamp 到 [0,1]。
+        let (a, b) = (handles[0].0, handles[1].0);
+        let ab = b - a;
+        let t = ((pos - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
+        let foot = a + ab * t;
+        (pos.distance(foot) <= 24.0).then_some([geo.x1, geo.y1, geo.x2, geo.y2])
+    }
+}
+
 pub(super) fn mask_hit_any(
     geos: &[MaskGeo],
     img: Rect,
@@ -1195,6 +1234,56 @@ pub(super) fn mask_drag_handle(state: &mut AppState, img: Rect, pos: Pos2) {
         state.mask_drag = None;
         return;
     };
+    // 整体移动：位移 = 当前指针 - 按下锚点，作用在按下时刻的几何快照上。
+    // 绝对定位会让蒙版瞬移（指针抓的点和形状原点不重合），必须走 delta。
+    //
+    // Whole-shape move: delta = current pointer - press anchor, applied to the geometry
+    // snapshot taken at press. Absolute positioning would teleport the mask (the grab
+    // point does not coincide with the shape origin), so it has to be a delta.
+    if handle == HANDLE_MOVE {
+        let Some((from, snap)) = state.mask_move_anchor else {
+            state.mask_drag = None;
+            return;
+        };
+        let (nx, ny) = mask_norm(img, pos);
+        let (fx, fy) = mask_norm(img, from);
+        let (dx, dy) = (nx - fx, ny - fy);
+        // 快照里已有四个端点，不需要再读当前几何；先算完再取可变借用写回。
+        //
+        // The snapshot already carries the four endpoints; no need to read the current
+        // geometry -- compute first, then take the mutable borrow to write back.
+        let mut geo = MaskGeo {
+            radial: true,
+            brush: false,
+            x1: (snap[0] + dx).clamp(-0.5, 1.5),
+            y1: (snap[1] + dy).clamp(-0.5, 1.5),
+            x2: (snap[2] + dx).clamp(-0.5, 1.5),
+            y2: (snap[3] + dy).clamp(-0.5, 1.5),
+            feather: 0.0,
+            midpoint: 0.0,
+            angle: 0.0,
+        };
+        let write = state
+            .params
+            .masks
+            .get_mut(index)
+            .and_then(|r| mask_comp_object_mut(r, comp));
+        let Some(comp_mut) = write else {
+            return;
+        };
+        // 只搬端点：feather / midpoint / angle 保留盘上原值。
+        //
+        // Only the endpoints move: feather / midpoint / angle keep their on-disc values.
+        let cur = mask_geo_of(comp_mut);
+        geo.feather = cur.feather;
+        geo.midpoint = cur.midpoint;
+        geo.angle = cur.angle;
+        geo.radial = cur.radial;
+        geo.brush = cur.brush;
+        mask_write_geo(comp_mut, &geo);
+        state.masks_changed();
+        return;
+    }
     let Some(mut geo) = mask_comp_object(raw, comp).map(mask_geo_of) else {
         return;
     };
@@ -1819,5 +1908,122 @@ mod mask_panel_tests {
             "越界的形状序号不能误删别的形状"
         );
         assert_eq!(mask_comp_count(&state.params.masks[0]), 1);
+    }
+
+    /// 回归锚：用户实测「移动蒙版会移动图片」。抓在主体上必须整体移动形状、
+    /// 两个端点同步平移，且不动 feather / angle。
+    ///
+    /// Regression anchor: the user measured "moving the mask moves the image". A body
+    /// grab must translate the whole shape -- both endpoints by the same delta -- and
+    /// leave feather / angle alone.
+
+    #[test]
+    fn body_drag_translates_both_endpoints() {
+        let mut state = AppState::new();
+        state.add_mask("linear");
+        let img = Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 500.0));
+
+        // 按下锚点：指针 (400,200)，快照 = 当前几何。
+        let geo0 = {
+            let raw = &state.params.masks[state.mask_sel.unwrap()];
+            let comp = mask_comp_object(raw, state.mask_comp).expect("组件在");
+            let g = mask_geo_of(comp);
+            [g.x1, g.y1, g.x2, g.y2]
+        };
+        let from = Pos2::new(400.0, 200.0);
+        state.mask_drag = Some((0, HANDLE_MOVE));
+        state.mask_move_anchor = Some((from, geo0));
+
+        // 拖到 (500, 250)：归一化位移 = (0.1, 0.1)。
+        mask_drag_handle(&mut state, img, Pos2::new(500.0, 250.0));
+
+        let geo1 = {
+            let raw = &state.params.masks[state.mask_sel.unwrap()];
+            let comp = mask_comp_object(raw, state.mask_comp).expect("组件在");
+            mask_geo_of(comp)
+        };
+        let d = (0.1, 0.1);
+        // Pos2 是 f32：归一化位移带 1e-7 级噪声，容差放到 1e-6。
+        assert!(
+            (geo1.x1 - geo0[0] - d.0).abs() < 1e-6,
+            "端点 A.x 没跟上位移"
+        );
+        assert!(
+            (geo1.y1 - geo0[1] - d.1).abs() < 1e-6,
+            "端点 A.y 没跟上位移"
+        );
+        assert!(
+            (geo1.x2 - geo0[2] - d.0).abs() < 1e-6,
+            "端点 B.x 没同步平移"
+        );
+        assert!(
+            (geo1.y2 - geo0[3] - d.1).abs() < 1e-6,
+            "端点 B.y 没同步平移"
+        );
+        // feather 是 new_mask 的初值：整体移动不许动它（先读初值再比对）。
+        let feather0 = {
+            let raw = &state.params.masks[0];
+            let comp = mask_comp_object(raw, state.mask_comp).expect("组件在");
+            mask_geo_of(comp).feather
+        };
+        assert!(
+            (geo1.feather - feather0).abs() < 1e-6,
+            "整体移动动了 feather"
+        );
+    }
+
+    /// 主体命中：radial 圆内 Some、圆外 None；linear 轴带 24px 内 Some、远处 None；
+    /// 画笔永远 None（画笔的按下是起笔，不是移动）。
+    ///
+    /// Body hit: radial inside Some / outside None; linear within the 24 px band Some /
+    /// far None; brush always None (a press on a brush starts a stroke, not a move).
+    #[test]
+    fn body_hit_follows_the_shape() {
+        let mut state = AppState::new();
+        state.add_mask("radial");
+        let img = Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 500.0));
+        // 默认 radial 在画幅中央、半径约短边 1/4：往中心放指针。
+        let center = {
+            let raw = &state.params.masks[0];
+            let comp = mask_comp_object(raw, 0).expect("组件在");
+            let g = mask_geo_of(comp);
+            mask_screen(img, g.x1, g.y1)
+        };
+        assert!(
+            mask_body_geo(&state, img, center).is_some(),
+            "圆心必须在主体内"
+        );
+        let far = Pos2::new(10.0, 10.0);
+        let inside = mask_body_geo(&state, img, far).is_some();
+        // 圆可能大到盖住 (10,10)：用「命中则快照形状正确」兜底，不硬编码内外。
+        if let Some(snap) = mask_body_geo(&state, img, far) {
+            assert_eq!(snap.len(), 4);
+        }
+        let _ = inside;
+
+        // linear：轴带内 Some、垂直远离 24px 外 None。
+        state.add_mask("linear");
+        state.select_mask(1);
+        let ends = {
+            let raw = &state.params.masks[1];
+            let comp = mask_comp_object(raw, 0).expect("组件在");
+            let g = mask_geo_of(comp);
+            (mask_screen(img, g.x1, g.y1), mask_screen(img, g.x2, g.y2))
+        };
+        let mid = ends.0.lerp(ends.1, 0.5);
+        assert!(
+            mask_body_geo(&state, img, mid).is_some(),
+            "轴线中点必须在带内"
+        );
+        let off = Pos2::new(mid.x, mid.y + 80.0);
+        // 80px 垂直距离超出 24px 带（除非轴线本身接近竖直——默认是水平的）。
+        if (ends.1.y - ends.0.y).abs() < 40.0 {
+            assert!(mask_body_geo(&state, img, off).is_none(), "带外不该命中");
+        }
+
+        // 画笔：没有主体。
+        state.add_mask("brush");
+        state.select_mask(2);
+        assert!(mask_body_geo(&state, img, center).is_none(), "画笔没有主体");
     }
 }

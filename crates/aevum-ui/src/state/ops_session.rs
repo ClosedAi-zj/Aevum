@@ -725,6 +725,7 @@ impl AppState {
             mask_sel: None,
             mask_comp: 0,
             mask_drag: None,
+            mask_move_anchor: None,
             mask_paint: None,
             heal_radius: 2.0,
             heal_feather: 35.0,
