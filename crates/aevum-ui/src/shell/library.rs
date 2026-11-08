@@ -562,6 +562,24 @@ fn lib_row_menu(
         f.name.clone()
     };
     ui.label(egui::RichText::new(title).size(SIZE_SMALL).color(dim()));
+    // LapseOne 的核心动作：把任何一段序列丢进批量渲染队列，渲染不等当前段。
+    //
+    // LapseOne's core move: drop any sequence into the batch render queue.
+    if ui.button(crate::i18n::t!("加入渲染队列")).clicked() {
+        let target = if f.path.is_dir() {
+            Some(f.path.clone())
+        } else {
+            f.path.parent().map(|p| p.to_path_buf())
+        };
+        let r = target
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| state.add_root_to_queue(&p))
+            .unwrap_or_else(|| Err("这个条目没有可入队的序列目录".to_owned()));
+        if let Err(e) = r {
+            state.error = Some(e);
+        }
+        ui.close();
+    }
     ui.menu_button(crate::i18n::t!("加入集合"), |ui| {
         if state.lib_cols.is_empty() {
             ui.label(egui::RichText::new(crate::i18n::t!("还没有集合，先在面板顶部建一个")).weak());

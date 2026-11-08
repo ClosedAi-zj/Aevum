@@ -564,6 +564,7 @@ impl AppState {
             preview_has_orig: false,
             bypassed: BTreeSet::new(),
             thumbs: HashMap::new(),
+            thumb_trim_at: None,
             thumb_pending: HashSet::new(),
             thumb_src: HashMap::new(),
             thumb_regrade: HashSet::new(),
@@ -956,6 +957,13 @@ impl AppState {
         self.audio_info = None;
         self.audio_probe_err = None;
         self.metrics = vec![None; n];
+        // 导入在后台线程收尾时 UI 可能停在反应式空转：到点必须叫醒重绘，
+        // 否则 ✓ 与胶片条要等用户动一下鼠标才出现（用户实测「勾选不及时」）。
+        //
+        // The import lands on a background thread and a reactive UI may be idling: wake
+        // the repaint, or the ✓ and the strip wait for the next mouse move (user-reported
+        // "checkmarks update late").
+        ctx.request_repaint();
         self.exif.clear();
         self.issues.clear();
         self.analysis = None;

@@ -425,6 +425,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("副本改名 {}", "Copy renamed to {}"),
     ("加{}蒙版", "{} mask added"),
     ("加入当前序列", "Add to current sequence"),
+    ("加入渲染队列", "Add to render queue"),
     ("加入集合", "Add to collection"),
     ("加权平均", "Weighted average"),
     ("动态范围", "Dynamic range"),

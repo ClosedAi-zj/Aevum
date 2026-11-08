@@ -399,6 +399,49 @@ impl AppState {
         });
     }
 
+    /// 缩略图缓存上限：千帧级序列（1387 帧实测）里 128px 解码源 + 纹理
+    /// 累到几百 MB。超过 1024 就淘汰离当前帧最远的条目，纹理句柄随手柄
+    /// 一起释放；可见窗口 ±2 每帧都会重建，淘汰无感。两秒最多跑一次——
+    /// 每帧排序上千个键本身就是卡顿源。
+    ///
+    /// Thumbnail cache bound: on thousand-frame sequences (1,387 measured) the 128 px
+    /// decoded sources plus textures add up to hundreds of MB. Past 1,024 entries the
+    /// ones farthest from the current frame are evicted; textures go with their handles.
+    /// The visible window rebuilds every frame, so eviction is invisible. Runs at most
+    /// every two seconds -- sorting a thousand keys per frame was the stutter.
+    fn trim_thumbs(&mut self) {
+        const THUMB_CACHE_MAX: usize = 1024;
+        const TRIM_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+        let now = std::time::Instant::now();
+        if self
+            .thumb_trim_at
+            .is_some_and(|t| now.duration_since(t) < TRIM_EVERY)
+        {
+            return;
+        }
+        self.thumb_trim_at = Some(now);
+        if self.thumb_src.len() <= THUMB_CACHE_MAX && self.thumbs.len() <= THUMB_CACHE_MAX {
+            return;
+        }
+        let cur = self.selected as isize;
+        let mut by_distance: Vec<usize> = self.thumb_src.keys().copied().collect();
+        by_distance.sort_by_key(|i| (cur - *i as isize).abs());
+        let excess = self.thumb_src.len().saturating_sub(THUMB_CACHE_MAX);
+        for i in by_distance.into_iter().rev().take(excess) {
+            self.thumb_src.remove(&i);
+            self.thumbs.remove(&i);
+        }
+        // 纹理可能比源多（源换了 profile 纹理还在）：同样按距离裁。
+        if self.thumbs.len() > THUMB_CACHE_MAX {
+            let mut far: Vec<usize> = self.thumbs.keys().copied().collect();
+            far.sort_by_key(|i| (cur - *i as isize).abs());
+            let excess = self.thumbs.len() - THUMB_CACHE_MAX;
+            for i in far.into_iter().rev().take(excess) {
+                self.thumbs.remove(&i);
+            }
+        }
+    }
+
     pub fn ensure_thumbs(&mut self, ctx: &Context, lo: usize, hi: usize) {
         if self.headless {
             return;
@@ -406,6 +449,7 @@ impl AppState {
         if self.seq.is_none() {
             return;
         }
+        self.trim_thumbs();
         let hi = hi.min(self.frame_count());
         let params = self.preview_params();
 

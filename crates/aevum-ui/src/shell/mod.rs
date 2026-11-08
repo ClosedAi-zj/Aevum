@@ -275,6 +275,24 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         }))
         .show(root, |ui| options_bar(state, ui, &ctx));
 
+    // 顶部步骤栏（LapseOne 式）：多帧序列才摆，单张与空工程没有流程。
+    // 声明在选项栏之后，正好落在它下面一条。
+    //
+    // Top step bar (LapseOne-style): only for multi-frame sequences; single photos and
+    // empty projects have no flow. Declared after the options bar, so it stacks right
+    // beneath it.
+    if state.show_flow && state.frame_count() > 1 {
+        egui::Panel::top("flow-top")
+            .exact_size(30.0)
+            .frame(egui::Frame::NONE.fill(header()).inner_margin(egui::Margin {
+                left: 10,
+                right: 10,
+                top: 0,
+                bottom: 0,
+            }))
+            .show(root, |ui| flow_panel::flow_top_bar(state, ui));
+    }
+
     // 3 底部两行：**先声明状态栏**，它才拿得到窗口最底边；胶片条压在它上面。
     //   反过来声明就成了"状态栏飘在胶片条之上"，与界面稿差出整整一行。
     //   没有告警 / 任务时整条不声明——底边留白还回来（用户 2026-11-08）。

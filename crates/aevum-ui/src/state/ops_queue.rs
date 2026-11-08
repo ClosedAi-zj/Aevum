@@ -151,6 +151,50 @@ impl AppState {
         Ok(index)
     }
 
+    /// 图库右键「加入渲染队列」：任意序列按当前输出设置入队。当前序列用
+    /// 内存快照，别的序列读它磁盘上的工程，读不到就不带（与 MCP 同口径）。
+    ///
+    /// Library context-menu "add to render queue": any sequence joins with the current
+    /// output settings. The current sequence snapshots memory; others read their on-disk
+    /// project, or none when absent (same rule as the MCP command).
+    pub fn add_root_to_queue(&mut self, root: &std::path::Path) -> Result<usize, String> {
+        if self.queue_busy {
+            return Err("队列正在渲染，先取消或等它跑完".to_owned());
+        }
+        let name = root
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "序列".to_owned());
+        let out = root.join(format!("{name}_成片.mp4"));
+        let is_current = self.seq.as_ref().is_some_and(|s| s.root == root);
+        let project = if is_current {
+            Some(self.project_snapshot())
+        } else {
+            project::load(&project::project_path(root)).ok()
+        };
+        let item = QueueItem {
+            width: self.output_w,
+            height: self.output_h,
+            fps: self.output_fps as f64,
+            codec: if self.codec.contains("264") {
+                "h264"
+            } else {
+                "h265"
+            }
+            .to_owned(),
+            crf: self.render_crf,
+            preset: self.render_preset.clone(),
+            keep_frames: self.render_keep_frames,
+            resume: self.render_resume,
+            project,
+            ..QueueItem::new(root, out)
+        };
+        let index = queue::add(&mut self.queue, item)?;
+        self.save_queue();
+        self.status = crate::i18n::tr_fmt("已加入队列：第 {} 段", &[&(index + 1)]);
+        Ok(index)
+    }
+
     /// 开始逐段渲染；立即返回，进度看 `queue.status`。
     ///
     /// Start rendering segment by segment; returns immediately, watch `queue.status` for

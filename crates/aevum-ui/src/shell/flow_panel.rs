@@ -271,6 +271,50 @@ pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
 }
 
+/// 顶部步骤栏（LapseOne 式）：多帧序列的三段横排在画布上方，点标签即跳段。
+/// 单张与未开序列都不摆——那两种状态没有流程。
+///
+/// The top step bar (LapseOne-style): the flow's phases sit horizontally above the
+/// canvas; clicking a tab jumps there. Neither single photos nor an empty project get
+/// one -- neither has a flow.
+pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
+    let task = state.flow_task;
+    let steps = task.steps();
+    let states = flow::step_states(state, task);
+    let current = flow::display_step(state, task);
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for (i, s) in steps.iter().enumerate() {
+            let marker = match states[i] {
+                flow::StepState::Ready => "✓ ",
+                flow::StepState::Current => "● ",
+                flow::StepState::Todo => "○ ",
+            };
+            let label = format!("{marker}{}", crate::i18n::tr(s.label));
+            let resp = ui.selectable_label(i == current, RichText::new(label).size(SIZE_BODY));
+            let info = match states[i] {
+                flow::StepState::Ready => crate::i18n::tr("输入已就绪"),
+                flow::StepState::Current => crate::i18n::tr("下一步"),
+                flow::StepState::Todo => crate::i18n::tr("尚未开始"),
+            };
+            let resp = resp.on_hover_text(format!("{} · {}", crate::i18n::tr(s.label), info));
+            if resp.clicked() {
+                state.flow_step = Some(i);
+                state.set_module(s.module);
+            }
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                RichText::new(format!("{}/{}", current + 1, steps.len()))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
+            );
+        });
+    });
+    ui.add_space(2.0);
+}
+
 /// 任务切换菜单（原标题栏的 flow_task_menu，随步骤条一起搬进来）。
 ///
 /// The task picker menu (formerly the title bar's, moved with the step list).
@@ -306,10 +350,11 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .unwrap_or("");
+        // 两条写入都是合法点击路径：面板里的步骤行 + 顶部的 LapseOne 式标签。
         assert_eq!(
             code.matches("state.flow_step = Some(i);").count(),
-            1,
-            "步骤行的点击写入手选态不见了或翻倍"
+            2,
+            "手选写入（面板行 + 顶部标签）数量变了"
         );
         // 两条清零都是合法语义：切任务换一套步骤、底部「下一步」回到派生主线。
         assert_eq!(

@@ -1520,6 +1520,11 @@ pub struct AppState {
     pub bypassed: BTreeSet<&'static str>,
 
     pub thumbs: HashMap<usize, Thumb>,
+    /// 缩略图淘汰的上次运行时刻：节流用，别每帧排序上千个键。
+    ///
+    /// Last thumbnail-trim instant: a throttle, so we do not sort a thousand-plus keys
+    /// every frame.
+    pub(crate) thumb_trim_at: Option<std::time::Instant>,
     thumb_pending: HashSet<usize>,
     /// 缩略图的解码源（见 [`ThumbSrc`]）：只给「参数变了重调色」用，不参与绘制。
     ///
