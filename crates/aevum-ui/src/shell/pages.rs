@@ -160,12 +160,19 @@ pub(super) fn sequence_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             state.ensure_thumbs(ctx, lo.saturating_sub(1), hi + 1);
             for row in row_range {
                 ui.horizontal(|ui| {
+                    // 列数是用 GAP 算的，布局必须用同一个 GAP——否则 egui 默认的
+                    // item_spacing 与它不一致，右边几列会被挤出可视宽度。
+                    //
+                    // The column count is derived from GAP, so the layout must use that
+                    // same GAP; otherwise egui's default spacing differs and the
+                    // right-hand columns are pushed out of view.
+                    ui.spacing_mut().item_spacing.x = GAP;
                     for col in 0..cols {
                         let i = row * cols + col;
                         if i >= state.frame_count() {
                             break;
                         }
-                        cell(state, ui, i, CELL_W, CELL_H);
+                        cell(state, ui, ctx, i, CELL_W, CELL_H);
                     }
                 });
                 ui.add_space(GAP);
@@ -176,10 +183,39 @@ pub(super) fn sequence_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
 /// 一格：序号 + 缩略图；选中格描强调色边。
 ///
 /// One cell: index plus thumbnail; the selected cell gets an accent outline.
-fn cell(state: &mut AppState, ui: &mut Ui, i: usize, w: f32, h: f32) {
+/// 一格缩略图。
+///
+/// **画到哪格就补哪格**：此前按「行号 × 列数」估算预热区间，但每行实际能放几格
+/// 受 `item_spacing` 影响，估算列数偏大时右边几列永远不在预热区间里——整片格子
+/// 长期纯黑（用户 2026-11-09 截图：37–70 全黑）。改为在绘制点按需派发，与布局
+/// 计算解耦。
+///
+/// One thumbnail cell.
+///
+/// **Prefetch the cell you are drawing**: the old code estimated the warm-up range
+/// from "row index x column count", but how many cells actually fit per row depends on
+/// `item_spacing`; an over-estimated column count left the right-hand columns outside
+/// the warm-up range and they stayed black (user screenshot, 2026-11-09).
+fn cell(state: &mut AppState, ui: &mut Ui, ctx: &Context, i: usize, w: f32, h: f32) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::click());
     let p = ui.painter();
     p.rect_filled(rect, radius_control(), thumb_bg());
+    // 缺图就当场派发这一格（后台解码，不阻塞本帧），并画一个占位底：
+    // 纯黑会被读成「坏格」，比「加载中」更糟。
+    //
+    // Missing thumbnail: dispatch this very frame (background decode, does not block
+    // the frame) and draw a placeholder instead of leaving it pure black -- black reads
+    // as a broken cell, which is worse than "loading".
+    if state.thumb(i).is_none() {
+        state.ensure_thumbs(ctx, i, i + 1);
+        p.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "…",
+            font(SIZE_SMALL),
+            muted(),
+        );
+    }
     if let Some(t) = state.thumb(i) {
         let tex = t.texture.clone();
         let size = t.size;
