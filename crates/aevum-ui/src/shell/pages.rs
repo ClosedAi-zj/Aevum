@@ -29,9 +29,12 @@ pub(super) fn sequence_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .color(text()),
         );
         ui.label(
-            RichText::new(crate::i18n::tr_fmt("{} 帧", &[&state.frame_count()]))
-                .size(SIZE_LABEL)
-                .color(muted()),
+            RichText::new(crate::i18n::tr_fmt(
+                "{} 帧 · {} 关键帧",
+                &[&state.frame_count(), &state.keyframes.len()],
+            ))
+            .size(SIZE_LABEL)
+            .color(muted()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if secondary_button(ui, "转到对齐").clicked() {
@@ -45,6 +48,19 @@ pub(super) fn sequence_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             }
             if primary_button(ui, "导入照片…").clicked() {
                 dialogs::open_photos_dialog(state);
+            }
+            // LRT 式关键帧：只给「打点/取消」两颗，过渡由既有 keyframes 表驱动。
+            // 与 LR 的评级打点同源：先打稀疏关键帧，再只在这些帧上动色。
+            //
+            // LRT-style keyframes: just mark / unmark; interpolation is driven by the
+            // existing keyframes map. Same idea as LR rating marks: sparse checkpoints,
+            // grade only those.
+            if state.keyframes.contains_key(&state.selected) {
+                if secondary_button(ui, "取消关键帧").clicked() {
+                    state.remove_keyframe(state.selected);
+                }
+            } else if secondary_button(ui, "标记关键帧").clicked() {
+                state.add_keyframe();
             }
         });
     });
@@ -137,10 +153,33 @@ fn cell(state: &mut AppState, ui: &mut Ui, i: usize, w: f32, h: f32) {
         font(SIZE_SMALL),
         if selected { on_accent() } else { muted() },
     );
+    // 关键帧角标：LRT 里关键帧就是稀疏的「锚」，必须一眼可见。
+    //
+    // Keyframe badge: in LRT a keyframe is a sparse anchor and must be visible at a glance.
+    if state.keyframes.contains_key(&i) {
+        let chip =
+            egui::Rect::from_min_size(rect.left_top() + Vec2::new(4.0, 4.0), Vec2::new(14.0, 14.0));
+        p.rect_filled(chip, 3.0, accent());
+        p.text(
+            chip.center(),
+            egui::Align2::CENTER_CENTER,
+            "K",
+            font(SIZE_SMALL),
+            on_accent(),
+        );
+    }
     if resp.clicked() {
         state.selected = i;
     }
-    resp.on_hover_text(format!("第 {} 帧", i + 1));
+    // 双击直接进调色（用户 2026-11-09）：序列页是「挑帧」的地方，挑完就该调。
+    //
+    // Double-click jumps straight to develop (user, 2026-11-09): this page is for
+    // picking a frame, and once picked the next action is grading.
+    if resp.double_clicked() {
+        state.selected = i;
+        goto_develop(state);
+    }
+    resp.on_hover_text(format!("第 {} 帧 · 双击进调色", i + 1));
 }
 
 /// 导出视频页：LapseOne 式「队列 + 设置 + 进度」。
@@ -198,102 +237,208 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         ui.add_space(6.0);
     }
 
+    // 概况行：帧数 / 时长 / 队列段数 —— LapseOne 的导出页先给「要导什么」，
+    // 再给操作，空白版面里只有两列会显得没做完。
+    //
+    // Summary row: frames / duration / queued segments. LapseOne's export page states
+    // what is being exported before the controls; two bare columns read as unfinished.
+    let fps = state.output_fps.max(1.0);
+    let secs = state.frame_count() as f32 / fps;
+    ui.horizontal(|ui| {
+        for (k, v) in [
+            ("序列帧数", format!("{}", state.frame_count())),
+            (
+                "片长",
+                format!("{:02}:{:02}", (secs / 60.0) as u32, (secs % 60.0) as u32),
+            ),
+            ("队列", crate::i18n::tr_fmt("{} 段", &[&state.queue.len()])),
+        ] {
+            card_stat(ui, k, &v);
+        }
+    });
+    ui.add_space(8.0);
+
     ui.columns(2, |cols| {
-        // 左：队列
-        let left = &mut cols[0];
-        left.label(
-            RichText::new(crate::i18n::tr("渲染队列"))
-                .size(SIZE_BODY)
-                .color(text()),
-        );
-        left.add_space(4.0);
-        if state.queue.is_empty() {
-            left.label(
+        card(cols, 0, |ui| {
+            ui.label(
+                RichText::new(crate::i18n::tr("渲染队列"))
+                    .size(SIZE_BODY)
+                    .color(text()),
+            );
+            ui.add_space(6.0);
+            if state.queue.is_empty() {
+                // 空态也给一个「位置」：一整块空白会被读成页面没加载完。
+                let (r, _) =
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 96.0), Sense::hover());
+                ui.painter().rect_filled(r, radius_control(), elev());
+                ui.painter().text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    crate::i18n::tr("队列是空的。点「加入当前序列」，或到图库右键任意序列入队。"),
+                    font(SIZE_LABEL),
+                    dim(),
+                );
+            } else {
+                queue_head(ui);
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        local_queue_table(state, ui);
+                    });
+            }
+        });
+
+        card(cols, 1, |ui| {
+            ui.label(
+                RichText::new(crate::i18n::tr("导出设置"))
+                    .size(SIZE_BODY)
+                    .color(text()),
+            );
+            ui.add_space(6.0);
+            egui::Grid::new("export-settings")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new(crate::i18n::tr("帧率"))
+                            .size(SIZE_LABEL)
+                            .color(muted()),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut state.output_fps)
+                            .range(1.0..=60.0)
+                            .speed(1.0),
+                    );
+                    ui.end_row();
+                    ui.label(
+                        RichText::new(crate::i18n::tr("画质 CRF"))
+                            .size(SIZE_LABEL)
+                            .color(muted()),
+                    );
+                    ui.add(egui::DragValue::new(&mut state.render_crf).range(0..=51));
+                    ui.end_row();
+                    ui.label(
+                        RichText::new(crate::i18n::tr("编码"))
+                            .size(SIZE_LABEL)
+                            .color(muted()),
+                    );
+                    ui.horizontal(|ui| {
+                        for (name, tag) in [("H.265", "h265"), ("H.264", "h264")] {
+                            let on = state.codec.contains(tag);
+                            let resp = ui.add(
+                                egui::Button::new(
+                                    RichText::new(name).size(SIZE_SMALL).color(if on {
+                                        on_selected()
+                                    } else {
+                                        text()
+                                    }),
+                                )
+                                .fill(if on { accent() } else { elev() })
+                                .stroke(egui::Stroke::new(
+                                    1.0,
+                                    if on { accent() } else { border() },
+                                ))
+                                .corner_radius(radius_control())
+                                .min_size(Vec2::new(58.0, 24.0)),
+                            );
+                            if resp.clicked() {
+                                state.codec = format!("libx{tag}");
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    ui.label(
+                        RichText::new(crate::i18n::tr("输出"))
+                            .size(SIZE_LABEL)
+                            .color(muted()),
+                    );
+                    ui.label(
+                        RichText::new(crate::theme::ellipsis(
+                            &state.render_video_out.display().to_string(),
+                            40,
+                        ))
+                        .size(SIZE_SMALL)
+                        .color(value()),
+                    );
+                    ui.end_row();
+                });
+            ui.add_space(8.0);
+            ui.label(
                 RichText::new(crate::i18n::tr(
-                    "队列是空的。点「加入当前序列」，或到图库右键任意序列入队。",
+                    "每段读取加入队列时的工程参数；批量渲染按顺序逐段执行。",
                 ))
-                .size(SIZE_LABEL)
+                .size(SIZE_SMALL)
                 .color(dim()),
             );
-        } else {
-            egui::ScrollArea::vertical()
-                .max_height(320.0)
-                .show(left, |ui| {
-                    local_queue_table(state, ui);
-                });
-        }
-
-        // 右：导出设置
-        let right = &mut cols[1];
-        right.label(
-            RichText::new(crate::i18n::tr("导出设置"))
-                .size(SIZE_BODY)
-                .color(text()),
-        );
-        right.add_space(4.0);
-        egui::Grid::new("export-settings")
-            .num_columns(2)
-            .spacing([10.0, 6.0])
-            .show(right, |ui| {
-                ui.label(
-                    RichText::new(crate::i18n::tr("帧率"))
-                        .size(SIZE_LABEL)
-                        .color(muted()),
-                );
-                ui.add(
-                    egui::DragValue::new(&mut state.output_fps)
-                        .range(1.0..=60.0)
-                        .speed(1.0),
-                );
-                ui.end_row();
-                ui.label(
-                    RichText::new(crate::i18n::tr("画质 CRF"))
-                        .size(SIZE_LABEL)
-                        .color(muted()),
-                );
-                ui.add(egui::DragValue::new(&mut state.render_crf).range(0..=51));
-                ui.end_row();
-                ui.label(
-                    RichText::new(crate::i18n::tr("编码"))
-                        .size(SIZE_LABEL)
-                        .color(muted()),
-                );
-                ui.horizontal(|ui| {
-                    for (name, tag) in [("H.265", "h265"), ("H.264", "h264")] {
-                        let on = state.codec.contains(tag);
-                        let resp = ui.add(
-                            egui::Button::new(RichText::new(name).size(SIZE_SMALL).color(if on {
-                                on_selected()
-                            } else {
-                                text()
-                            }))
-                            .fill(if on { accent() } else { elev() })
-                            .stroke(egui::Stroke::new(1.0, if on { accent() } else { border() }))
-                            .corner_radius(radius_control())
-                            .min_size(Vec2::new(56.0, 24.0)),
-                        );
-                        if resp.clicked() {
-                            state.codec = format!("libx{tag}");
-                        }
-                    }
-                });
-                ui.end_row();
-                ui.label(
-                    RichText::new(crate::i18n::tr("输出"))
-                        .size(SIZE_LABEL)
-                        .color(muted()),
-                );
-                ui.label(
-                    RichText::new(crate::theme::ellipsis(
-                        &state.render_video_out.display().to_string(),
-                        42,
-                    ))
-                    .size(SIZE_SMALL)
-                    .color(value()),
-                );
-                ui.end_row();
-            });
+        });
     });
+}
+
+/// 一张卡片：升一档的底 + 1px 边 + 内边距。
+///
+/// A card: one step up in fill, hairline stroke, inner padding.
+fn card<R>(cols: &mut [Ui], idx: usize, add: impl FnOnce(&mut Ui) -> R) {
+    let frame = egui::Frame::NONE
+        .fill(elev())
+        .stroke(egui::Stroke::new(1.0, border()))
+        .corner_radius(radius_control())
+        .inner_margin(egui::Margin::same(12));
+    frame.show(&mut cols[idx], add);
+}
+
+/// 概况格：小标签 + 值。
+///
+/// A summary cell: small label plus value.
+fn card_stat(ui: &mut Ui, k: &str, v: &str) {
+    let frame = egui::Frame::NONE
+        .fill(elev())
+        .stroke(egui::Stroke::new(1.0, border()))
+        .corner_radius(radius_control())
+        .inner_margin(egui::Margin::symmetric(12, 6));
+    frame.show(ui, |ui| {
+        ui.vertical(|ui| {
+            ui.label(
+                RichText::new(crate::i18n::tr(k))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
+            );
+            ui.label(RichText::new(v).size(SIZE_BODY).color(text()));
+        });
+    });
+}
+
+/// 队列列头。
+///
+/// Queue table header.
+fn queue_head(ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(crate::i18n::tr("序号"))
+                .size(SIZE_SMALL)
+                .color(muted()),
+        );
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(crate::i18n::tr("序列"))
+                .size(SIZE_SMALL)
+                .color(muted()),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                RichText::new(crate::i18n::tr("规格"))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
+            );
+        });
+    });
+    rule(
+        ui.painter(),
+        ui.max_rect().left() + 4.0,
+        ui.max_rect().right() - 4.0,
+        ui.cursor().top(),
+        divider(),
+    );
+    ui.add_space(4.0);
 }
 
 /// 常规按钮（中性底 + 1px 边）。
@@ -390,4 +535,23 @@ fn local_queue_table(state: &mut AppState, ui: &mut Ui) {
         state.remove_queue_at(i);
     }
     let _ = n;
+}
+
+/// 跳到调色页：把当前工作流的「调色与修复」段设为手选步，并切到显影模块。
+/// 放在本文件而不是 `flow_panel`，是为了让「手选步唯一写入口」那条判据仍然只数
+/// 顶栏那一处。
+///
+/// Jump to the develop page: pin the flow's develop phase as the hand-picked step and
+/// switch to the Develop module. Kept here (not in `flow_panel`) so the "single write
+/// path for the hand-picked step" fence still counts only the top bar.
+fn goto_develop(state: &mut AppState) {
+    let task = state.flow_task;
+    if let Some(i) = task
+        .steps()
+        .iter()
+        .position(|step| step.module == Module::Develop)
+    {
+        state.flow_step = Some(i);
+    }
+    state.set_module(Module::Develop);
 }
