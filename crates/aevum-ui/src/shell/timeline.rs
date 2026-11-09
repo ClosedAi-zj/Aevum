@@ -874,6 +874,28 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                                 StrokeKind::Inside,
                             );
                         }
+                        // 关键帧角标：LRT 的三重编码要求「轨道与表格行首同形同色」，
+                        // 序列页已有 K 角标，胶片条这条「轨道」也必须同形——否则
+                        // 同一批锚点在两个视图里长着两副样子。
+                        //
+                        // Keyframe badge: LRT's triple encoding requires the same shape on
+                        // the track and in the table gutter. The sequence page already has
+                        // a K badge, so the filmstrip -- the track -- must match, or the
+                        // same anchors look like two different objects in two views.
+                        if state.keyframes.contains_key(&i) {
+                            let chip = egui::Rect::from_min_size(
+                                cell.left_top() + Vec2::new(3.0, 3.0),
+                                Vec2::splat(13.0),
+                            );
+                            p.rect_filled(chip, radius_chip(), accent());
+                            p.text(
+                                chip.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "K",
+                                font(SIZE_SMALL),
+                                on_accent(),
+                            );
+                        }
                         if cell_resp.clicked() {
                             state.set_frame(i);
                         }
