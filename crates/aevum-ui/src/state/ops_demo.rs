@@ -24,7 +24,7 @@ impl AppState {
         // screenshot regression depends on it.
         let n = std::env::var_os("AEVUM_DEMO_FRAMES")
             .and_then(|v| v.to_str().and_then(|s| s.parse::<usize>().ok()))
-            .map_or(48usize, |n| n.clamp(1, 48));
+            .map_or(48usize, |n| n.clamp(1, 400));
         let frames: Vec<Frame> = (0..n)
             .map(|i| Frame {
                 index: i,

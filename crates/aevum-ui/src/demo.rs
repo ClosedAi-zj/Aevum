@@ -13,6 +13,11 @@ use std::path::PathBuf;
 const W: u32 = 1280;
 const H: u32 = 720;
 const COUNT: u32 = 48;
+/// 压测上限：演示序列最多生成多少帧（48 太小，测不出千帧级滚动问题）。
+///
+/// Load-test ceiling: the most frames the demo sequence will generate (48 was too
+/// small to expose thousand-frame scrolling problems).
+const DEMO_MAX: u32 = 400;
 
 pub fn ensure_demo() -> Result<PathBuf, String> {
     // 单帧演示用独立目录：共享目录里躺着全量 48 张旧图，序列加载按目录
@@ -23,7 +28,7 @@ pub fn ensure_demo() -> Result<PathBuf, String> {
     // them out.
     let count = std::env::var_os("AEVUM_DEMO_FRAMES")
         .and_then(|v| v.to_str().and_then(|s| s.parse::<u32>().ok()))
-        .map_or(COUNT, |n| n.clamp(1, COUNT));
+        .map_or(COUNT, |n| n.clamp(1, DEMO_MAX));
     let dir = std::env::temp_dir().join(if count == COUNT {
         "aevum_studio_demo"
     } else {
