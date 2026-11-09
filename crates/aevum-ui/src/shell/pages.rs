@@ -307,8 +307,7 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .color(text()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let busy = state.queue_busy;
-            if busy {
+            if state.queue_busy {
                 if primary_button(ui, "取消队列").clicked() {
                     state.stop_queue();
                 }
@@ -331,30 +330,7 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     });
     ui.add_space(6.0);
 
-    if let Some((done, total, stage)) = state.queue_progress() {
-        let frac = if total > 0 {
-            done as f32 / total as f32
-        } else {
-            0.0
-        };
-        let phase = match stage {
-            aevum_core::export::Stage::Frames => "写帧",
-            aevum_core::export::Stage::Encode => "编码",
-        };
-        ui.add(
-            egui::ProgressBar::new(frac).desired_height(10.0).text(
-                RichText::new(crate::i18n::tr_fmt("{}{}/{}", &[&phase, &done, &total]))
-                    .size(SIZE_SMALL),
-            ),
-        );
-        ui.add_space(6.0);
-    }
-
-    // 概况行：帧数 / 时长 / 队列段数 —— LapseOne 的导出页先给「要导什么」，
-    // 再给操作，空白版面里只有两列会显得没做完。
-    //
-    // Summary row: frames / duration / queued segments. LapseOne's export page states
-    // what is being exported before the controls; two bare columns read as unfinished.
+    // 概况：帧数 / 片长 / 队列段数。LapseOne 的导出页先回答「要导什么」。
     let fps = state.output_fps.max(1.0);
     let secs = state.frame_count() as f32 / fps;
     ui.horizontal(|ui| {
@@ -369,62 +345,106 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             card_stat(ui, k, &v);
         }
     });
+
+    if let Some((done, total, stage)) = state.queue_progress() {
+        let frac = if total > 0 {
+            done as f32 / total as f32
+        } else {
+            0.0
+        };
+        let phase = match stage {
+            aevum_core::export::Stage::Frames => "写帧",
+            aevum_core::export::Stage::Encode => "编码",
+        };
+        ui.add_space(6.0);
+        ui.add(
+            egui::ProgressBar::new(frac).desired_height(10.0).text(
+                RichText::new(crate::i18n::tr_fmt("{}{}/{}", &[&phase, &done, &total]))
+                    .size(SIZE_SMALL),
+            ),
+        );
+    }
+
     ui.add_space(8.0);
 
-    ui.columns(2, |cols| {
-        // 两张卡等高：内容只有一小截时页面会像没做完（用户 2026-11-09：
-        // 「页面看着空」）。按可用高度的 55% 兜底，最少 8 个控件高。
-        //
-        // Equal card heights: a stub of content reads as an unfinished page.
-        let body_h = (cols[0].available_height() * 0.55).max(CH * 8.0);
-        cols[0].set_min_height(body_h);
-        cols[1].set_min_height(body_h);
-        // 两卡等高：内容只有一小截时，页面会读成「没做完」。
-        // Equal card heights: a stub of content reads as an unfinished page.
-        let body_h = (cols[0].available_height() * 0.55).max(CH * 8.0);
-        cols[0].set_min_height(body_h);
-        cols[1].set_min_height(body_h);
-        card(cols, 0, |ui| {
+    // 主体：左 62% 队列、右 38% 设置，**两张卡都撑到同一高度**并把剩余空间
+    // 用实底填住——内容少时若只按内容高度画，页面会读成「没做完」
+    // （用户 2026-11-09 连续两次指出）。
+    //
+    // Body: 62% queue / 38% settings, both cards forced to the same height and filled
+    // with solid colour. Drawing them content-sized made the page read as unfinished.
+    const GAP: f32 = 10.0;
+    const ACTION_H: f32 = 46.0;
+    let avail = ui.available_size();
+    let left_w = ((avail.x - GAP) * 0.62).max(340.0);
+    let right_w = (avail.x - GAP - left_w).max(280.0);
+    let body_h = (avail.y - ACTION_H - 8.0).max(240.0);
+
+    ui.horizontal_top(|ui| {
+        frame_card(ui, left_w, body_h, |ui| {
             ui.label(
                 RichText::new(crate::i18n::tr("渲染队列"))
                     .size(SIZE_BODY)
                     .color(text()),
             );
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             if state.queue.is_empty() {
-                // 空态也给一个「位置」：一整块空白会被读成页面没加载完。
-                let (r, _) =
-                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 96.0), Sense::hover());
-                ui.painter().rect_filled(r, radius_control(), elev());
-                // 空态本身就是入口：只写一句「队列是空的」等于让用户自己找按钮。
-                // The empty state is the entry point: a bare sentence makes the user
-                // hunt for the action.
-                let _ = ui.allocate_space(Vec2::new(0.0, 2.0));
-                ui.painter().text(
-                    r.center(),
-                    egui::Align2::CENTER_CENTER,
-                    crate::i18n::tr("队列还是空的"),
-                    font(SIZE_LABEL),
-                    dim(),
+                // 空态：垂直居中的「图标 + 一句 + 主按钮」，不是整块空洞。
+                //
+                // Empty state: a centred icon + one line + the primary action, not a void.
+                let h = (body_h - 56.0).max(120.0);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), h),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        ui.add_space(h * 0.28);
+                        ui.label(
+                            RichText::new(crate::i18n::tr("队列还是空的"))
+                                .size(SIZE_BODY)
+                                .color(dim()),
+                        );
+                        ui.add_space(8.0);
+                        if primary_button(ui, "加入当前序列").clicked()
+                            && let Err(e) = state.add_current_to_queue()
+                        {
+                            state.error = Some(e);
+                        }
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new(crate::i18n::tr("也可以到图库右键任意序列入队"))
+                                .size(SIZE_SMALL)
+                                .color(muted()),
+                        );
+                    },
                 );
             } else {
                 queue_head(ui);
                 egui::ScrollArea::vertical()
-                    .max_height(320.0)
+                    .max_height(body_h - 60.0)
                     .show(ui, |ui| {
                         local_queue_table(state, ui);
                     });
             }
         });
 
-        card(cols, 1, |ui| {
+        ui.add_space(GAP);
+        frame_card(ui, right_w, body_h, |ui| {
             ui.label(
                 RichText::new(crate::i18n::tr("导出设置"))
                     .size(SIZE_BODY)
                     .color(text()),
+            )
+            .on_hover_text(crate::i18n::tr(
+                "每段读取加入队列时的工程参数；批量渲染按顺序逐段执行。",
+            ));
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new(crate::i18n::tr("输出"))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
             );
-            ui.add_space(6.0);
-            egui::Grid::new("export-settings")
+            ui.add_space(4.0);
+            egui::Grid::new("export-out")
                 .num_columns(2)
                 .spacing([12.0, 8.0])
                 .show(ui, |ui| {
@@ -440,74 +460,156 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     );
                     ui.end_row();
                     ui.label(
+                        RichText::new(crate::i18n::tr("分辨率"))
+                            .size(SIZE_LABEL)
+                            .color(muted()),
+                    );
+                    ui.label(
+                        RichText::new(crate::i18n::tr_fmt(
+                            "{} × {}",
+                            &[&state.output_w, &state.output_h],
+                        ))
+                        .size(SIZE_LABEL)
+                        .color(value()),
+                    );
+                    ui.end_row();
+                });
+
+            ui.add_space(10.0);
+            section_rule(ui);
+            ui.label(
+                RichText::new(crate::i18n::tr("编码"))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                for (name, tag) in [("H.265", "h265"), ("H.264", "h264")] {
+                    let on = state.codec.contains(tag);
+                    let resp = if on {
+                        primary_button(ui, name)
+                    } else {
+                        secondary_button(ui, name)
+                    };
+                    if resp.clicked() {
+                        state.codec = format!("libx{tag}");
+                    }
+                }
+            });
+            ui.add_space(8.0);
+            egui::Grid::new("export-enc")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label(
                         RichText::new(crate::i18n::tr("画质 CRF"))
                             .size(SIZE_LABEL)
                             .color(muted()),
                     );
                     ui.add(egui::DragValue::new(&mut state.render_crf).range(0..=51));
                     ui.end_row();
-                    ui.label(
-                        RichText::new(crate::i18n::tr("编码"))
-                            .size(SIZE_LABEL)
-                            .color(muted()),
-                    );
-                    ui.horizontal(|ui| {
-                        for (name, tag) in [("H.265", "h265"), ("H.264", "h264")] {
-                            let on = state.codec.contains(tag);
-                            let resp = ui.add(
-                                egui::Button::new(
-                                    RichText::new(name).size(SIZE_SMALL).color(if on {
-                                        on_selected()
-                                    } else {
-                                        text()
-                                    }),
-                                )
-                                .fill(if on { accent() } else { elev() })
-                                .stroke(egui::Stroke::new(
-                                    1.0,
-                                    if on { accent() } else { border() },
-                                ))
-                                .corner_radius(radius_control())
-                                .min_size(Vec2::new(58.0, 24.0)),
-                            );
-                            if resp.clicked() {
-                                state.codec = format!("libx{tag}");
-                            }
-                        }
-                    });
-                    ui.end_row();
-                    ui.label(
-                        RichText::new(crate::i18n::tr("输出"))
-                            .size(SIZE_LABEL)
-                            .color(muted()),
-                    );
-                    ui.label(
-                        RichText::new(crate::theme::ellipsis(
-                            &state.render_video_out.display().to_string(),
-                            40,
-                        ))
-                        .size(SIZE_SMALL)
-                        .color(value()),
-                    );
-                    ui.end_row();
                 });
-            // 常驻说明收进标题 tooltip（用户：文字太多）。
-            // The standing note moves into the heading tooltip.
+
+            ui.add_space(10.0);
+            section_rule(ui);
+            ui.label(
+                RichText::new(crate::i18n::tr("文件"))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(crate::theme::ellipsis(
+                    &state.render_video_out.display().to_string(),
+                    34,
+                ))
+                .size(SIZE_SMALL)
+                .color(value()),
+            )
+            .on_hover_text(state.render_video_out.display().to_string());
         });
     });
+
+    // 底部行动条：跨满宽的实底条，主行动固定在右侧——LapseOne 的「开始渲染」
+    // 就是这样一条独立横条，而不是挤在标题行角落。
+    //
+    // Bottom action bar: a full-width strip with the primary action pinned right,
+    // matching LapseOne instead of tucking the button into the title row.
+    ui.add_space(8.0);
+    let w = ui.available_width();
+    egui::Frame::NONE
+        .fill(elev())
+        .stroke(egui::Stroke::new(1.0, border()))
+        .corner_radius(radius_control())
+        .inner_margin(egui::Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.set_width(w - 20.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(crate::i18n::tr_fmt(
+                        "{} 段排队 · 输出 {}",
+                        &[
+                            &state.queue.len(),
+                            &crate::theme::ellipsis(
+                                &state.render_video_out.display().to_string(),
+                                28,
+                            ),
+                        ],
+                    ))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if state.queue_busy {
+                        if primary_button(ui, "取消队列").clicked() {
+                            state.stop_queue();
+                        }
+                    } else if primary_button(ui, "开始批量渲染").clicked()
+                        && let Err(e) = state.start_queue(ctx)
+                    {
+                        state.error = Some(e);
+                    }
+                });
+            });
+        });
 }
 
-/// 一张卡片：升一档的底 + 1px 边 + 内边距。
+/// 定宽定高的卡片：先铺实底与描边，再让内容在固定区域内排版。
 ///
-/// A card: one step up in fill, hairline stroke, inner padding.
-fn card<R>(cols: &mut [Ui], idx: usize, add: impl FnOnce(&mut Ui) -> R) {
+/// A fixed-size card: solid fill and stroke first, then content inside that box.
+fn frame_card<R>(ui: &mut Ui, w: f32, h: f32, add: impl FnOnce(&mut Ui) -> R) {
     let frame = egui::Frame::NONE
         .fill(elev())
         .stroke(egui::Stroke::new(1.0, border()))
         .corner_radius(radius_control())
         .inner_margin(egui::Margin::same(12));
-    frame.show(&mut cols[idx], add);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink(1.0))
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    frame.show(&mut child, add);
 }
+
+/// 设置区的小节分隔线。
+///
+/// Section divider inside the settings card.
+fn section_rule(ui: &mut Ui) {
+    let w = ui.available_width();
+    let y = ui.cursor().top();
+    rule(
+        ui.painter(),
+        ui.cursor().left(),
+        ui.cursor().left() + w,
+        y,
+        divider(),
+    );
+}
+
+/// 一张卡片：升一档的底 + 1px 边 + 内边距。
+///
+/// A card: one step up in fill, hairline stroke, inner padding.
 
 /// 概况格：小标签 + 值。
 ///
