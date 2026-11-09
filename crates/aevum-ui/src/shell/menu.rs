@@ -365,15 +365,15 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         Sense::click_and_drag(),
     );
     p.rect_filled(track, 2.0, slider_rail());
-    let frac = ((zoom_pct / 400.0) as f32).clamp(0.0, 1.0);
+    let frac = (zoom_pct / 400.0).clamp(0.0, 1.0);
     let knob_x = track.left() + track.width() * frac;
     p.circle_filled(Pos2::new(knob_x, track.center().y), 4.5, knob());
-    if zr.dragged() || zr.clicked() {
-        if let Some(pos) = zr.interact_pointer_pos() {
-            let f = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0);
-            let want = (f * 4.0).max(0.01);
-            state.zoom = (want / state.fit_scale.max(1e-4)).clamp(0.2, 24.0);
-        }
+    if (zr.dragged() || zr.clicked())
+        && let Some(pos) = zr.interact_pointer_pos()
+    {
+        let f = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0);
+        let want = (f * 4.0).max(0.01);
+        state.zoom = (want / state.fit_scale.max(1e-4)).clamp(0.2, 24.0);
     }
     let pct = Rect::from_min_size(
         Pos2::new(track.right() + 8.0, mid - 13.0),

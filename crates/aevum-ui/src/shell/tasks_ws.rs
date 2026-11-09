@@ -211,11 +211,11 @@ fn run_card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         Some((d, t, stage)) => (d, t, matches!(stage, aevum_core::export::Stage::Encode)),
         None => (0, 0, false),
     };
-    let pct = if total_n == 0 {
-        0
-    } else {
-        (done_n * 100 / total_n).min(100)
-    };
+    let pct = done_n
+        .checked_mul(100)
+        .and_then(|v| v.checked_div(total_n))
+        .unwrap_or(0)
+        .min(100);
     let x0 = rect.left() + PAD;
     let x1 = rect.right() - PAD;
     let cy = rect.top() + PAD + 12.0;
@@ -1186,13 +1186,13 @@ fn item_name(root: &str) -> String {
 ///
 /// Title of the running job: queue segment first, then export / merge / align.
 fn running_text(state: &AppState) -> Option<String> {
-    if let Some(i) = state.queue_current {
-        if let Some(item) = state.queue.get(i) {
-            return Some(crate::i18n::tr_fmt(
-                "渲染队列 · {}",
-                &[&item_name(&item.root)],
-            ));
-        }
+    if let Some(i) = state.queue_current
+        && let Some(item) = state.queue.get(i)
+    {
+        return Some(crate::i18n::tr_fmt(
+            "渲染队列 · {}",
+            &[&item_name(&item.root)],
+        ));
     }
     if state.export_busy {
         return Some(crate::i18n::t!("导出进行中").to_owned());

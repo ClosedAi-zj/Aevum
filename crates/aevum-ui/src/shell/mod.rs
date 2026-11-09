@@ -546,16 +546,15 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // The gutter between dock and canvas: neutral surround grey with a hairline on the
     // dock's inner edge. Drawn only across the document area, never over the menu row,
     // options bar or bottom filmstrip.
-    if develop {
-        if let Some((band, line_x)) = crate::layout::canvas_gutter(available, centre, insets) {
-            let p = root.painter().clone();
-            p.rect_filled(band, 0.0, surround());
-            let x = line_x.round() + 0.5;
-            p.line_segment(
-                [Pos2::new(x, band.top()), Pos2::new(x, band.bottom())],
-                Stroke::new(1.0, border()),
-            );
-        }
+    if develop && let Some((band, line_x)) = crate::layout::canvas_gutter(available, centre, insets)
+    {
+        let p = root.painter().clone();
+        p.rect_filled(band, 0.0, surround());
+        let x = line_x.round() + 0.5;
+        p.line_segment(
+            [Pos2::new(x, band.top()), Pos2::new(x, band.bottom())],
+            Stroke::new(1.0, border()),
+        );
     }
 
     // 工作台导航卡：浮在内容之上（design `.wsbar{position:absolute;top:56px;z-index:45}`），
