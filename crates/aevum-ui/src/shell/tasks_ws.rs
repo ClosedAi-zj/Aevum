@@ -175,15 +175,27 @@ fn task_cards(
     qrows: &[QueueRow],
 ) -> f32 {
     let mut y = rect.top();
-    run_card(state, ui, Rect::from_min_size(rect.left_top(), Vec2::new(rect.width(), RUN_H)));
+    run_card(
+        state,
+        ui,
+        Rect::from_min_size(rect.left_top(), Vec2::new(rect.width(), RUN_H)),
+    );
     y += RUN_H + GAP;
 
     let list_h = rows.len() as f32 * TROW_H;
-    task_list(ui, Rect::from_min_size(Pos2::new(rect.left(), y), Vec2::new(rect.width(), list_h)), rows);
+    task_list(
+        ui,
+        Rect::from_min_size(Pos2::new(rect.left(), y), Vec2::new(rect.width(), list_h)),
+        rows,
+    );
     y += list_h + GAP;
 
     let q_h = PAD * 2.0 + 24.0 + 8.0 + qrows.len() as f32 * QLINE_H;
-    queue_order(ui, Rect::from_min_size(Pos2::new(rect.left(), y), Vec2::new(rect.width(), q_h)), qrows);
+    queue_order(
+        ui,
+        Rect::from_min_size(Pos2::new(rect.left(), y), Vec2::new(rect.width(), q_h)),
+        qrows,
+    );
     y += q_h;
     y - rect.top()
 }
@@ -266,7 +278,11 @@ fn run_card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         Align2::CENTER_CENTER,
         crate::i18n::t!("取消"),
         font(SIZE_SMALL),
-        if busy { text() } else { dim().gamma_multiply(0.72) },
+        if busy {
+            text()
+        } else {
+            dim().gamma_multiply(0.72)
+        },
     );
     if cancel_resp.clicked() {
         state.stop_queue();
@@ -429,7 +445,12 @@ fn run_card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         .map(|(l, _)| *l)
         .unwrap_or("—");
     let mut mx = x0;
-    mx = run(&p, mx, meta_y, &[(crate::i18n::t!("当前阶段"), dim(), false)]);
+    mx = run(
+        &p,
+        mx,
+        meta_y,
+        &[(crate::i18n::t!("当前阶段"), dim(), false)],
+    );
     mx += 4.0;
     mx = run(&p, mx, meta_y, &[(stage_now, muted(), true)]);
     mx += 16.0;
@@ -442,7 +463,12 @@ fn run_card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     mx += 4.0;
     mx = run(&p, mx, meta_y, &[(crate::i18n::t!("帧"), dim(), false)]);
     mx += 16.0;
-    mx = run(&p, mx, meta_y, &[(crate::i18n::t!("预计剩余"), dim(), false)]);
+    mx = run(
+        &p,
+        mx,
+        meta_y,
+        &[(crate::i18n::t!("预计剩余"), dim(), false)],
+    );
     mx += 4.0;
     let _ = run(&p, mx, meta_y, &[("—", muted(), false)]);
     p.text(
@@ -742,7 +768,10 @@ fn aside(state: &AppState, ui: &mut Ui, rect: Rect) -> f32 {
     // egui's temp data.
     let top = summary.bottom() + GAP;
     let notify_h = PAD * 2.0 + 24.0 + 8.0 + 3.0 * 32.0;
-    let notify = Rect::from_min_size(Pos2::new(rect.left(), top), Vec2::new(rect.width(), notify_h));
+    let notify = Rect::from_min_size(
+        Pos2::new(rect.left(), top),
+        Vec2::new(rect.width(), notify_h),
+    );
     card_face(&p, notify);
     p.text(
         Pos2::new(x0, notify.top() + PAD + 12.0),
@@ -826,7 +855,8 @@ fn aside(state: &AppState, ui: &mut Ui, rect: Rect) -> f32 {
     //
     // The shared-state note: one 10 px paragraph, no card of its own.
     let info_y = notify.bottom() + GAP;
-    let info = crate::i18n::t!("任务卡与导出队列共用同一状态源；渲染在后台继续，切换工作台不会中断。");
+    let info =
+        crate::i18n::t!("任务卡与导出队列共用同一状态源；渲染在后台继续，切换工作台不会中断。");
     let galley = p.layout(
         info.to_owned(),
         font(SIZE_MICRO),
@@ -834,11 +864,7 @@ fn aside(state: &AppState, ui: &mut Ui, rect: Rect) -> f32 {
         rect.width() - 2.0 * PAD,
     );
     let info_h = galley.size().y;
-    p.galley(
-        Pos2::new(rect.left() + PAD, info_y),
-        galley,
-        dim(),
-    );
+    p.galley(Pos2::new(rect.left() + PAD, info_y), galley, dim());
     info_y + info_h + PAD - rect.top()
 }
 
@@ -1162,7 +1188,10 @@ fn item_name(root: &str) -> String {
 fn running_text(state: &AppState) -> Option<String> {
     if let Some(i) = state.queue_current {
         if let Some(item) = state.queue.get(i) {
-            return Some(crate::i18n::tr_fmt("渲染队列 · {}", &[&item_name(&item.root)]));
+            return Some(crate::i18n::tr_fmt(
+                "渲染队列 · {}",
+                &[&item_name(&item.root)],
+            ));
         }
     }
     if state.export_busy {

@@ -105,7 +105,11 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     //
     // Narrow cards drop the last two columns, as the mockup's media query does, instead of
     // painting them outside the card.
-    let cols = if rect.width() >= 980.0 { COLS.len() } else { 10 };
+    let cols = if rect.width() >= 980.0 {
+        COLS.len()
+    } else {
+        10
+    };
     let name_w = (rect.width() - fixed_width(cols)).max(96.0);
 
     // ── 卡头 32：标题 + 行数 + 图例 ───────────────────────────────────
@@ -127,11 +131,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         dim(),
     );
     let legend = "K = 关键帧";
-    let lg = p.layout_no_wrap(
-        legend.to_owned(),
-        FontId::proportional(9.0),
-        dim(),
-    );
+    let lg = p.layout_no_wrap(legend.to_owned(), FontId::proportional(9.0), dim());
     p.text(
         Pos2::new(head.right() - 10.0, head.center().y),
         Align2::RIGHT_CENTER,
@@ -198,10 +198,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
                 Align2::RIGHT_CENTER,
             )
         } else {
-            (
-                Pos2::new(x + PAD_X, th.center().y),
-                Align2::LEFT_CENTER,
-            )
+            (Pos2::new(x + PAD_X, th.center().y), Align2::LEFT_CENTER)
         };
         p.text(at, a2, *title, FontId::proportional(10.0), dim());
         x += cw;
@@ -222,14 +219,8 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         .filter(|i| match scope {
             Scope::All => true,
             Scope::Keys => state.keyframes.contains_key(i),
-            Scope::Offset => state
-                .corr
-                .get(*i)
-                .is_some_and(|v| v.abs() > 1e-3),
-            Scope::Unmeasured => state
-                .metrics
-                .get(*i)
-                .is_none_or(|m| m.is_none()),
+            Scope::Offset => state.corr.get(*i).is_some_and(|v| v.abs() > 1e-3),
+            Scope::Unmeasured => state.metrics.get(*i).is_none_or(|m| m.is_none()),
         })
         .collect();
 
@@ -273,18 +264,13 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
 
                 for k in range {
                     let Some(&i) = rows.get(k) else { continue };
-                    let (row, resp) = ui.allocate_exact_size(
-                        Vec2::new(ui.available_width(), ROW),
-                        Sense::click(),
-                    );
+                    let (row, resp) = ui
+                        .allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
                     let rp = ui.painter();
                     if i == sel {
                         rp.rect_filled(row, 0.0, selected());
                         rp.rect_filled(
-                            Rect::from_min_size(
-                                row.left_top(),
-                                Vec2::new(2.0, row.height()),
-                            ),
+                            Rect::from_min_size(row.left_top(), Vec2::new(2.0, row.height())),
                             0.0,
                             accent(),
                         );
@@ -401,10 +387,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
                                     Align2::RIGHT_CENTER,
                                 )
                             } else {
-                                (
-                                    Pos2::new(x + PAD_X, row.center().y),
-                                    Align2::LEFT_CENTER,
-                                )
+                                (Pos2::new(x + PAD_X, row.center().y), Align2::LEFT_CENTER)
                             };
                             rp.text(at, a2, shown, font, ink);
                         }
@@ -472,10 +455,7 @@ fn state_texture(state: &AppState, i: usize) -> Option<(egui::TextureId, [u32; 2
 ///
 /// Draw the 40×28 thumbnail with a 4 px radius; paint `…` when the texture is missing.
 fn draw_thumb(tex: &Option<(egui::TextureId, [u32; 2])>, p: &egui::Painter, row: Rect, x: f32) {
-    let r = Rect::from_min_size(
-        Pos2::new(x + PAD_X, row.center().y - THUMB.y * 0.5),
-        THUMB,
-    );
+    let r = Rect::from_min_size(Pos2::new(x + PAD_X, row.center().y - THUMB.y * 0.5), THUMB);
     // 40×28 的图比 26px 的行高多 2px，整块裁到行内，否则会压到上下两行。
     //
     // The 40×28 thumb is 2 px taller than the 26 px row; clip the whole thing to the row so
@@ -513,7 +493,10 @@ fn draw_thumb(tex: &Option<(egui::TextureId, [u32; 2])>, p: &egui::Painter, row:
 fn scope_bar(state: &AppState, ui: &mut Ui, rect: Rect) -> Scope {
     let p = ui.painter().clone();
     let id = egui::Id::unique("aevum-seq-table-scope");
-    let cur = ui.ctx().data(|d| d.get_temp::<Scope>(id)).unwrap_or(Scope::All);
+    let cur = ui
+        .ctx()
+        .data(|d| d.get_temp::<Scope>(id))
+        .unwrap_or(Scope::All);
 
     let n = state.frame_count();
     let keys = state.keyframes.len();
@@ -534,16 +517,9 @@ fn scope_bar(state: &AppState, ui: &mut Ui, rect: Rect) -> Scope {
         let on = s == cur;
         let fg = if on { text() } else { dim() };
         let lg = p.layout_no_wrap(label.to_owned(), FontId::proportional(10.0), fg);
-        let cg = p.layout_no_wrap(
-            thousands(count),
-            FontId::proportional(10.0),
-            dim(),
-        );
+        let cg = p.layout_no_wrap(thousands(count), FontId::proportional(10.0), dim());
         let bw = lg.size().x + cg.size().x + 20.0;
-        let r = Rect::from_min_size(
-            Pos2::new(x, rect.center().y - 10.0),
-            Vec2::new(bw, 20.0),
-        );
+        let r = Rect::from_min_size(Pos2::new(x, rect.center().y - 10.0), Vec2::new(bw, 20.0));
         let resp = ui.interact(r, ui.make_persistent_id(("scope", label)), Sense::click());
         if on {
             p.rect_filled(r, radius_chip(), accent_dim());
@@ -662,20 +638,24 @@ fn bar_button(
     let fg = if enabled { muted() } else { dim() };
     let g = p.layout_no_wrap(label.to_owned(), FontId::proportional(10.0), fg);
     let w = g.size().x + 14.0;
-    let r = Rect::from_min_size(
-        Pos2::new(x, bar.center().y - 11.0),
-        Vec2::new(w, 22.0),
-    );
+    let r = Rect::from_min_size(Pos2::new(x, bar.center().y - 11.0), Vec2::new(w, 22.0));
     let resp = ui.interact(
         r,
         ui.make_persistent_id(("seq-selbar", label)),
-        if enabled { Sense::click() } else { Sense::hover() },
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
     );
     if enabled && resp.hovered() {
         p.rect_filled(r, radius_chip(), elev());
     }
     p.galley(
-        Pos2::new(r.center().x - g.size().x * 0.5, r.center().y - g.size().y * 0.5),
+        Pos2::new(
+            r.center().x - g.size().x * 0.5,
+            r.center().y - g.size().y * 0.5,
+        ),
         g,
         fg,
     );

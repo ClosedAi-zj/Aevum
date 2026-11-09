@@ -148,13 +148,7 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
         ],
         Stroke::new(1.0, group_ring()),
     );
-    let (nx, _) = bench::tool_button(
-        ui,
-        sep + 8.0,
-        strip,
-        crate::i18n::t!("暂停当前"),
-        false,
-    );
+    let (nx, _) = bench::tool_button(ui, sep + 8.0, strip, crate::i18n::t!("暂停当前"), false);
     let (last, _) = bench::tool_button(ui, nx, strip, crate::i18n::t!("重试失败帧"), false);
 
     // 工具条右端的流水说明：`每帧 渲染 → 去闪 → 参数过渡 → 编码 · 24 fps · H.265 CRF 18`。
@@ -276,10 +270,7 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
         //
         // The sentence centres in the card body below the header, not in the whole card:
         // the 30 px header would otherwise push it visually high.
-        let body = Rect::from_min_max(
-            Pos2::new(card.left(), band.bottom()),
-            card.right_bottom(),
-        );
+        let body = Rect::from_min_max(Pos2::new(card.left(), band.bottom()), card.right_bottom());
         p.text(
             body.center(),
             Align2::CENTER_CENTER,
@@ -308,10 +299,7 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
             break;
         }
         drawn += 1;
-        let row = Rect::from_min_size(
-            Pos2::new(card.left(), y),
-            Vec2::new(card.width(), ROW_H),
-        );
+        let row = Rect::from_min_size(Pos2::new(card.left(), y), Vec2::new(card.width(), ROW_H));
         let running = state.queue_current == Some(i);
         if running {
             p.rect_filled(row, 0.0, warn().gamma_multiply(0.07));
@@ -431,13 +419,7 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
     // Footer: how many entries are still waiting; the count of rows that did not fit is
     // reported here too, so nothing spills out of the card.
     let foot_y = rows_bottom;
-    rule(
-        &p,
-        card.left(),
-        card.right(),
-        foot_y,
-        group_ring(),
-    );
+    rule(&p, card.left(), card.right(), foot_y, group_ring());
     let pending = state
         .queue
         .iter()
@@ -690,7 +672,13 @@ fn split_out(out: &str) -> (String, String) {
 /// Tail-preserving single-line truncation for paths: the head goes, the file name stays.
 /// [`fit_text`] cuts the tail, which for a path leaves a chain of parent folders and no
 /// way to tell which segment it is.
-fn fit_tail(painter: &Painter, text: &str, font_id: egui::FontId, color: Color32, max_w: f32) -> String {
+fn fit_tail(
+    painter: &Painter,
+    text: &str,
+    font_id: egui::FontId,
+    color: Color32,
+    max_w: f32,
+) -> String {
     let width = |s: &str| {
         painter
             .layout_no_wrap(s.to_owned(), font_id.clone(), color)

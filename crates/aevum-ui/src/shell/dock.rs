@@ -73,7 +73,20 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
     // screenshot, 2026-11-07). Panel fill plus a hairline on the top edge makes the tab row
     // its own surface inside the dock.
     let strip = Rect::from_min_size(full.min, Vec2::new(full.width(), TAB_H));
-    p.rect_filled(strip, 0, dock());
+    // 浮卡的上沿要跟着卡片圆角走，否则第一行页签是方角、下面卡片是圆角。
+    //
+    // The floating card's top edge follows the card radius; a square tab strip over a
+    // rounded card reads as two different surfaces.
+    p.rect_filled(
+        strip,
+        egui::CornerRadius {
+            nw: 12,
+            ne: 12,
+            sw: 0,
+            se: 0,
+        },
+        dock(),
+    );
     theme::rule(&p, strip.left(), strip.right(), strip.top(), divider());
     theme::rule(
         &p,

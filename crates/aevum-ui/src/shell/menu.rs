@@ -334,7 +334,10 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         crate::theme::bold(13.0),
         text(),
     );
-    let badge_label = format!("{} 帧 · {:.0} fps", state.frame_count(), state.output_fps);
+    let badge_label = crate::i18n::tr_fmt(
+        "{} 帧 · {} fps",
+        &[&state.frame_count(), &format!("{:.0}", state.output_fps)],
+    );
     let badge = Rect::from_min_size(
         Pos2::new(doc.left(), doc.center().y + 8.0),
         Vec2::new(88.0, 14.0),
@@ -516,7 +519,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             w.hovered.bg_stroke = Stroke::NONE;
             w.hovered.fg_stroke = Stroke::new(1.0, text());
             ui.spacing_mut().button_padding = Vec2::new(6.0, 4.0);
-            ui.menu_button(RichText::new("☰").size(15.0), |ui| {
+            ui.menu_button(RichText::new("☰").size(SIZE_TITLE), |ui| {
                 menu_style(ui);
                 ui.menu_button(crate::i18n::t!("文件"), |ui| file_menu(state, ui, ctx));
                 ui.menu_button(crate::i18n::t!("编辑"), |ui| edit_menu(state, ui, ctx));

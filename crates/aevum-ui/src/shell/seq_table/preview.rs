@@ -75,7 +75,11 @@ pub(super) fn column(state: &mut AppState, ui: &mut Ui, rect: Rect) {
 ///
 /// Summary card height: padding, title, five rows and the chip row.
 fn summary_height(state: &AppState) -> f32 {
-    let chips = if state.keyframes.is_empty() { 0.0 } else { 25.0 };
+    let chips = if state.keyframes.is_empty() {
+        0.0
+    } else {
+        25.0
+    };
     10.0 + 22.0 + 2.0 + 5.0 * KV_H + chips + 10.0
 }
 
@@ -178,7 +182,11 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
         Vec2::new(gl.size().x + 28.0, 20.0),
     );
     p.rect_filled(badge, radius_chip(), badge_fill());
-    p.circle_filled(Pos2::new(badge.left() + 10.0, badge.center().y), 2.5, accent());
+    p.circle_filled(
+        Pos2::new(badge.left() + 10.0, badge.center().y),
+        2.5,
+        accent(),
+    );
     p.galley(
         Pos2::new(badge.left() + 18.0, badge.center().y - gl.size().y * 0.5),
         gl,
@@ -206,10 +214,7 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
             dim(),
         );
         p.galley(
-            Pos2::new(
-                b.left() + 11.0 + lw_w,
-                b.center().y - vw.size().y * 0.5,
-            ),
+            Pos2::new(b.left() + 11.0 + lw_w, b.center().y - vw.size().y * 0.5),
             vw,
             text(),
         );
@@ -255,7 +260,13 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
     let mut x = bar.left() + 7.0;
     let prev = transport_button(ui, &p, Pos2::new(x, bar.center().y), true, sel > 0);
     x = prev.rect.left() + 26.0;
-    let next = transport_button(ui, &p, Pos2::new(x, bar.center().y), false, n > 0 && sel + 1 < n);
+    let next = transport_button(
+        ui,
+        &p,
+        Pos2::new(x, bar.center().y),
+        false,
+        n > 0 && sel + 1 < n,
+    );
     if prev.clicked() && sel > 0 {
         state.selected = sel - 1;
     }
@@ -302,7 +313,11 @@ fn transport_button(
     let resp = ui.interact(
         r,
         ui.make_persistent_id(("seq-tp", left)),
-        if enabled { Sense::click() } else { Sense::hover() },
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
     );
     if enabled && resp.hovered() {
         p.rect_filled(r, radius_chip(), elev());
@@ -479,11 +494,7 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
                 break;
             }
             let r = Rect::from_min_size(Pos2::new(x, cy - 9.0), Vec2::new(cw, 18.0));
-            let resp = ui.interact(
-                r,
-                ui.make_persistent_id(("seq-kchip", i)),
-                Sense::click(),
-            );
+            let resp = ui.interact(r, ui.make_persistent_id(("seq-kchip", i)), Sense::click());
             let a = warn();
             p.rect_filled(
                 r,

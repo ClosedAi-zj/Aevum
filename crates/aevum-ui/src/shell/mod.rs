@@ -10,7 +10,7 @@
 //! Only the layout and interaction habits are borrowed; icons, colour schemes and
 //! controls are all drawn in-house.
 
-use egui::{Pos2, Rect, Sense, Stroke, Ui, Vec2};
+use egui::{Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 use self::canvas::canvas_panel;
 use self::chrome::window_resize;
@@ -417,11 +417,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .frame(egui::Frame::NONE.fill(chrome()))
             .show(root, |ui| tool_rail(state, ui, right_half, false));
         if state.show_dock && !dock_left {
-            egui::Panel::right("dock")
-                .exact_size(state.dock_w)
-                .resizable(false)
-                .frame(egui::Frame::NONE.fill(dock()))
-                .show(root, |ui| dock_panel(state, ui));
+            floating_dock(root, state, true);
         }
 
         // 左缘：另一根贴边；左坞与工作流面板依次向内。
@@ -436,11 +432,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .frame(egui::Frame::NONE.fill(chrome()))
             .show(root, |ui| tool_rail(state, ui, left_half, true));
         if state.show_dock && dock_left {
-            egui::Panel::left("dock")
-                .exact_size(state.dock_w)
-                .resizable(false)
-                .frame(egui::Frame::NONE.fill(dock()))
-                .show(root, |ui| dock_panel(state, ui));
+            floating_dock(root, state, false);
         }
         // 5 工作流面板：最后声明，所以贴着画布（同侧先声明的在外）。窄窗强制收起；
         // 没导入序列时不收起——面板会给出「导入照片…」，不能点了开关却什么都没有。
@@ -488,7 +480,8 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // The canvas insets have a single source: `layout::canvas_insets` (panel width plus
     // the gutter). The centre panel, the canvas' own layout and the gutter painting all
     // derive from these two numbers; nothing adds the 10 a second time.
-    let insets = crate::layout::canvas_insets(state.show_dock, dock_left, state.dock_w);
+    let insets =
+        crate::layout::canvas_insets(state.show_dock, dock_left, state.dock_w + DOCK_GUTTER * 2.0);
     // 中间区自己也得钉住：`insets` 只交代画布**内部**怎么排，管不了
     // CentralPanel 占多宽。而 CentralPanel 拿的是「所有面板之后剩下的空间」——
     // 右坞内容一旦比面板宽，egui 会把面板 rect 整体往右推（`set_rect_size` 保
@@ -571,14 +564,28 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // The bench nav card floats above the content (design `.wsbar`: absolute, top 56 px,
     // z-index 45) -- 12 px under the top bar, horizontally centred. Painted after the
     // content so it sits above both the media and the full-page views.
-    let nav_top = full.top() + MENU_H + 12.0;
+    // 导航卡的位置按工作台分别算，避免和顶栏下面的两条带子叠压：
+    // - 显影：浮在**画布**上沿内 12px、画布水平居中（设计稿 `.wsbar` 浮在媒体上）；
+    // - 整页工作台：顶栏下 12px、窗口水平居中（设计稿页头中央，两侧被标题/动作占着，
+    //   中间这段本来就是空的）。
+    //
+    // The nav card is positioned per bench so it never collides with the two strips under
+    // the top bar: in develop it floats 12 px inside the canvas top, centred on the canvas
+    // (the design floats `.wsbar` over the media); on the full-page benches it sits 12 px
+    // under the top bar, centred in the window (the design's page-head centre, which the
+    // title and actions leave free).
+    let (nav_center_x, nav_top) = if develop {
+        (centre.center().x, centre.top() + 12.0)
+    } else {
+        (full.center().x, full.top() + MENU_H + 12.0)
+    };
     egui::Area::new(egui::Id::unique("bench-nav"))
         .order(egui::Order::Foreground)
-        .fixed_pos(Pos2::new(full.center().x - 300.0, nav_top))
+        .fixed_pos(Pos2::new(nav_center_x - 300.0, nav_top))
         .show(&ctx, |ui| {
             ui.set_min_size(Vec2::new(600.0, 34.0));
             ui.set_max_width(600.0);
-            bench::nav(state, ui, Pos2::new(full.center().x, nav_top));
+            bench::nav(state, ui, Pos2::new(nav_center_x, nav_top));
         });
 
     state.history_commit();
@@ -613,6 +620,63 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     window_resize(root, &ctx, full);
 
     state.ensure_preview(&ctx);
+}
+
+/// 检查器浮卡的外距：设计稿 `.dock{top:12px;right:12px;width:300px}`。
+///
+/// The inspector card's outer gutter, per the design's `.dock` (12 px from the edge).
+const DOCK_GUTTER: f32 = 12.0;
+
+/// 把检查器画成**浮在画布上的卡**：面板本身透明、只占位，卡片在 12px 内距里
+/// 圆角 12、深投影、1px 环。
+///
+/// 设计稿的 `.dock` 是浮卡而不是贴边侧栏；贴边侧栏把画布切成两半，照片永远是
+/// 「被面板挤窄的」，而浮卡让画面吃满整个窗口。面板宽度因此多出两侧 12px，
+/// `canvas_insets` 那边同步加，画布不会被压到卡下面。
+///
+/// Draw the inspector as a **card floating over the canvas**: the panel itself is
+/// transparent and only reserves space; the card sits in a 12 px gutter with a 12 px
+/// radius, a deep shadow and a 1 px ring.
+///
+/// The design's `.dock` floats rather than docking to the edge -- a docked column cuts
+/// the canvas in half and the photo always reads as "squeezed by the panel", while a
+/// floating card lets the image fill the window. The panel is therefore two gutters
+/// wider, and `canvas_insets` is widened in step so the canvas never slides under it.
+fn floating_dock(root: &mut Ui, state: &mut AppState, right: bool) {
+    let id = if right { "dock" } else { "dock-left" };
+    let pnl = if right {
+        egui::Panel::right(id)
+    } else {
+        egui::Panel::left(id)
+    };
+    pnl.exact_size(state.dock_w + DOCK_GUTTER * 2.0)
+        .resizable(false)
+        .frame(
+            egui::Frame::NONE
+                .fill(canvas())
+                .inner_margin(egui::Margin::same(DOCK_GUTTER as i8)),
+        )
+        .show(root, |ui| {
+            let card = ui.max_rect();
+            let p = ui.painter().clone();
+            p.add(
+                egui::epaint::Shadow {
+                    offset: [0, 8],
+                    blur: 24,
+                    spread: 0,
+                    color: Color32::from_black_alpha(115),
+                }
+                .as_shape(card, 12.0),
+            );
+            p.rect_filled(card, 12.0, panel());
+            p.rect_stroke(
+                card,
+                12.0,
+                Stroke::new(1.0, Color32::from_white_alpha(15)),
+                StrokeKind::Inside,
+            );
+            dock_panel(state, ui);
+        });
 }
 
 // ---------------------------------------------------------------- 画布辅看浮层
