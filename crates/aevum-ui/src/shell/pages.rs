@@ -139,7 +139,21 @@ fn cell(state: &mut AppState, ui: &mut Ui, i: usize, w: f32, h: f32) {
         );
     }
     let selected = state.selected == i;
-    let stroke = if selected { accent() } else { divider() };
+    // 悬停：升一档底 + 描边提亮。第一屏几十个可点格子划过毫无变化，是「死界面」
+    // 最直接的一层（2026-11-09 交互审计 #1）。
+    //
+    // Hover: one step up plus a brighter stroke. Dozens of clickable cells that do not
+    // react on hover are the most direct "dead interface" signal.
+    if !selected && resp.hovered() {
+        p.rect_filled(rect, radius_control(), row_hover());
+    }
+    let stroke = if selected {
+        accent()
+    } else if resp.hovered() {
+        border_strong()
+    } else {
+        divider()
+    };
     p.rect_stroke(
         rect,
         radius_control(),
@@ -444,35 +458,53 @@ fn queue_head(ui: &mut Ui) {
 /// 常规按钮（中性底 + 1px 边）。
 ///
 /// A regular button: neutral fill with a hairline.
+/// 常规按钮。**不写 `.fill()/.stroke()`**：egui 文档明写这两个会覆盖悬停与
+/// 按下效果（`button.rs` "this will override any on-hover effects"），
+/// 之前 11 颗按钮因此悬停/按下毫无变化——这是「点了像图片」的最大来源。
+/// 底色与三态交给 `theme::apply_style` 里统一配好的 widgets。
+///
+/// A regular button. **No `.fill()` / `.stroke()`**: egui documents that they override
+/// the hover and pressed effects. Eleven buttons had no hover/press change because of
+/// them -- the biggest source of "clicking feels like clicking an image".
 fn secondary_button(ui: &mut Ui, label: &str) -> egui::Response {
     ui.add(
-        egui::Button::new(
-            RichText::new(crate::i18n::tr(label))
-                .size(SIZE_LABEL)
-                .color(text()),
-        )
-        .fill(elev())
-        .stroke(egui::Stroke::new(1.0, border()))
-        .corner_radius(radius_control())
-        .min_size(Vec2::new(0.0, 26.0)),
+        egui::Button::new(RichText::new(crate::i18n::tr(label)).size(SIZE_LABEL))
+            .corner_radius(radius_control())
+            .min_size(Vec2::new(0.0, 26.0)),
     )
 }
 
 /// 主行动按钮（强调色底）。
 ///
 /// The primary action: accent fill.
+/// 主行动按钮：强调色底，但**三态仍由 style 驱动**（悬停更亮、按下更深），
+/// 而不是用 `.fill()` 把三种状态钉成同一个颜色。
+///
+/// The primary action: accent fill, but its three states still come from the style
+/// (brighter on hover, deeper on press) instead of `.fill()` pinning all three to one
+/// colour.
 fn primary_button(ui: &mut Ui, label: &str) -> egui::Response {
-    ui.add(
-        egui::Button::new(
-            RichText::new(crate::i18n::tr(label))
-                .size(SIZE_LABEL)
-                .color(on_accent()),
+    ui.scope(|ui| {
+        let w = &mut ui.style_mut().visuals.widgets;
+        w.inactive.bg_fill = accent();
+        w.inactive.weak_bg_fill = accent();
+        w.inactive.fg_stroke = egui::Stroke::new(1.0, on_accent());
+        w.inactive.bg_stroke = egui::Stroke::new(1.0, accent());
+        w.hovered.bg_fill = accent_hover();
+        w.hovered.weak_bg_fill = accent_hover();
+        w.hovered.fg_stroke = egui::Stroke::new(1.0, on_accent());
+        w.hovered.bg_stroke = egui::Stroke::new(1.0, accent_hover());
+        w.active.bg_fill = accent_dim();
+        w.active.weak_bg_fill = accent_dim();
+        w.active.fg_stroke = egui::Stroke::new(1.0, on_accent());
+        w.active.bg_stroke = egui::Stroke::new(1.0, accent_dim());
+        ui.add(
+            egui::Button::new(RichText::new(crate::i18n::tr(label)).size(SIZE_LABEL))
+                .corner_radius(radius_control())
+                .min_size(Vec2::new(0.0, 26.0)),
         )
-        .fill(accent())
-        .stroke(egui::Stroke::new(1.0, accent_hover()))
-        .corner_radius(radius_control())
-        .min_size(Vec2::new(0.0, 26.0)),
-    )
+    })
+    .inner
 }
 
 /// 紧凑队列行：序号 / 序列名 / 输出 / 移除。渲染中的那一段带进度条。

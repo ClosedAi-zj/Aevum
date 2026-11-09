@@ -1350,6 +1350,15 @@ pub fn apply_style(ctx: &Context, zoom: f32) {
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, text());
     v.widgets.noninteractive.corner_radius = 4.into();
 
+    // 全局手型光标：egui 默认 `interact_cursor = None`，导致所有原生按钮/
+    // 复选框/菜单项/拖拽数值悬停时都是箭头——「能点的地方不告诉你它能点」是
+    // 廉价感最普遍的一层（2026-11-09 交互审计：全仓仅 5 处手动设 PointingHand）。
+    //
+    // Global pointing-hand cursor: egui defaults `interact_cursor` to None, so every
+    // native button / checkbox / menu item shows an arrow on hover -- "clickable things
+    // that do not announce themselves" is the most widespread cheapness signal.
+    v.interact_cursor = Some(egui::CursorIcon::PointingHand);
+
     v.widgets.inactive.bg_fill = elev();
     v.widgets.inactive.weak_bg_fill = elev();
     // 复选框的方框就是这颗「未激活控件」的底：ELEV 底配 NONE 描边，在深色
