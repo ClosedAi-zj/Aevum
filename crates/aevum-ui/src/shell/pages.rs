@@ -372,6 +372,13 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     ui.add_space(8.0);
 
     ui.columns(2, |cols| {
+        // 两张卡等高：内容只有一小截时页面会像没做完（用户 2026-11-09：
+        // 「页面看着空」）。按可用高度的 55% 兜底，最少 8 个控件高。
+        //
+        // Equal card heights: a stub of content reads as an unfinished page.
+        let body_h = (cols[0].available_height() * 0.55).max(CH * 8.0);
+        cols[0].set_min_height(body_h);
+        cols[1].set_min_height(body_h);
         card(cols, 0, |ui| {
             ui.label(
                 RichText::new(crate::i18n::tr("渲染队列"))
