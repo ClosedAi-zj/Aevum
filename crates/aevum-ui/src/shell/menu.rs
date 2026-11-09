@@ -121,9 +121,23 @@ pub(super) fn handle_input(state: &mut AppState, ctx: &Context) {
             actual_size(state);
         }
         if alt {
-            for (idx, m) in Module::ALL.iter().enumerate() {
-                if ctx.input(|i| i.key_pressed(digit_key(idx))) {
-                    state.set_module(*m);
+            // Ctrl+Alt+1..4 切工作台；Alt+1..7 仍是模块。两组必须分开：模块的
+            // 0-5 序号契约写在 `ui.module` 命令与文档里，不能让工作台抢走它。
+            //
+            // Ctrl+Alt+1..4 switches benches; Alt+1..7 still picks modules. The two sets
+            // stay apart because the module index contract is documented and shared with
+            // the `ui.module` command.
+            if ctrl {
+                for b in Bench::ALL {
+                    if ctx.input(|i| i.key_pressed(digit_key(b.no() - 1))) {
+                        state.set_bench(b);
+                    }
+                }
+            } else {
+                for (idx, m) in Module::ALL.iter().enumerate() {
+                    if ctx.input(|i| i.key_pressed(digit_key(idx))) {
+                        state.set_module(*m);
+                    }
                 }
             }
         }
@@ -439,7 +453,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 state.set_bench(Bench::Develop);
                 state.set_module(*m);
             }
-            resp.on_hover_text(format!("{} (Ctrl+Alt+{})", crate::i18n::tr(m.cn()), i + 1));
+            resp.on_hover_text(format!("{} (Alt+{})", crate::i18n::tr(m.cn()), i + 1));
         }
     }
 

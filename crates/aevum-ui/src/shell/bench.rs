@@ -191,7 +191,7 @@ pub(super) fn nav(state: &mut AppState, ui: &mut egui::Ui, top_center: Pos2) {
         if resp.clicked() {
             pick = Some(*b);
         }
-        let tip = format!("{} (Alt+{})", crate::i18n::tr(b.cn()), b.no());
+        let tip = format!("{} (Ctrl+Alt+{})", crate::i18n::tr(b.cn()), b.no());
         resp.on_hover_text(tip);
     }
     if let Some(b) = pick {
