@@ -605,20 +605,30 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
 ///
 /// A fixed-size card: solid fill and stroke first, then content inside that box.
 fn frame_card<R>(ui: &mut Ui, w: f32, h: f32, add: impl FnOnce(&mut Ui) -> R) {
-    let frame = egui::Frame::NONE
-        .fill(elev())
-        .stroke(egui::Stroke::new(1.0, border()))
-        .corner_radius(radius_control())
-        .inner_margin(egui::Margin::same(12));
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+    // 关键：Frame::show 的高度由内容决定，allocate 出来的 h 会被无视——这正是
+    // 前几轮「卡片改成定高却依然只有一小截」的原因。直接用 painter 铺满占位
+    // 矩形，骨架高度才真正等于 h。
+    //
+    // Frame::show sizes itself from its content, ignoring the height we allocated;
+    // that is why "fixed-height cards" stayed a stub. Paint the allocated rect directly
+    // so the skeleton really is h tall.
+    let p = ui.painter();
+    let r = radius_panel();
+    p.rect_filled(rect, r, elev());
+    p.rect_stroke(
+        rect,
+        r,
+        egui::Stroke::new(1.0, border()),
+        egui::StrokeKind::Inside,
+    );
     let mut child = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink(1.0))
+            .max_rect(rect.shrink(12.0))
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
-    frame.show(&mut child, add);
+    add(&mut child);
 }
-
 /// 设置区的小节分隔线。
 ///
 /// Section divider inside the settings card.

@@ -509,11 +509,13 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
             p.text(
                 circle.center(),
                 egui::Align2::CENTER_CENTER,
-                if done && i != current {
-                    "✓".to_owned()
-                } else {
-                    format!("{}", i + 1)
-                },
+                // 三步是导航，不是进度条：完成态只用底色区分，不再画 ✓。
+                // 派生完成态与手选步会互相矛盾（导入后显示「✓调色与修复」，
+                // 但高亮仍停在第一段），用户 2026-11-09 反复指出。
+                //
+                // Three steps are navigation, not a progress bar: done is shown by the
+                // fill only. A check contradicts the hand-picked highlight.
+                format!("{}", i + 1),
                 font(SIZE_SMALL),
                 ctext,
             );

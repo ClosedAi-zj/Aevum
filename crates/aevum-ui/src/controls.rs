@@ -187,6 +187,13 @@ pub fn grad_stops(spec: &ControlSpec) -> Option<&'static [(f32, egui::Color32)]>
 /// `const fn` and cannot be called from a `static`. Those four "material colours do not
 /// follow the theme" values are fixed RGB in theme.rs (see the note there), so the same
 /// numbers are repeated here and both places change together.
+/// 色温轨：冷蓝 → 中性灰 → 暖黄。中灰取主题的 dim 档，保证中点是真正的「无彩」。
+///
+/// Temperature rail: cold blue -> neutral grey -> warm yellow. The middle grey comes
+/// from the theme's `dim` step so the centre point is genuinely achromatic.
+/// 色值直接写字面量：`theme::temp_cold()` 这类访问器不是 const fn，static 里调不了。
+///
+/// Values are literals: accessors such as `theme::temp_cold()` are not `const fn`.
 static TEMPERATURE_STOPS: [(f32, egui::Color32); 3] = [
     (0.0, egui::Color32::from_rgb(0x4E, 0x86, 0xC8)),
     (0.5, egui::Color32::from_rgb(0x8A, 0x8A, 0x8C)),
