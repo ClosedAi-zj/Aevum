@@ -1028,13 +1028,21 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui, half: RailHalf, on_le
             } else {
                 (rect.left() + 1.0, rect.left() + 3.0)
             };
+            // 竖条从中间长出来（0.12s）：与顶栏/坞下划线同一套参数，只动长度。
+            //
+            // The bar grows from the middle over 0.12 s, matching the top bar and dock
+            // underline, length only.
+            let t = ui.ctx().animate_bool_with_time(
+                ui.make_persistent_id(("rail-active", *idx)),
+                true,
+                0.12,
+            );
+            let mid = rect.center().y;
+            let half = (rect.height() * 0.5 - 8.0).max(0.0) * t;
             p.rect_filled(
-                Rect::from_min_max(
-                    Pos2::new(bx0, rect.top() + 8.0),
-                    Pos2::new(bx1, rect.bottom() - 8.0),
-                ),
+                Rect::from_min_max(Pos2::new(bx0, mid - half), Pos2::new(bx1, mid + half)),
                 1.0,
-                accent(),
+                accent().gamma_multiply(t.max(0.15)),
             );
         } else if resp.is_pointer_button_down_on() {
             // 按下比悬停再沉一档：15 个图标点起来才有「按」而不是「滑」。

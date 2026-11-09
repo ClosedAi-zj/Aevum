@@ -148,11 +148,19 @@ pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // The step description occupies a stable block so the action rows do not jump when
     // the user switches steps. Single photos have no steps, hence no description.
     if !single {
+        // 说明只留一行（约 18 字），全文进 tooltip：每步一大段散文会把动作按钮
+        // 顶到折线以下，而用户此刻需要的是按钮，不是导读（审计 #43）。
+        //
+        // The hint keeps one line (~18 chars) and the full text goes to a tooltip: a
+        // paragraph per step pushes the action buttons below the fold, while buttons are
+        // what the user needs right now.
+        let full = crate::i18n::tr(step.hint);
         ui.label(
-            RichText::new(crate::i18n::tr(step.hint))
+            RichText::new(crate::theme::ellipsis(full, 18))
                 .size(SIZE_LABEL)
                 .color(muted()),
-        );
+        )
+        .on_hover_text(full);
         ui.add_space(10.0);
     } else {
         ui.add_space(6.0);
@@ -178,7 +186,7 @@ pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         let resp = ui.add_enabled(
             enabled,
             egui::Button::new(RichText::new(label).size(SIZE_BODY))
-                .min_size(Vec2::new(ui.available_width(), 28.0))
+                .min_size(Vec2::new(ui.available_width(), CH))
                 .corner_radius(radius_control()),
         );
         if enabled && resp.clicked() {
@@ -208,7 +216,7 @@ pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             .add_enabled(
                 current != flow::derived_current(state, task),
                 egui::Button::new(RichText::new(back).size(SIZE_BODY))
-                    .min_size(Vec2::new(ui.available_width(), 26.0))
+                    .min_size(Vec2::new(ui.available_width(), CH))
                     .corner_radius(radius_control()),
             )
             .clicked()
