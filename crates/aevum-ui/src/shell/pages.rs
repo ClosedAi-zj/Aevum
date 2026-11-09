@@ -607,10 +607,6 @@ fn section_rule(ui: &mut Ui) {
     );
 }
 
-/// 一张卡片：升一档的底 + 1px 边 + 内边距。
-///
-/// A card: one step up in fill, hairline stroke, inner padding.
-
 /// 概况格：小标签 + 值。
 ///
 /// A summary cell: small label plus value.
