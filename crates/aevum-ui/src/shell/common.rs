@@ -277,6 +277,17 @@ pub(super) fn group_header(
     // hairline. An earlier mockup added a sliders glyph and dropped the rule; the
     // newest reference has neither -- the glyph turned eight headers into eight
     // buttons, and without the rule collapsed groups blur into one slab.
+    // 卡中卡（设计稿 v10.6/v12 的 `.grp`）：每个分组是一张独立圆角卡片
+    // ——`background:#2a2d32`、`border-radius:8px`、`padding:12px`、
+    // `box-shadow:0 0 0 1px rgba(255,255,255,.06)`。
+    // 我们是「通栏 hairline 分隔」的 ACR 语法：八组排下来读成一张长表，
+    // 用户点名「质感不对」的根源就在这里——分隔线只切断，不建立「这是一块」。
+    //
+    // Card-in-card, per the design's `.grp`: each group is its own rounded card --
+    // `#2a2d32` fill, 8 px radius, 12 px padding, a 1px ring via box-shadow. Our
+    // full-width hairline separators are ACR's grammar: eight groups read as one long
+    // table, and that is exactly what "the texture is wrong" points at -- a rule only
+    // cuts, it never says "this is one block".
     ui.add_space(2.0);
     // 行高由「信息密度」偏好决定：标准 32px（用户 ACR 截图实测），紧凑 28px
     // （更紧的 ACR 版本）。折叠态四个组头的差别就是 16px，展开态还会再放大。
@@ -538,6 +549,7 @@ pub(super) fn group_header(
     // It reads as the boundary of a column of sections, not the old double rule that
     // cut each section into a table row.
     theme::rule(p, rect.left(), rect.right(), rect.bottom(), divider());
+
     ui.add_space(4.0);
     !state.collapsed.contains(key)
 }
@@ -784,21 +796,19 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         // panel colour, while a recessed fill made a column of rows look like seven web
         // input fields. The fill appears on hover or drag, so "clickable" is an
         // interaction cue instead of permanent decoration.
+        // 读数框设计稿口径（.srow .val）：静止时**无边框**——纯文字浮在卡片底上；
+        // 悬停才出现 field 底 + ring 描边（1px 低对比环，不是 border_strong）。
+        // 常驻描边让一列读数读成七个输入框，是「质感不对」的来源之一。
+        //
+        // Readout per the design's .srow .val: no border at rest -- bare text on the card
+        // fill; hover brings a field fill plus a 1px low-contrast ring. A permanent
+        // outline makes a column of readouts read as seven input boxes.
         if ui.rect_contains_pointer(field) {
             p.rect_filled(field, radius_control(), theme::field());
-        }
-        p.rect_stroke(
-            field,
-            radius_control(),
-            Stroke::new(1.0, divider()),
-            egui::StrokeKind::Inside,
-        );
-        if ui.rect_contains_pointer(field) {
-            p.rect_filled(field, radius_control(), theme::field_hover());
             p.rect_stroke(
                 field,
                 radius_control(),
-                Stroke::new(1.0, border_strong()),
+                Stroke::new(1.0, divider()),
                 egui::StrokeKind::Inside,
             );
         }
@@ -818,9 +828,26 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
 
     let old_text = ui.style().visuals.override_text_color;
     let old_font = ui.style().override_font_id.clone();
-    // 读数颜色与强调色脱钩（用户截图：满屏蓝读数像一片报错）：改动值用正文白，
-    // 未动值用 value()（淡一档）。蓝色留给交互态（悬停/拖动）。
-    ui.style_mut().visuals.override_text_color = Some(if changed_now { text() } else { value() });
+    // 读数颜色按设计稿 .srow.changed .val：**改过的值 = 琥珀色 #f5b83d**，
+    // 未动值 = 正文白。琥珀是"这根推子动过"的标记色（设计稿把琥珀固定为
+    // 时间/改动语义），扫一眼就知道哪几根动了——正文白做不到这一点。
+    // （用户早前"满屏蓝读数"的问题不回归：蓝色仍只留给交互态。）
+    //
+    // Readout colour per the design's .srow.changed .val: a **changed value is amber
+    // #f5b83d**, untouched stays body-white. Amber is the design's "this slider moved"
+    // marker (time/change semantics), so a glance tells which sliders moved -- plain
+    // white cannot. (The earlier "wall of blue readouts" does not come back: blue
+    // remains interaction-only.)
+    ui.style_mut().visuals.override_text_color = Some(if changed_now {
+        // 设计稿 --amber #f5b83d：与 theme 的 warn(#FF9F0A) 不是一个语义，
+        // 这里直接用字面量并在判据里钉住，不挪用警告色。
+        //
+        // The design's --amber #f5b83d is not theme::warn (#FF9F0A); the literal is used
+        // here and pinned by a test, rather than borrowing the warning colour.
+        Color32::from_rgb(0xF5, 0xB8, 0x3D)
+    } else {
+        value()
+    });
     // 读数走等宽（设计稿 B1）：一列推子的小数点必须落在同一条竖线上。`DragValue`
     // 没有 `.font()`，只能在作用域里压 `override_font_id`，画完立刻还原——与
     // 选项栏 `bar_value` 同一套写法。

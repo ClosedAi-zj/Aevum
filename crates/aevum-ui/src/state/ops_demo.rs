@@ -150,6 +150,16 @@ impl AppState {
         demo_mask["range"] = json!({
             "lum_on": true, "lum_min": 0.12, "lum_max": 0.62, "lum_feather": 0.08
         });
+        // 主参数也动几根：琥珀色"改动值"读数（设计稿 .srow.changed .val）需要
+        // 真有改动才显示，全 0 的演示看不出这条样式是否生效。
+        //
+        // Nudge a few primary sliders too: the amber "changed value" readouts (the
+        // design's .srow.changed .val) only appear with real changes; an all-zero demo
+        // cannot show whether that style works.
+        self.params.temperature = 12.0;
+        self.params.exposure = 0.35;
+        self.params.highlights = -12.0;
+        self.params.shadows = 8.0;
         self.params.masks.push(demo_mask);
         self.mask_sel = Some(self.params.masks.len() - 1);
         self.preset = "自定义".to_owned();

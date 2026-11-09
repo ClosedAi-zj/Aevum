@@ -194,8 +194,15 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
                     bottom: 12,
                 })
                 .show(ui, |ui| {
-                    histogram(ui, state);
-                    ui.add_space(6.0);
+                    // 直方图已搬到画布左上浮动卡片（设计稿 .histcard）：
+                    // 检查器里再画一遍等于同一份数据出现两次，且占掉右栏首屏。
+                    // 画布卡片是唯一一处，这里直接进参数区。
+                    //
+                    // The histogram moved to the canvas's top-left floating card (the
+                    // design's .histcard). Drawing it again here would show the same data
+                    // twice and eat the dock's first screen; the canvas card is the one
+                    // place, so this jumps straight into the parameter area.
+                    ui.add_space(2.0);
                     let mut scroll = ScrollArea::vertical()
                         .id_salt("dock-scroll")
                         .auto_shrink([false, false]);
@@ -278,7 +285,7 @@ fn smooth_twice(vals: &mut [f32], bins: usize) {
 /// The capture-parameter line under the histogram in Lightroom's order: ISO, focal
 /// length, aperture, shutter, one slot each. Missing fields are omitted rather than
 /// padded with dashes -- four em dashes read louder than an empty row.
-fn capture_line(
+pub(super) fn capture_line_pub(
     iso: Option<f64>,
     focal_mm: Option<f64>,
     fnum: Option<f64>,
@@ -316,7 +323,7 @@ fn capture_line(
     parts
 }
 
-fn histogram(ui: &mut Ui, state: &mut AppState) {
+pub(super) fn histogram(ui: &mut Ui, state: &mut AppState) {
     // 94px：设计图 `.hist-svg{height:94px}`。原 84 让山形比设计图矮一档，
     // 裁切角标与峰值之间的空气也跟着少。
     // 左右各收 4px 且居中：原先只把宽度减 8 再贴左放，左边贴住、右边空 10px，
@@ -658,7 +665,7 @@ fn histogram(ui: &mut Ui, state: &mut AppState) {
     // spread with equal gaps across the well's width and equal end margins. Equal-slot
     // layout made the gaps jump between short fields; an even rhythm needs equal gaps.
     if let Some(e) = state.exif.get(state.selected) {
-        let items = capture_line(e.iso(), e.focal_mm(), e.fnum(), e.exposure_sec());
+        let items = capture_line_pub(e.iso(), e.focal_mm(), e.fnum(), e.exposure_sec());
         if !items.is_empty() {
             ui.add_space(7.0);
             let (row, _) =
@@ -713,26 +720,26 @@ mod dock_paint_tests {
     #[test]
     fn capture_line_formats_and_omits_missing_fields() {
         assert_eq!(
-            capture_line(Some(200.0), Some(35.0), Some(8.0), Some(1.0 / 250.0)),
+            capture_line_pub(Some(200.0), Some(35.0), Some(8.0), Some(1.0 / 250.0)),
             vec!["ISO 200", "35 mm", "f / 8.0", "1/250 秒"]
         );
         assert_eq!(
-            capture_line(Some(1600.0), Some(50.0), Some(1.8), Some(1.0 / 60.0)),
+            capture_line_pub(Some(1600.0), Some(50.0), Some(1.8), Some(1.0 / 60.0)),
             vec!["ISO 1600", "50 mm", "f / 1.8", "1/60 秒"]
         );
         // 1 秒以上：LR 中文口径写「4.0 秒」。
         assert_eq!(
-            capture_line(Some(100.0), Some(249.0), Some(8.0), Some(4.0)),
+            capture_line_pub(Some(100.0), Some(249.0), Some(8.0), Some(4.0)),
             vec!["ISO 100", "249 mm", "f / 8.0", "4.0 秒"]
         );
         // 缺项：直接跳过，不补「—」。
         assert_eq!(
-            capture_line(Some(100.0), None, Some(4.0), None),
+            capture_line_pub(Some(100.0), None, Some(4.0), None),
             vec!["ISO 100", "f / 4.0"]
         );
-        assert!(capture_line(None, None, None, None).is_empty());
+        assert!(capture_line_pub(None, None, None, None).is_empty());
         // 坏 EXIF 的 0 值当缺项：不出 `f / 0.0` 或 `1/inf`。
-        assert!(capture_line(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).is_empty());
+        assert!(capture_line_pub(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).is_empty());
     }
 
     fn input(w: f32, h: f32) -> egui::RawInput {
@@ -924,14 +931,20 @@ mod dock_paint_tests {
 
     #[test]
     fn slider_value_is_flat_grey_at_default_and_text_once_changed() {
-        // 2026-11-07 故意偏离旧口径（accent 蓝）：用户截图里一排蓝读数读作
-        // 一片报错——改动值用正文白、未动值用 value()，蓝色留给交互态。
-        // 改没动过由标签提亮与组头圆点双路指示，不靠读数变蓝。
+        // 2026-11-10 第三次换口径（设计稿 v10.6/v12 的 .srow.changed .val）：
+        // **改动值 = 琥珀 #f5B83D**，未动值 = value()。琥珀是设计稿固定给
+        // "改动/时间"的语义色；蓝色仍只留给交互态（accent），正文白留给
+        // 组头标题。三个色各管一摊，谁也不抢谁的戏。
+        //
+        // Third colour ruling (2026-11-10, per the design's .srow.changed .val): a
+        // **changed value is amber #f5B83D**, untouched stays value(). Amber owns the
+        // "changed/time" semantics in the design; blue stays interaction-only; body
+        // white stays on headings. One colour per job, no overlaps.
         assert_eq!(value_color(0.0), value(), "默认值的读数不该抢眼");
         assert_eq!(
             value_color(0.75),
-            text(),
-            "改过的读数应是正文白（蓝读数口径已废）"
+            Color32::from_rgb(0xF5, 0xB8, 0x3D),
+            "改过的读数应是设计稿琥珀 #f5b83d"
         );
         assert_ne!(value_color(0.0), value_color(0.75), "两种状态必须分得开");
     }

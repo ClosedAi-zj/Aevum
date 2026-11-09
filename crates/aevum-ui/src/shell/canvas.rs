@@ -552,6 +552,16 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     if state.rulers {
         draw_rulers(ui, body, content, Some(img), scale, hover);
     }
+
+    // 浮动直方图卡（左上）+ 无序列提示卡：设计稿把直方图从检查器里搬到了画布上，
+    // 视线第一落点就是数据。卡片实色不透明（浮层纪律：不许模糊或透出照片）。
+    //
+    // The floating histogram card (top-left) plus the empty-state hint: the design moves
+    // the histogram out of the inspector onto the canvas, so the first thing the eye
+    // lands on is data. The card is opaque (overlay discipline: never blur or let the
+    // photo show through).
+    let _card = super::canvas_cards::histogram_card(state, ui, content);
+    super::canvas_cards::empty_hint(state, ui, content);
 }
 
 /// 把平移量收口到「图像不越出内容区」的范围：图像比可视区小则强制居中（偏差 0px），

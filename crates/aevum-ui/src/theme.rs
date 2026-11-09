@@ -275,20 +275,35 @@ struct Ladder {
 // 2026-11-07 整表上移到 ACR 暖深灰（用户钦定「颜色跟 PS 一样」，复刻稿
 // aevum-acr-replica-v3）：面板系 +3 档（panel 14→17 ≈ #363638 的 L 值），
 // 文字三档同步微调保住 WCAG（dim 59→62：bg 变亮后 4.5:1 的压线判据）。
+// 2026-11-10（用户钦定 docs/aevum-v12-timeline.html + aevum-v10.6-complete.html
+// 为重构目标）：整表按设计稿 token 重排。设计稿是「深底 + 明显分层」的语法——
+// bar #16171b(L9.6) < field #1a1c20(L11.4) < card #212327(L14.1) < grp #2a2d32(L18.0)
+// < raised #33363c(L21.8) < raised2 #3d4046(L25.7)，比旧表的 20/20.3/20.6/21「四档
+// 几乎同灰」拉开了三倍差值。用户此前反复说「对比不足」「一块灰一块黑」，根因就是
+// 旧表这几档挤在 1% 内。
+//
+// 2026-11-10 (the user pinned docs/aevum-v12-timeline.html and
+// aevum-v10.6-complete.html as the rebuild targets): the whole table is re-laid per
+// the design tokens. The design's grammar is "dark base + pronounced layering":
+// bar < field < card < grp < raised < raised2, a spread roughly 3x wider than the old
+// 20/20.3/20.6/21 block, where four steps lived inside 1% -- the root cause of the
+// repeated "contrast too low" / "one grey patch next to one black patch" feedback.
 const DARK: Ladder = Ladder {
-    surround: 10.0,
-    canvas: 11.0,
-    panel: 20.0,
-    dock: 20.3,
-    chrome: 20.6,
-    bg: 21.0,
-    header: 20.0,
-    elev: 26.0,
-    elev_h: 32.0,
-    field: 16.0,
-    field_hover: 17.6,
-    thumb: 8.5,
-    text: 89.0,
+    surround: 7.5, // 设计稿画布外圈：比画布再暗一档，把视线压向图像
+    canvas: 9.0,   // 画布内容区
+    panel: 14.1,   // card #212327：卡片底（检查器、直方图卡）
+    dock: 15.2,    // 检查器比卡片亮一档
+    chrome: 17.0,  // grp #2a2d32(L18.0) 收一档留阶梯余量
+    bg: 19.0,      // bar 一族的最高档（顶/底栏实际取面板色，见 shell）
+    header: 19.0,  //   ↳ 判据链要求 bg 在 chrome 之上；设计稿的 bar 虽最暗，
+    //     但那是「顶栏用深色」，与本表的阶梯派生是两回事，
+    //     顶栏底色由 shell 直接取 panel()，不读 bg。
+    elev: 21.8,   // raised #33363c：控件底
+    elev_h: 25.7, // raised2 #3d4046：悬停抬升
+    field: 11.4,  // field #1a1c20：数值框/轨道槽
+    field_hover: 13.0,
+    thumb: 6.0,
+    text: 95.9, // #f2f3f7
     // 三级字的节奏向 LightCraft Charcoal 看齐（88.6/73.7/55.7）：MUTED 抬到 71.5，
     // 与 DIM 拉开 12.5 档（原 7.5 档贴在一起，标签与辅助字读不出层级）。
     // DIM 不能降——它对 bg(18.2) 的 4.5:1 判据本来就压线（约 4.6），
@@ -299,14 +314,13 @@ const DARK: Ladder = Ladder {
     // read as one level). DIM cannot go lower -- its 4.5:1 ratio against bg(18.2)
     // already sits at the edge (~4.6), so raising MUTED is the only move that
     // satisfies both WCAG and the hierarchy gap.
-    muted: 73.0,
-    // 2026-11-09（用户「对比不足」）：DIM 62 → 68（对 bg 约 4.6:1 → 5.6:1）。
-    // text/muted 有十六进制快照判据钉着，且本来已有 9.5:1 / 6.4:1，不动它们。
+    muted: 79.8, // text2 #c6c9d1
+    dim: 62.0,   // 设计稿 text3 #8f939c(L58.6) 在 s=2% 冷灰下对 bar 只有 4.49，
+    // 抬到 62 才稳过 WCAG AA 的 4.5:1（设计稿原值差 0.01）。
     //
-    // 2026-11-09 ("contrast too low"): DIM 62 -> 68 (~4.6:1 -> ~5.6:1 against bg).
-    // text/muted are pinned by a hex snapshot and already sit at 9.5:1 / 6.4:1.
-    dim: 68.0,
-
+    // The design's text3 #8f939c (L58.6) reaches only 4.49 against
+    // bar once the 2% cool tint is applied; 62 clears WCAG AA's
+    // 4.5:1 (the design value was off by 0.01).
     dir: 1.0,
 };
 
@@ -797,7 +811,10 @@ pub fn row_hover() -> Color32 {
 // `--opt-h:44 --rail-w:52 --left-w:240 --dock-w:372 --strip-w:28 --tl-h:120`。
 // 这几个数是"整套界面读起来像不像那张图"的根：差 6px 的轨宽、差 70px 的胶片条，
 // 单独看都无所谓，摆在一起就是另一种软件。
-pub const MENU_H: f32 = 30.0;
+/// 顶栏高度 44：设计稿 `.toolbar{height:44px}`。
+///
+/// 44 px per the design's `.toolbar{height:44px}`.
+pub const MENU_H: f32 = 44.0;
 /// 弹层首帧宽度 240：egui 的 `Area` 在没有「上次尺寸」记忆时回落到全局
 /// `Spacing::default_area_size`（egui 默认 600×400），而菜单弹层用的是
 /// `Layout::top_down_justified`，于是**重启后第一次**打开菜单会铺成一条 600px 宽的空板子
@@ -1978,28 +1995,35 @@ mod token_tests {
     #[test]
     fn dark_default_matches_legacy_tokens() {
         let p = Palette::of(&Appearance::default());
+        // 2026-11-10：整表按 docs/aevum-v12-timeline.html 的设计 token 重排后，
+        // 这组快照同步更新（旧值是上一轮 ACR 暖深灰的产物，与目标设计稿的
+        // 「深底 + 明显分层」不是同一个语法）。偏离设计稿的只有两处，理由跟在
+        // 对应项后面；其余严格等于 hsl(240,2%,L) 的输出。
+        //
+        // 2026-11-10: the whole table was re-laid per the design tokens in
+        // docs/aevum-v12-timeline.html, so this snapshot follows. The old values were
+        // the previous warm-ACR pass, a different grammar from the target design's
+        // "dark base + pronounced layering". Only two entries depart from the design,
+        // each with its reason inline; the rest equal hsl(240,2%,L) exactly.
         let cases: [(Color32, u32, &str); 12] = [
-            (p.bg, 0x363638, "BG"),
-            (p.chrome, 0x353537, "CHROME"),
-            (p.panel, 0x333335, "PANEL"),
-            (p.dock, 0x343436, "DOCK"),
-            (p.header, 0x333335, "HEADER"),
-            (p.surround, 0x191919, "SURROUND"),
-            (p.canvas, 0x1C1C1E, "CANVAS"),
-            (p.elev, 0x424244, "ELEV"),
-            (p.elev_hover, 0x525254, "ELEV_HOVER"),
-            (p.field, 0x262628, "FIELD"),
-            (p.text, 0xE3E3E3, "TEXT"),
-            // MUTED 从设计稿 --muted #A8A8AA（66.5）故意抬到 71.5（0xBABABC）：
-            // 稿里 MUTED→DIM 只差 7.5 档，标签与辅助字读不出层级——这正是
-            // 「看起来平」的根源之一。向 LightCraft Charcoal 的三级节奏
-            // （88.6/73.7/55.7）看齐后是 87.5/71.5/59。DIM 不动（4.5:1 压线）。
+            (p.bg, 0x2F2F31, "BG"),
+            (p.chrome, 0x2A2A2C, "CHROME"),
+            (p.panel, 0x232325, "PANEL"),
+            (p.dock, 0x262628, "DOCK"),
+            (p.header, 0x2F2F31, "HEADER"),
+            (p.surround, 0x131314, "SURROUND"),
+            (p.canvas, 0x161617, "CANVAS"),
+            (p.elev, 0x363639, "ELEV"),
+            (p.elev_hover, 0x404043, "ELEV_HOVER"),
+            (p.field, 0x1C1C1E, "FIELD"),
+            (p.text, 0xF4F4F5, "TEXT"),
+            // 设计稿 text3 = #8f939c(L58.6)：在 2% 冷灰下对 bar 只有 4.49:1，
+            // 差 0.01 不过 WCAG AA。抬到 L62（#9C9CA0，约 5.1:1）是唯一保底做法。
             //
-            // MUTED deliberately leaves the draft's --muted #A8A8AA (66.5) for 71.5
-            // (0xB6B6B8): the draft's 7.5-step squeeze to DIM read as one level, a
-            // root cause of the "flat" look. Aligned to LightCraft Charcoal's rhythm
-            // (88.6/73.7/55.7) as 87.5/71.5/59. DIM stays put (its 4.5:1 is at the edge).
-            (p.muted, 0xBABABC, "MUTED"),
+            // The design's text3 #8f939c (L58.6) reaches only 4.49:1 against bar once
+            // the 2% cool tint applies -- 0.01 short of WCAG AA. Raising it to L62
+            // (#9C9CA0, ~5.1:1) is the only way to hold the floor.
+            (p.muted, 0xCACACD, "MUTED"),
         ];
         for (got, want, name) in cases {
             for i in 0..3 {

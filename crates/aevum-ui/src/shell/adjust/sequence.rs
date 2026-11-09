@@ -27,54 +27,89 @@ fn qa_color(kind: qa::Kind) -> Color32 {
 
 pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "seq", "序列", false) {
-        let n = state.frame_count();
-        let valid = state.metrics.iter().filter(|m| m.is_some()).count();
-        kv_dense(
-            ui,
-            "帧数",
-            format!("{n}"),
-            if n > 0 { text() } else { dim() },
-        );
-        kv_dense(
-            ui,
-            "测光完成",
-            format!("{valid}"),
-            if state.measuring.is_some() {
-                accent()
-            } else {
-                text()
-            },
-        );
-        let res = state
-            .resolution
-            .map(|(w, h)| format!("{w} × {h}"))
-            .unwrap_or_else(|| "—".to_owned());
-        kv_dense(ui, "分辨率", res, text());
-        kv_dense(
-            ui,
-            "缺帧 / 异常",
-            format!("{}", state.issues.len()),
-            if state.issues.is_empty() {
-                ok()
-            } else {
-                danger()
-            },
-        );
-        if let Some(root) = state.seq.as_ref().map(|s| s.root.display().to_string()) {
-            ui.add_space(4.0);
-            ui.add(
-                egui::Label::new(
-                    RichText::new(root)
-                        .size(SIZE_SMALL)
-                        .monospace()
-                        .color(dim()),
-                )
-                .wrap()
-                .selectable(false),
-            );
-        }
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                let n = state.frame_count();
+                let valid = state.metrics.iter().filter(|m| m.is_some()).count();
+                kv_dense(
+                    ui,
+                    "帧数",
+                    format!("{n}"),
+                    if n > 0 { text() } else { dim() },
+                );
+                kv_dense(
+                    ui,
+                    "测光完成",
+                    format!("{valid}"),
+                    if state.measuring.is_some() {
+                        accent()
+                    } else {
+                        text()
+                    },
+                );
+                let res = state
+                    .resolution
+                    .map(|(w, h)| format!("{w} × {h}"))
+                    .unwrap_or_else(|| "—".to_owned());
+                kv_dense(ui, "分辨率", res, text());
+                kv_dense(
+                    ui,
+                    "缺帧 / 异常",
+                    format!("{}", state.issues.len()),
+                    if state.issues.is_empty() {
+                        ok()
+                    } else {
+                        danger()
+                    },
+                );
+                if let Some(root) = state.seq.as_ref().map(|s| s.root.display().to_string()) {
+                    ui.add_space(4.0);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(root)
+                                .size(SIZE_SMALL)
+                                .monospace()
+                                .color(dim()),
+                        )
+                        .wrap()
+                        .selectable(false),
+                    );
+                }
+            });
     }
     if group_header(ui, state, "seq-cull", "筛选台", false) {
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
         let n = state.frame_count();
         let cull_ctx = ui.ctx().clone();
         let suggest = bar_chip(ui, "按序列推建议区间", false)
@@ -232,6 +267,7 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
                     }),
             );
         }
+            });
     }
     if !state.issues.is_empty() && group_header(ui, state, "seq-issues", "异常帧", false) {
         let items: Vec<(usize, String)> = state.issues.iter().take(6).cloned().collect();
@@ -254,282 +290,377 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         }
     }
     if group_header(ui, state, "seq-qa", "序列体检", false) {
-        let busy = state.qa_busy;
-        let n = state.frame_count();
-        if slider(
-            ui,
-            "qa.sig",
-            "阈值松紧",
-            &mut state.qa_sig,
-            0.5,
-            20.0,
-            3.0,
-            1,
-            false,
-        ) && state.qa_run
-        {
-            // 阈值一改，上一张清单就不是这个判据下的结果了；留着会让「没发现问题」骗人。
-            state.qa_run = false;
-        }
-        ui.add_space(2.0);
-        let ctx = ui.ctx().clone();
-        ui.horizontal(|ui| {
-            // 忙碌时退成普通按钮：实心蓝是「现在就点」的语气，跑着的时候不该用它。
-            if busy {
-                ui.label(
-                    RichText::new(crate::i18n::t!("正在逐帧查文件…"))
-                        .size(SIZE_SMALL)
-                        .color(muted()),
-                );
-                if bar_button(ui, "取消").clicked() {
-                    state.stop_qa();
-                }
-            } else if n > 0 {
-                if bar_primary(ui, "开始体检").clicked() {
-                    state.run_qa(&ctx);
-                }
-            } else {
-                bar_button(ui, "开始体检");
-            }
-        });
-        if n == 0 && !busy {
-            note(ui, "先打开素材。");
-        }
-        if let Some((done, total)) = state.qa_progress() {
-            let frac = if total > 0 {
-                done as f32 / total as f32
-            } else {
-                0.0
-            };
-            ui.add(
-                egui::ProgressBar::new(frac)
-                    .desired_height(4.0)
-                    .text(RichText::new(format!("{done} / {total}")).size(SIZE_SMALL)),
-            );
-        }
-        if let Some(e) = &state.qa_error {
-            ui.add(
-                egui::Label::new(RichText::new(e).size(SIZE_SMALL).color(danger()))
-                    .wrap()
-                    .selectable(false),
-            );
-        }
-        if state.qa_run && !busy {
-            if state.qa_findings.is_empty() {
-                kv_dense(ui, "结论", "没发现问题", ok());
-            } else {
-                kv_dense(
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                let busy = state.qa_busy;
+                let n = state.frame_count();
+                if slider(
                     ui,
-                    "结论",
-                    crate::i18n::tr_fmt("{} 处", &[&state.qa_findings.len()]),
-                    danger(),
-                );
-                let counts = qa::count_by_kind(&state.qa_findings);
-                ui.horizontal_wrapped(|ui| {
-                    for kind in QA_KINDS {
-                        let c = counts.get(kind.id()).copied().unwrap_or(0);
-                        if c == 0 {
-                            continue;
-                        }
+                    "qa.sig",
+                    "阈值松紧",
+                    &mut state.qa_sig,
+                    0.5,
+                    20.0,
+                    3.0,
+                    1,
+                    false,
+                ) && state.qa_run
+                {
+                    // 阈值一改，上一张清单就不是这个判据下的结果了；留着会让「没发现问题」骗人。
+                    state.qa_run = false;
+                }
+                ui.add_space(2.0);
+                let ctx = ui.ctx().clone();
+                ui.horizontal(|ui| {
+                    // 忙碌时退成普通按钮：实心蓝是「现在就点」的语气，跑着的时候不该用它。
+                    if busy {
                         ui.label(
-                            RichText::new(format!("{} {}", kind.cn(), c))
+                            RichText::new(crate::i18n::t!("正在逐帧查文件…"))
                                 .size(SIZE_SMALL)
-                                .color(qa_color(kind)),
+                                .color(muted()),
                         );
+                        if bar_button(ui, "取消").clicked() {
+                            state.stop_qa();
+                        }
+                    } else if n > 0 {
+                        if bar_primary(ui, "开始体检").clicked() {
+                            state.run_qa(&ctx);
+                        }
+                    } else {
+                        bar_button(ui, "开始体检");
                     }
                 });
-                let items: Vec<Finding> = state.qa_findings.iter().take(60).cloned().collect();
-                for f in items {
-                    let resp = ui
-                        .add(
-                            egui::Label::new(
-                                RichText::new(format!("{:04} · {}", f.frame + 1, f.kind.cn()))
-                                    .size(SIZE_SMALL)
-                                    .color(qa_color(f.kind)),
-                            )
-                            .selectable(false)
-                            .sense(Sense::click()),
-                        )
-                        .on_hover_text(crate::i18n::tr_fmt(
-                            "{}：{}",
-                            &[&crate::i18n::tr(f.kind.cn()), &crate::i18n::tr(&f.note)],
-                        ));
-                    if resp.clicked() {
-                        state.set_frame(f.frame);
-                    }
+                if n == 0 && !busy {
+                    note(ui, "先打开素材。");
                 }
-                if state.qa_findings.len() > 60 {
-                    ui.label(
-                        RichText::new(crate::i18n::tr_fmt(
-                            "另有 {} 条…",
-                            &[&(state.qa_findings.len() - 60)],
-                        ))
-                        .size(SIZE_SMALL)
-                        .color(dim()),
+                if let Some((done, total)) = state.qa_progress() {
+                    let frac = if total > 0 {
+                        done as f32 / total as f32
+                    } else {
+                        0.0
+                    };
+                    ui.add(
+                        egui::ProgressBar::new(frac)
+                            .desired_height(4.0)
+                            .text(RichText::new(format!("{done} / {total}")).size(SIZE_SMALL)),
                     );
                 }
-                note(ui, "点一行跳到那一帧。");
-            }
-        } else if !busy && n > 0 && state.qa_error.is_none() {
-            note(ui, "按阈值检查缺帧与质量异常。");
-        }
+                if let Some(e) = &state.qa_error {
+                    ui.add(
+                        egui::Label::new(RichText::new(e).size(SIZE_SMALL).color(danger()))
+                            .wrap()
+                            .selectable(false),
+                    );
+                }
+                if state.qa_run && !busy {
+                    if state.qa_findings.is_empty() {
+                        kv_dense(ui, "结论", "没发现问题", ok());
+                    } else {
+                        kv_dense(
+                            ui,
+                            "结论",
+                            crate::i18n::tr_fmt("{} 处", &[&state.qa_findings.len()]),
+                            danger(),
+                        );
+                        let counts = qa::count_by_kind(&state.qa_findings);
+                        ui.horizontal_wrapped(|ui| {
+                            for kind in QA_KINDS {
+                                let c = counts.get(kind.id()).copied().unwrap_or(0);
+                                if c == 0 {
+                                    continue;
+                                }
+                                ui.label(
+                                    RichText::new(format!("{} {}", kind.cn(), c))
+                                        .size(SIZE_SMALL)
+                                        .color(qa_color(kind)),
+                                );
+                            }
+                        });
+                        let items: Vec<Finding> =
+                            state.qa_findings.iter().take(60).cloned().collect();
+                        for f in items {
+                            let resp = ui
+                                .add(
+                                    egui::Label::new(
+                                        RichText::new(format!(
+                                            "{:04} · {}",
+                                            f.frame + 1,
+                                            f.kind.cn()
+                                        ))
+                                        .size(SIZE_SMALL)
+                                        .color(qa_color(f.kind)),
+                                    )
+                                    .selectable(false)
+                                    .sense(Sense::click()),
+                                )
+                                .on_hover_text(crate::i18n::tr_fmt(
+                                    "{}：{}",
+                                    &[&crate::i18n::tr(f.kind.cn()), &crate::i18n::tr(&f.note)],
+                                ));
+                            if resp.clicked() {
+                                state.set_frame(f.frame);
+                            }
+                        }
+                        if state.qa_findings.len() > 60 {
+                            ui.label(
+                                RichText::new(crate::i18n::tr_fmt(
+                                    "另有 {} 条…",
+                                    &[&(state.qa_findings.len() - 60)],
+                                ))
+                                .size(SIZE_SMALL)
+                                .color(dim()),
+                            );
+                        }
+                        note(ui, "点一行跳到那一帧。");
+                    }
+                } else if !busy && n > 0 && state.qa_error.is_none() {
+                    note(ui, "按阈值检查缺帧与质量异常。");
+                }
+            });
     }
     if group_header(ui, state, "seq-align", "序列对齐", true) {
-        let n = state.frame_count();
-        ui.horizontal_wrapped(|ui| {
-            for (estimator, label) in [(Estimator::Template, "模板"), (Estimator::Phase, "相位")]
-            {
-                if bar_chip(ui, label, state.align_estimator == estimator).clicked() {
-                    state.align_estimator = estimator;
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                let n = state.frame_count();
+                ui.horizontal_wrapped(|ui| {
+                    for (estimator, label) in
+                        [(Estimator::Template, "模板"), (Estimator::Phase, "相位")]
+                    {
+                        if bar_chip(ui, label, state.align_estimator == estimator).clicked() {
+                            state.align_estimator = estimator;
+                        }
+                    }
+                });
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(crate::i18n::t!("参考帧"))
+                            .size(SIZE_SMALL)
+                            .color(muted()),
+                    );
+                    let mut r = state.align_ref.min(n.saturating_sub(1)) + 1;
+                    let resp = in_field(ui, field(), field_hover(), |ui| {
+                        ui.add_enabled(
+                            n > 0,
+                            egui::DragValue::new(&mut r).range(1..=n.max(1)).speed(0.2),
+                        )
+                    });
+                    if resp.changed() {
+                        state.align_ref = r.saturating_sub(1).min(n.saturating_sub(1));
+                    }
+                    ui.label(
+                        RichText::new(format!("/ {n}"))
+                            .size(SIZE_SMALL)
+                            .color(dim()),
+                    );
+                });
+                if ui
+                    .checkbox(
+                        &mut state.align_preview,
+                        RichText::new(crate::i18n::t!("画布显示对齐后")).size(SIZE_SMALL),
+                    )
+                    .changed()
+                {
+                    state.preview_dirty = true;
                 }
-            }
-        });
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(crate::i18n::t!("参考帧"))
-                    .size(SIZE_SMALL)
-                    .color(muted()),
-            );
-            let mut r = state.align_ref.min(n.saturating_sub(1)) + 1;
-            let resp = in_field(ui, field(), field_hover(), |ui| {
-                ui.add_enabled(
-                    n > 0,
-                    egui::DragValue::new(&mut r).range(1..=n.max(1)).speed(0.2),
-                )
-            });
-            if resp.changed() {
-                state.align_ref = r.saturating_sub(1).min(n.saturating_sub(1));
-            }
-            ui.label(
-                RichText::new(format!("/ {n}"))
-                    .size(SIZE_SMALL)
-                    .color(dim()),
-            );
-        });
-        if ui
-            .checkbox(
-                &mut state.align_preview,
-                RichText::new(crate::i18n::t!("画布显示对齐后")).size(SIZE_SMALL),
-            )
-            .changed()
-        {
-            state.preview_dirty = true;
-        }
-        if let Some((done, total)) = state.align_progress() {
-            let frac = if total > 0 {
-                done as f32 / total as f32
-            } else {
-                0.0
-            };
-            ui.add(
-                egui::ProgressBar::new(frac)
-                    .desired_height(4.0)
-                    .text(RichText::new(format!("{done} / {total}")).size(SIZE_SMALL)),
-            );
-        }
-        let busy = state.align_busy;
-        if ui
-            .add_enabled(
-                !busy && n > 1,
-                egui::Button::new(
-                    RichText::new(if busy {
-                        crate::i18n::t!("正在对齐…")
+                if let Some((done, total)) = state.align_progress() {
+                    let frac = if total > 0 {
+                        done as f32 / total as f32
                     } else {
-                        crate::i18n::t!("开始对齐")
+                        0.0
+                    };
+                    ui.add(
+                        egui::ProgressBar::new(frac)
+                            .desired_height(4.0)
+                            .text(RichText::new(format!("{done} / {total}")).size(SIZE_SMALL)),
+                    );
+                }
+                let busy = state.align_busy;
+                if ui
+                    .add_enabled(
+                        !busy && n > 1,
+                        egui::Button::new(
+                            RichText::new(if busy {
+                                crate::i18n::t!("正在对齐…")
+                            } else {
+                                crate::i18n::t!("开始对齐")
+                            })
+                            .size(SIZE_SMALL),
+                        ),
+                    )
+                    .on_disabled_hover_text(if n == 1 {
+                        crate::i18n::t!("单张照片没有要对齐的邻居")
+                    } else {
+                        crate::i18n::t!("先打开素材")
                     })
-                    .size(SIZE_SMALL),
-                ),
-            )
-            .on_disabled_hover_text(if n == 1 {
-                crate::i18n::t!("单张照片没有要对齐的邻居")
-            } else {
-                crate::i18n::t!("先打开素材")
-            })
-            .clicked()
-        {
-            state.run_align(ui.ctx());
-        }
-        if let Some(msg) = &state.align_msg {
-            ui.add(
-                egui::Label::new(RichText::new(msg).size(SIZE_SMALL).color(
-                    if state.align_report.is_some() {
-                        ok()
-                    } else {
-                        danger()
-                    },
-                ))
-                .wrap(),
-            );
-        }
+                    .clicked()
+                {
+                    state.run_align(ui.ctx());
+                }
+                if let Some(msg) = &state.align_msg {
+                    ui.add(
+                        egui::Label::new(RichText::new(msg).size(SIZE_SMALL).color(
+                            if state.align_report.is_some() {
+                                ok()
+                            } else {
+                                danger()
+                            },
+                        ))
+                        .wrap(),
+                    );
+                }
+            });
     }
     if group_header(ui, state, "seq-align-report", "对齐质量", false) {
-        if let Some(report) = &state.align_report {
-            let crop = report.crop;
-            kv_dense(
-                ui,
-                "统一裁切",
-                format!("{}×{} @ {},{}", crop.w, crop.h, crop.x, crop.y),
-                text(),
-            );
-            let mut mx = 0.0f64;
-            let mut my = 0.0f64;
-            for o in &report.offsets {
-                mx = mx.max(o[0].abs());
-                my = my.max(o[1].abs());
-            }
-            kv_dense(
-                ui,
-                "最大位移",
-                format!("X {mx:.1} px · Y {my:.1} px"),
-                text(),
-            );
-            let low = report.scores.iter().filter(|s| **s < 0.35).count();
-            kv_dense(
-                ui,
-                "低分帧",
-                format!("{low}"),
-                if low == 0 { ok() } else { danger() },
-            );
-            for issue in report.issues.iter().take(4) {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(format!(
-                            "{:04} · {} · {}",
-                            issue.frame + 1,
-                            issue.kind,
-                            theme::ellipsis(&issue.detail, 22)
-                        ))
-                        .size(SIZE_SMALL)
-                        .color(danger()),
-                    )
-                    .wrap(),
-                );
-            }
-            if report.issues.len() > 4 {
-                ui.label(
-                    RichText::new(crate::i18n::tr_fmt(
-                        "另有 {} 条…",
-                        &[&(report.issues.len() - 4)],
-                    ))
-                    .size(SIZE_SMALL)
-                    .color(dim()),
-                );
-            }
-        } else {
-            note(ui, "尚未运行对齐。");
-        }
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                if let Some(report) = &state.align_report {
+                    let crop = report.crop;
+                    kv_dense(
+                        ui,
+                        "统一裁切",
+                        format!("{}×{} @ {},{}", crop.w, crop.h, crop.x, crop.y),
+                        text(),
+                    );
+                    let mut mx = 0.0f64;
+                    let mut my = 0.0f64;
+                    for o in &report.offsets {
+                        mx = mx.max(o[0].abs());
+                        my = my.max(o[1].abs());
+                    }
+                    kv_dense(
+                        ui,
+                        "最大位移",
+                        format!("X {mx:.1} px · Y {my:.1} px"),
+                        text(),
+                    );
+                    let low = report.scores.iter().filter(|s| **s < 0.35).count();
+                    kv_dense(
+                        ui,
+                        "低分帧",
+                        format!("{low}"),
+                        if low == 0 { ok() } else { danger() },
+                    );
+                    for issue in report.issues.iter().take(4) {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(format!(
+                                    "{:04} · {} · {}",
+                                    issue.frame + 1,
+                                    issue.kind,
+                                    theme::ellipsis(&issue.detail, 22)
+                                ))
+                                .size(SIZE_SMALL)
+                                .color(danger()),
+                            )
+                            .wrap(),
+                        );
+                    }
+                    if report.issues.len() > 4 {
+                        ui.label(
+                            RichText::new(crate::i18n::tr_fmt(
+                                "另有 {} 条…",
+                                &[&(report.issues.len() - 4)],
+                            ))
+                            .size(SIZE_SMALL)
+                            .color(dim()),
+                        );
+                    }
+                } else {
+                    note(ui, "尚未运行对齐。");
+                }
+            });
     }
     if group_header(ui, state, "seq-spec", "口径", false) {
-        kv_dense(ui, "测光长边", "512 px", muted());
-        kv_dense(ui, "去闪输入", "全帧均值", muted());
-        kv_dense(ui, "预览长边", "1600 px", muted());
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                kv_dense(ui, "测光长边", "512 px", muted());
+                kv_dense(ui, "去闪输入", "全帧均值", muted());
+                kv_dense(ui, "预览长边", "1600 px", muted());
+            });
     }
 }
 
 pub(super) fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
     let mut changed = false;
     if group_header(ui, state, "deflicker", "去闪烁", true) {
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
         changed |= slider(
             ui,
             "def.window",
@@ -606,65 +737,102 @@ pub(super) fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
             state.def_window = snapped as f64;
             state.recompute_deflicker();
         }
+            });
     }
     if group_header(ui, state, "def-stats", "分析结果", false) {
-        if let Some(a) = &state.analysis {
-            let st = a.stats;
-            kv_dense(
-                ui,
-                "亮度抖动",
-                format!("{:.3} → {:.3} EV", st.jitter_before, st.jitter_after),
-                if st.jitter_after < st.jitter_before {
-                    ok()
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                if let Some(a) = &state.analysis {
+                    let st = a.stats;
+                    kv_dense(
+                        ui,
+                        "亮度抖动",
+                        format!("{:.3} → {:.3} EV", st.jitter_before, st.jitter_after),
+                        if st.jitter_after < st.jitter_before {
+                            ok()
+                        } else {
+                            text()
+                        },
+                    );
+                    if st.channels {
+                        kv_dense(
+                            ui,
+                            "色闪抖动",
+                            format!("{:.3} → {:.3} EV", st.color_before, st.color_after),
+                            if st.color_after < st.color_before {
+                                ok()
+                            } else {
+                                text()
+                            },
+                        );
+                    }
+                    kv_dense(ui, "最大修正", format!("{:+.2} EV", st.max_ev), text());
+                    kv_dense(ui, "平均修正", format!("{:.3} EV", st.mean_abs_ev), text());
+                    kv_dense(
+                        ui,
+                        "有效帧",
+                        format!("{} / {}", st.valid, st.frames),
+                        muted(),
+                    );
+                    let moved = state.corr.iter().filter(|v| v.abs() > 0.05).count();
+                    kv_dense(ui, "受影响帧", format!("{moved}"), muted());
                 } else {
-                    text()
-                },
-            );
-            if st.channels {
-                kv_dense(
-                    ui,
-                    "色闪抖动",
-                    format!("{:.3} → {:.3} EV", st.color_before, st.color_after),
-                    if st.color_after < st.color_before {
-                        ok()
-                    } else {
-                        text()
-                    },
-                );
-            }
-            kv_dense(ui, "最大修正", format!("{:+.2} EV", st.max_ev), text());
-            kv_dense(ui, "平均修正", format!("{:.3} EV", st.mean_abs_ev), text());
-            kv_dense(
-                ui,
-                "有效帧",
-                format!("{} / {}", st.valid, st.frames),
-                muted(),
-            );
-            let moved = state.corr.iter().filter(|v| v.abs() > 0.05).count();
-            kv_dense(ui, "受影响帧", format!("{moved}"), muted());
-        } else {
-            ui.label(
-                RichText::new(crate::i18n::t!("等待测光…"))
-                    .size(SIZE_SMALL)
-                    .color(dim()),
-            );
-        }
+                    ui.label(
+                        RichText::new(crate::i18n::t!("等待测光…"))
+                            .size(SIZE_SMALL)
+                            .color(dim()),
+                    );
+                }
+            });
     }
     if group_header(ui, state, "def-exposure", "曝光", false) {
-        let p = &mut state.params;
-        if slider(
-            ui,
-            "def.exp",
-            "曝光",
-            &mut p.exposure,
-            -5.0,
-            5.0,
-            0.0,
-            2,
-            true,
-        ) {
-            state.preview_dirty = true;
-        }
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                let p = &mut state.params;
+                if slider(
+                    ui,
+                    "def.exp",
+                    "曝光",
+                    &mut p.exposure,
+                    -5.0,
+                    5.0,
+                    0.0,
+                    2,
+                    true,
+                ) {
+                    state.preview_dirty = true;
+                }
+            });
     }
 }
 

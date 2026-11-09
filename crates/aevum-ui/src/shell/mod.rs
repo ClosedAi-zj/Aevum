@@ -38,6 +38,7 @@ use crate::theme::*;
 // ---- 模块划分（性能重构设计-2026-10-30 §7/§10）----
 mod adjust;
 mod canvas;
+mod canvas_cards;
 mod chrome;
 mod common;
 mod dialogs;

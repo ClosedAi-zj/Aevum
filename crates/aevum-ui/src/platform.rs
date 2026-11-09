@@ -172,7 +172,7 @@ impl Chrome {
             Os::Win => Self {
                 buttons_left: false,
                 traffic_lights: false,
-                titlebar_h: 36.0,
+                titlebar_h: 44.0,
                 brand_icon: true,
                 title_tracking: 1.2,
                 menu_pad_x: 12.0,
@@ -189,7 +189,7 @@ impl Chrome {
             Os::Mac => Self {
                 buttons_left: true,
                 traffic_lights: true,
-                titlebar_h: 30.0,
+                titlebar_h: 44.0,
                 brand_icon: false,
                 title_tracking: 1.6,
                 menu_pad_x: 10.0,
@@ -274,10 +274,11 @@ mod tests {
     fn each_platform_gets_a_distinct_shell() {
         let win = Chrome::of(Os::Win);
         let mac = Chrome::of(Os::Mac);
-        // 四件必须不同的事：按钮侧、字形、行高、分段形态。
+        // 按钮侧与字形必须不同；行高两平台**同为 44**（设计稿 .toolbar 单行
+        // 顶栏，按钮与菜单同一行），平台差异落在按钮侧与菜单字体上。
         assert!(!win.buttons_left && mac.buttons_left);
         assert!(!win.traffic_lights && mac.traffic_lights);
-        assert!(win.titlebar_h > mac.titlebar_h);
+        assert_eq!(win.titlebar_h, mac.titlebar_h);
         assert!(win.seg_track && !mac.seg_track);
         // 菜单字号按行高压得住为准：win 36px 行配 12px 字、mac 30px 行配 13px 字，
         // 两端刻意不同档，谁也不许悄悄改成同一个数。

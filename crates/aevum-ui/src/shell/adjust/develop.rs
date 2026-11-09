@@ -208,189 +208,229 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     // Sliders come from explicit field lists, so display order is decoupled from the
     // table -- the table is the parameter registry, not the page layout.
     if group_header(ui, state, "basic", "基本", true) {
-        // 快捷动作行（LR 的 Treatment / Auto 位）：三枚文字动作，与推子同一条左缘。
-        // 自动住在这里而不是面板顶栏——它改的就是下面这堆推子，动作贴着自己的
-        // 结果放，按完抬眼就能看见哪几根动了。
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
         //
-        // Quick actions (LR's treatment / auto slot): three text actions on the slider
-        // rail. Auto lives here rather than the panel's top bar because it drives
-        // exactly the sliders below -- the action sits next to its outcome.
-        ui.add_space(2.0);
-        let mut auto = false;
-        let mut mono_toggle = false;
-        let mut hdr = false;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add_space(6.0);
-            // 自动结果（「+1.17 EV · 对比 …」）进悬停提示，不铺在面板里：那是一串
-            // 读数，摊开会把推子推下去。
-            //
-            // The auto result ("+1.17 EV · contrast …") stays in the tooltip rather than
-            // the panel body: it is a wall of readings that would push the sliders down.
-            let chip = quiet_action(ui, "自动", false);
-            auto = match state.auto_note.as_deref() {
-                Some(note) => chip.on_hover_text(note).clicked(),
-                None => chip.clicked(),
-            };
-            mono_toggle = quiet_action(ui, "黑白", state.params.mono >= 50.0)
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                // 卡中卡（设计稿 .grp）：整组是一张圆角卡片，组头和内容都在卡里。
+                // 用 egui::Frame 是正解——它在画内容之前先铺底、之后再补描边，
+                // 即时模式下"背景先行"这条唯一可靠的路径。
+                //
+                // Card-in-card (the design's .grp): the whole group is one rounded card holding
+                // both header and body. `egui::Frame` is the right tool -- it paints the fill
+                // before the content and the stroke after, the one reliable path in immediate
+                // mode for "background first".
+                egui::Frame::NONE
+                    .fill(theme::chrome())
+                    .stroke(egui::Stroke::new(1.0, theme::divider()))
+                    .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        // 快捷动作行（LR 的 Treatment / Auto 位）：三枚文字动作，与推子同一条左缘。
+                        // 自动住在这里而不是面板顶栏——它改的就是下面这堆推子，动作贴着自己的
+                        // 结果放，按完抬眼就能看见哪几根动了。
+                        //
+                        // Quick actions (LR's treatment / auto slot): three text actions on the slider
+                        // rail. Auto lives here rather than the panel's top bar because it drives
+                        // exactly the sliders below -- the action sits next to its outcome.
+                        ui.add_space(2.0);
+                        let mut auto = false;
+                        let mut mono_toggle = false;
+                        let mut hdr = false;
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            ui.add_space(6.0);
+                            // 自动结果（「+1.17 EV · 对比 …」）进悬停提示，不铺在面板里：那是一串
+                            // 读数，摊开会把推子推下去。
+                            //
+                            // The auto result ("+1.17 EV · contrast …") stays in the tooltip rather than
+                            // the panel body: it is a wall of readings that would push the sliders down.
+                            let chip = quiet_action(ui, "自动", false);
+                            auto = match state.auto_note.as_deref() {
+                                Some(note) => chip.on_hover_text(note).clicked(),
+                                None => chip.clicked(),
+                            };
+                            mono_toggle = quiet_action(ui, "黑白", state.params.mono >= 50.0)
                 .on_hover_text(crate::i18n::t!(
                     "在彩色与黑白之间切换；黑白后可到「颜色混合器 → 黑白」逐色相调明暗"
                 ))
                 .clicked();
-            hdr = quiet_action(ui, "HDR", false)
-                .on_hover_text(crate::i18n::t!(
-                    "切到合成模块的 HDR 合并：同一场景的包围曝光帧合成一张"
-                ))
-                .clicked();
-        });
-        if auto {
-            state.auto_exposure(ui.ctx());
-        }
-        if mono_toggle {
-            let to_mono = state.params.mono < 50.0;
-            state.params.mono = if to_mono { 100.0 } else { 0.0 };
-            history::note(
-                "mono",
-                crate::i18n::tr(if to_mono { "黑白" } else { "彩色" }).to_owned(),
-            );
-            changed = true;
-        }
-        if hdr {
-            state.module = Module::Merge;
-            state.dock_tab = crate::state::DockTab::Adjust;
-            state.dock_focus = Some("hdr".to_owned());
-            state.collapsed.remove("hdr");
-        }
-        // 照片风格（LR 的 Profile 位）：所有滑块之下的渲染基调。换风格不动任何
-        // 参数值，也不进「N 项调整」徽标——它是基调，不是调整。
-        //
-        // Photo style (LR's Profile slot): the rendering basis beneath every slider.
-        // Switching touches no slider value and never enters the "N adjusted" badge --
-        // it is a basis, not an adjustment.
-        ui.add_space(2.0);
-        // 风格行与推子同轨：标签占 76px 列（左边距与推子标签一致，6px），下拉从
-        // 84px 起到行尾通栏。效果图（用户 2026-11-07 第 4 张）里下拉是整行宽的，
-        // 112px 的小方框读起来像一条缩在角落的推子，和下面四十多根推子的左缘对
-        // 不齐。行高与读数框同步按 PS 参考校准为 30 / 18。
-        //
-        // The style row shares the slider rail: a 76 px label column (same 6 px left
-        // pad as the slider labels) and a dropdown from 84 px to the row's right edge.
-        // In the user's mockup the dropdown spans the row; a 112 px box read like a
-        // stray slider and broke the left edge shared by the forty-odd sliders below.
-        // Row/box heights follow the PS-measured 30 / 18.
-        let (row, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::hover());
-        ui.painter().text(
-            Pos2::new(row.left() + 6.0, row.center().y),
-            Align2::LEFT_CENTER,
-            crate::i18n::t!("风格"),
-            font(SIZE_LABEL + 1.0),
-            text(),
-        );
-        let combo = Rect::from_min_max(
-            Pos2::new(row.left() + 89.0, row.top() + 6.0),
-            Pos2::new(row.right() - 6.0, row.bottom() - 6.0),
-        );
-        let current = state.params.style;
-        ui.scope_builder(
-            egui::UiBuilder::new()
-                .max_rect(combo)
-                .layout(Layout::left_to_right(Align::Center)),
-            |ui| {
-                ui.spacing_mut().interact_size.y = 18.0;
-                // 下拉收成 PS 的读数框体格：深一档的实底、1px divider 边、10px 小箭头。
-                // egui 默认的「浅灰大三角」比读数框重，一整页下来每个下拉都像按钮。
-                //
-                // The dropdown adopts the PS readout-box physique: one step darker fill,
-                // a 1px divider edge, a 10 px arrow. egui's stock light slab with a big
-                // triangle outweighs the readout boxes and reads as a button.
-                ui.spacing_mut().icon_width = 10.0;
-                {
-                    let v = &mut ui.style_mut().visuals;
-                    v.override_text_color = Some(text());
-                    v.widgets.inactive.bg_fill = field();
-                    v.widgets.inactive.weak_bg_fill = field();
-                    v.widgets.inactive.bg_stroke = Stroke::new(1.0, divider());
-                    v.widgets.hovered.bg_fill = field_hover();
-                    v.widgets.hovered.weak_bg_fill = field_hover();
-                    v.widgets.hovered.bg_stroke = Stroke::new(1.0, border_strong());
-                }
-                egui::ComboBox::from_id_salt("dev-style")
-                    .selected_text(crate::i18n::tr(
-                        aevum_core::style::NAME_KEYS
-                            [current.min(aevum_core::style::COUNT - 1) as usize],
-                    ))
-                    .width(combo.width())
-                    .show_ui(ui, |ui| {
-                        combo_style(ui);
-                        for (i, key) in aevum_core::style::NAME_KEYS.iter().enumerate() {
-                            let idx = i as u8;
-                            if ui
-                                .selectable_label(state.params.style == idx, crate::i18n::tr(key))
-                                .clicked()
-                                && state.params.style != idx
-                            {
-                                state.params.style = idx;
-                                state.preview_dirty = true;
-                                history::note(
-                                    "style",
-                                    crate::i18n::tr_fmt(
-                                        "风格 {}",
-                                        &[&crate::i18n::tr(key).to_owned()],
-                                    ),
-                                );
-                            }
+                            hdr = quiet_action(ui, "HDR", false)
+                                .on_hover_text(crate::i18n::t!(
+                                    "切到合成模块的 HDR 合并：同一场景的包围曝光帧合成一张"
+                                ))
+                                .clicked();
+                        });
+                        if auto {
+                            state.auto_exposure(ui.ctx());
+                        }
+                        if mono_toggle {
+                            let to_mono = state.params.mono < 50.0;
+                            state.params.mono = if to_mono { 100.0 } else { 0.0 };
+                            history::note(
+                                "mono",
+                                crate::i18n::tr(if to_mono { "黑白" } else { "彩色" }).to_owned(),
+                            );
+                            changed = true;
+                        }
+                        if hdr {
+                            state.module = Module::Merge;
+                            state.dock_tab = crate::state::DockTab::Adjust;
+                            state.dock_focus = Some("hdr".to_owned());
+                            state.collapsed.remove("hdr");
+                        }
+                        // 照片风格（LR 的 Profile 位）：所有滑块之下的渲染基调。换风格不动任何
+                        // 参数值，也不进「N 项调整」徽标——它是基调，不是调整。
+                        //
+                        // Photo style (LR's Profile slot): the rendering basis beneath every slider.
+                        // Switching touches no slider value and never enters the "N adjusted" badge --
+                        // it is a basis, not an adjustment.
+                        ui.add_space(2.0);
+                        // 风格行与推子同轨：标签占 76px 列（左边距与推子标签一致，6px），下拉从
+                        // 84px 起到行尾通栏。效果图（用户 2026-11-07 第 4 张）里下拉是整行宽的，
+                        // 112px 的小方框读起来像一条缩在角落的推子，和下面四十多根推子的左缘对
+                        // 不齐。行高与读数框同步按 PS 参考校准为 30 / 18。
+                        //
+                        // The style row shares the slider rail: a 76 px label column (same 6 px left
+                        // pad as the slider labels) and a dropdown from 84 px to the row's right edge.
+                        // In the user's mockup the dropdown spans the row; a 112 px box read like a
+                        // stray slider and broke the left edge shared by the forty-odd sliders below.
+                        // Row/box heights follow the PS-measured 30 / 18.
+                        let (row, _) = ui.allocate_exact_size(
+                            Vec2::new(ui.available_width(), 30.0),
+                            Sense::hover(),
+                        );
+                        ui.painter().text(
+                            Pos2::new(row.left() + 6.0, row.center().y),
+                            Align2::LEFT_CENTER,
+                            crate::i18n::t!("风格"),
+                            font(SIZE_LABEL + 1.0),
+                            text(),
+                        );
+                        let combo = Rect::from_min_max(
+                            Pos2::new(row.left() + 89.0, row.top() + 6.0),
+                            Pos2::new(row.right() - 6.0, row.bottom() - 6.0),
+                        );
+                        let current = state.params.style;
+                        ui.scope_builder(
+                            egui::UiBuilder::new()
+                                .max_rect(combo)
+                                .layout(Layout::left_to_right(Align::Center)),
+                            |ui| {
+                                ui.spacing_mut().interact_size.y = 18.0;
+                                // 下拉收成 PS 的读数框体格：深一档的实底、1px divider 边、10px 小箭头。
+                                // egui 默认的「浅灰大三角」比读数框重，一整页下来每个下拉都像按钮。
+                                //
+                                // The dropdown adopts the PS readout-box physique: one step darker fill,
+                                // a 1px divider edge, a 10 px arrow. egui's stock light slab with a big
+                                // triangle outweighs the readout boxes and reads as a button.
+                                ui.spacing_mut().icon_width = 10.0;
+                                {
+                                    let v = &mut ui.style_mut().visuals;
+                                    v.override_text_color = Some(text());
+                                    v.widgets.inactive.bg_fill = field();
+                                    v.widgets.inactive.weak_bg_fill = field();
+                                    v.widgets.inactive.bg_stroke = Stroke::new(1.0, divider());
+                                    v.widgets.hovered.bg_fill = field_hover();
+                                    v.widgets.hovered.weak_bg_fill = field_hover();
+                                    v.widgets.hovered.bg_stroke = Stroke::new(1.0, border_strong());
+                                }
+                                egui::ComboBox::from_id_salt("dev-style")
+                                    .selected_text(crate::i18n::tr(
+                                        aevum_core::style::NAME_KEYS
+                                            [current.min(aevum_core::style::COUNT - 1) as usize],
+                                    ))
+                                    .width(combo.width())
+                                    .show_ui(ui, |ui| {
+                                        combo_style(ui);
+                                        for (i, key) in
+                                            aevum_core::style::NAME_KEYS.iter().enumerate()
+                                        {
+                                            let idx = i as u8;
+                                            if ui
+                                                .selectable_label(
+                                                    state.params.style == idx,
+                                                    crate::i18n::tr(key),
+                                                )
+                                                .clicked()
+                                                && state.params.style != idx
+                                            {
+                                                state.params.style = idx;
+                                                state.preview_dirty = true;
+                                                history::note(
+                                                    "style",
+                                                    crate::i18n::tr_fmt(
+                                                        "风格 {}",
+                                                        &[&crate::i18n::tr(key).to_owned()],
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    });
+                            },
+                        );
+                        // 相机配置行（LR 的 Profile 行）：DCP 决定 RAW 解码后的白平衡、颜色矩阵
+                        // 与色调曲线，是所有推子底下的地基，所以从光学组搬到基本组。镜头配置
+                        // 留在光学组——那是整幅画面的几何与暗角校正，和调色不是一件事。
+                        //
+                        // Camera-profile row (LR's Profile row): DCP takes over white balance, colour
+                        // matrix and tone curve after RAW decode, i.e. it sits beneath every slider, so
+                        // it moves from Optics into Basic. The lens profile stays in Optics -- it is a
+                        // whole-frame geometry/vignetting correction, not grading.
+                        let ctx = ui.ctx().clone();
+                        camera_profile_row(state, &ctx, ui);
+                        sub_head(ui, crate::i18n::t!("白平衡"));
+                        for f in [Field::Temperature, Field::Tint] {
+                            changed |= spec_field(ui, state, f);
+                        }
+                        // 小标题用「影调」而不是「色调」：中文里 tone 与 tint 都叫「色调」，
+                        // 而 i18n 表以中文为键——同一个键只能有一条英文，区标题会被译成 Tint。
+                        //
+                        // The heading says 影调 (tonal range) rather than 色调: in Chinese both tone
+                        // and tint are called 色调, and the i18n table keys on Chinese, so one key can
+                        // only carry one English string -- the section title would read "Tint".
+                        sub_head(ui, crate::i18n::t!("影调"));
+                        for f in [
+                            Field::Exposure,
+                            Field::HlRolloff,
+                            Field::Contrast,
+                            Field::ContrastLinear,
+                            Field::Highlights,
+                            Field::Shadows,
+                            Field::Whites,
+                            Field::Blacks,
+                            Field::BlackSoft,
+                            Field::WhiteSoft,
+                        ] {
+                            changed |= spec_field(ui, state, f);
+                        }
+                        sub_head(ui, crate::i18n::t!("偏好"));
+                        for f in [
+                            Field::Texture,
+                            Field::Clarity,
+                            Field::Dehaze,
+                            Field::DehazeDark,
+                            Field::DehazeContrast,
+                            Field::Vibrance,
+                            Field::Saturation,
+                        ] {
+                            changed |= spec_field(ui, state, f);
                         }
                     });
-            },
-        );
-        // 相机配置行（LR 的 Profile 行）：DCP 决定 RAW 解码后的白平衡、颜色矩阵
-        // 与色调曲线，是所有推子底下的地基，所以从光学组搬到基本组。镜头配置
-        // 留在光学组——那是整幅画面的几何与暗角校正，和调色不是一件事。
-        //
-        // Camera-profile row (LR's Profile row): DCP takes over white balance, colour
-        // matrix and tone curve after RAW decode, i.e. it sits beneath every slider, so
-        // it moves from Optics into Basic. The lens profile stays in Optics -- it is a
-        // whole-frame geometry/vignetting correction, not grading.
-        let ctx = ui.ctx().clone();
-        camera_profile_row(state, &ctx, ui);
-        sub_head(ui, crate::i18n::t!("白平衡"));
-        for f in [Field::Temperature, Field::Tint] {
-            changed |= spec_field(ui, state, f);
-        }
-        // 小标题用「影调」而不是「色调」：中文里 tone 与 tint 都叫「色调」，
-        // 而 i18n 表以中文为键——同一个键只能有一条英文，区标题会被译成 Tint。
-        //
-        // The heading says 影调 (tonal range) rather than 色调: in Chinese both tone
-        // and tint are called 色调, and the i18n table keys on Chinese, so one key can
-        // only carry one English string -- the section title would read "Tint".
-        sub_head(ui, crate::i18n::t!("影调"));
-        for f in [
-            Field::Exposure,
-            Field::HlRolloff,
-            Field::Contrast,
-            Field::ContrastLinear,
-            Field::Highlights,
-            Field::Shadows,
-            Field::Whites,
-            Field::Blacks,
-            Field::BlackSoft,
-            Field::WhiteSoft,
-        ] {
-            changed |= spec_field(ui, state, f);
-        }
-        sub_head(ui, crate::i18n::t!("偏好"));
-        for f in [
-            Field::Texture,
-            Field::Clarity,
-            Field::Dehaze,
-            Field::DehazeDark,
-            Field::DehazeContrast,
-            Field::Vibrance,
-            Field::Saturation,
-        ] {
-            changed |= spec_field(ui, state, f);
-        }
+            });
     }
     // 子区返回「参数动了」就顺手摘掉该组的旁路：推子路径已在 spec_slider 里
     // 自清，这里接的是曲线/色阶拖点、外观卸下这类非推子路径。
@@ -435,7 +475,23 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
 /// 外观：外挂一张 .cube 三维查表，套在主链之前；导出把当前调色烘成 .cube。
 fn adjust_look(state: &mut AppState, ui: &mut Ui) -> bool {
     if !group_header(ui, state, "look", "外观（.cube）", true) {
-        return false;
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |_ui| false);
     }
     let mut import = false;
     let mut export = false;
@@ -557,7 +613,23 @@ fn parametric_body(state: &mut AppState, ui: &mut Ui) -> bool {
 /// point / levels) under the header, sharing one history path and one reset scope.
 fn adjust_curve(state: &mut AppState, ui: &mut Ui) -> bool {
     if !group_header(ui, state, "curve", "曲线", true) {
-        return false;
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |_ui| false);
     }
     let mut changed = false;
     if let Some(i) = acr_tabs(
@@ -654,7 +726,23 @@ fn point_curve_body(state: &mut AppState, ui: &mut Ui) -> bool {
 /// "pick a band first" round trip.
 fn adjust_mixer(state: &mut AppState, ui: &mut Ui) -> bool {
     if !group_header(ui, state, "mixer", "颜色混合器", true) {
-        return false;
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |_ui| false);
     }
     let mut changed = false;
     if let Some(i) = acr_tabs(
@@ -794,7 +882,23 @@ fn mono_body(state: &mut AppState, ui: &mut Ui) -> bool {
 /// 的 HSV 灰心盘面。
 fn adjust_grade(state: &mut AppState, ui: &mut Ui) -> bool {
     if !group_header(ui, state, "grade", "色彩分级", true) {
-        return false;
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |_ui| false);
     }
     let mut changed = false;
     let w = ui.available_width();
@@ -857,7 +961,23 @@ fn adjust_grade(state: &mut AppState, ui: &mut Ui) -> bool {
 /// 细节：中频（清晰度 / 纹理）+ 锐化四件套 + 降噪五件套。
 fn adjust_detail(state: &mut AppState, ui: &mut Ui) -> bool {
     if !group_header(ui, state, "detail", "细节", true) {
-        return false;
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |_ui| false);
     }
     let mut changed = false;
     for s in controls::specs_of_group("detail") {
@@ -873,7 +993,23 @@ fn adjust_detail(state: &mut AppState, ui: &mut Ui) -> bool {
 /// Each band gets a subsection heading -- nine mixed sliders read as a wall otherwise.
 fn adjust_effects(state: &mut AppState, ui: &mut Ui) -> bool {
     if !group_header(ui, state, "effects", "效果", true) {
-        return false;
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |_ui| false);
     }
     let mut changed = false;
     sub_head(ui, crate::i18n::t!("暗角"));

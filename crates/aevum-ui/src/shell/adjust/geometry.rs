@@ -15,7 +15,23 @@ use super::*;
 /// insufficient evidence it does nothing rather than guess a quad that warps the frame.
 pub(super) fn adjust_geometry(state: &mut AppState, ui: &mut Ui) -> bool {
     if !group_header(ui, state, "geometry", "几何", false) {
-        return false;
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |_ui| false);
     }
     let mut auto = false;
     let mut clear = false;
@@ -122,7 +138,23 @@ pub(super) fn adjust_geometry(state: &mut AppState, ui: &mut Ui) -> bool {
 /// this into a form where you type coordinates and press enter.
 pub(super) fn adjust_retouch(state: &mut AppState, ui: &mut Ui) -> bool {
     if !group_header(ui, state, "retouch", "修复", false) {
-        return false;
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |_ui| false);
     }
     let mut changed = false;
     let mode = ui
@@ -238,7 +270,23 @@ pub(super) fn adjust_retouch(state: &mut AppState, ui: &mut Ui) -> bool {
 /// reading it last says "the calibration is the base layer").
 pub(super) fn adjust_optics(state: &mut AppState, ui: &mut Ui) -> bool {
     if !group_header(ui, state, "optics", "光学", true) {
-        return false;
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |_ui| false);
     }
     let mut changed = false;
     sub_head(ui, crate::i18n::t!("镜头校正"));
@@ -299,79 +347,115 @@ fn lens_body(state: &mut AppState, ui: &mut Ui) -> bool {
 
 pub(super) fn adjust_frame(state: &mut AppState, ui: &mut Ui) {
     if group_header(ui, state, "frame", "画幅", true) {
-        // 比例胶囊 9 枚，336px 面板一行装不下——horizontal_wrapped 会在第 8 枚
-        // 后孤行挂一枚「2:3」，读作排版事故。改成 5+4 两行均衡排。
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
         //
-        // Nine aspect chips do not fit one row of the 336 px panel; horizontal wrap
-        // stranded "2:3" alone on line two, which reads as a layout accident. Lay
-        // them out as two balanced rows of 5 and 4.
-        for row in Aspect::ALL.chunks(5) {
-            ui.horizontal(|ui| {
-                for &a in row {
-                    if bar_chip(ui, a.label(), state.aspect == a).clicked() {
-                        state.set_aspect(a);
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                // 比例胶囊 9 枚，336px 面板一行装不下——horizontal_wrapped 会在第 8 枚
+                // 后孤行挂一枚「2:3」，读作排版事故。改成 5+4 两行均衡排。
+                //
+                // Nine aspect chips do not fit one row of the 336 px panel; horizontal wrap
+                // stranded "2:3" alone on line two, which reads as a layout accident. Lay
+                // them out as two balanced rows of 5 and 4.
+                for row in Aspect::ALL.chunks(5) {
+                    ui.horizontal(|ui| {
+                        for &a in row {
+                            if bar_chip(ui, a.label(), state.aspect == a).clicked() {
+                                state.set_aspect(a);
+                            }
+                        }
+                    });
+                }
+                if state.resolution.is_some() {
+                    ui.add_space(4.0);
+                    // 推子只管取值，0 附近吸附和重画标记都交给 set_rotate。
+                    let mut deg = state.rotate;
+                    if slider(
+                        ui,
+                        "frame.rotate",
+                        "拉直",
+                        &mut deg,
+                        -45.0,
+                        45.0,
+                        0.0,
+                        1,
+                        true,
+                    ) {
+                        state.set_rotate(deg);
                     }
                 }
-            });
-        }
-        if state.resolution.is_some() {
-            ui.add_space(4.0);
-            // 推子只管取值，0 附近吸附和重画标记都交给 set_rotate。
-            let mut deg = state.rotate;
-            if slider(
-                ui,
-                "frame.rotate",
-                "拉直",
-                &mut deg,
-                -45.0,
-                45.0,
-                0.0,
-                1,
-                true,
-            ) {
-                state.set_rotate(deg);
-            }
-        }
-        ui.add_space(4.0);
-        if state.resolution.is_some() {
-            let sel = state.crop_box();
-            kv(
-                ui,
-                "取景框",
-                format!("{} × {} @ {}, {}", sel.w, sel.h, sel.x, sel.y),
-                text(),
-            );
-            match state.aspect.ratio() {
-                Some(r) => kv(ui, "画幅比例", format!("{r:.3}"), muted()),
-                None => kv(ui, "画幅比例", "跟随原生", muted()),
-            }
-            ui.horizontal_wrapped(|ui| {
-                if bar_chip(ui, "拖框裁剪", state.tool == Tool::Crop).clicked() {
-                    state.set_tool(Tool::Crop);
-                }
-                if (state.user_crop.is_some() || state.rotate != 0.0)
-                    && ui.small_button(crate::i18n::t!("取消取景")).clicked()
-                {
-                    state.crop_reset();
-                    state.set_rotate(0.0);
+                ui.add_space(4.0);
+                if state.resolution.is_some() {
+                    let sel = state.crop_box();
+                    kv(
+                        ui,
+                        "取景框",
+                        format!("{} × {} @ {}, {}", sel.w, sel.h, sel.x, sel.y),
+                        text(),
+                    );
+                    match state.aspect.ratio() {
+                        Some(r) => kv(ui, "画幅比例", format!("{r:.3}"), muted()),
+                        None => kv(ui, "画幅比例", "跟随原生", muted()),
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        if bar_chip(ui, "拖框裁剪", state.tool == Tool::Crop).clicked() {
+                            state.set_tool(Tool::Crop);
+                        }
+                        if (state.user_crop.is_some() || state.rotate != 0.0)
+                            && ui.small_button(crate::i18n::t!("取消取景")).clicked()
+                        {
+                            state.crop_reset();
+                            state.set_rotate(0.0);
+                        }
+                    });
+                } else {
+                    kv(ui, "画幅比例", "跟随原生", muted());
                 }
             });
-        } else {
-            kv(ui, "画幅比例", "跟随原生", muted());
-        }
     }
     if group_header(ui, state, "frame-guides", "辅助线", false) {
-        ui.checkbox(
-            &mut state.grid,
-            RichText::new(crate::i18n::t!("三分线")).size(SIZE_SMALL),
-        );
-        ui.checkbox(
-            &mut state.cross,
-            RichText::new(crate::i18n::t!("中心十字")).size(SIZE_SMALL),
-        );
-        ui.checkbox(
-            &mut state.split,
-            RichText::new(crate::i18n::t!("前后分割")).size(SIZE_SMALL),
-        );
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                ui.checkbox(
+                    &mut state.grid,
+                    RichText::new(crate::i18n::t!("三分线")).size(SIZE_SMALL),
+                );
+                ui.checkbox(
+                    &mut state.cross,
+                    RichText::new(crate::i18n::t!("中心十字")).size(SIZE_SMALL),
+                );
+                ui.checkbox(
+                    &mut state.split,
+                    RichText::new(crate::i18n::t!("前后分割")).size(SIZE_SMALL),
+                );
+            });
     }
 }

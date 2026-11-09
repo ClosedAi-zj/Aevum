@@ -96,6 +96,7 @@ fn main() -> ExitCode {
     let mut shot_libstack = false;
     let mut shot_plugin: Option<String> = None;
     let mut shot_market = false;
+    let mut shot_step: Option<usize> = None;
     let mut shot_color = false;
     let mut shot_look = false;
 
@@ -129,6 +130,19 @@ fn main() -> ExitCode {
                 }
             },
             "--shot-market" => shot_market = true,
+            // --shot-step N：截图前把三页流程钉在第 N 步（0 序列管理 / 1 调色 / 2 导出）。
+            // 不钉的话派生逻辑会按「输入是否就绪」自己跳，截演示图常跳到导出页。
+            //
+            // --shot-step N pins the three-page flow to step N before the shot.
+            // Without it the derived logic jumps by "is the input ready", which lands on
+            // the export page for demo screenshots.
+            "--shot-step" => match args.next().map(|v| v.to_string_lossy().parse::<usize>()) {
+                Some(Ok(n)) => shot_step = Some(n),
+                _ => {
+                    warn!("--shot-step 需要一个数字");
+                    return ExitCode::from(2);
+                }
+            },
             "--shot-color" => shot_color = true,
             "--shot-look" => shot_look = true,
             "--shot-end" => shot_end = true,
@@ -280,6 +294,7 @@ fn main() -> ExitCode {
             libstack: shot_libstack,
             plugin: shot_plugin,
             market: shot_market,
+            step: shot_step,
             color: shot_color,
             look: shot_look,
         },

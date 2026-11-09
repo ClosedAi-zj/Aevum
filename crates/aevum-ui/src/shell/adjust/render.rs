@@ -62,89 +62,127 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
     // One chip per platform fills frame, rate, encoder and quality in one click; everything
     // stays editable below. It sits before "Output": decide where it goes first, then tune.
     if group_header(ui, state, "render-delivery", "平台交付", true) {
-        let table = delivery_table();
-        let zh = crate::i18n::current() == crate::i18n::Lang::ZH;
-        ui.horizontal_wrapped(|ui| {
-            for preset in &table.presets {
-                let response = bar_chip(ui, preset.name(zh), state.matches_delivery(preset));
-                if response.clicked() {
-                    state.apply_delivery(preset);
-                }
-                let hint = preset.hint(zh);
-                if !hint.is_empty() {
-                    response.on_hover_text(hint);
-                }
-            }
-        });
-        let active: Vec<&str> = table
-            .presets
-            .iter()
-            .filter(|p| state.matches_delivery(p))
-            .map(|p| p.name(zh))
-            .collect();
-        // 状态行只说结论不写括号注解：旧句 24 字还带双括号，dim 色排出来像
-        // debug 文本（用户截图点名）。命中平台时列平台名，未命中就四个字。
-        let line = if active.is_empty() {
-            crate::i18n::t!("未套平台预设").to_owned()
-        } else {
-            active.join(" · ")
-        };
-        ui.add_space(2.0);
-        ui.add(egui::Label::new(RichText::new(line).size(SIZE_SMALL).color(muted())).wrap());
-        ui.horizontal_wrapped(|ui| {
-            if ui.small_button(crate::i18n::t!("预设表…")).clicked() {
-                let path = DeliveryTable::path();
-                // 不存在就先写一份内置模板再打开：让人「照着一个空文件猜格式」是最坏的
-                // 交付方式。
-                //
-                // Write the built-in template first when the file is missing: asking someone
-                // to guess the format from an empty file is the worst kind of delivery.
-                if !path.exists() {
-                    let _ = table.write_to(&path);
-                }
-                reveal_in_file_manager(&path);
-            }
-            // 路径按**可用宽度**截断，不按字符数：34 个半角字符在 372px 面板里
-            // 仍然宽过按钮剩下的位置，旧写法会让路径压到「预设表…」按钮上
-            // （2026-11-04 的重叠自检抓到的实例）。`truncate()` 走 egui 的布局，
-            // 拿到的是这一行真实的剩余宽度。
-            //
-            // Truncate by available width rather than by character count: 34 half-width
-            // characters still overrun the space left of the button on a 372 px panel,
-            // and the old form ran the path onto the button. `truncate()` asks egui's
-            // layout for the real remaining width.
-            // 只显示文件名，全路径走悬停：面板里挂一条
-            // `C://Users//…//AppData//Roaming//…` 是开发痕迹，用户既读不懂也点不开，
-            // 真正需要全路径的场景（找文件）已经由左边那颗按钮承担。
-            //
-            // Show the file name only and keep the full path on hover: a raw
-            // `C://Users//...//AppData//Roaming//...` in the panel is a developer trace the user
-            // can neither read nor click, and the one case that needs it -- locating the file
-            // -- is already covered by the button on the left.
-            let preset_path = DeliveryTable::path();
-            let preset_name = preset_path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| preset_path.display().to_string());
-            ui.add(
-                egui::Label::new(RichText::new(preset_name).size(SIZE_SMALL).color(dim()))
-                    .truncate()
-                    .selectable(false),
-            )
-            // 一条悬停里给全两件事：文件在哪、改完何时生效。
-            // 拆成两层提示会让后者被覆盖（Response 只保留最后一次）。
-            //
-            // One tooltip carries both facts -- where the file is and when an edit takes
-            // effect -- because two chained hints overwrite each other (a Response keeps
-            // only the last one).
-            .on_hover_text(format!(
-                "{}\n{}",
-                preset_path.display(),
-                crate::i18n::t!("改完重启生效：预设在启动时读一次")
-            ));
-        });
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                let table = delivery_table();
+                let zh = crate::i18n::current() == crate::i18n::Lang::ZH;
+                ui.horizontal_wrapped(|ui| {
+                    for preset in &table.presets {
+                        let response =
+                            bar_chip(ui, preset.name(zh), state.matches_delivery(preset));
+                        if response.clicked() {
+                            state.apply_delivery(preset);
+                        }
+                        let hint = preset.hint(zh);
+                        if !hint.is_empty() {
+                            response.on_hover_text(hint);
+                        }
+                    }
+                });
+                let active: Vec<&str> = table
+                    .presets
+                    .iter()
+                    .filter(|p| state.matches_delivery(p))
+                    .map(|p| p.name(zh))
+                    .collect();
+                // 状态行只说结论不写括号注解：旧句 24 字还带双括号，dim 色排出来像
+                // debug 文本（用户截图点名）。命中平台时列平台名，未命中就四个字。
+                let line = if active.is_empty() {
+                    crate::i18n::t!("未套平台预设").to_owned()
+                } else {
+                    active.join(" · ")
+                };
+                ui.add_space(2.0);
+                ui.add(
+                    egui::Label::new(RichText::new(line).size(SIZE_SMALL).color(muted())).wrap(),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    if ui.small_button(crate::i18n::t!("预设表…")).clicked() {
+                        let path = DeliveryTable::path();
+                        // 不存在就先写一份内置模板再打开：让人「照着一个空文件猜格式」是最坏的
+                        // 交付方式。
+                        //
+                        // Write the built-in template first when the file is missing: asking someone
+                        // to guess the format from an empty file is the worst kind of delivery.
+                        if !path.exists() {
+                            let _ = table.write_to(&path);
+                        }
+                        reveal_in_file_manager(&path);
+                    }
+                    // 路径按**可用宽度**截断，不按字符数：34 个半角字符在 372px 面板里
+                    // 仍然宽过按钮剩下的位置，旧写法会让路径压到「预设表…」按钮上
+                    // （2026-11-04 的重叠自检抓到的实例）。`truncate()` 走 egui 的布局，
+                    // 拿到的是这一行真实的剩余宽度。
+                    //
+                    // Truncate by available width rather than by character count: 34 half-width
+                    // characters still overrun the space left of the button on a 372 px panel,
+                    // and the old form ran the path onto the button. `truncate()` asks egui's
+                    // layout for the real remaining width.
+                    // 只显示文件名，全路径走悬停：面板里挂一条
+                    // `C://Users//…//AppData//Roaming//…` 是开发痕迹，用户既读不懂也点不开，
+                    // 真正需要全路径的场景（找文件）已经由左边那颗按钮承担。
+                    //
+                    // Show the file name only and keep the full path on hover: a raw
+                    // `C://Users//...//AppData//Roaming//...` in the panel is a developer trace the user
+                    // can neither read nor click, and the one case that needs it -- locating the file
+                    // -- is already covered by the button on the left.
+                    let preset_path = DeliveryTable::path();
+                    let preset_name = preset_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| preset_path.display().to_string());
+                    ui.add(
+                        egui::Label::new(RichText::new(preset_name).size(SIZE_SMALL).color(dim()))
+                            .truncate()
+                            .selectable(false),
+                    )
+                    // 一条悬停里给全两件事：文件在哪、改完何时生效。
+                    // 拆成两层提示会让后者被覆盖（Response 只保留最后一次）。
+                    //
+                    // One tooltip carries both facts -- where the file is and when an edit takes
+                    // effect -- because two chained hints overwrite each other (a Response keeps
+                    // only the last one).
+                    .on_hover_text(format!(
+                        "{}\n{}",
+                        preset_path.display(),
+                        crate::i18n::t!("改完重启生效：预设在启动时读一次")
+                    ));
+                });
+            });
     }
     if group_header(ui, state, "render-out", "输出", true) {
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
         chip_row(ui, "输出模式", |ui| {
             for (mode, label) in [
                 (OutputMode::Video, "视频"),
@@ -382,386 +420,483 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
                 );
             }
         }
+            });
     }
     if group_header(ui, state, "render-watermark", "水印", true) {
-        let mut enabled = state.render_watermark.enabled;
-        if ui
-            .checkbox(
-                &mut enabled,
-                RichText::new(crate::i18n::t!("在成片上盖章")).size(SIZE_SMALL),
-            )
-            .on_hover_text(crate::i18n::t!(
-                "和输出锐化同一条规矩：只在导出尾部生效，预览与缩略图都不叠这一层"
-            ))
-            .changed()
-        {
-            state.render_watermark.enabled = enabled;
-            let on = crate::i18n::tr(if enabled { "开" } else { "关" });
-            history::note("render.watermark", crate::i18n::tr_fmt("水印 {}", &[&on]));
-        }
-        if state.render_watermark.enabled {
-            ui.add_space(4.0);
-            // 内容二选一：切过去另一侧的输入原样留着，来回切不丢正文。
-            ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new(crate::i18n::t!("内容"))
-                        .size(SIZE_SMALL)
-                        .color(muted()),
-                );
-                for &kind in &WatermarkKind::ALL {
-                    if bar_chip(ui, kind.cn(), state.render_watermark.kind == kind).clicked() {
-                        state.render_watermark.kind = kind;
-                        history::note(
-                            "render.watermark.kind",
-                            crate::i18n::tr_fmt("水印内容 {}", &[&crate::i18n::tr(kind.cn())]),
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                let mut enabled = state.render_watermark.enabled;
+                if ui
+                    .checkbox(
+                        &mut enabled,
+                        RichText::new(crate::i18n::t!("在成片上盖章")).size(SIZE_SMALL),
+                    )
+                    .on_hover_text(crate::i18n::t!(
+                        "和输出锐化同一条规矩：只在导出尾部生效，预览与缩略图都不叠这一层"
+                    ))
+                    .changed()
+                {
+                    state.render_watermark.enabled = enabled;
+                    let on = crate::i18n::tr(if enabled { "开" } else { "关" });
+                    history::note("render.watermark", crate::i18n::tr_fmt("水印 {}", &[&on]));
+                }
+                if state.render_watermark.enabled {
+                    ui.add_space(4.0);
+                    // 内容二选一：切过去另一侧的输入原样留着，来回切不丢正文。
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new(crate::i18n::t!("内容"))
+                                .size(SIZE_SMALL)
+                                .color(muted()),
                         );
+                        for &kind in &WatermarkKind::ALL {
+                            if bar_chip(ui, kind.cn(), state.render_watermark.kind == kind)
+                                .clicked()
+                            {
+                                state.render_watermark.kind = kind;
+                                history::note(
+                                    "render.watermark.kind",
+                                    crate::i18n::tr_fmt(
+                                        "水印内容 {}",
+                                        &[&crate::i18n::tr(kind.cn())],
+                                    ),
+                                );
+                            }
+                        }
+                    });
+                    ui.add_space(2.0);
+                    if state.render_watermark.kind == WatermarkKind::Text {
+                        let edited = ui.add(
+                            egui::TextEdit::singleline(&mut state.render_watermark.text)
+                                .hint_text(format!("© {}", aevum_core::brand::TITLE))
+                                .desired_width(f32::INFINITY)
+                                .font(mono(SIZE_SMALL)),
+                        );
+                        if edited.changed() {
+                            history::note("render.watermark.text", "水印正文");
+                        }
+                    } else {
+                        let picked = state.render_watermark.image.display().to_string();
+                        let shown = if state.render_watermark.image.as_os_str().is_empty() {
+                            "还没选图片".to_owned()
+                        } else {
+                            theme::ellipsis(&picked, 24)
+                        };
+                        ui.horizontal(|ui| {
+                            if bar_button(ui, "选择图片…").clicked() {
+                                state.request_dialog(
+                                    crate::state::ops_dialog::DialogPurpose::WatermarkImage,
+                                    crate::state::ops_dialog::DialogMode::File,
+                                    Some(crate::state::ops_dialog::DialogFilter {
+                                        name: "图片",
+                                        exts: vec!["png", "jpg", "jpeg", "webp", "tif", "tiff"],
+                                    }),
+                                    state.seq.as_ref().map(|s| s.root.clone()),
+                                    None,
+                                );
+                            }
+                            ui.label(RichText::new(shown).size(SIZE_SMALL).color(dim()));
+                        });
+                    }
+                    ui.add_space(4.0);
+                    // 九宫格按屏幕坐标读：y 向下，所以「上中」真的是上面那格。
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new(crate::i18n::t!("位置"))
+                                .size(SIZE_SMALL)
+                                .color(muted()),
+                        );
+                        for &spot in &Spot::ALL {
+                            if bar_chip(ui, spot.cn(), state.render_watermark.spot == spot)
+                                .clicked()
+                            {
+                                state.render_watermark.spot = spot;
+                                history::note(
+                                    "render.watermark.spot",
+                                    crate::i18n::tr_fmt(
+                                        "水印位置 {}",
+                                        &[&crate::i18n::tr(spot.cn())],
+                                    ),
+                                );
+                            }
+                        }
+                    });
+                    let mut opacity = f64::from(state.render_watermark.opacity);
+                    if slider(
+                        ui,
+                        "render.watermark.opacity",
+                        "不透明度",
+                        &mut opacity,
+                        0.0,
+                        100.0,
+                        60.0,
+                        0,
+                        false,
+                    ) {
+                        state.render_watermark.opacity = opacity.round().clamp(0.0, 100.0) as u8;
+                    }
+                    let mut size = f64::from(state.render_watermark.size);
+                    if slider(
+                        ui,
+                        "render.watermark.size",
+                        "尺寸",
+                        &mut size,
+                        1.0,
+                        40.0,
+                        4.0,
+                        0,
+                        false,
+                    ) {
+                        state.render_watermark.size = size.round().clamp(1.0, 40.0) as u8;
+                    }
+                    let mut margin = f64::from(state.render_watermark.margin);
+                    if slider(
+                        ui,
+                        "render.watermark.margin",
+                        "边距",
+                        &mut margin,
+                        0.0,
+                        40.0,
+                        2.0,
+                        0,
+                        false,
+                    ) {
+                        state.render_watermark.margin = margin.round().clamp(0.0, 40.0) as u8;
+                    }
+                    if state.render_watermark.kind == WatermarkKind::Text {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                RichText::new(crate::i18n::t!("颜色"))
+                                    .size(SIZE_SMALL)
+                                    .color(muted()),
+                            );
+                            for (name, rgb) in [
+                                ("白", [255u8, 255, 255]),
+                                ("浅灰", [200, 200, 200]),
+                                ("黑", [0, 0, 0]),
+                            ] {
+                                if bar_chip(ui, name, state.render_watermark.color == rgb).clicked()
+                                {
+                                    state.render_watermark.color = rgb;
+                                    history::note(
+                                        "render.watermark.color",
+                                        crate::i18n::tr_fmt(
+                                            "水印颜色 {}",
+                                            &[&crate::i18n::tr(name)],
+                                        ),
+                                    );
+                                }
+                            }
+                        });
+                    }
+                    if !state.render_watermark.is_on() {
+                        note(ui, "正文、图片与不透明度至少填一项。");
                     }
                 }
             });
-            ui.add_space(2.0);
-            if state.render_watermark.kind == WatermarkKind::Text {
-                let edited = ui.add(
-                    egui::TextEdit::singleline(&mut state.render_watermark.text)
-                        .hint_text(format!("© {}", aevum_core::brand::TITLE))
-                        .desired_width(f32::INFINITY)
-                        .font(mono(SIZE_SMALL)),
+    }
+    if group_header(ui, state, "render-time", "时间", true) {
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::hover());
+                let p = ui.painter();
+                p.text(
+                    Pos2::new(rect.left(), rect.center().y),
+                    Align2::LEFT_CENTER,
+                    crate::i18n::t!("帧率"),
+                    font(SIZE_SMALL),
+                    muted(),
                 );
-                if edited.changed() {
-                    history::note("render.watermark.text", "水印正文");
-                }
-            } else {
-                let picked = state.render_watermark.image.display().to_string();
-                let shown = if state.render_watermark.image.as_os_str().is_empty() {
-                    "还没选图片".to_owned()
-                } else {
-                    theme::ellipsis(&picked, 24)
-                };
-                ui.horizontal(|ui| {
-                    if bar_button(ui, "选择图片…").clicked() {
-                        state.request_dialog(
-                            crate::state::ops_dialog::DialogPurpose::WatermarkImage,
-                            crate::state::ops_dialog::DialogMode::File,
-                            Some(crate::state::ops_dialog::DialogFilter {
-                                name: "图片",
-                                exts: vec!["png", "jpg", "jpeg", "webp", "tif", "tiff"],
-                            }),
-                            state.seq.as_ref().map(|s| s.root.clone()),
-                            None,
-                        );
-                    }
-                    ui.label(RichText::new(shown).size(SIZE_SMALL).color(dim()));
-                });
-            }
-            ui.add_space(4.0);
-            // 九宫格按屏幕坐标读：y 向下，所以「上中」真的是上面那格。
-            ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new(crate::i18n::t!("位置"))
-                        .size(SIZE_SMALL)
-                        .color(muted()),
-                );
-                for &spot in &Spot::ALL {
-                    if bar_chip(ui, spot.cn(), state.render_watermark.spot == spot).clicked() {
-                        state.render_watermark.spot = spot;
-                        history::note(
-                            "render.watermark.spot",
-                            crate::i18n::tr_fmt("水印位置 {}", &[&crate::i18n::tr(spot.cn())]),
-                        );
-                    }
-                }
-            });
-            let mut opacity = f64::from(state.render_watermark.opacity);
-            if slider(
-                ui,
-                "render.watermark.opacity",
-                "不透明度",
-                &mut opacity,
-                0.0,
-                100.0,
-                60.0,
-                0,
-                false,
-            ) {
-                state.render_watermark.opacity = opacity.round().clamp(0.0, 100.0) as u8;
-            }
-            let mut size = f64::from(state.render_watermark.size);
-            if slider(
-                ui,
-                "render.watermark.size",
-                "尺寸",
-                &mut size,
-                1.0,
-                40.0,
-                4.0,
-                0,
-                false,
-            ) {
-                state.render_watermark.size = size.round().clamp(1.0, 40.0) as u8;
-            }
-            let mut margin = f64::from(state.render_watermark.margin);
-            if slider(
-                ui,
-                "render.watermark.margin",
-                "边距",
-                &mut margin,
-                0.0,
-                40.0,
-                2.0,
-                0,
-                false,
-            ) {
-                state.render_watermark.margin = margin.round().clamp(0.0, 40.0) as u8;
-            }
-            if state.render_watermark.kind == WatermarkKind::Text {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new(crate::i18n::t!("颜色"))
-                            .size(SIZE_SMALL)
-                            .color(muted()),
+                in_field(ui, field(), field_hover(), |ui| {
+                    ui.put(
+                        Rect::from_min_size(
+                            Pos2::new(rect.right() - 92.0, rect.center().y - 9.0),
+                            Vec2::new(92.0, 18.0),
+                        ),
+                        egui::DragValue::new(&mut state.output_fps)
+                            .range(1.0..=120.0)
+                            .speed(1.0)
+                            .fixed_decimals(0)
+                            .suffix(" fps"),
                     );
-                    for (name, rgb) in [
-                        ("白", [255u8, 255, 255]),
-                        ("浅灰", [200, 200, 200]),
-                        ("黑", [0, 0, 0]),
-                    ] {
-                        if bar_chip(ui, name, state.render_watermark.color == rgb).clicked() {
-                            state.render_watermark.color = rgb;
-                            history::note(
-                                "render.watermark.color",
-                                crate::i18n::tr_fmt("水印颜色 {}", &[&crate::i18n::tr(name)]),
+                });
+                let dur = match state.retime_estimate() {
+                    // 片长说的是导出来的东西：变速开着就按变速后的秒数算。
+                    Ok((_, seconds)) => seconds as f32,
+                    Err(_) => state.frame_count() as f32 / state.output_fps.max(1.0),
+                };
+                kv(
+                    ui,
+                    "片长",
+                    crate::i18n::tr_fmt("{} 秒", &[&format!("{dur:.1}")]),
+                    muted(),
+                );
+            });
+    }
+    if group_header(ui, state, "render-retime", "变速 · 运动模糊", true) {
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                let mut enabled = state.retime.enabled;
+                if ui
+                    .checkbox(
+                        &mut enabled,
+                        RichText::new(crate::i18n::t!("重映射时间（变速 + 运动模糊）"))
+                            .size(SIZE_SMALL),
+                    )
+                    .changed()
+                {
+                    state.retime.enabled = enabled;
+                    history::note("retime.enabled", "变速开关");
+                }
+                if enabled {
+                    let flat = flat_speed(&state.retime);
+                    ui.horizontal_wrapped(|ui| {
+                        for speed in [0.5, 1.0, 2.0, 4.0, 8.0] {
+                            let label = format!("{speed}×");
+                            if bar_chip(ui, &label, flat == Some(speed)).clicked() {
+                                state.retime = Retime::uniform(speed, state.retime.shutter);
+                                history::note(
+                                    "retime.speed",
+                                    crate::i18n::tr_fmt("倍速 {}", &[&label]),
+                                );
+                            }
+                        }
+                        // 曲线不平时就是画过形状（缓入缓出）：芯片按「平不平」亮，不去猜具体几个键。
+                        if bar_chip(ui, "缓入缓出", flat.is_none()).clicked() {
+                            let peak = retime::speed_at(&state.retime.keys, 0.5);
+                            state.retime =
+                                Retime::ease(1.0, peak, 0.25, 0.75, state.retime.shutter);
+                            history::note("retime.ease", "变速缓入缓出");
+                        }
+                    });
+                    ui.add_space(2.0);
+                    if let Some(speed) = flat {
+                        let mut v = speed;
+                        if slider(
+                            ui,
+                            "retime.speed",
+                            "倍速",
+                            &mut v,
+                            0.05,
+                            16.0,
+                            1.0,
+                            2,
+                            false,
+                        ) {
+                            state.retime = Retime::uniform(v, state.retime.shutter);
+                        }
+                    } else {
+                        // 曲线态下倍速不是一个数，推子会把它抹平成匀速——只给一行读数。
+                        let at = retime::speed_at(&state.retime.keys, 0.0);
+                        let mid = retime::speed_at(&state.retime.keys, 0.5);
+                        let end = retime::speed_at(&state.retime.keys, 1.0);
+                        kv(
+                            ui,
+                            "曲线",
+                            format!("{}× → {}× → {}×", at, mid, end),
+                            muted(),
+                        );
+                    }
+                    // 拖点编辑：键表空着（刚勾上开关）时先摆两个 1× 端点，第一次拖就落进真实键表。
+                    // 比色调曲线那格矮一档：这组上下还有芯片、快门与读数，方框吃满会把它们挤出视野。
+                    let box_side = ui.available_width().clamp(150.0, 208.0);
+                    let mut keys = if state.retime.keys.is_empty() {
+                        vec![
+                            SpeedKey {
+                                at: 0.0,
+                                speed: 1.0,
+                            },
+                            SpeedKey {
+                                at: 1.0,
+                                speed: 1.0,
+                            },
+                        ]
+                    } else {
+                        state.retime.keys.clone()
+                    };
+                    if widgets::speed_box(ui, "retime", &mut keys, box_side, &mut state.retime_grab)
+                    {
+                        state.retime.keys = keys;
+                        history::note("retime.keys", "速度曲线");
+                    }
+                    let mut pct = state.retime.shutter * 100.0;
+                    if slider(
+                        ui,
+                        "retime.shutter",
+                        "快门（模糊量）",
+                        &mut pct,
+                        0.0,
+                        100.0,
+                        0.0,
+                        0,
+                        false,
+                    ) {
+                        state.retime.shutter = (pct / 100.0).clamp(0.0, 1.0);
+                    }
+                    match state.retime_estimate() {
+                        Ok((frames, seconds)) => {
+                            kv(
+                                ui,
+                                "变速后",
+                                crate::i18n::tr_fmt(
+                                    "{} 帧 · {} 秒",
+                                    &[&frames, &format!("{:.1}", seconds)],
+                                ),
+                                accent(),
+                            );
+                        }
+                        Err(e) => {
+                            ui.add(
+                                egui::Label::new(RichText::new(e).size(SIZE_SMALL).color(danger()))
+                                    .wrap(),
                             );
                         }
                     }
-                });
-            }
-            if !state.render_watermark.is_on() {
-                note(ui, "正文、图片与不透明度至少填一项。");
-            }
-        }
-    }
-    if group_header(ui, state, "render-time", "时间", true) {
-        let (rect, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::hover());
-        let p = ui.painter();
-        p.text(
-            Pos2::new(rect.left(), rect.center().y),
-            Align2::LEFT_CENTER,
-            crate::i18n::t!("帧率"),
-            font(SIZE_SMALL),
-            muted(),
-        );
-        in_field(ui, field(), field_hover(), |ui| {
-            ui.put(
-                Rect::from_min_size(
-                    Pos2::new(rect.right() - 92.0, rect.center().y - 9.0),
-                    Vec2::new(92.0, 18.0),
-                ),
-                egui::DragValue::new(&mut state.output_fps)
-                    .range(1.0..=120.0)
-                    .speed(1.0)
-                    .fixed_decimals(0)
-                    .suffix(" fps"),
-            );
-        });
-        let dur = match state.retime_estimate() {
-            // 片长说的是导出来的东西：变速开着就按变速后的秒数算。
-            Ok((_, seconds)) => seconds as f32,
-            Err(_) => state.frame_count() as f32 / state.output_fps.max(1.0),
-        };
-        kv(
-            ui,
-            "片长",
-            crate::i18n::tr_fmt("{} 秒", &[&format!("{dur:.1}")]),
-            muted(),
-        );
-    }
-    if group_header(ui, state, "render-retime", "变速 · 运动模糊", true) {
-        let mut enabled = state.retime.enabled;
-        if ui
-            .checkbox(
-                &mut enabled,
-                RichText::new(crate::i18n::t!("重映射时间（变速 + 运动模糊）")).size(SIZE_SMALL),
-            )
-            .changed()
-        {
-            state.retime.enabled = enabled;
-            history::note("retime.enabled", "变速开关");
-        }
-        if enabled {
-            let flat = flat_speed(&state.retime);
-            ui.horizontal_wrapped(|ui| {
-                for speed in [0.5, 1.0, 2.0, 4.0, 8.0] {
-                    let label = format!("{speed}×");
-                    if bar_chip(ui, &label, flat == Some(speed)).clicked() {
-                        state.retime = Retime::uniform(speed, state.retime.shutter);
-                        history::note("retime.speed", crate::i18n::tr_fmt("倍速 {}", &[&label]));
-                    }
-                }
-                // 曲线不平时就是画过形状（缓入缓出）：芯片按「平不平」亮，不去猜具体几个键。
-                if bar_chip(ui, "缓入缓出", flat.is_none()).clicked() {
-                    let peak = retime::speed_at(&state.retime.keys, 0.5);
-                    state.retime = Retime::ease(1.0, peak, 0.25, 0.75, state.retime.shutter);
-                    history::note("retime.ease", "变速缓入缓出");
                 }
             });
-            ui.add_space(2.0);
-            if let Some(speed) = flat {
-                let mut v = speed;
-                if slider(
-                    ui,
-                    "retime.speed",
-                    "倍速",
-                    &mut v,
-                    0.05,
-                    16.0,
-                    1.0,
-                    2,
-                    false,
-                ) {
-                    state.retime = Retime::uniform(v, state.retime.shutter);
+    }
+    if group_header(ui, state, "render-motion", "运镜 · Ken Burns", true) {
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                let mut enabled = state.motion.enabled;
+                if ui
+                    .checkbox(
+                        &mut enabled,
+                        RichText::new(crate::i18n::t!("启用运镜")).size(SIZE_SMALL),
+                    )
+                    .changed()
+                {
+                    state.set_motion_enabled(enabled);
                 }
-            } else {
-                // 曲线态下倍速不是一个数，推子会把它抹平成匀速——只给一行读数。
-                let at = retime::speed_at(&state.retime.keys, 0.0);
-                let mid = retime::speed_at(&state.retime.keys, 0.5);
-                let end = retime::speed_at(&state.retime.keys, 1.0);
-                kv(
-                    ui,
-                    "曲线",
-                    format!("{}× → {}× → {}×", at, mid, end),
-                    muted(),
-                );
-            }
-            // 拖点编辑：键表空着（刚勾上开关）时先摆两个 1× 端点，第一次拖就落进真实键表。
-            // 比色调曲线那格矮一档：这组上下还有芯片、快门与读数，方框吃满会把它们挤出视野。
-            let box_side = ui.available_width().clamp(150.0, 208.0);
-            let mut keys = if state.retime.keys.is_empty() {
-                vec![
-                    SpeedKey {
-                        at: 0.0,
-                        speed: 1.0,
-                    },
-                    SpeedKey {
-                        at: 1.0,
-                        speed: 1.0,
-                    },
-                ]
-            } else {
-                state.retime.keys.clone()
-            };
-            if widgets::speed_box(ui, "retime", &mut keys, box_side, &mut state.retime_grab) {
-                state.retime.keys = keys;
-                history::note("retime.keys", "速度曲线");
-            }
-            let mut pct = state.retime.shutter * 100.0;
-            if slider(
-                ui,
-                "retime.shutter",
-                "快门（模糊量）",
-                &mut pct,
-                0.0,
-                100.0,
-                0.0,
-                0,
-                false,
-            ) {
-                state.retime.shutter = (pct / 100.0).clamp(0.0, 1.0);
-            }
-            match state.retime_estimate() {
-                Ok((frames, seconds)) => {
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    // 选中的那一端才在画布上带把手：两端同时可拖会抢同一个把手命中区。
+                    for w in [MotionBox::Start, MotionBox::End] {
+                        let on = state.motion_picking && state.motion_box == w;
+                        if bar_chip(ui, w.cn(), on).clicked() {
+                            state.set_motion_box(w);
+                            state.set_motion_picking(true);
+                        }
+                    }
+                    if bar_chip(ui, "拖取景框", state.motion_picking).clicked() {
+                        let on = !state.motion_picking;
+                        state.set_motion_picking(on);
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    for e in crop::Ease::ALL {
+                        if bar_chip(ui, e.cn(), state.motion.ease == e).clicked() {
+                            state.set_motion_ease(e);
+                        }
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    if ui.small_button(crate::i18n::t!("反向")).clicked() {
+                        state.motion_swap();
+                    }
+                    if ui.small_button(crate::i18n::t!("铺满")).clicked() {
+                        state.motion_fill_box();
+                    }
+                    if state.motion != crop::Motion::default()
+                        && ui.small_button(crate::i18n::t!("清零")).clicked()
+                    {
+                        state.motion_reset();
+                    }
+                });
+                ui.add_space(4.0);
+                let (fw, fh) = state.motion_frame_size();
+                let (ow, oh) = state.motion_output_size();
+                let s = state.motion_box_rect(MotionBox::Start);
+                let e = state.motion_box_rect(MotionBox::End);
+                let zf = state.motion.from.zoom(ow, oh, fw, fh);
+                let zt = state.motion.to.zoom(ow, oh, fw, fh);
+                kv(ui, "起点", format!("{} × {} · {zf:.2}×", s.w, s.h), muted());
+                kv(ui, "终点", format!("{} × {} · {zt:.2}×", e.w, e.h), muted());
+                if state.motion_picking {
                     kv(
                         ui,
-                        "变速后",
+                        "画布",
                         crate::i18n::tr_fmt(
-                            "{} 帧 · {} 秒",
-                            &[&frames, &format!("{:.1}", seconds)],
+                            "拖 {} 那一端",
+                            &[&crate::i18n::tr(state.motion_box.cn())],
                         ),
                         accent(),
                     );
                 }
-                Err(e) => {
+                if zf.max(zt) > 2.0 {
                     ui.add(
-                        egui::Label::new(RichText::new(e).size(SIZE_SMALL).color(danger())).wrap(),
+                        egui::Label::new(
+                            RichText::new(crate::i18n::t!(
+                                "推近已经过 2×：再推就是拿少数像素撑大画面，会糊。"
+                            ))
+                            .size(SIZE_SMALL)
+                            .color(warn()),
+                        )
+                        .wrap(),
                     );
                 }
-            }
-        }
-    }
-    if group_header(ui, state, "render-motion", "运镜 · Ken Burns", true) {
-        let mut enabled = state.motion.enabled;
-        if ui
-            .checkbox(
-                &mut enabled,
-                RichText::new(crate::i18n::t!("启用运镜")).size(SIZE_SMALL),
-            )
-            .changed()
-        {
-            state.set_motion_enabled(enabled);
-        }
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            // 选中的那一端才在画布上带把手：两端同时可拖会抢同一个把手命中区。
-            for w in [MotionBox::Start, MotionBox::End] {
-                let on = state.motion_picking && state.motion_box == w;
-                if bar_chip(ui, w.cn(), on).clicked() {
-                    state.set_motion_box(w);
-                    state.set_motion_picking(true);
-                }
-            }
-            if bar_chip(ui, "拖取景框", state.motion_picking).clicked() {
-                let on = !state.motion_picking;
-                state.set_motion_picking(on);
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
-            for e in crop::Ease::ALL {
-                if bar_chip(ui, e.cn(), state.motion.ease == e).clicked() {
-                    state.set_motion_ease(e);
-                }
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
-            if ui.small_button(crate::i18n::t!("反向")).clicked() {
-                state.motion_swap();
-            }
-            if ui.small_button(crate::i18n::t!("铺满")).clicked() {
-                state.motion_fill_box();
-            }
-            if state.motion != crop::Motion::default()
-                && ui.small_button(crate::i18n::t!("清零")).clicked()
-            {
-                state.motion_reset();
-            }
-        });
-        ui.add_space(4.0);
-        let (fw, fh) = state.motion_frame_size();
-        let (ow, oh) = state.motion_output_size();
-        let s = state.motion_box_rect(MotionBox::Start);
-        let e = state.motion_box_rect(MotionBox::End);
-        let zf = state.motion.from.zoom(ow, oh, fw, fh);
-        let zt = state.motion.to.zoom(ow, oh, fw, fh);
-        kv(ui, "起点", format!("{} × {} · {zf:.2}×", s.w, s.h), muted());
-        kv(ui, "终点", format!("{} × {} · {zt:.2}×", e.w, e.h), muted());
-        if state.motion_picking {
-            kv(
-                ui,
-                "画布",
-                crate::i18n::tr_fmt("拖 {} 那一端", &[&crate::i18n::tr(state.motion_box.cn())]),
-                accent(),
-            );
-        }
-        if zf.max(zt) > 2.0 {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(crate::i18n::t!(
-                        "推近已经过 2×：再推就是拿少数像素撑大画面，会糊。"
-                    ))
-                    .size(SIZE_SMALL)
-                    .color(warn()),
-                )
-                .wrap(),
-            );
-        }
+            });
     }
     if state.render_mode == OutputMode::Video
         && group_header(ui, state, "render-codec", "编码", true)
@@ -843,180 +978,216 @@ pub(super) fn adjust_render(state: &mut AppState, ui: &mut Ui) {
         }
     }
     if group_header(ui, state, "render-export", "导出", false) {
-        let ctx = ui.ctx().clone();
-        let w = ui.available_width();
-        let busy = state.export_busy;
-        let label = if busy {
-            "正在导出…"
-        } else if state.render_mode == OutputMode::Video {
-            "导出成片"
-        } else {
-            "导出静帧序列"
-        };
-        let resp = ui.add_enabled(
-            !busy,
-            egui::Button::new(
-                RichText::new(label)
-                    .size(SIZE_SMALL)
-                    .color(on_accent())
-                    .strong(),
-            )
-            .fill(accent())
-            .corner_radius(radius_control())
-            .min_size(Vec2::new(w, 26.0)),
-        );
-        if resp.clicked() {
-            state.export_copy = None;
-            // 先弹参数确认，用户在弹窗里点「开始导出」才真正写文件；取消不产生任何文件。
-            //
-            // Show the parameter confirmation first; the actual write happens only after the
-            // user presses "Start export" in the modal. Cancel produces no file.
-            ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aevum-export-pending"), 1u8));
-        }
-        if busy {
-            if let Some((done, total, stage)) = state.export_progress() {
-                // 进度条按阶段分区间：`done` 是**阶段内**计数（写帧 0..total，编码又从 1
-                // 起数），直接当比例会让进度条在阶段切换时从 100% 退回十几——用户看到
-                // 条子倒退，会以为任务重启了。写帧占 0–70%、编码占 70–100%，两段各自
-                // 单调，接缝只跨一次。文案仍然分阶段显示，不做「假一体化」。
-                //
-                // The bar maps stages to ranges: `done` is a **per-stage** count (frames
-                // 0..total, then the encode restarts at 1), so using it directly makes the
-                // bar fall from 100% back to the teens at the switch, which reads as "the
-                // job restarted". Frames take 0-70%, encode 70-100%; each segment is
-                // monotone and the seam is crossed once. The text still names the stage.
-                let frac = export_bar_fraction(stage, done, total);
-                let text = match stage {
-                    aevum_core::export::Stage::Frames => {
-                        crate::i18n::tr_fmt("写帧 {} / {}", &[&done, &total])
-                    }
-                    aevum_core::export::Stage::Encode => {
-                        crate::i18n::tr_fmt("编码 {} / {}", &[&done, &total])
-                    }
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                let ctx = ui.ctx().clone();
+                let w = ui.available_width();
+                let busy = state.export_busy;
+                let label = if busy {
+                    "正在导出…"
+                } else if state.render_mode == OutputMode::Video {
+                    "导出成片"
+                } else {
+                    "导出静帧序列"
                 };
-                ui.add(
-                    egui::ProgressBar::new(frac)
-                        .desired_height(4.0)
-                        .text(RichText::new(text).size(SIZE_SMALL)),
+                let resp = ui.add_enabled(
+                    !busy,
+                    egui::Button::new(
+                        RichText::new(label)
+                            .size(SIZE_SMALL)
+                            .color(on_accent())
+                            .strong(),
+                    )
+                    .fill(accent())
+                    .corner_radius(radius_control())
+                    .min_size(Vec2::new(w, 26.0)),
                 );
-            }
-            if bar_button(ui, "取消导出").clicked() {
-                state.stop_export();
-            }
-        }
-        if let Some(path) = &state.last_saved {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(crate::i18n::tr_fmt(
-                        "已保存 · {}",
-                        &[&theme::ellipsis(path, 34)],
-                    ))
-                    .size(SIZE_SMALL)
-                    .color(ok()),
-                )
-                .wrap(),
-            );
-        }
-        ui.add_space(4.0);
-        if ui
-            .add_enabled(
-                !busy,
-                egui::Button::new(
-                    RichText::new(crate::i18n::tr_fmt(
-                        "导出当前帧 · {}",
-                        &[&crate::i18n::tr(state.render_format.cn())],
-                    ))
-                    .size(SIZE_SMALL),
-                )
-                .min_size(Vec2::new(w, 24.0)),
-            )
-            .clicked()
-        {
-            ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aevum-export-pending"), 2u8));
-        }
+                if resp.clicked() {
+                    state.export_copy = None;
+                    // 先弹参数确认，用户在弹窗里点「开始导出」才真正写文件；取消不产生任何文件。
+                    //
+                    // Show the parameter confirmation first; the actual write happens only after the
+                    // user presses "Start export" in the modal. Cancel produces no file.
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aevum-export-pending"), 1u8));
+                }
+                if busy {
+                    if let Some((done, total, stage)) = state.export_progress() {
+                        // 进度条按阶段分区间：`done` 是**阶段内**计数（写帧 0..total，编码又从 1
+                        // 起数），直接当比例会让进度条在阶段切换时从 100% 退回十几——用户看到
+                        // 条子倒退，会以为任务重启了。写帧占 0–70%、编码占 70–100%，两段各自
+                        // 单调，接缝只跨一次。文案仍然分阶段显示，不做「假一体化」。
+                        //
+                        // The bar maps stages to ranges: `done` is a **per-stage** count (frames
+                        // 0..total, then the encode restarts at 1), so using it directly makes the
+                        // bar fall from 100% back to the teens at the switch, which reads as "the
+                        // job restarted". Frames take 0-70%, encode 70-100%; each segment is
+                        // monotone and the seam is crossed once. The text still names the stage.
+                        let frac = export_bar_fraction(stage, done, total);
+                        let text = match stage {
+                            aevum_core::export::Stage::Frames => {
+                                crate::i18n::tr_fmt("写帧 {} / {}", &[&done, &total])
+                            }
+                            aevum_core::export::Stage::Encode => {
+                                crate::i18n::tr_fmt("编码 {} / {}", &[&done, &total])
+                            }
+                        };
+                        ui.add(
+                            egui::ProgressBar::new(frac)
+                                .desired_height(4.0)
+                                .text(RichText::new(text).size(SIZE_SMALL)),
+                        );
+                    }
+                    if bar_button(ui, "取消导出").clicked() {
+                        state.stop_export();
+                    }
+                }
+                if let Some(path) = &state.last_saved {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(crate::i18n::tr_fmt(
+                                "已保存 · {}",
+                                &[&theme::ellipsis(path, 34)],
+                            ))
+                            .size(SIZE_SMALL)
+                            .color(ok()),
+                        )
+                        .wrap(),
+                    );
+                }
+                ui.add_space(4.0);
+                if ui
+                    .add_enabled(
+                        !busy,
+                        egui::Button::new(
+                            RichText::new(crate::i18n::tr_fmt(
+                                "导出当前帧 · {}",
+                                &[&crate::i18n::tr(state.render_format.cn())],
+                            ))
+                            .size(SIZE_SMALL),
+                        )
+                        .min_size(Vec2::new(w, 24.0)),
+                    )
+                    .clicked()
+                {
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aevum-export-pending"), 2u8));
+                }
+            });
     }
     if group_header(ui, state, "render-queue", "队列", false) {
-        let busy = state.queue_busy;
-        let count = state.queue.len();
-        ui.horizontal_wrapped(|ui| {
-            let resp = ui.add_enabled(!busy, {
-                egui::Button::new(
-                    RichText::new(crate::i18n::t!("加入当前序列"))
-                        .size(SIZE_SMALL)
-                        .color(text()),
-                )
-                .fill(elev())
-                .stroke(Stroke::NONE)
-                .corner_radius(radius_control())
-                .min_size(Vec2::new(0.0, 22.0))
-            });
-            if resp.clicked()
-                && let Err(e) = state.add_current_to_queue()
-            {
-                state.error = Some(e);
-            }
-            if busy {
-                if bar_button(ui, "取消队列").clicked() {
-                    state.stop_queue();
-                }
-            } else {
-                let ctx = ui.ctx().clone();
-                if bar_primary(ui, "开始渲染队列").clicked()
-                    && let Err(e) = state.start_queue(&ctx)
-                {
-                    state.error = Some(e);
-                }
-            }
-            if !busy && count > 0 && bar_button(ui, "清空").clicked() {
-                state.clear_queue_rows();
-            }
-        });
-        kv(
-            ui,
-            "队列",
-            crate::i18n::tr_fmt("{} 段 · {}", &[&count, &queue_counts(state)]),
-            if count > 0 { text() } else { dim() },
-        );
-        if count == 0 {
-            note(ui, "尚无排队段。");
-        } else {
-            queue_table(state, ui, busy);
-            if busy && let Some((done, total, stage)) = state.queue_progress() {
-                let frac = if total > 0 {
-                    done as f32 / total as f32
-                } else {
-                    0.0
-                };
-                let current = state.queue_current.map(|i| i + 1).unwrap_or(1);
-                let phase = match stage {
-                    aevum_core::export::Stage::Frames => "写帧",
-                    aevum_core::export::Stage::Encode => "编码",
-                };
-                ui.add(
-                    egui::ProgressBar::new(frac).desired_height(4.0).text(
-                        RichText::new(crate::i18n::tr_fmt(
-                            "第 {}/{} 段 · {} {}/{}",
-                            &[&current, &count, &phase, &done, &total],
-                        ))
-                        .size(SIZE_SMALL),
-                    ),
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                let busy = state.queue_busy;
+                let count = state.queue.len();
+                ui.horizontal_wrapped(|ui| {
+                    let resp = ui.add_enabled(!busy, {
+                        egui::Button::new(
+                            RichText::new(crate::i18n::t!("加入当前序列"))
+                                .size(SIZE_SMALL)
+                                .color(text()),
+                        )
+                        .fill(elev())
+                        .stroke(Stroke::NONE)
+                        .corner_radius(radius_control())
+                        .min_size(Vec2::new(0.0, 22.0))
+                    });
+                    if resp.clicked()
+                        && let Err(e) = state.add_current_to_queue()
+                    {
+                        state.error = Some(e);
+                    }
+                    if busy {
+                        if bar_button(ui, "取消队列").clicked() {
+                            state.stop_queue();
+                        }
+                    } else {
+                        let ctx = ui.ctx().clone();
+                        if bar_primary(ui, "开始渲染队列").clicked()
+                            && let Err(e) = state.start_queue(&ctx)
+                        {
+                            state.error = Some(e);
+                        }
+                    }
+                    if !busy && count > 0 && bar_button(ui, "清空").clicked() {
+                        state.clear_queue_rows();
+                    }
+                });
+                kv(
+                    ui,
+                    "队列",
+                    crate::i18n::tr_fmt("{} 段 · {}", &[&count, &queue_counts(state)]),
+                    if count > 0 { text() } else { dim() },
                 );
-            }
-        }
-        ui.add(
-            egui::Label::new(
-                RichText::new(crate::i18n::tr_fmt(
-                    "队列文件 · {}",
-                    &[&theme::ellipsis(
-                        &state.queue_path.display().to_string(),
-                        30,
-                    )],
-                ))
-                .size(SIZE_SMALL)
-                .color(dim()),
-            )
-            .wrap(),
-        );
+                if count == 0 {
+                    note(ui, "尚无排队段。");
+                } else {
+                    queue_table(state, ui, busy);
+                    if busy && let Some((done, total, stage)) = state.queue_progress() {
+                        let frac = if total > 0 {
+                            done as f32 / total as f32
+                        } else {
+                            0.0
+                        };
+                        let current = state.queue_current.map(|i| i + 1).unwrap_or(1);
+                        let phase = match stage {
+                            aevum_core::export::Stage::Frames => "写帧",
+                            aevum_core::export::Stage::Encode => "编码",
+                        };
+                        ui.add(
+                            egui::ProgressBar::new(frac).desired_height(4.0).text(
+                                RichText::new(crate::i18n::tr_fmt(
+                                    "第 {}/{} 段 · {} {}/{}",
+                                    &[&current, &count, &phase, &done, &total],
+                                ))
+                                .size(SIZE_SMALL),
+                            ),
+                        );
+                    }
+                }
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(crate::i18n::tr_fmt(
+                            "队列文件 · {}",
+                            &[&theme::ellipsis(
+                                &state.queue_path.display().to_string(),
+                                30,
+                            )],
+                        ))
+                        .size(SIZE_SMALL)
+                        .color(dim()),
+                    )
+                    .wrap(),
+                );
+            });
     }
 }
 

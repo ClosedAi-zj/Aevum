@@ -955,19 +955,109 @@ pub(super) fn adjust_merge(state: &mut AppState, ui: &mut Ui) {
     ui.add_space(4.0);
     let ctx = ui.ctx().clone();
     if group_header(ui, state, "hdr", "HDR 合并", false) {
-        hdr_group(state, ui, &ctx);
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                hdr_group(state, ui, &ctx);
+            });
     }
     if group_header(ui, state, "pano", "全景合并", false) {
-        pano_group(state, ui, &ctx);
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                pano_group(state, ui, &ctx);
+            });
     }
     if group_header(ui, state, "stack", "星空堆栈", false) {
-        stack_group(state, ui, &ctx);
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                stack_group(state, ui, &ctx);
+            });
     }
     if group_header(ui, state, "timeblend", "时间合成", false) {
-        timeblend_group(state, ui, &ctx);
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                timeblend_group(state, ui, &ctx);
+            });
     }
     if group_header(ui, state, "focus", "焦点合成", false) {
-        focus_group(state, ui, &ctx);
+        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
+        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
+        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
+        // 矩形有时序毛刺，均已试过并否决）。
+        //
+        // Card-in-card (the design's .grp): one rounded card per group, header and
+        // body inside. egui::Frame paints the fill before the content and the stroke
+        // after -- the one reliable "background first" path in immediate mode.
+        // (Rejected alternatives: painting later covers earlier so the fill must go
+        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
+        // expand/collapse.)
+        egui::Frame::NONE
+            .fill(theme::chrome())
+            .stroke(egui::Stroke::new(1.0, theme::divider()))
+            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                focus_group(state, ui, &ctx);
+            });
     }
 }
 

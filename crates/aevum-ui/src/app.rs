@@ -64,6 +64,10 @@ pub enum Startup {
         plugin: Option<String>,
         /// 截图前打开插件市场窗口，拍标题栏与两栏清单。
         market: bool,
+        /// 截图前钉住三页流程的当前步。
+        ///
+        /// Pin the flow's current step before the shot.
+        step: Option<usize>,
         /// 截图前给调色盘摆一套演示值：点曲线 + 三枚分级轮 + 几条 HSL，
         /// 拍 ACR 风调色盘（曲线剪影 / 品字色轮 / 属性页渐变轨）。
         color: bool,
@@ -102,6 +106,10 @@ struct Shot {
     plugin: Option<String>,
     /// 截图前打开插件市场窗口。
     market: bool,
+    /// 截图前把三页流程钉在第 N 步。
+    ///
+    /// Pin the three-page flow to step N before the shot.
+    step: Option<usize>,
     /// 截图前给调色盘摆演示值（点曲线 / 分级轮 / HSL）。
     color: bool,
     /// 截图前打开「外观与布局」窗口（验浅色主题的控件配色）。
@@ -252,6 +260,7 @@ impl AevumApp {
                 market,
                 color,
                 look,
+                step,
             } => {
                 // 一次性截图不参与回环控制：避免短暂占用序列的 control.json，
                 // 和已经在跑的 GUI 抢同一份文件。
@@ -270,6 +279,7 @@ impl AevumApp {
                     Some(boot),
                     Some(Shot {
                         out,
+                        step,
                         module,
                         edit,
                         queue,
@@ -353,6 +363,10 @@ impl AevumApp {
                 self.state.render_audio_opts.fade_out = 0.8;
                 self.state.render_audio_opts.looped = true;
             }
+        }
+        // --shot-step：钉住流程页（0 序列 / 1 调色 / 2 导出）。
+        if let Some(step) = self.shot.as_ref().and_then(|s| s.step) {
+            self.state.flow_step = Some(step);
         }
         if self.shot.as_ref().is_some_and(|s| s.edit) {
             self.state.apply_demo_edit();
