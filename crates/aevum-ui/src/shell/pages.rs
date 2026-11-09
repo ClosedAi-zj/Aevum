@@ -25,7 +25,7 @@ pub(super) fn sequence_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(crate::i18n::tr("序列管理"))
-                .size(SIZE_TITLE)
+                .font(crate::theme::bold(SIZE_TITLE))
                 .color(text()),
         );
         // LRT 的规则：用数字给进度（`KF 3/8`），比一句话快。当前帧是关键帧时
@@ -303,7 +303,7 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(crate::i18n::tr("导出视频"))
-                .size(SIZE_TITLE)
+                .font(crate::theme::bold(SIZE_TITLE))
                 .color(text()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -384,7 +384,7 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         frame_card(ui, left_w, body_h, |ui| {
             ui.label(
                 RichText::new(crate::i18n::tr("渲染队列"))
-                    .size(SIZE_BODY)
+                    .font(crate::theme::bold(SIZE_BODY))
                     .color(text()),
             );
             ui.add_space(8.0);
@@ -431,13 +431,40 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         frame_card(ui, right_w, body_h, |ui| {
             ui.label(
                 RichText::new(crate::i18n::tr("导出设置"))
-                    .size(SIZE_BODY)
+                    .font(crate::theme::bold(SIZE_BODY))
                     .color(text()),
             )
             .on_hover_text(crate::i18n::tr(
                 "每段读取加入队列时的工程参数；批量渲染按顺序逐段执行。",
             ));
             ui.add_space(10.0);
+            // 预设：一行一个「成品」，而不是让用户自己拼帧率+CRF+编码三件套。
+            // LapseOne 的渲染对话框就是把 Codec 做成一行行预设。
+            //
+            // Presets: one row per finished spec instead of making the user assemble
+            // fps + CRF + codec by hand (LapseOne's render dialog does the same).
+            ui.label(
+                RichText::new(crate::i18n::tr("预设"))
+                    .size(SIZE_SMALL)
+                    .color(muted()),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                for (name, fps, crf, codec) in [
+                    ("标准 1080p", 24.0f32, 20u8, "h265"),
+                    ("4K UHD", 24.0, 18, "h265"),
+                    ("高码率", 30.0, 14, "h264"),
+                ] {
+                    if secondary_button(ui, name).clicked() {
+                        state.output_fps = fps;
+                        state.render_crf = crf;
+                        state.codec = format!("libx{codec}");
+                    }
+                }
+            });
+
+            ui.add_space(10.0);
+            section_rule(ui);
             ui.label(
                 RichText::new(crate::i18n::tr("输出"))
                     .size(SIZE_SMALL)

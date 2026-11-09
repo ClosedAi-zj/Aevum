@@ -757,16 +757,22 @@ pub fn radius_control() -> f32 {
 /// Corner radius for chips and small badges: control radius minus 2 px. The literals
 /// 2.0 / 3.0 / 8.0 all collapse to this one step so small blocks stop looking randomly
 /// rounded.
+/// M3 shape tokens：4（chip）/ 8（control）/ 12（panel）/ 16（window）。
+/// 圆角只允许这四档，别再按 `radius_control ± n` 派生——派生值会随外观旋钮
+/// 漂移，同一屏上的徽标与卡片就对不上。
+///
+/// M3 shape tokens: 4 / 8 / 12 / 16. Only these four steps are allowed; deriving from
+/// `radius_control +- n` makes chips and cards drift apart as the appearance knob moves.
 pub fn radius_chip() -> f32 {
-    (radius_control() - 2.0).max(2.0)
+    4.0
 }
 
 pub fn radius_window() -> f32 {
-    radius_control() + 4.0
+    16.0
 }
 
 pub fn radius_panel() -> f32 {
-    radius_control() + 2.0
+    12.0
 }
 
 /// 面板行的悬停底色：深色主题往上抬一档，浅色主题往下压一档 —— 两个方向都是

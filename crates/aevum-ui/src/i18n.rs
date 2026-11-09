@@ -1032,6 +1032,7 @@ mod tests {
     #[test]
     fn entries_are_translated() {
         const SAME_OK: &[&str] = &[
+            "4K UHD", // 规格名，中英同形；不是漏译。
             "Aevum",
             "English",
             "中文",
