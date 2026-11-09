@@ -470,7 +470,7 @@ fn secondary_button(ui: &mut Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(RichText::new(crate::i18n::tr(label)).size(SIZE_LABEL))
             .corner_radius(radius_control())
-            .min_size(Vec2::new(0.0, 26.0)),
+            .min_size(Vec2::new(0.0, CH)),
     )
 }
 
@@ -501,7 +501,7 @@ fn primary_button(ui: &mut Ui, label: &str) -> egui::Response {
         ui.add(
             egui::Button::new(RichText::new(crate::i18n::tr(label)).size(SIZE_LABEL))
                 .corner_radius(radius_control())
-                .min_size(Vec2::new(0.0, 26.0)),
+                .min_size(Vec2::new(0.0, CH)),
         )
     })
     .inner

@@ -506,6 +506,16 @@ fn catalog_view(state: &mut AppState, ui: &mut Ui, ctx: &Context, index: usize) 
                     Vec2::new(ui.available_width(), ROW_H - 8.0),
                     Sense::click(),
                 );
+                // 整行悬停：图库是最长的一块列表，划过毫无变化会让整页读成贴图。
+                // 先画底、再建子控件，所以它永远压在文字与星标之下（审计 #2）。
+                //
+                // Whole-row hover: the library is the longest list in the app, and no
+                // reaction on hover makes it read as a screenshot. Painted before the
+                // children so it always sits under text and stars.
+                if resp.hovered() && !selected && !checked {
+                    ui.painter()
+                        .rect_filled(rect, radius_control(), crate::theme::row_hover());
+                }
                 let mut row_ui = ui.new_child(
                     UiBuilder::new()
                         .max_rect(rect)

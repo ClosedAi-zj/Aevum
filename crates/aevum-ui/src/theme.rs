@@ -1095,6 +1095,18 @@ pub const SIZE_BODY: f32 = 13.0;
 ///
 /// Page title: one step above body text; only page titles use it.
 pub const SIZE_TITLE: f32 = 15.0;
+
+/// 标准控件高度：按钮、输入框、页签行都取这一档；小号取 `CH_SM`。
+/// 收口 5 种高度（22/24/26/28/32）是「整体像拼装」的直接来源（审计 #32）。
+///
+/// Standard control height: buttons, fields and tab rows all use this; `CH_SM` for the
+/// compact variant. Five different heights were a direct cause of the "assembled from
+/// parts" look.
+pub const CH: f32 = 26.0;
+/// 小号控件高度（工具栏图标按钮、芯片）。
+///
+/// Compact control height (toolbar icon buttons, chips).
+pub const CH_SM: f32 = 22.0;
 pub const SIZE_HEADING: f32 = 15.0;
 /// 面板里的推子标签与键值行：比 11 号小字大一档，11 号在 372px 宽的面板上
 /// 读起来像脚注，而参数名是这一页最常读的字。
