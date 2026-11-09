@@ -13,7 +13,9 @@
 use egui::{Color32, Context, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
 
 use super::flow::{self, StepAction};
+
 use crate::state::AppState;
+use crate::state::Module;
 use crate::theme::*;
 
 /// 该不该摆这块面板。窄窗强制收起；没有序列时**不**收起，面板会给「导入照片…」。
@@ -41,7 +43,7 @@ fn needs_frames(a: StepAction) -> bool {
 /// 动作分发：只接既有入口，不为面板新造旁路。
 ///
 /// Action dispatch: existing entry points only, no side channel for this panel.
-fn run_action(state: &mut AppState, ctx: &Context, a: StepAction) {
+pub(super) fn run_action(state: &mut AppState, ctx: &Context, a: StepAction) {
     match a {
         StepAction::Import => super::dialogs::open_photos_dialog(state),
         StepAction::Rescan => super::dialogs::rescan(state, ctx),
@@ -346,6 +348,37 @@ pub(super) fn step_metrics(avail_w: f32, n: usize) -> (f32, bool) {
 /// segment.
 pub(super) fn step_min_width(n: usize) -> f32 {
     STEP_COUNTER_W + STEP_GAP * (n as f32 + 1.0) + n as f32
+}
+
+/// 中央区当前该画哪一页：三步各自一个独立界面（用户 2026-11-09）。
+///
+/// Which page the centre area should paint: three steps, three independent views
+/// (user, 2026-11-09).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum FlowPage {
+    Sequence,
+    Develop,
+    Export,
+}
+
+/// 由当前步派生页面：序列管理步 → 缩略图墙；导出步 → 导出工作台；
+/// 其余（去闪/对齐/调色）都回到画布。单张与空工程恒为画布。
+///
+/// Page derived from the current step: sequence step -> thumbnail wall; export step ->
+/// export workbench; everything else (deflicker / align / develop) -> canvas. Single
+/// photos and an empty project always get the canvas.
+pub(super) fn current_page(state: &AppState) -> FlowPage {
+    if state.frame_count() <= 1 {
+        return FlowPage::Develop;
+    }
+    let task = state.flow_task;
+    let steps = task.steps();
+    let step = &steps[flow::display_step(state, task).min(steps.len().saturating_sub(1))];
+    match step.module {
+        Module::Sequence => FlowPage::Sequence,
+        Module::Render => FlowPage::Export,
+        _ => FlowPage::Develop,
+    }
 }
 
 pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {

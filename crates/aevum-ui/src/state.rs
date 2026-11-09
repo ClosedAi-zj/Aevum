@@ -1440,6 +1440,14 @@ pub struct AppState {
     cancel_measure: Arc<AtomicBool>,
 
     pub params: GradeParams,
+    /// 导入那一刻的调色基线：`✓ 调色与修复` 只在这个基线被改动后才亮。
+    /// 没有它，上一趟/全局默认留下的参数会让刚导入的序列直接显示「已调色」
+    /// （用户 2026-11-09 截图：导入后前两步全打勾）。
+    ///
+    /// Grade baseline captured at import: `Done` lights up only after the params move
+    /// away from it. Without it, params carried over from a previous sequence made a
+    /// freshly imported sequence read as already graded (user screenshot, 2026-11-09).
+    pub grade_baseline: Option<GradeParams>,
     pub preset: String,
     pub auto_note: Option<String>,
     /// 自动校正的 256 长边代理：同一帧重复点自动不重复解码。

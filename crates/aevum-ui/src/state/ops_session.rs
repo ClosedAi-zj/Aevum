@@ -531,6 +531,7 @@ impl AppState {
             measuring: None,
             cancel_measure: Arc::new(AtomicBool::new(false)),
             params: GradeParams::default(),
+            grade_baseline: None,
             preset: "原始".to_owned(),
             auto_note: None,
             auto_probe: None,
@@ -943,6 +944,11 @@ impl AppState {
         let root = seq.root.clone();
         let seq_name = seq.display_name();
         self.seq = Some(seq);
+        // 导入基线：这一刻的参数就是「没调过色」。此后没动过色，
+        // 就不该亮（用户 2026-11-09 截图：导入后前两步全打勾）。
+        //
+        // Import baseline: the params at this instant mean "not graded yet".
+        self.grade_baseline = Some(self.params.clone());
         self.unload_jobs();
         self.align_report = None;
         self.align_busy = false;

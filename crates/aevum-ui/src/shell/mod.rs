@@ -49,6 +49,7 @@ mod library;
 mod markdown;
 mod mask;
 mod menu;
+mod pages;
 mod palette;
 mod tabs;
 mod timeline;
@@ -452,7 +453,19 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     let mut centre_ui = root.new_child(egui::UiBuilder::new().max_rect(centre).id_salt("centre"));
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(surround()))
-        .show(&mut centre_ui, |ui| canvas_panel(state, ui, insets.right));
+        .show(&mut centre_ui, |ui| {
+            // 三步三页（用户 2026-11-09）：序列管理看整条序列、调色与修复看画布、
+            // 导出视频看队列与设置。单张与空工程恒为画布。
+            //
+            // Three steps, three pages (user, 2026-11-09): sequence manager shows the
+            // whole sequence, develop shows the canvas, export shows queue and settings.
+            // Single photos and an empty project always get the canvas.
+            match flow_panel::current_page(state) {
+                flow_panel::FlowPage::Sequence => pages::sequence_page(state, ui, &ctx),
+                flow_panel::FlowPage::Export => pages::export_page(state, ui, &ctx),
+                flow_panel::FlowPage::Develop => canvas_panel(state, ui, insets.right),
+            }
+        });
 
     // 面板与画布之间那条呼吸带：与画布同底色的中性灰，面板内缘压一根发丝线。
     // 只画在文档区高度内，不越过菜单行 / 选项栏 / 底部胶片条。

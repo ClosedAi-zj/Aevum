@@ -291,7 +291,15 @@ pub fn check_ready(state: &AppState, check: StepCheck) -> bool {
         StepCheck::Frames => state.frame_count() > 0,
         StepCheck::Deflick => !state.corr.is_empty(),
         StepCheck::Aligned => state.align_report.is_some(),
-        StepCheck::Graded => state.params != GradeParams::default(),
+        // 以导入基线为准，不是「与出厂默认不同」：沿用上一趟的参数会让刚导入的
+        // 序列直接显示已调色（用户 2026-11-09 截图：前两步全打勾）。
+        //
+        // Compare against the import baseline, not the factory default: carried-over
+        // params made a freshly imported sequence read as already graded.
+        StepCheck::Graded => match &state.grade_baseline {
+            Some(base) => state.params != *base,
+            None => state.params != GradeParams::default(),
+        },
         StepCheck::Masked => !state.params.masks.is_empty(),
         StepCheck::OutDir => !state.render_out_dir.as_os_str().is_empty(),
         StepCheck::Merged => state.merge_result.is_some(),

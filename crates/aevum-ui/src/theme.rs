@@ -300,7 +300,13 @@ const DARK: Ladder = Ladder {
     // already sits at the edge (~4.6), so raising MUTED is the only move that
     // satisfies both WCAG and the hierarchy gap.
     muted: 73.0,
-    dim: 62.0,
+    // 2026-11-09（用户「对比不足」）：DIM 62 → 68（对 bg 约 4.6:1 → 5.6:1）。
+    // text/muted 有十六进制快照判据钉着，且本来已有 9.5:1 / 6.4:1，不动它们。
+    //
+    // 2026-11-09 ("contrast too low"): DIM 62 -> 68 (~4.6:1 -> ~5.6:1 against bg).
+    // text/muted are pinned by a hex snapshot and already sit at 9.5:1 / 6.4:1.
+    dim: 68.0,
+
     dir: 1.0,
 };
 
@@ -1085,6 +1091,10 @@ pub const FONT_ZOOMS: [f32; 4] = [1.0, 1.06, 1.14, 1.24];
 /// Heading plus a zoom step).
 pub const SIZE_SMALL: f32 = 11.0;
 pub const SIZE_BODY: f32 = 13.0;
+/// 页面标题：比正文大一档，全应用只有页面标题用它。
+///
+/// Page title: one step above body text; only page titles use it.
+pub const SIZE_TITLE: f32 = 15.0;
 pub const SIZE_HEADING: f32 = 15.0;
 /// 面板里的推子标签与键值行：比 11 号小字大一档，11 号在 372px 宽的面板上
 /// 读起来像脚注，而参数名是这一页最常读的字。
