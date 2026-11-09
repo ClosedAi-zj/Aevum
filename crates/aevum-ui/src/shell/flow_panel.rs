@@ -417,12 +417,22 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
         for (i, s) in steps.iter().enumerate() {
             let done = states[i] == flow::StepState::Ready;
             let name = crate::i18n::tr(s.label);
-            let label = if done {
-                format!("✓ {}", name)
-            } else if compact {
-                name.to_owned()
+            // 序号与完成标记改由左侧圆承担，文字只留名称——「✓ 1 序列管理」
+            // 这种三重前缀挤在一起，读起来像注释不像导航。
+            //
+            // The index and the done mark move into the leading circle; the text keeps
+            // only the name. "check 1 sequence" reads like a comment, not navigation.
+            // 圆占掉 27px，文字只能用剩下的宽度：超出就截断，否则窄屏会压到
+            // 相邻段（ui_tokens 的文本重叠判据会红）。
+            //
+            // The circle eats 27 px; the label gets the rest and is truncated, or narrow
+            // layouts would bleed into the neighbouring segment.
+            let text_w = (per - 27.0 - 10.0).max(12.0);
+            let max_chars = (text_w / SIZE_BODY).max(1.0) as usize;
+            let label = if crate::i18n::tr(s.label).chars().count() > max_chars {
+                crate::theme::ellipsis(name, max_chars)
             } else {
-                format!("{}  {}", i + 1, name)
+                name.to_owned()
             };
             // 极窄屏：按段宽截字，避免文字压到边框外。
             let label = if compact {
@@ -477,13 +487,42 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
                     accent().gamma_multiply(t.max(0.15)),
                 );
             }
+            // 序号圆：导航的主锚点。完成=强调色暗底✓，当前=强调色实底序号，
+            // 未到=升一档底 + 次级字。形状 + 位置 + 颜色三重编码，不只靠颜色。
+            //
+            // Leading number circle: the navigation anchor. Done = accent-dim with a
+            // check, current = solid accent, todo = elevated fill with secondary text.
+            // Shape + position + colour, not colour alone.
+            let d = 18.0;
+            let circle = Rect::from_center_size(
+                Pos2::new(rect.left() + 9.0 + d * 0.5, rect.center().y),
+                Vec2::splat(d),
+            );
+            let (cfill, ctext) = if i == current {
+                (accent(), on_accent())
+            } else if done {
+                (accent_dim(), on_elev())
+            } else {
+                (elev_hover(), muted())
+            };
+            p.circle_filled(circle.center(), d * 0.5, cfill);
+            p.text(
+                circle.center(),
+                egui::Align2::CENTER_CENTER,
+                if done && i != current {
+                    "✓".to_owned()
+                } else {
+                    format!("{}", i + 1)
+                },
+                font(SIZE_SMALL),
+                ctext,
+            );
             let galley = ui
                 .painter()
                 .layout_no_wrap(label.clone(), font(SIZE_BODY), v.text);
-            // 文字水平垂直居中，段与段对齐一致。
             p.galley(
                 Pos2::new(
-                    rect.center().x - galley.size().x * 0.5,
+                    circle.right() + 7.0,
                     rect.center().y - galley.size().y * 0.5,
                 ),
                 galley,
