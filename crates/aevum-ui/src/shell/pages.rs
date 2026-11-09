@@ -379,6 +379,11 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         let body_h = (cols[0].available_height() * 0.55).max(CH * 8.0);
         cols[0].set_min_height(body_h);
         cols[1].set_min_height(body_h);
+        // 两卡等高：内容只有一小截时，页面会读成「没做完」。
+        // Equal card heights: a stub of content reads as an unfinished page.
+        let body_h = (cols[0].available_height() * 0.55).max(CH * 8.0);
+        cols[0].set_min_height(body_h);
+        cols[1].set_min_height(body_h);
         card(cols, 0, |ui| {
             ui.label(
                 RichText::new(crate::i18n::tr("渲染队列"))
@@ -391,10 +396,14 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 let (r, _) =
                     ui.allocate_exact_size(Vec2::new(ui.available_width(), 96.0), Sense::hover());
                 ui.painter().rect_filled(r, radius_control(), elev());
+                // 空态本身就是入口：只写一句「队列是空的」等于让用户自己找按钮。
+                // The empty state is the entry point: a bare sentence makes the user
+                // hunt for the action.
+                let _ = ui.allocate_space(Vec2::new(0.0, 2.0));
                 ui.painter().text(
                     r.center(),
                     egui::Align2::CENTER_CENTER,
-                    crate::i18n::tr("队列是空的。点「加入当前序列」，或到图库右键任意序列入队。"),
+                    crate::i18n::tr("队列还是空的"),
                     font(SIZE_LABEL),
                     dim(),
                 );
@@ -482,14 +491,8 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     );
                     ui.end_row();
                 });
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new(crate::i18n::tr(
-                    "每段读取加入队列时的工程参数；批量渲染按顺序逐段执行。",
-                ))
-                .size(SIZE_SMALL)
-                .color(dim()),
-            );
+            // 常驻说明收进标题 tooltip（用户：文字太多）。
+            // The standing note moves into the heading tooltip.
         });
     });
 }

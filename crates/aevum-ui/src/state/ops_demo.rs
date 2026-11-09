@@ -53,6 +53,17 @@ impl AppState {
         // 线性光测光也合成一份，形状跟着胶片条同调：每 7 帧一次整体掉档（曝光跳，
         // 三通道一起掉），每 5 帧一次偏绿（色闪，只有分通道看得见）。演示序列不带
         // 这两样，验收时「分通道」就是个死控件。
+        // 截图调试：`AEVUM_DEMO_PAGE=export|sequence` 直接把流程手选到对应页，
+        // 否则 headless 截图只能停在派生出来的第一页，改版面根本没法取证。
+        //
+        // Screenshot hook: `AEVUM_DEMO_PAGE=export|sequence` pins the flow step so a
+        // headless shot can capture that page; otherwise only the derived first page is
+        // reachable and layout changes cannot be verified.
+        match std::env::var("AEVUM_DEMO_PAGE").as_deref() {
+            Ok("export") => s.flow_step = Some(2),
+            Ok("sequence") => s.flow_step = Some(0),
+            _ => {}
+        }
         s.def_means = (0..n)
             .map(|i| {
                 let t = i as f64 / n as f64;

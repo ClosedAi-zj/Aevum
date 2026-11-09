@@ -460,7 +460,19 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             // Three steps, three pages (user, 2026-11-09): sequence manager shows the
             // whole sequence, develop shows the canvas, export shows queue and settings.
             // Single photos and an empty project always get the canvas.
-            match flow_panel::current_page(state) {
+            // 截图钩子（仅 `--shot` 用）：`AEVUM_DEMO_PAGE=export|sequence` 强制
+            // 打开对应页面。导入流程会把手选步重置回第一段，所以在渲染决策处判定
+            // 才可靠——否则 headless 永远只能截到派生页。
+            //
+            // Screenshot hook (`--shot` only): `AEVUM_DEMO_PAGE=export|sequence` forces
+            // the page. Import resets the hand-picked step, so deciding here is the only
+            // reliable way for a headless shot to reach another page.
+            let forced = match std::env::var("AEVUM_DEMO_PAGE").as_deref() {
+                Ok("export") => Some(flow_panel::FlowPage::Export),
+                Ok("sequence") => Some(flow_panel::FlowPage::Sequence),
+                _ => None,
+            };
+            match forced.unwrap_or_else(|| flow_panel::current_page(state)) {
                 flow_panel::FlowPage::Sequence => pages::sequence_page(state, ui, &ctx),
                 flow_panel::FlowPage::Export => pages::export_page(state, ui, &ctx),
                 flow_panel::FlowPage::Develop => canvas_panel(state, ui, insets.right),
