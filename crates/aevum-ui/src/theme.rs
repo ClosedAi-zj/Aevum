@@ -276,8 +276,8 @@ struct Ladder {
 // aevum-acr-replica-v3）：面板系 +3 档（panel 14→17 ≈ #363638 的 L 值），
 // 文字三档同步微调保住 WCAG（dim 59→62：bg 变亮后 4.5:1 的压线判据）。
 const DARK: Ladder = Ladder {
-    surround: 15.0,
-    canvas: 15.4,
+    surround: 10.0,
+    canvas: 11.0,
     panel: 20.0,
     dock: 20.3,
     chrome: 20.6,
@@ -1984,8 +1984,8 @@ mod token_tests {
             (p.panel, 0x333335, "PANEL"),
             (p.dock, 0x343436, "DOCK"),
             (p.header, 0x333335, "HEADER"),
-            (p.surround, 0x262628, "SURROUND"),
-            (p.canvas, 0x272729, "CANVAS"),
+            (p.surround, 0x191919, "SURROUND"),
+            (p.canvas, 0x1C1C1E, "CANVAS"),
             (p.elev, 0x424244, "ELEV"),
             (p.elev_hover, 0x525254, "ELEV_HOVER"),
             (p.field, 0x262628, "FIELD"),
