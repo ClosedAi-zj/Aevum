@@ -565,7 +565,7 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     ui.add_space(8.0);
     let w = ui.available_width();
     egui::Frame::NONE
-        .fill(elev())
+        .fill(panel())
         .stroke(egui::Stroke::new(1.0, border()))
         .corner_radius(radius_control())
         .inner_margin(egui::Margin::symmetric(10, 6))
@@ -615,7 +615,7 @@ fn frame_card<R>(ui: &mut Ui, w: f32, h: f32, add: impl FnOnce(&mut Ui) -> R) {
     // so the skeleton really is h tall.
     let p = ui.painter();
     let r = radius_panel();
-    p.rect_filled(rect, r, elev());
+    p.rect_filled(rect, r, panel());
     p.rect_stroke(
         rect,
         r,
@@ -649,7 +649,7 @@ fn section_rule(ui: &mut Ui) {
 /// A summary cell: small label plus value.
 fn card_stat(ui: &mut Ui, k: &str, v: &str) {
     let frame = egui::Frame::NONE
-        .fill(elev())
+        .fill(panel())
         .stroke(egui::Stroke::new(1.0, border()))
         .corner_radius(radius_control())
         .inner_margin(egui::Margin::symmetric(12, 6));
