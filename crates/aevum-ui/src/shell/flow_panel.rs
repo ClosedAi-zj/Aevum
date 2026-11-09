@@ -455,7 +455,7 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
                 // snaps is where the digital feel comes from. Only one property moves
                 // (width) -- no shift, scale or glow.
                 let t = ui.ctx().animate_bool_with_time(
-                    egui::Id::new(("flow-tab-underline", i as u8)),
+                    ui.make_persistent_id(("flow-tab-underline", i as u8)),
                     true,
                     0.12,
                 );

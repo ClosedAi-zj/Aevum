@@ -102,7 +102,7 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
             //
             // Same rule as the top step bar: 0.12 s, grows from the centre, width only.
             let t = ui.ctx().animate_bool_with_time(
-                egui::Id::new(("dock-tab-underline", i as u8)),
+                ui.make_persistent_id(("dock-tab-underline", i as u8)),
                 true,
                 0.12,
             );
