@@ -276,13 +276,13 @@ struct Ladder {
 // aevum-acr-replica-v3）：面板系 +3 档（panel 14→17 ≈ #363638 的 L 值），
 // 文字三档同步微调保住 WCAG（dim 59→62：bg 变亮后 4.5:1 的压线判据）。
 const DARK: Ladder = Ladder {
-    surround: 10.0,
-    canvas: 14.0,
-    panel: 17.0,
-    dock: 18.5,
-    chrome: 19.5,
+    surround: 7.0,
+    canvas: 11.0,
+    panel: 18.0,
+    dock: 19.5,
+    chrome: 20.5,
     bg: 21.0,
-    header: 15.5,
+    header: 13.0,
     elev: 26.0,
     elev_h: 32.0,
     field: 15.0,
@@ -1974,12 +1974,12 @@ mod token_tests {
         let p = Palette::of(&Appearance::default());
         let cases: [(Color32, u32, &str); 12] = [
             (p.bg, 0x363638, "BG"),
-            (p.chrome, 0x323234, "CHROME"),
-            (p.panel, 0x2B2B2D, "PANEL"),
-            (p.dock, 0x2F2F31, "DOCK"),
-            (p.header, 0x28282A, "HEADER"),
-            (p.surround, 0x191919, "SURROUND"),
-            (p.canvas, 0x242426, "CANVAS"),
+            (p.chrome, 0x343436, "CHROME"),
+            (p.panel, 0x2E2E30, "PANEL"),
+            (p.dock, 0x323234, "DOCK"),
+            (p.header, 0x212123, "HEADER"),
+            (p.surround, 0x121212, "SURROUND"),
+            (p.canvas, 0x1C1C1E, "CANVAS"),
             (p.elev, 0x424244, "ELEV"),
             (p.elev_hover, 0x525254, "ELEV_HOVER"),
             (p.field, 0x262628, "FIELD"),
