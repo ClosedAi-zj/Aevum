@@ -445,7 +445,6 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("单张也走序列容器：以后想补成延时，不用换工程。", "A single photo still uses the sequence container, so it can grow into a timelapse later without a new project."),
     ("单张修图", "Single photo"),
     ("单张照片", "Single photo"),
-    ("单张照片不需要流程，下面的动作直接用", "A single photo needs no flow -- use the actions below directly"),
     ("单张照片没有要对齐的邻居", "A single photo has no neighbour to align with"),
     ("单张照片没有闪烁可去", "A single photo has no flicker to remove"),
     ("单色", "Monochrome"),

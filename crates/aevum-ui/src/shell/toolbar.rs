@@ -46,7 +46,12 @@ pub(super) fn bar_primary(ui: &mut Ui, label: &str) -> Response {
         .layout_no_wrap(label.to_owned(), font(SIZE_BODY), on_accent());
     let size = Vec2::new(galley.size().x + 22.0, BAR_H);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let fill = if resp.dragged() {
+    // `dragged()` 只在 `senses_drag()` 的控件上为真（egui interaction.rs），
+    // click-only 的主按钮恒 false——按下态因此是死代码。改用真正的按下判定。
+    //
+    // `dragged()` is only true for drag-sensing widgets, so a click-only primary button
+    // never saw it -- the pressed state was dead code.
+    let fill = if resp.is_pointer_button_down_on() {
         accent_dim()
     } else if resp.hovered() {
         accent_hover()
@@ -1031,6 +1036,12 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui, half: RailHalf, on_le
                 1.0,
                 accent(),
             );
+        } else if resp.is_pointer_button_down_on() {
+            // 按下比悬停再沉一档：15 个图标点起来才有「按」而不是「滑」。
+            //
+            // Pressed sinks one step below hover, so the fifteen icons feel pressed,
+            // not swiped.
+            p.rect_filled(*rect, radius_control(), press());
         } else if resp.hovered() {
             p.rect_filled(*rect, radius_control(), elev_hover());
         }

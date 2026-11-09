@@ -127,13 +127,11 @@ pub(super) fn flow_panel(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // Step navigation lives in the top bar only (horizontal tabs); the panel no longer
     // repeats the same steps as a vertical list -- exactly the duplication the user
     // called out. The panel keeps the current phase's description and actions.
-    if single {
-        ui.label(
-            RichText::new(crate::i18n::tr("单张照片不需要流程，下面的动作直接用"))
-                .size(SIZE_LABEL)
-                .color(dim()),
-        );
-    }
+    // 单张模式不再用一行文字解释「界面为什么长这样」：状态由标题与动作本身
+    // 表达，解释收进标题的 tooltip（2026-11-09 审计 #41）。
+    //
+    // Single mode no longer explains itself in a standing line; the title and the
+    // actions already say it, and the explanation moves into a tooltip.
     ui.add_space(2.0);
     rule(
         ui.painter(),

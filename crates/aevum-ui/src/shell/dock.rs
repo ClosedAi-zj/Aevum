@@ -106,6 +106,8 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
                 1.0,
                 accent(),
             );
+        } else if resp.is_pointer_button_down_on() {
+            p.rect_filled(r, radius_control(), press());
         } else if resp.hovered() {
             p.rect_filled(r, radius_control(), elev_hover());
         }
