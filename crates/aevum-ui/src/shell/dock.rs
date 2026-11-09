@@ -98,13 +98,22 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
         let resp = ui.interact(r, ui.make_persistent_id(("dock-tab", i)), Sense::click());
         let active = state.dock_tab == *tab;
         if active {
+            // 与顶栏步骤同一套：0.12s 从中心展开，只动宽度。
+            //
+            // Same rule as the top step bar: 0.12 s, grows from the centre, width only.
+            let t = ui.ctx().animate_bool_with_time(
+                egui::Id::new(("dock-tab-underline", i as u8)),
+                true,
+                0.12,
+            );
+            let half = (r.width() * 0.5 - 8.0).max(0.0) * t;
             p.rect_filled(
                 Rect::from_min_max(
-                    Pos2::new(r.left() + 8.0, r.bottom() - 1.5),
-                    Pos2::new(r.right() - 8.0, r.bottom()),
+                    Pos2::new(r.center().x - half, r.bottom() - 1.5),
+                    Pos2::new(r.center().x + half, r.bottom()),
                 ),
                 1.0,
-                accent(),
+                accent().gamma_multiply(t.max(0.15)),
             );
         } else if resp.is_pointer_button_down_on() {
             p.rect_filled(r, radius_control(), press());

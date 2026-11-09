@@ -448,13 +448,25 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
                 // The accent line sits on the button's **inner** bottom edge. The old
                 // implementation added bar_h to left_bottom, drawing it 26 px below the
                 // button -- effectively invisible, hence "no click effect".
+                // 下划线从中心展开（0.12s）：状态切换「跳」一下是数字感的来源；
+                // 一次只动一个属性（宽度），不做位移/缩放/发光。
+                //
+                // The underline grows from the centre over 0.12 s: a state change that
+                // snaps is where the digital feel comes from. Only one property moves
+                // (width) -- no shift, scale or glow.
+                let t = ui.ctx().animate_bool_with_time(
+                    egui::Id::new(("flow-tab-underline", i as u8)),
+                    true,
+                    0.12,
+                );
+                let half = (per - 12.0) * 0.5 * t;
                 p.rect_filled(
-                    Rect::from_min_size(
-                        Pos2::new(rect.left() + 6.0, rect.bottom() - 2.0),
-                        Vec2::new(per - 12.0, 2.0),
+                    Rect::from_min_max(
+                        Pos2::new(rect.center().x - half, rect.bottom() - 2.0),
+                        Pos2::new(rect.center().x + half, rect.bottom()),
                     ),
                     1.0,
-                    accent(),
+                    accent().gamma_multiply(t.max(0.15)),
                 );
             }
             let galley = ui
