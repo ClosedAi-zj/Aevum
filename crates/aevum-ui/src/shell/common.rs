@@ -167,6 +167,25 @@ pub(super) fn group_gap(ui: &mut Ui) {
     ui.add_space(18.0);
 }
 
+/// 一张分组卡（设计稿 `.grp`）：12px 内距、8px 圆角、6% 白环、卡与卡之间 8px。
+/// 组头也画在卡内——这是「卡中卡」真正成立的地方；把组头留在卡外，卡只剩内容
+/// 一条，标题与卡会读成两个互不相干的层。
+///
+/// One group card (design `.grp`): 12 px padding, 8 px radius, 6 % white ring and
+/// 8 px between cards. The header lives inside as well -- that is what makes the
+/// card-in-card read as one block; leaving the header outside turns the card into a
+/// strip of body that is visually unrelated to its title.
+pub(super) fn group_card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.add_space(8.0);
+    egui::Frame::NONE
+        .fill(theme::group_fill())
+        .stroke(egui::Stroke::new(1.0, theme::group_ring()))
+        .corner_radius((theme::radius_panel() - 4.0).max(2.0))
+        .inner_margin(egui::Margin::same(12))
+        .show(ui, add)
+        .inner
+}
+
 /// 选项栏的分段竖线（界面稿 .opt-sep）：1 × 20 的 divider 竖线，
 /// 把「工具身份 / 工具参数 / 上下文」三段隔开 —— 不用线的话，
 /// 参数一多就糊成一条连续的按钮带。
@@ -267,34 +286,24 @@ pub(super) fn group_header(
     resettable: bool,
 ) -> bool {
     let title = crate::i18n::tr(title);
-    // 分组头口径（ACR 2023+ 的面板列，用户 2026-11-07 截图）：一行 32px，
-    // 箭头 + 常规字重标题 + 眼睛，下面一道通栏 hairline。上一版按更早的效果图
-    // 加了滑杆图标又把分隔线撤掉；最新的参考图里两样都没有——图标让八个组头
-    // 变成八颗按钮，没有线则让折叠后的分组糊成一整块。
-    //
-    // Group header, per ACR's 2023+ panel column (user screenshot, 2026-11-07):
-    // a 32 px row of chevron + regular-weight title + eye, closed by a full-width
-    // hairline. An earlier mockup added a sliders glyph and dropped the rule; the
-    // newest reference has neither -- the glyph turned eight headers into eight
-    // buttons, and without the rule collapsed groups blur into one slab.
     // 卡中卡（设计稿 v10.6/v12 的 `.grp`）：每个分组是一张独立圆角卡片
     // ——`background:#2a2d32`、`border-radius:8px`、`padding:12px`、
-    // `box-shadow:0 0 0 1px rgba(255,255,255,.06)`。
-    // 我们是「通栏 hairline 分隔」的 ACR 语法：八组排下来读成一张长表，
-    // 用户点名「质感不对」的根源就在这里——分隔线只切断，不建立「这是一块」。
+    // `box-shadow:0 0 0 1px rgba(255,255,255,.06)`。旧版是「通栏 hairline
+    // 分隔」的 ACR 语法：八组排下来读成一张长表，用户点名「质感不对」的根源
+    // 就在这里——分隔线只切断，不建立「这是一块」。
     //
     // Card-in-card, per the design's `.grp`: each group is its own rounded card --
-    // `#2a2d32` fill, 8 px radius, 12 px padding, a 1px ring via box-shadow. Our
-    // full-width hairline separators are ACR's grammar: eight groups read as one long
+    // `#2a2d32` fill, 8 px radius, 12 px padding, a 1px ring via box-shadow. The old
+    // full-width hairline separators were ACR's grammar: eight groups read as one long
     // table, and that is exactly what "the texture is wrong" points at -- a rule only
     // cuts, it never says "this is one block".
-    ui.add_space(2.0);
-    // 行高由「信息密度」偏好决定：标准 32px（用户 ACR 截图实测），紧凑 28px
-    // （更紧的 ACR 版本）。折叠态四个组头的差别就是 16px，展开态还会再放大。
+    // 组头 24px（设计稿 `.grp-h{height:24px}`）。旧版 32px 是卡外组头的口径；
+    // 组头搬进卡后，24px + 卡内距 12 才和参考图的呼吸一致。
     //
-    // Row height follows the density preference: 32 px standard (measured on the user's
-    // ACR screenshot) or 28 px compact (tighter ACR builds).
-    let gh = if state.layout.dense { 28.0 } else { 32.0 };
+    // Header 24 px (design `.grp-h`). The old 32 px belonged to a header outside the
+    // card; once the header moves inside, 24 px plus the card's 12 px padding matches
+    // the reference's breathing room.
+    let gh = 24.0;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), gh), Sense::click());
     if state.dock_focus.as_deref() == Some(key) {
         // 只推一次：egui 在下一帧把目标滚到位，截图时机在 900ms 之后，足够稳定。
@@ -321,7 +330,7 @@ pub(super) fn group_header(
     icons::paint(
         p,
         Rect::from_center_size(
-            Pos2::new(rect.left() + 11.0, rect.center().y),
+            Pos2::new(rect.left() + 6.0, rect.center().y),
             Vec2::splat(11.0),
         ),
         if open {
@@ -331,13 +340,20 @@ pub(super) fn group_header(
         },
         if resp.hovered() { text() } else { muted() },
     );
-    // 标题用正文字阶 + 常规字重：ACR 的组名是常规字重，800 的粗体叠在
-    // 十来个组头上会把面板读成一排按钮。
+    // 组名 13px / 600（设计稿 `.grp-h .lb`）：它是卡片的标题，比下面的
+    // 参数名重一档才立得住卡片层级；用真粗体字族而非描边加粗。
     //
-    // Title at body scale in the regular weight: ACR's group names are regular, and
-    // a bold 800 across ten headers reads as a column of buttons.
-    let title_galley = p.layout_no_wrap(title.to_owned(), font(SIZE_LABEL + 1.0), text());
-    let title_x = rect.left() + 26.0;
+    // Group name 13 px / 600 (the design's `.grp-h .lb`): as the card's title it
+    // must outweigh the 12 px parameter labels to carry the card hierarchy; this
+    // uses the real bold family, not a faux-bold stroke.
+    let title_galley = p.layout_no_wrap(title.to_owned(), bold(SIZE_LABEL + 1.0), text());
+    // 卡内左缘：设计稿 `.grp-h` 的箭头与标题相距约 6px，卡内距 12px 已经把
+    // 标题推到 x≈18。这里取 18，标题与下面 `.srow` 的标签列不再差一截。
+    //
+    // Left edge inside the card: the design puts about 6 px between the chevron and
+    // the title, and the card's 12 px padding already lands the title at x~18. Using
+    // 18 keeps the title and the labels below it on the same column.
+    let title_x = rect.left() + 18.0;
     p.galley(
         Pos2::new(title_x, rect.center().y - title_galley.size().y * 0.5),
         title_galley.clone(),
@@ -542,16 +558,21 @@ pub(super) fn group_header(
             state.settings_dirty = true;
         }
     });
-    // 通栏 hairline：最新的 ACR 截图里每组之间都有一条极淡的线。它读作
-    // 「一列分组的边界」，不是旧版那种把分组切成表格的双线。
+    // 组头随卡走：设计稿 `.grp-h` 下没有分隔线，卡自身就是一层的边界。
+    // 旧版通栏 hairline 是「卡外组头」的口径，留在这里会把卡再切一刀。
+    // 展开时补 8px 底距（`.grp-h{margin-bottom:8px}`），收起时不补
+    // （`.is-collapsed .grp-h{margin-bottom:0}`），否则折叠卡会多出一截下沿。
     //
-    // Full-width hairline: the newest ACR reference has a faint rule between groups.
-    // It reads as the boundary of a column of sections, not the old double rule that
-    // cut each section into a table row.
-    theme::rule(p, rect.left(), rect.right(), rect.bottom(), divider());
-
-    ui.add_space(4.0);
-    !state.collapsed.contains(key)
+    // The header travels with the card: the design's `.grp-h` has no rule beneath it
+    // because the card itself is the boundary. The old full-width hairline belonged
+    // to a header outside the card and would cut the card in two. Open sections add
+    // 8 px below the header (`.grp-h{margin-bottom:8px}`); collapsed ones do not
+    // (`.is-collapsed .grp-h{margin-bottom:0}`), which would leave a fat lower lip.
+    let open_now = !state.collapsed.contains(key);
+    if open_now {
+        ui.add_space(8.0);
+    }
+    open_now
 }
 
 /// 数值输入域的材质口径：`DragValue` 内部其实是一颗按钮，默认拿到的是 ELEV；
@@ -710,12 +731,15 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // 5 px per the design's `.slider-row .s-reset{width:5px;height:5px}`. The hit area
     // is widened through the `ui.interact` rect instead of by reserving layout width.
     const RESET_W: f32 = 5.0;
-    // 行内左右留白 10px（原 6）：ACR 的读数框离面板右缘有明显呼吸区，6px 让数字
-    // 贴着边线，读起来像被裁（用户 2026-11-08 截图）。
+    // 行内留白 6px：分组卡已经有 12px 内距，再加 6 就是离卡缘 18px——设计稿
+    // `.srow` 没有横向内距，标签几乎贴卡缘；旧版 10px 叠上卡内距变成 22px，
+    // 整列被推进画面中间，和组标题的左缘也对不上。
     //
-    // Row padding 10 px (was 6): ACR leaves visible breathing room between the readout box
-    // and the panel edge; at 6 px the numbers looked clipped.
-    const ROW_PAD: f32 = 10.0;
+    // Row padding 6 px: the card already brings 12 px, so 6 lands at 18 px from the
+    // card edge. The design's `.srow` has no horizontal padding and the label nearly
+    // touches the card; the old 10 px stacked onto the card's padding to 22 px, which
+    // pushed the column inward and broke alignment with the group title.
+    const ROW_PAD: f32 = 6.0;
     // 两行排布：首行中线 9px（标签与读数框），轨道中线 26px，行高 34——标签与轨道
     // 之间留 17px，轨道与下一行标签之间留 21px。参考图是 31px 节距，但实测这套
     // 深色 + 通栏轨道的组合按参考节距排下来太挤（用户 2026-11-07 实机反馈），
@@ -730,15 +754,25 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // 紧凑/标准/宽松对滑块静默失效——「不能动功能」红线）。三档节距 =
     // row_h + 6：紧凑 34 / 标准 38 / 宽松 46；行内两线随节距比例定位。
     let pitch = row_h() + 6.0;
-    let (l1_y, track_y) = (pitch * 0.26, pitch * 0.74);
-    // 标签 13 / 读数 11 / 组标题 14：PS 参考图的字号阶梯——参数名比读数大一档，
-    // 读数收在框里做次级信息；三档都用 13 会让整列读起来一样重。
+    // 行内纵向按设计稿 `.srow` 的比例分：上距 6 + 首行 18 / 行高 39 ≈ 0.38，
+    // 轨道中心 6+18+6+1.5 = 31.5 / 39 ≈ 0.81。旧值 0.26/0.74 把标签和轨道都
+    // 顶到行上部，底部空出一大截，整列读起来是「上密下松」的断拍。
     //
-    // Label 13 / readout 11 / section title 14, the PS reference's ladder: the parameter
-    // name is one step above its number, and the number recedes inside its box. Making
-    // all three 13 gives the column one flat weight.
-    const LABEL_SIZE: f32 = SIZE_LABEL + 1.0;
-    const VALUE_SIZE: f32 = SIZE_SMALL;
+    // Vertical split follows the design's `.srow`: 6 px pad + 18 px top over the
+    // 39 px row puts the first line at 0.38 and the rail centre (6+18+6+1.5) at
+    // 0.81. The old 0.26/0.74 pushed both to the top and left a fat bottom gap,
+    // giving the column a top-heavy, broken rhythm.
+    let (l1_y, track_y) = (pitch * 0.38, pitch * 0.81);
+    // 标签 12 / 读数 12：v12 设计稿 `.lab` 与 `.val` 同为 12px，只有颜色与字重
+    // 分主次——标签 `#c6c9d1` 常规，读数 `#f2f3f7` 中等。此前 13/11 的阶梯是 PS
+    // 的口径，套在 300px 面板上让参数名偏大、读数偏小，整列灰度还不统一。
+    //
+    // Label 12 / readout 12: in the v12 design both `.lab` and `.val` are 12 px, and
+    // only colour and weight separate them -- label `#c6c9d1` regular, value `#f2f3f7`
+    // medium. The old 13/11 ladder was Photoshop's; on a 300 px panel it oversized the
+    // names and shrank the numbers.
+    const LABEL_SIZE: f32 = SIZE_LABEL;
+    const VALUE_SIZE: f32 = SIZE_LABEL;
     let label = crate::i18n::tr(label);
     let tip = crate::i18n::tr(tip);
 
@@ -822,7 +856,12 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
             Align2::LEFT_CENTER,
             theme::ellipsis(label, crate::i18n::current().ellipsis_chars()),
             font(LABEL_SIZE),
-            text(),
+            // 设计稿 `.lab{color:var(--text2)}`：标签是次级文字，读数才是主角。
+            // 旧版标签用正文白，和读数抢亮度，一列看下来分不出谁是要读的数。
+            //
+            // The design's `.lab` is secondary (`--text2`); the readout is the headline.
+            // White labels competed with the numbers, so the column had no focal point.
+            muted(),
         );
     }
 
@@ -846,7 +885,10 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         // here and pinned by a test, rather than borrowing the warning colour.
         Color32::from_rgb(0xF5, 0xB8, 0x3D)
     } else {
-        value()
+        // 设计稿 `.val{color:var(--text)}`：读数用正文白，不是次级灰。
+        //
+        // The design's `.val` is body white (`--text`), not the secondary grey.
+        text()
     });
     // 读数走等宽（设计稿 B1）：一列推子的小数点必须落在同一条竖线上。`DragValue`
     // 没有 `.font()`，只能在作用域里压 `override_font_id`，画完立刻还原——与
@@ -1002,36 +1044,17 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
             }
         }
         None => {
-            // 通用轨道：PS 参考图（512×2093）实测是一整段「左暗右亮」渐变——
-            // 左端 92、右端 231（面板底 83），读数靠圆点位置读，不另铺填充条。
-            // 此前的深槽 + 左端填充在深色面板上读成一根短而脏的黑线；换渐变后
-            // 轨道自身的明度坡度就把量程说清楚了，也不再和色温/色调的彩轨分家。
-            // 左端取 `track`、右端取 `text`，与 PS 的 92→231 对背景 83 同比例。
+            // 通用轨道设计稿口径（`.track{background:#43464e}`）：一条平色细轨，
+            // 亮度从卡底只抬一档。旧版铺了一条「暗→白」渐变，两侧推子看起来像
+            // 在发光，整列轨道比标签还抢眼——这是「质感不对」的直观来源。
+            // 量程由滑块位置与端点读数表示，轨道不需要用明度再讲一遍。
             //
-            // Generic rail: the PS reference (512×2093) is a full-width dark -> light
-            // gradient -- 92 on the left, 231 on the right over an 83 background. The
-            // readout comes from the knob position, not a fill bar. The old dark groove
-            // plus left-anchored fill read as a short, dirty black line on the dark
-            // panel; the ramp itself now states the range and matches the temperature/
-            // tint colour rails. Left end `track`, right end `text` -- the same ratio
-            // as PS's 92 -> 231 over 83.
-            const SLICES: f32 = 48.0;
-            let lo = theme::track();
-            let hi = theme::text();
-            for k in 0..SLICES as usize {
-                let t0 = k as f32 / SLICES;
-                let t1 = (k as f32 + 1.0) / SLICES;
-                let x0 = rail_left + (rail_right - rail_left) * t0;
-                let x1 = rail_left + (rail_right - rail_left) * t1;
-                p.rect_filled(
-                    Rect::from_min_max(
-                        Pos2::new(x0, rail.top()),
-                        Pos2::new(x1 + 0.6, rail.bottom()),
-                    ),
-                    0,
-                    crate::widgets::mix(lo, hi, t0),
-                );
-            }
+            // Generic rail per the design (`.track` is a flat `#43464e`): one thin
+            // flat bar, one step above the card. The old dark -> white ramp made every
+            // rail glow and outshout its label -- a direct source of the "texture is
+            // wrong" reading. Range is told by the knob and the numbers, not by a
+            // brightness gradient.
+            p.rect_filled(rail, rail_h * 0.5, theme::slider_rail());
         }
     }
     // 参考图的轨道上没有中缝刻线：零位由滑块本身的位置读出，未动的推子滑块就在
@@ -1062,31 +1085,24 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // In the two-line form the rail sits only 13 px below the label, so a 12 px dot
     // collided with the label's lower edge; matching the reference's handle scale, it is
     // now 9 px (11 hover, 8 pressed), so the white dot reads as a point on the range.
+    // 设计稿 `.track i`：10×10、`#c9ccd3`、`box-shadow:0 1px 2px rgba(0,0,0,.5)`。
+    // 所以静止是 10px 圆点 + 一道柔和落影，没有黑描边也没有亮白填充；悬停微胀
+    // 到 11px 给指认，按下缩到 9px 并转 accent——按压反馈仍要在，但只出现在
+    // 手指按下的那一瞬，不常驻。
+    //
+    // The design's `.track i` is 10x10 `#c9ccd3` with `0 1px 2px rgba(0,0,0,.5)`:
+    // a 10 px dot with a soft drop shadow, no dark outline and no bright white fill.
+    // Hover nudges it to 11 px; pressing shrinks it to 9 px and turns it accent, so
+    // press feedback only exists while the finger is down.
     let r = if t.dragged() {
-        4.0
+        4.5
     } else if t.hovered() {
         5.5
     } else {
-        4.5
+        5.0
     };
-    // 先投影再填色：浅色渐变轨上，没有暗边的白点会糊进轨道。
-    //
-    // Shadow first, then fill: without a dark edge a light dot blurs into a light gradient
-    // rail.
-    p.circle_filled(knob + Vec2::new(0.0, 1.0), r, Color32::from_black_alpha(70));
-    p.circle(
-        knob,
-        r,
-        if t.dragged() { accent() } else { text() },
-        Stroke::new(1.0, Color32::from_black_alpha(90)),
-    );
-    // 悬停时外圈描边，指认「可抓」；拖动中不画——按下态已用 accent 填色区分。
-    //
-    // A halo ring on hover says "grabbable"; omitted while dragging, where the accent fill
-    // already marks the pressed state.
-    if t.hovered() && !t.dragged() {
-        p.circle_stroke(knob, r + 2.0, Stroke::new(1.0, border_strong()));
-    }
+    p.circle_filled(knob + Vec2::new(0.0, 1.2), r + 0.4, Color32::from_black_alpha(55));
+    p.circle_filled(knob, r, if t.dragged() { accent() } else { theme::knob() });
     // 复位点只在悬停这一行时画：每条推子常年挂一颗蓝点，整列看起来像一排指示灯，
     // 既挤又吵；需要时它就在读数框左边。
     //

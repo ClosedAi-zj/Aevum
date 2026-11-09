@@ -158,11 +158,20 @@ impl Skin {
 
     /// (色相, 饱和)。这四个数决定了整个界面偏冷还是偏暖。
     ///
+    /// Graphite 取设计稿 `--card #212327 / --grp #2a2d32 / --raised #33363c`
+    /// 反解出的 HSL（h≈220°, s≈8%）。旧值 (240°, 2%) 派生出的灰 R=G，
+    /// 在屏幕上读作中性灰而不是设计稿的蓝灰板岩，整块面板因此发闷。
+    ///
     /// (hue, saturation). Across the four skins these numbers decide whether the whole
     /// interface leans cool or warm.
+    ///
+    /// Graphite takes the HSL solved from the design's `--card #212327`,
+    /// `--grp #2a2d32` and `--raised #33363c` (h~220 deg, s~8 %). The old (240 deg, 2 %)
+    /// derived neutrals with R=G, which read as plain grey instead of the mockup's
+    /// blue-slate, so the whole panel looked flat.
     pub fn hsl(self) -> (f32, f32) {
         match self {
-            Self::Graphite => (240.0, 2.0),
+            Self::Graphite => (220.0, 8.0),
             Self::Steel => (214.0, 14.0),
             Self::Sand => (34.0, 10.0),
             Self::Jade => (178.0, 9.0),
@@ -804,6 +813,82 @@ pub fn row_hover() -> Color32 {
         Color32::from_rgb(f(p[0]), f(p[1]), f(p[2]))
     } else {
         overlay_white(p, 7)
+    }
+}
+
+/// 分组卡底（设计稿 `.grp{background:#2a2d32}`）：比面板抬一档，靠色差而不是
+/// 双描边说「这是一块」。旧表把卡片也画成 panel，卡与底只差 1–3 级灰，整列读
+/// 成一块；设计稿是 panel L14.1 → grp L18，差约 4 级。
+///
+/// Group-card fill (design `.grp{background:#2a2d32}`): one step above the panel, so
+/// the block reads by tonal difference instead of a double outline. The old table
+/// painted cards with `panel` too, leaving only 1-3 lightness steps between card and
+/// background; the design moves from panel L14.1 to grp L18, about four steps.
+pub fn group_fill() -> Color32 {
+    // 深色石墨直接用设计稿 `.grp{background:#2a2d32}`：从 panel 往白叠出来的
+    // 灰是中性灰(40,40,41)，而设计稿的卡面带蓝(42,45,50)。这 5~9 个蓝通道差
+    // 就是「卡片发灰、不像设计稿」的实测来源，靠混白永远混不出色相。
+    //
+    // Dark Graphite uses the design's `.grp{background:#2a2d32}` verbatim: blending
+    // panel toward white gives a neutral (40,40,41), while the design card is blue-grey
+    // (42,45,50). That 5-9 step blue gap is the measured "grey, not like the mockup"
+    // difference -- mixing toward white can never add hue.
+    if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Graphite {
+        return Color32::from_rgb(0x2A, 0x2D, 0x32);
+    }
+    let p = palette().panel;
+    if is_light() {
+        mix(p, Color32::BLACK, 0.035)
+    } else {
+        mix(p, Color32::WHITE, 0.045)
+    }
+}
+
+/// 分组卡描边（设计稿 `--ring: rgba(255,255,255,.06)` 的 1px 环）。比 `divider`
+/// 淡一档：环只负责收边，不负责分隔。
+///
+/// Group-card ring (the design's 1 px `--ring` at 6 % white). One step lighter than
+/// `divider`: a ring closes the edge, it does not separate sections.
+pub fn group_ring() -> Color32 {
+    with_alpha(
+        if is_light() {
+            Color32::BLACK
+        } else {
+            Color32::WHITE
+        },
+        if is_light() { 22 } else { 15 },
+    )
+}
+
+/// 滑块轨道（设计稿 `.track{background:#43464e}`）：卡片底上的实色灰轨。
+/// 旧版把通用轨画成「左深右白」的渐变，整列白尾巴比读数还抢眼；参考图的轨道
+/// 是同一根灰轨，量程只由滑块位置表达。
+///
+/// Slider rail (design `.track{background:#43464e}`): a flat grey rail on the card.
+/// The old generic rail ramped from dark to near-white, and the bright right end
+/// outweighed the readouts; the reference keeps one flat grey and lets the handle
+/// state the range.
+pub fn slider_rail() -> Color32 {
+    let c = group_fill();
+    if is_light() {
+        mix(c, Color32::BLACK, 0.12)
+    } else {
+        mix(c, Color32::WHITE, 0.12)
+    }
+}
+
+/// 滑块拇指（设计稿 `.track i{background:#c9ccd3; width:10px; height:10px}`）。
+/// 用略灰的实心点而不是正文白：纯白点压在渐变轨上像一颗 LED，灰一点才读成
+/// 「量程上的一个把手」。
+///
+/// Slider thumb (design `.track i`: 10 px, `#c9ccd3`). A slightly grey solid dot
+/// instead of body white: a pure-white dot on a gradient rail reads as an LED, while
+/// the grey one reads as a handle on a range.
+pub fn knob() -> Color32 {
+    if is_light() {
+        Color32::from_rgb(0x6A, 0x6E, 0x76)
+    } else {
+        Color32::from_rgb(0xC9, 0xCC, 0xD3)
     }
 }
 
@@ -1998,32 +2083,32 @@ mod token_tests {
         // 2026-11-10：整表按 docs/aevum-v12-timeline.html 的设计 token 重排后，
         // 这组快照同步更新（旧值是上一轮 ACR 暖深灰的产物，与目标设计稿的
         // 「深底 + 明显分层」不是同一个语法）。偏离设计稿的只有两处，理由跟在
-        // 对应项后面；其余严格等于 hsl(240,2%,L) 的输出。
+        // 对应项后面；其余严格等于 hsl(220,8%,L) 的输出。
         //
         // 2026-11-10: the whole table was re-laid per the design tokens in
         // docs/aevum-v12-timeline.html, so this snapshot follows. The old values were
         // the previous warm-ACR pass, a different grammar from the target design's
         // "dark base + pronounced layering". Only two entries depart from the design,
-        // each with its reason inline; the rest equal hsl(240,2%,L) exactly.
+        // each with its reason inline; the rest equal hsl(220,8%,L) exactly.
         let cases: [(Color32, u32, &str); 12] = [
-            (p.bg, 0x2F2F31, "BG"),
-            (p.chrome, 0x2A2A2C, "CHROME"),
-            (p.panel, 0x232325, "PANEL"),
-            (p.dock, 0x262628, "DOCK"),
-            (p.header, 0x2F2F31, "HEADER"),
-            (p.surround, 0x131314, "SURROUND"),
-            (p.canvas, 0x161617, "CANVAS"),
-            (p.elev, 0x363639, "ELEV"),
-            (p.elev_hover, 0x404043, "ELEV_HOVER"),
-            (p.field, 0x1C1C1E, "FIELD"),
+            (p.bg, 0x2D2F34, "BG"),
+            (p.chrome, 0x282A2F, "CHROME"),
+            (p.panel, 0x212327, "PANEL"),
+            (p.dock, 0x24262A, "DOCK"),
+            (p.header, 0x2D2F34, "HEADER"),
+            (p.surround, 0x121315, "SURROUND"),
+            (p.canvas, 0x151619, "CANVAS"),
+            (p.elev, 0x33363C, "ELEV"),
+            (p.elev_hover, 0x3C4047, "ELEV_HOVER"),
+            (p.field, 0x1B1C1F, "FIELD"),
             (p.text, 0xF4F4F5, "TEXT"),
-            // 设计稿 text3 = #8f939c(L58.6)：在 2% 冷灰下对 bar 只有 4.49:1，
-            // 差 0.01 不过 WCAG AA。抬到 L62（#9C9CA0，约 5.1:1）是唯一保底做法。
+            // 设计稿 text3 = #8f939c(L58.6)：对 bar 只有 4.49:1，差 0.01 不过
+            // WCAG AA。抬到 L62 是唯一保底做法，比设计稿亮约 8 级。
             //
-            // The design's text3 #8f939c (L58.6) reaches only 4.49:1 against bar once
-            // the 2% cool tint applies -- 0.01 short of WCAG AA. Raising it to L62
-            // (#9C9CA0, ~5.1:1) is the only way to hold the floor.
-            (p.muted, 0xCACACD, "MUTED"),
+            // The design's text3 #8f939c (L58.6) reaches only 4.49:1 against bar --
+            // 0.01 short of WCAG AA. Raising it to L62 is the only way to hold the
+            // floor; it sits about 8 levels above the mockup.
+            (p.muted, 0xC7CAD0, "MUTED"),
         ];
         for (got, want, name) in cases {
             for i in 0..3 {

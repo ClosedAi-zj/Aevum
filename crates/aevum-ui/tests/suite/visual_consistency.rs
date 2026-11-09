@@ -390,14 +390,13 @@ fn hsl_band_rails_carry_their_band_colour() {
 
 #[test]
 fn group_headers_match_the_acr_panel_column() {
-    // 用户 2026-11-07 最新的 ACR 面板截图：组头是一行 32px 的「折叠箭头 +
-    // 标题 + 眼睛」，下面一道通栏 hairline。参考图里既没有滑杆图标，标题也
-    // 不是粗体——八个组头叠在一起时，粗体会把面板读成一排按钮。
+    // 用户 2026-11-10 钦定的 v12 设计稿：组头是一行「折叠箭头 + 常规/粗体标题 +
+    // 眼睛」，下面是卡片边界本身，不再压一道通栏 hairline。判据保留箭头和标题，
+    // 只把 hairline 的要求翻成「不许有」。
     //
-    // The user's newest ACR panel screenshot (2026-11-07): a 32 px row of chevron +
-    // title + eye, closed by a full-width hairline. The reference has neither a
-    // sliders glyph nor a bold title -- bold across eight headers reads as a column
-    // of buttons.
+    // The user's pinned v12 design (2026-11-10): the header is a row of chevron +
+    // title + eye, closed by the card edge itself rather than a full-width hairline.
+    // The gate keeps the chevron/title checks and flips the hairline requirement.
     let common = clean("shell/common.rs");
     let i = common
         .find("pub(super) fn group_header")
@@ -406,24 +405,30 @@ fn group_headers_match_the_acr_panel_column() {
         .find("\npub(super) fn ")
         .map(|j| i + j)
         .unwrap_or(common.len())];
+    // v12 设计稿改为「卡中卡」语法：`.grp` 自己就是边界，`.grp-h` 下面不再压线。
+    // 旧 ACR 参考图（卡外组头 + 通栏 hairline）已不是当前目标，判据跟着翻面。
+    //
+    // v12 uses the "card inside card" grammar: `.grp` is the boundary and `.grp-h`
+    // carries no rule beneath it. The older ACR reference (out-of-card headers with a
+    // full-width hairline) is no longer the target, so the gate flips.
     assert_eq!(
         body.matches("theme::rule(").count(),
-        1,
-        "组头下应有且只有一道通栏 hairline（最新 ACR 参考图）"
+        0,
+        "组头下不该再压 hairline：v12 设计稿用卡片边界分组"
     );
     assert!(
         !body.contains("Glyph::Sliders"),
         "组头又加回了滑杆图标（参考图里箭头之后直接是标题）"
     );
-    // 行高现在由「信息密度」偏好决定：标准 32px（用户 ACR 截图实测）/ 紧凑 28px。
-    // 判据要的是"默认仍是 32，且密度开关真的接在行高上"，不是写死一个数字。
+    // 组头高度按 v12 设计稿 `.grp-h{height:24px}`：搬进卡片后 24px 才对得上
+    // 卡内距 12px 的呼吸。旧口径的 28/32 密度开关属于「卡外组头」时代。
     //
-    // Height now follows the density preference: 32 px standard (measured on the user's
-    // ACR screenshot) / 28 px compact. The criterion checks that 32 stays the default and
-    // that the switch really drives the row height, not that one number is hard-coded.
+    // The header height follows v12's `.grp-h{height:24px}`: inside the card, 24 px is
+    // what matches the 12 px card padding. The old 28/32 density switch belonged to the
+    // out-of-card header era.
     assert!(
-        body.contains("if state.layout.dense { 28.0 } else { 32.0 }"),
-        "组头行高应随「信息密度」在 28 / 32 之间切换，且默认 32px"
+        body.contains("let gh = 24.0;"),
+        "组头行高应为设计稿 `.grp-h` 的 24px"
     );
 }
 

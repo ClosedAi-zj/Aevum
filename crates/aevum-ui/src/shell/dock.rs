@@ -932,15 +932,14 @@ mod dock_paint_tests {
     #[test]
     fn slider_value_is_flat_grey_at_default_and_text_once_changed() {
         // 2026-11-10 第三次换口径（设计稿 v10.6/v12 的 .srow.changed .val）：
-        // **改动值 = 琥珀 #f5B83D**，未动值 = value()。琥珀是设计稿固定给
-        // "改动/时间"的语义色；蓝色仍只留给交互态（accent），正文白留给
-        // 组头标题。三个色各管一摊，谁也不抢谁的戏。
+        // **改动值 = 琥珀 #f5B83D**，未动值 = 正文白 text()（设计稿 `.val{color:var(--text)}`）。
+        // 琥珀是设计稿固定给"改动/时间"的语义色；蓝色仍只留给交互态（accent）。
         //
         // Third colour ruling (2026-11-10, per the design's .srow.changed .val): a
-        // **changed value is amber #f5B83D**, untouched stays value(). Amber owns the
-        // "changed/time" semantics in the design; blue stays interaction-only; body
-        // white stays on headings. One colour per job, no overlaps.
-        assert_eq!(value_color(0.0), value(), "默认值的读数不该抢眼");
+        // **changed value is amber #f5B83D**, untouched stays body white `text()` (the
+        // design's `.val{color:var(--text)}`). Amber owns the "changed/time" semantics;
+        // blue stays interaction-only.
+        assert_eq!(value_color(0.0), text(), "默认值的读数应走正文白");
         assert_eq!(
             value_color(0.75),
             Color32::from_rgb(0xF5, 0xB8, 0x3D),

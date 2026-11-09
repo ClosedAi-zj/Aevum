@@ -14,26 +14,11 @@ use super::*;
 /// converging to an off-frame vanishing point); it does not fix rotation or pincushion. With
 /// insufficient evidence it does nothing rather than guess a quad that warps the frame.
 pub(super) fn adjust_geometry(state: &mut AppState, ui: &mut Ui) -> bool {
-    if !group_header(ui, state, "geometry", "几何", false) {
-        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
-        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
-        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
-        // 矩形有时序毛刺，均已试过并否决）。
-        //
-        // Card-in-card (the design's .grp): one rounded card per group, header and
-        // body inside. egui::Frame paints the fill before the content and the stroke
-        // after -- the one reliable "background first" path in immediate mode.
-        // (Rejected alternatives: painting later covers earlier so the fill must go
-        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
-        // expand/collapse.)
-        egui::Frame::NONE
-            .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
-            .inner_margin(egui::Margin::symmetric(10, 8))
-            .show(ui, |_ui| false);
-    }
-    let mut auto = false;
+    group_card(ui, |ui| {
+        if !group_header(ui, state, "geometry", "几何", false) {
+            return false;
+        }
+        let mut auto = false;
     let mut clear = false;
     let mut corners = false;
     ui.horizontal(|ui| {
@@ -117,13 +102,14 @@ pub(super) fn adjust_geometry(state: &mut AppState, ui: &mut Ui) -> bool {
         }
         _ => kv(ui, "状态", crate::i18n::t!("未校正"), dim()),
     }
-    if state.upright_editing {
-        note(
-            ui,
-            crate::i18n::t!("画布上四个圆点就是四角：拖到方形物体的边上，双击某个角放回原处"),
-        );
-    }
-    changed
+        if state.upright_editing {
+            note(
+                ui,
+                crate::i18n::t!("画布上四个圆点就是四角：拖到方形物体的边上，双击某个角放回原处"),
+            );
+        }
+        changed
+    })
 }
 
 /// 修复：画笔设定 + 已落笔触的撤销。
@@ -137,26 +123,11 @@ pub(super) fn adjust_geometry(state: &mut AppState, ui: &mut Ui) -> bool {
 /// "how big is the brush", the canvas owns "where it goes". Keeping them apart avoids turning
 /// this into a form where you type coordinates and press enter.
 pub(super) fn adjust_retouch(state: &mut AppState, ui: &mut Ui) -> bool {
-    if !group_header(ui, state, "retouch", "修复", false) {
-        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
-        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
-        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
-        // 矩形有时序毛刺，均已试过并否决）。
-        //
-        // Card-in-card (the design's .grp): one rounded card per group, header and
-        // body inside. egui::Frame paints the fill before the content and the stroke
-        // after -- the one reliable "background first" path in immediate mode.
-        // (Rejected alternatives: painting later covers earlier so the fill must go
-        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
-        // expand/collapse.)
-        egui::Frame::NONE
-            .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
-            .inner_margin(egui::Margin::symmetric(10, 8))
-            .show(ui, |_ui| false);
-    }
-    let mut changed = false;
+    group_card(ui, |ui| {
+        if !group_header(ui, state, "retouch", "修复", false) {
+            return false;
+        }
+        let mut changed = false;
     let mode = ui
         .horizontal(|ui| {
             let mut hit = false;
@@ -253,13 +224,14 @@ pub(super) fn adjust_retouch(state: &mut AppState, ui: &mut Ui) -> bool {
             },
         );
     }
-    if !state.heal_can_place() {
-        note(
-            ui,
-            crate::i18n::t!("画布当前不是整幅（拉直 / 推近 / 裁剪中），先复位再落点"),
-        );
-    }
-    changed
+        if !state.heal_can_place() {
+            note(
+                ui,
+                crate::i18n::t!("画布当前不是整幅（拉直 / 推近 / 裁剪中），先复位再落点"),
+            );
+        }
+        changed
+    })
 }
 
 /// 光学区：ACR 的 Optics 面板——手动校正三项在前，相机/镜头配置文件在后
@@ -269,32 +241,18 @@ pub(super) fn adjust_retouch(state: &mut AppState, ui: &mut Ui) -> bool {
 /// profiles (what the profile derives is applied ahead of the manual sliders, so
 /// reading it last says "the calibration is the base layer").
 pub(super) fn adjust_optics(state: &mut AppState, ui: &mut Ui) -> bool {
-    if !group_header(ui, state, "optics", "光学", true) {
-        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
-        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
-        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
-        // 矩形有时序毛刺，均已试过并否决）。
-        //
-        // Card-in-card (the design's .grp): one rounded card per group, header and
-        // body inside. egui::Frame paints the fill before the content and the stroke
-        // after -- the one reliable "background first" path in immediate mode.
-        // (Rejected alternatives: painting later covers earlier so the fill must go
-        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
-        // expand/collapse.)
-        egui::Frame::NONE
-            .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
-            .inner_margin(egui::Margin::symmetric(10, 8))
-            .show(ui, |_ui| false);
-    }
-    let mut changed = false;
-    sub_head(ui, crate::i18n::t!("镜头校正"));
-    changed |= lens_body(state, ui);
-    sub_head(ui, crate::i18n::t!("镜头配置"));
-    let ctx = ui.ctx().clone();
-    lens_profile_body(state, &ctx, ui);
-    changed
+    group_card(ui, |ui| {
+        if !group_header(ui, state, "optics", "光学", true) {
+            return false;
+        }
+        let mut changed = false;
+        sub_head(ui, crate::i18n::t!("镜头校正"));
+        changed |= lens_body(state, ui);
+        sub_head(ui, crate::i18n::t!("镜头配置"));
+        let ctx = ui.ctx().clone();
+        lens_profile_body(state, &ctx, ui);
+        changed
+    })
 }
 
 /// 镜头校正：畸变、暗角补偿、去紫边；三项都是空间操作，导出同样生效。
@@ -346,24 +304,8 @@ fn lens_body(state: &mut AppState, ui: &mut Ui) -> bool {
 }
 
 pub(super) fn adjust_frame(state: &mut AppState, ui: &mut Ui) {
-    if group_header(ui, state, "frame", "画幅", true) {
-        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
-        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
-        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
-        // 矩形有时序毛刺，均已试过并否决）。
-        //
-        // Card-in-card (the design's .grp): one rounded card per group, header and
-        // body inside. egui::Frame paints the fill before the content and the stroke
-        // after -- the one reliable "background first" path in immediate mode.
-        // (Rejected alternatives: painting later covers earlier so the fill must go
-        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
-        // expand/collapse.)
-        egui::Frame::NONE
-            .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
-            .inner_margin(egui::Margin::symmetric(10, 8))
-            .show(ui, |ui| {
+    group_card(ui, |ui| {
+        if group_header(ui, state, "frame", "画幅", true) {
                 // 比例胶囊 9 枚，336px 面板一行装不下——horizontal_wrapped 会在第 8 枚
                 // 后孤行挂一枚「2:3」，读作排版事故。改成 5+4 两行均衡排。
                 //
@@ -424,38 +366,22 @@ pub(super) fn adjust_frame(state: &mut AppState, ui: &mut Ui) {
                 } else {
                     kv(ui, "画幅比例", "跟随原生", muted());
                 }
-            });
-    }
-    if group_header(ui, state, "frame-guides", "辅助线", false) {
-        // 卡中卡（设计稿 .grp）：整组一张圆角卡，组头与内容都在卡里。
-        // egui::Frame 在内容之前铺底、之后补描边——即时模式唯一可靠的
-        // "背景先行"路径（其余方案：后画盖先画、RAII 拿不到终点、上一帧
-        // 矩形有时序毛刺，均已试过并否决）。
-        //
-        // Card-in-card (the design's .grp): one rounded card per group, header and
-        // body inside. egui::Frame paints the fill before the content and the stroke
-        // after -- the one reliable "background first" path in immediate mode.
-        // (Rejected alternatives: painting later covers earlier so the fill must go
-        // first; RAII cannot reach the body's end; last-frame rects lag a frame on
-        // expand/collapse.)
-        egui::Frame::NONE
-            .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
-            .inner_margin(egui::Margin::symmetric(10, 8))
-            .show(ui, |ui| {
-                ui.checkbox(
-                    &mut state.grid,
-                    RichText::new(crate::i18n::t!("三分线")).size(SIZE_SMALL),
-                );
-                ui.checkbox(
-                    &mut state.cross,
-                    RichText::new(crate::i18n::t!("中心十字")).size(SIZE_SMALL),
-                );
-                ui.checkbox(
-                    &mut state.split,
-                    RichText::new(crate::i18n::t!("前后分割")).size(SIZE_SMALL),
-                );
-            });
-    }
+        }
+    });
+    group_card(ui, |ui| {
+        if group_header(ui, state, "frame-guides", "辅助线", false) {
+            ui.checkbox(
+                &mut state.grid,
+                RichText::new(crate::i18n::t!("三分线")).size(SIZE_SMALL),
+            );
+            ui.checkbox(
+                &mut state.cross,
+                RichText::new(crate::i18n::t!("中心十字")).size(SIZE_SMALL),
+            );
+            ui.checkbox(
+                &mut state.split,
+                RichText::new(crate::i18n::t!("前后分割")).size(SIZE_SMALL),
+            );
+        }
+    });
 }
