@@ -28,14 +28,24 @@ pub(super) fn sequence_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 .size(SIZE_TITLE)
                 .color(text()),
         );
-        ui.label(
-            RichText::new(crate::i18n::tr_fmt(
-                "{} 帧 · {} 关键帧",
-                &[&state.frame_count(), &state.keyframes.len()],
-            ))
-            .size(SIZE_LABEL)
-            .color(muted()),
-        );
+        // LRT 的规则：用数字给进度（`KF 3/8`），比一句话快。当前帧是关键帧时
+        // 额外报出它是第几个，导航时不至于「不知道走到哪了」。
+        //
+        // LRT's rule: report progress as numbers (`KF 3/8`); digits beat sentences.
+        // When the current frame is a keyframe, also say which one it is.
+        let kf_n = state.keyframes.len();
+        let kf_pos = state
+            .keyframes
+            .keys()
+            .position(|k| *k == state.selected)
+            .map(|i| i + 1);
+        let stat = match kf_pos {
+            Some(pos) => {
+                crate::i18n::tr_fmt("{} 帧 · KF {}/{}", &[&state.frame_count(), &pos, &kf_n])
+            }
+            None => crate::i18n::tr_fmt("{} 帧 · {} 关键帧", &[&state.frame_count(), &kf_n]),
+        };
+        ui.label(RichText::new(stat).size(SIZE_LABEL).color(muted()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if secondary_button(ui, "转到对齐").clicked() {
                 state.set_module(Module::Frame);
@@ -55,6 +65,51 @@ pub(super) fn sequence_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             // LRT-style keyframes: just mark / unmark; interpolation is driven by the
             // existing keyframes map. Same idea as LR rating marks: sparse checkpoints,
             // grade only those.
+            // LRT 预览工具的「单箭头 = 跳上/下一个关键帧」。我们没有复制语义，
+            // 所以只做跳转这一对，图标用 ‹ › 保持与 LRT 同形；无关键帧时置灰。
+            //
+            // LRT's transport uses single arrows to jump to the previous/next keyframe.
+            // We have no "sync to next" action, so only the jump pair exists; ‹ › keeps
+            // the same shape, and both are disabled when there are no keyframes.
+            let prev_kf = state
+                .keyframes
+                .range(..state.selected)
+                .next_back()
+                .map(|(k, _)| *k);
+            let next_kf = state
+                .keyframes
+                .range((
+                    std::ops::Bound::Excluded(state.selected),
+                    std::ops::Bound::Unbounded,
+                ))
+                .next()
+                .map(|(k, _)| *k);
+            if ui
+                .add_enabled(
+                    prev_kf.is_some(),
+                    egui::Button::new(RichText::new("‹ KF").size(SIZE_SMALL))
+                        .corner_radius(radius_control())
+                        .min_size(Vec2::new(0.0, CH)),
+                )
+                .on_hover_text(crate::i18n::tr("上一个关键帧"))
+                .clicked()
+                && let Some(k) = prev_kf
+            {
+                state.selected = k;
+            }
+            if ui
+                .add_enabled(
+                    next_kf.is_some(),
+                    egui::Button::new(RichText::new("KF ›").size(SIZE_SMALL))
+                        .corner_radius(radius_control())
+                        .min_size(Vec2::new(0.0, CH)),
+                )
+                .on_hover_text(crate::i18n::tr("下一个关键帧"))
+                .clicked()
+                && let Some(k) = next_kf
+            {
+                state.selected = k;
+            }
             if state.keyframes.contains_key(&state.selected) {
                 if secondary_button(ui, "取消关键帧").clicked() {
                     state.remove_keyframe(state.selected);
