@@ -501,7 +501,16 @@ impl AppState {
         expire_in_flight(&mut self.thumb_pending);
 
         let missing: Vec<(usize, PathBuf)> = {
-            let seq = self.seq.as_ref().expect("上面已判空");
+            // 项目铁律：生产代码禁 `expect`。这里上方确实判过空，但用 `let else`
+            // 把「前提」变成「控制流」——即使日后有人调整顺序，也只是早退而不是
+            // 崩溃（review 2026-11-09）。
+            //
+            // Project rule: no `expect` in production code. The check above does guard
+            // this, but `let else` turns the precondition into control flow: a future
+            // reorder then returns early instead of panicking.
+            let Some(seq) = self.seq.as_ref() else {
+                return;
+            };
             (lo..hi)
                 .filter(|i| {
                     !self.thumb_pending.contains_key(i)
