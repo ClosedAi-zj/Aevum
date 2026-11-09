@@ -42,8 +42,18 @@ pub(super) fn page(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
     let sub = if n == 0 {
         crate::i18n::t!("还没有序列 · 文件 → 打开照片…").to_string()
     } else {
+        // 设计稿页头副行：`1,387 帧 · 24 fps · 亮度 0.213 · 关键帧 5`。
+        //
+        // The design's header subtitle: frames, rate, luma and keyframe count.
+        let mean = state
+            .metrics
+            .get(state.selected)
+            .and_then(|m| m.as_ref())
+            .map(|m| format!(" · 亮度 {:.3}", m.mean))
+            .unwrap_or_default();
         format!(
-            "{n} 帧 · {:.0} fps · 关键帧 {}",
+            "{} 帧 · {:.0} fps{mean} · 关键帧 {}",
+            preview::thousands(n),
             state.output_fps,
             state.keyframes.len()
         )
@@ -69,9 +79,12 @@ pub(super) fn page(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
     // 主体：左列预览/摘要，右侧表格。实现在 `table.rs` / `preview.rs`。
     //
     // Body: preview/summary column on the left, table on the right.
+    // 设计稿 `.ws-body{padding:12px 16px 16px}`：上 12、左右 16、下 16。
+    //
+    // Design padding: 12 top, 16 sides, 16 bottom.
     let body = egui::Rect::from_min_max(
         egui::Pos2::new(full.left(), strip.bottom() + 12.0),
-        egui::Pos2::new(full.right() - 16.0, full.bottom() - 12.0),
+        egui::Pos2::new(full.right() - 16.0, full.bottom() - 16.0),
     );
     let left = egui::Rect::from_min_size(
         body.left_top() + egui::vec2(16.0, 0.0),
