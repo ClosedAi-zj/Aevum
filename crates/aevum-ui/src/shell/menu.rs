@@ -4,6 +4,7 @@
 //! wheel dispatch.
 
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
+use super::Bench;
 use super::chrome::window_buttons;
 use super::dialogs::export_xmp_dialog;
 use super::dialogs::import_xmp_dialog;
@@ -259,6 +260,17 @@ pub(super) fn handle_input(state: &mut AppState, ctx: &Context) {
 
 // ---------------------------------------------------------------- 菜单行
 
+/// 右侧动作区的起点：窗口按钮区宽度之外再留 10px。
+///
+/// Left edge of the right-hand action cluster: 10 px inside the window-button zone.
+fn zone_right_pre(full: Rect, c: &platform::Chrome) -> f32 {
+    if c.buttons_left {
+        full.right() - 16.0
+    } else {
+        full.right() - c.buttons_zone_w() - 10.0
+    }
+}
+
 pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let c = platform::chrome();
     let full = ui.max_rect();
@@ -288,89 +300,153 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         full.left() + 12.0
     };
 
-    // 左侧品牌：一枚圆角图标块，仅此而已。应用名搬去了窗口标题与「关于」，
-    // 标题栏上文字重排只会让它更像命令面板 —— 图标认识的人自然认识。
-    // mac 版连图标块都没有 —— 交通灯之后直接是菜单，品牌在 Dock 里。
+    // 品牌块 24：设计稿 `.mk{width:24px;height:24px;border-radius:6px;background:var(--blue)}`。
+    // 蓝底白标志是全窗唯一一块「品牌色」，比旧版 18px + accent_dim 更贴设计稿，
+    // 也让左上角在深灰底上有个明确锚点。
+    //
+    // Brand tile 24 per the design's `.mk`: the one brand-coloured block in the window.
     if c.brand_icon {
-        let icon_tile = Rect::from_min_size(Pos2::new(x, mid - 9.0), Vec2::splat(18.0));
-        p.rect_filled(icon_tile, radius_control(), accent_dim());
-        icons::paint(&p, icon_tile.shrink(4.0), Glyph::Sequence, accent());
-        // 图标到首项菜单只留 4px：`brand_gap` 是给 mac 的「交通灯 → 菜单」留的，
-        // 有图标时再加 16px 会把「文件」推到 32px 之外（用户截图）。
-        //
-        // Only 4 px from the tile to the first menu: `brand_gap` is the macOS
-        // "traffic lights -> menus" distance, and adding it on top of the tile's 8 px
-        // pushed 「文件」 32 px away on Windows.
-        x = icon_tile.right() + 4.0;
+        let tile = Rect::from_min_size(Pos2::new(x, mid - 12.0), Vec2::splat(24.0));
+        p.rect_filled(tile, 6.0, accent());
+        icons::paint(&p, tile.shrink(5.0), Glyph::Sequence, Color32::WHITE);
+        x = tile.right() + 10.0;
     }
 
-    // 菜单：紧接品牌之后，间距与内边距按平台。
-    let menus_x = x + if c.brand_icon { 4.0 } else { c.brand_gap };
-    let left_rect = Rect::from_min_max(
-        Pos2::new(menus_x, full.top()),
-        Pos2::new(menus_x + 360.0, full.bottom()),
+    // 文档块：文件名 + 类型徽标 + 帧数/帧率（设计稿 `.doc{flex-direction:column}`）。
+    // 名称取序列根目录名；没有序列时写「未打开序列」，不摆假文件名。
+    //
+    // Doc block: file name + type badge + frame count / fps. The name comes from the
+    // sequence root; with no sequence it says "no sequence", never a fake file name.
+    let doc_name = state
+        .seq
+        .as_ref()
+        .and_then(|s| s.root.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| crate::i18n::t!("未打开序列").to_string());
+    let doc_w = 200.0;
+    let doc = Rect::from_min_size(
+        Pos2::new(x, full.top() + 6.0),
+        Vec2::new(doc_w, full.height() - 12.0),
     );
-    ui.scope_builder(
-        UiBuilder::new()
-            .id_salt("menus")
-            .max_rect(left_rect)
-            .layout(Layout::left_to_right(Align::Center)),
-        |ui| {
-            let w = &mut ui.style_mut().visuals.widgets;
-            w.inactive.weak_bg_fill = Color32::TRANSPARENT;
-            w.inactive.bg_stroke = Stroke::NONE;
-            w.inactive.fg_stroke = Stroke::new(1.0, text());
-            w.hovered.weak_bg_fill = elev();
-            w.hovered.bg_stroke = Stroke::NONE;
-            w.active.weak_bg_fill = selected();
-            // 弹出菜单的样式源头在这里（menu_bar 顶层设置，弹出层继承）：
-            // 必须与 menu_style 同一口径——此前只改了 menu_style，外层这段
-            // (menu_pad_x, 3.0) + menu_gap 仍把项高压在 22、行间留着缝，
-            // 用户实机截图证明弹出的菜单还是旧样子（"这改了吗"）。
-            //
-            // This is where the popup menus inherit their style from (set once on the
-            // menu bar); it must match `menu_style`. Only patching `menu_style` left the
-            // outer (menu_pad_x, 3.0) + menu_gap holding rows at 22 px with gaps, which
-            // the user's screenshot caught ("这改了吗").
-            ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
-            ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
-            // 五项，和界面稿同口径：文件 / 编辑 / 视图 / 插件 / 帮助。
-            // 原来的「显影」并进「视图 → 显影」，「模块」由标题栏的工作区胶囊接管 ——
-            // 七个菜单名横排会把标题栏撑成一个命令面板，标题栏只需要"去哪找"。
-            ui.menu_button(
-                RichText::new(crate::i18n::t!("文件")).size(c.menu_font),
-                |ui| file_menu(state, ui, ctx),
-            );
-            ui.menu_button(
-                RichText::new(crate::i18n::t!("编辑")).size(c.menu_font),
-                |ui| edit_menu(state, ui, ctx),
-            );
-            ui.menu_button(
-                RichText::new(crate::i18n::t!("视图")).size(c.menu_font),
-                |ui| view_menu(state, ui, ctx),
-            );
-            ui.menu_button(
-                RichText::new(crate::i18n::t!("插件")).size(c.menu_font),
-                |ui| plugin_menu(state, ui, ctx),
-            );
-            ui.menu_button(
-                RichText::new(crate::i18n::t!("帮助")).size(c.menu_font),
-                |ui| help_menu(state, ui),
-            );
-        },
+    p.text(
+        Pos2::new(doc.left(), doc.center().y - 7.0),
+        Align2::LEFT_CENTER,
+        doc_name,
+        crate::theme::bold(13.0),
+        text(),
     );
+    let badge_label = format!("{} 帧 · {:.0} fps", state.frame_count(), state.output_fps);
+    let badge = Rect::from_min_size(
+        Pos2::new(doc.left(), doc.center().y + 8.0),
+        Vec2::new(88.0, 14.0),
+    );
+    p.rect_filled(badge, 3.0, elev());
+    p.text(
+        Pos2::new(badge.left() + 4.0, badge.center().y),
+        Align2::LEFT_CENTER,
+        badge_label,
+        font(9.0),
+        muted(),
+    );
+    x = doc.right() + 12.0;
 
-    // 右侧：工作区胶囊（▦ 显影 ▾）→ 主按钮「导出…」→ 窗口按钮。
-    // 六个模块名不再横铺在标题栏上 —— 那排格子占掉 380px，还把"现在在哪个工作区"
-    // 和"这个软件有哪几个工作区"画成了同一排。收进下拉，标题栏才回到标题栏。
-    let zone_right = if c.buttons_left {
-        full.right() - 16.0
-    } else {
-        full.right() - c.buttons_zone_w() - 10.0
-    };
+    // 缩放：64px 轨道 + 46px 百分比（设计稿 `.zoomc .mini{width:64px} .pct{width:46px}`）。
+    // 拖动轨道改 `state.zoom`；点百分比回 100%。轨道上的滑块位置按 0..=400% 映射。
+    //
+    // Zoom: 64 px track + 46 px readout. Dragging the track sets `state.zoom`; clicking
+    // the readout resets to 100%.
+    let zoom_pct = (state.zoom * state.fit_scale.max(1e-4) * 100.0).clamp(1.0, 400.0);
+    let track = Rect::from_min_size(Pos2::new(x, mid - 1.5), Vec2::new(64.0, 3.0));
+    let zr = ui.interact(
+        Rect::from_min_size(Pos2::new(x - 4.0, mid - 8.0), Vec2::new(72.0, 16.0)),
+        ui.make_persistent_id("tb-zoom"),
+        Sense::click_and_drag(),
+    );
+    p.rect_filled(track, 2.0, slider_rail());
+    let frac = ((zoom_pct / 400.0) as f32).clamp(0.0, 1.0);
+    let knob_x = track.left() + track.width() * frac;
+    p.circle_filled(Pos2::new(knob_x, track.center().y), 4.5, knob());
+    if zr.dragged() || zr.clicked() {
+        if let Some(pos) = zr.interact_pointer_pos() {
+            let f = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0);
+            let want = (f * 4.0).max(0.01);
+            state.zoom = (want / state.fit_scale.max(1e-4)).clamp(0.2, 24.0);
+        }
+    }
+    let pct = Rect::from_min_size(
+        Pos2::new(track.right() + 8.0, mid - 13.0),
+        Vec2::new(46.0, 26.0),
+    );
+    let pr = ui.interact(pct, ui.make_persistent_id("tb-pct"), Sense::click());
+    if pr.hovered() {
+        p.rect_filled(pct, radius_control(), elev());
+    }
+    p.text(
+        pct.center(),
+        Align2::CENTER_CENTER,
+        format!("{:.0}%", zoom_pct),
+        font(SIZE_CHROME_LABEL),
+        if pr.hovered() { text() } else { muted() },
+    );
+    if pr.clicked() {
+        state.zoom = (1.0 / state.fit_scale.max(1e-4)).clamp(0.2, 24.0);
+    }
+    pr.on_hover_text(crate::i18n::t!("点击回到 100%"));
+    x = pct.right() + 10.0;
 
-    // 主按钮：全窗口唯一一颗实心强调色 —— 它是唯一"会产出文件"的动作，
-    // 剩下的动作都不该跟它抢同一层视觉重量。
+    // 中央模块 chips（设计稿 `.seg`：`#26282c` 槽、24px 按钮、选中 `#3a3d43`）。
+    // 七个模块横向铺开；「更多」不另设假入口——合成就是设计的「更多」。
+    //
+    // Centre module chips per `.seg`: a `#26282c` trough with 24 px buttons and a
+    // `#3a3d43` active fill. All seven modules are laid out; there is no fake "more"
+    // entry -- merge is what the design's "more" leads to.
+    let chip_labels: Vec<&'static str> = Module::ALL.iter().map(|m| m.cn()).collect();
+    let mut widths = Vec::with_capacity(chip_labels.len());
+    for lab in &chip_labels {
+        let g = p.layout_no_wrap(crate::i18n::tr(lab).to_string(), font(12.0), text());
+        widths.push(g.size().x + 24.0);
+    }
+    let seg_w: f32 = widths.iter().sum::<f32>() + 2.0 * (chip_labels.len() as f32 - 1.0) + 4.0;
+    let seg_h = 28.0;
+    let seg_x = x + 16.0;
+    if seg_x + seg_w < zone_right_pre(full, &c) {
+        let seg = Rect::from_min_size(Pos2::new(seg_x, mid - seg_h / 2.0), Vec2::new(seg_w, seg_h));
+        p.rect_filled(seg, 8.0, Color32::from_rgb(0x26, 0x28, 0x2c));
+        let mut cx = seg.left() + 2.0;
+        for (i, m) in Module::ALL.iter().enumerate() {
+            let r = Rect::from_min_size(
+                Pos2::new(cx, seg.top() + 2.0),
+                Vec2::new(widths[i], seg_h - 4.0),
+            );
+            cx += widths[i] + 2.0;
+            let resp = ui.interact(r, ui.make_persistent_id(("chip", i)), Sense::click());
+            let on = state.module == *m;
+            if on {
+                p.rect_filled(r, 6.0, Color32::from_rgb(0x3a, 0x3d, 0x43));
+            } else if resp.hovered() {
+                p.rect_filled(r, 6.0, elev());
+            }
+            p.text(
+                r.center(),
+                Align2::CENTER_CENTER,
+                crate::i18n::tr(m.cn()),
+                font(12.0),
+                if on || resp.hovered() { text() } else { dim() },
+            );
+            if resp.clicked() && !on {
+                state.set_bench(Bench::Develop);
+                state.set_module(*m);
+            }
+            resp.on_hover_text(format!("{} (Ctrl+Alt+{})", crate::i18n::tr(m.cn()), i + 1));
+        }
+    }
+
+    // 右侧动作簇：☰ 菜单 → 齿轮 → 「导出…」→ 窗口按钮（设计稿右端图标 + 主按钮）。
+    // 菜单字排收进 ☰，五项一个不少；导出仍是全窗唯一实心强调色。
+    //
+    // Right cluster: ☰ menu -> gear -> export -> window buttons. The menu word row lives
+    // behind ☰ with every entry intact; export stays the only accent-filled button.
+    let zone_right = zone_right_pre(full, &c);
+
     let export_w = 76.0;
     let export = Rect::from_min_size(
         Pos2::new(zone_right - export_w, mid - 13.0),
@@ -399,10 +475,10 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         state.request_export_confirm(ctx, false);
     }
 
-    // 设置齿轮：外观/布局/语言的唯一常驻入口。此前只有「视图 → 外观与布局…」
-    // 一条路，用户找不到（2026-11-01 反馈「界面自定义与中英切换在哪」）——
-    // 全程序只此一颗齿轮，位置固定，认它就行。
-    let gear = Rect::from_center_size(Pos2::new(export.left() - 16.0, mid), Vec2::splat(24.0));
+    // 齿轮：外观/布局/语言的唯一常驻入口。
+    //
+    // The gear: the single permanent entry to appearance / layout / language.
+    let gear = Rect::from_center_size(Pos2::new(export.left() - 22.0, mid), Vec2::splat(24.0));
     let gr = ui.interact(gear, ui.make_persistent_id("tb-look"), Sense::click());
     if gr.hovered() {
         p.rect_filled(gear, radius_control(), elev());
@@ -422,66 +498,34 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         state.look_open = true;
     }
 
-    // 工作区胶囊：紧跟菜单（界面稿 .menu-end + .ws-div + .ws-menu 的次序）——
-    // 「现在在哪个工作区」是标题栏的第二个信息，不是右角的第三颗按钮。
-    // 一条 1px 竖分隔线把它和菜单隔开，右侧只留导出与窗口钮。
-    // 菜单宽度自己量：五个词的 galley 加内边距与间距，别用固定盒子空出一段假距离。
-    let menu_labels = ["文件", "编辑", "视图", "插件", "帮助"];
-    let menus_w: f32 = menu_labels
-        .iter()
-        .map(|t| {
-            p.layout_no_wrap((*t).to_owned(), font(c.menu_font), text())
-                .size()
-                .x
-                + c.menu_pad_x * 2.0
-        })
-        .sum::<f32>()
-        + c.menu_gap * (menu_labels.len() - 1) as f32;
-    let ws_w = 104.0;
-    let ws_x = menus_x + menus_w + 14.0;
-    let ws = Rect::from_min_size(Pos2::new(ws_x, mid - 13.0), Vec2::new(ws_w, 26.0));
-    p.line_segment(
-        [
-            Pos2::new(ws_x - 7.0, mid - 9.0),
-            Pos2::new(ws_x - 7.0, mid + 9.0),
-        ],
-        Stroke::new(1.0, divider()),
-    );
+    // ☰：五项菜单（文件/编辑/视图/插件/帮助）全部保留在弹出层里。
+    //
+    // ☰: all five menus stay reachable in the popup.
+    let hub = Rect::from_center_size(Pos2::new(gear.left() - 20.0, mid), Vec2::splat(28.0));
     ui.scope_builder(
         UiBuilder::new()
-            .id_salt("ws-menu")
-            .max_rect(ws)
+            .id_salt("hub-menu")
+            .max_rect(hub)
             .layout(Layout::left_to_right(Align::Center)),
         |ui| {
             let w = &mut ui.style_mut().visuals.widgets;
-            w.inactive.weak_bg_fill = elev();
+            w.inactive.weak_bg_fill = Color32::TRANSPARENT;
             w.inactive.bg_stroke = Stroke::NONE;
-            w.inactive.fg_stroke = Stroke::new(1.0, text());
-            w.hovered.weak_bg_fill = elev_hover();
+            w.inactive.fg_stroke = Stroke::new(1.0, muted());
+            w.hovered.weak_bg_fill = elev();
             w.hovered.bg_stroke = Stroke::NONE;
             w.hovered.fg_stroke = Stroke::new(1.0, text());
-            w.active.weak_bg_fill = selected();
-            w.active.bg_stroke = Stroke::NONE;
-            ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
-            ui.menu_button(
-                RichText::new(format!("▦ {}  ▼", crate::i18n::tr(state.module.cn())))
-                    .size(SIZE_CHROME_LABEL),
-                |ui| {
-                    menu_style(ui);
-                    for (i, m) in Module::ALL.iter().enumerate() {
-                        let on = state.module == *m;
-                        let label = if on {
-                            format!("✓ {}", crate::i18n::tr(m.cn()))
-                        } else {
-                            format!("   {}", crate::i18n::tr(m.cn()))
-                        };
-                        if menu_item(ui, &label, &format!("Ctrl+Alt+{}", i + 1)) {
-                            state.set_module(*m);
-                            ui.close();
-                        }
-                    }
-                },
-            );
+            ui.spacing_mut().button_padding = Vec2::new(6.0, 4.0);
+            ui.menu_button(RichText::new("☰").size(15.0), |ui| {
+                menu_style(ui);
+                ui.menu_button(crate::i18n::t!("文件"), |ui| file_menu(state, ui, ctx));
+                ui.menu_button(crate::i18n::t!("编辑"), |ui| edit_menu(state, ui, ctx));
+                ui.menu_button(crate::i18n::t!("视图"), |ui| view_menu(state, ui, ctx));
+                ui.menu_button(crate::i18n::t!("插件"), |ui| plugin_menu(state, ui, ctx));
+                ui.menu_button(crate::i18n::t!("帮助"), |ui| help_menu(state, ui));
+            })
+            .response
+            .on_hover_text(crate::i18n::t!("菜单"));
         },
     );
 

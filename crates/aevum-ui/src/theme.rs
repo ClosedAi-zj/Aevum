@@ -824,6 +824,24 @@ pub fn row_hover() -> Color32 {
 /// the block reads by tonal difference instead of a double outline. The old table
 /// painted cards with `panel` too, leaving only 1-3 lightness steps between card and
 /// background; the design moves from panel L14.1 to grp L18, about four steps.
+/// 整页工作台底色：设计稿 `.wsview{background:#101114}`。
+///
+/// 比 `bg` 再沉一档，卡片（`panel` = #212327）浮上来才有「页 vs 卡」两层。
+/// 纯黑主题不去硬凑 #101114（黑底上 #212327 卡片会显脏），跟着黑阶走一档。
+///
+/// Full-page bench background per the design's `.wsview{background:#101114}`.
+///
+/// One step below `bg`, so cards (`panel` = #212327) actually float and the page reads
+/// as two layers. The pure-black theme does not force #101114 (a #212327 card on black
+/// looks dirty); it steps down its own ladder instead.
+pub fn bench_bg() -> Color32 {
+    match appearance().theme {
+        ThemeMode::Light => Color32::from_rgb(0xf2, 0xf3, 0xf5),
+        ThemeMode::Black => Color32::from_rgb(0x0b, 0x0c, 0x0d),
+        ThemeMode::Dark => Color32::from_rgb(0x10, 0x11, 0x14),
+    }
+}
+
 pub fn group_fill() -> Color32 {
     // 深色石墨直接用设计稿 `.grp{background:#2a2d32}`：从 panel 往白叠出来的
     // 灰是中性灰(40,40,41)，而设计稿的卡面带蓝(42,45,50)。这 5~9 个蓝通道差

@@ -838,3 +838,16 @@ fn goto_develop(state: &mut AppState) {
     }
     state.set_module(Module::Develop);
 }
+
+/// 整页工作台分派：帧表 / 导出 / 任务（显影走画布，不到这里）。
+///
+/// Full-page bench dispatch: table / export / tasks (develop is the canvas and never
+/// reaches here).
+pub(super) fn bench_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
+    match state.bench {
+        super::Bench::Table => super::seq_table::page(state, ui, ctx),
+        super::Bench::Export => super::export_ws::page(state, ui, ctx),
+        super::Bench::Tasks => super::tasks_ws::page(state, ui, ctx),
+        super::Bench::Develop => {}
+    }
+}

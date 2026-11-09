@@ -19,89 +19,89 @@ pub(super) fn adjust_geometry(state: &mut AppState, ui: &mut Ui) -> bool {
             return false;
         }
         let mut auto = false;
-    let mut clear = false;
-    let mut corners = false;
-    ui.horizontal(|ui| {
-        auto = bar_button(ui, "自动直立")
+        let mut clear = false;
+        let mut corners = false;
+        ui.horizontal(|ui| {
+            auto = bar_button(ui, "自动直立")
+                .on_hover_text(crate::i18n::t!(
+                    "找画面里的竖直主直线，把梯形拉正；只修上下透视，不修旋转与畸变"
+                ))
+                .clicked();
+            // 「四角」是自动直立的兜底：自动解要求画面里真有一条像样的竖直主直线，室内
+            // 广角、纯风景、对着墙拍的片子经常一条都没有。这时只能手动把四个角拖到画面的
+            // 方角上——ACR 里这个入口叫 Transform 的角点手柄。开着时按钮变「完成」。
+            //
+            // "Corners" is the fallback for auto-upright: the automatic solve needs a decent
+            // dominant vertical, and wide interiors, pure landscapes or anything shot against a
+            // wall often have none. Then the four corners have to be dragged onto the square
+            // object by hand -- the corner handles of Transform in ACR. While on, the chip reads
+            // "Done".
+            corners = bar_chip(
+                ui,
+                if state.upright_editing {
+                    "完成"
+                } else {
+                    "四角"
+                },
+                state.upright_editing,
+            )
             .on_hover_text(crate::i18n::t!(
-                "找画面里的竖直主直线，把梯形拉正；只修上下透视，不修旋转与畸变"
+                "拖四个角对齐画面里的方形物体；双击某个角放回原处"
             ))
             .clicked();
-        // 「四角」是自动直立的兜底：自动解要求画面里真有一条像样的竖直主直线，室内
-        // 广角、纯风景、对着墙拍的片子经常一条都没有。这时只能手动把四个角拖到画面的
-        // 方角上——ACR 里这个入口叫 Transform 的角点手柄。开着时按钮变「完成」。
-        //
-        // "Corners" is the fallback for auto-upright: the automatic solve needs a decent
-        // dominant vertical, and wide interiors, pure landscapes or anything shot against a
-        // wall often have none. Then the four corners have to be dragged onto the square
-        // object by hand -- the corner handles of Transform in ACR. While on, the chip reads
-        // "Done".
-        corners = bar_chip(
-            ui,
-            if state.upright_editing {
-                "完成"
-            } else {
-                "四角"
-            },
-            state.upright_editing,
-        )
-        .on_hover_text(crate::i18n::t!(
-            "拖四个角对齐画面里的方形物体；双击某个角放回原处"
-        ))
-        .clicked();
-        clear = bar_button(ui, "清除")
-            .on_hover_text(crate::i18n::t!("卸下透视校正，回到整幅画面"))
-            .clicked();
-    });
-    if corners {
-        let was = state.upright_editing;
-        let now = state.upright_edit_toggle();
-        if !was && !now {
-            state.auto_note = Some(
-                crate::i18n::t!("画布当前不是整幅（拉直 / 推近 / 裁剪中），四角抓不到；先复位")
-                    .to_owned(),
-            );
-        }
-    }
-    if auto {
-        state.auto_note = Some(match state.upright_auto() {
-            Ok(()) => {
-                crate::i18n::t!("已按竖直主直线拉正；四边形之外的一圈被裁掉了，这是校正的代价")
-                    .to_owned()
-            }
-            Err(e) => e,
+            clear = bar_button(ui, "清除")
+                .on_hover_text(crate::i18n::t!("卸下透视校正，回到整幅画面"))
+                .clicked();
         });
-    }
-    let mut changed = false;
-    if clear {
-        changed |= state.upright_clear();
-    }
-    // 状态行报的是「上边比下边窄多少」：梯形校正的全部意义就在这个数上，比四个角点
-    // 的坐标好读得多。单位方（没有动作）按「未校正」显示，不报 0.0%。
-    //
-    // The status line reports how much narrower the top edge is than the bottom: that ratio is
-    // the whole point of keystone correction and reads far better than four corner coordinates.
-    // The unit square (no action) shows as "not corrected" rather than 0.0%.
-    match state.params.upright {
-        Some(q) if !q.is_identity() => {
-            let top = (q.p[1].0 - q.p[0].0).abs();
-            let bottom = (q.p[2].0 - q.p[3].0).abs();
-            let pct = if bottom > 1e-9 {
-                (bottom - top) / bottom * 100.0
-            } else {
-                0.0
-            };
-            let label = if pct.abs() < 0.05 {
-                crate::i18n::t!("已启用（四边形接近整幅）").to_owned()
-            } else if pct > 0.0 {
-                crate::i18n::tr_fmt("已拉正 · 上边比下边窄 {:.1}%", &[&pct])
-            } else {
-                crate::i18n::tr_fmt("已拉正 · 上边比下边宽 {:.1}%", &[&(-pct)])
-            };
-            kv(ui, "状态", label, text());
+        if corners {
+            let was = state.upright_editing;
+            let now = state.upright_edit_toggle();
+            if !was && !now {
+                state.auto_note = Some(
+                    crate::i18n::t!("画布当前不是整幅（拉直 / 推近 / 裁剪中），四角抓不到；先复位")
+                        .to_owned(),
+                );
+            }
         }
-        _ => kv(ui, "状态", crate::i18n::t!("未校正"), dim()),
-    }
+        if auto {
+            state.auto_note = Some(match state.upright_auto() {
+                Ok(()) => {
+                    crate::i18n::t!("已按竖直主直线拉正；四边形之外的一圈被裁掉了，这是校正的代价")
+                        .to_owned()
+                }
+                Err(e) => e,
+            });
+        }
+        let mut changed = false;
+        if clear {
+            changed |= state.upright_clear();
+        }
+        // 状态行报的是「上边比下边窄多少」：梯形校正的全部意义就在这个数上，比四个角点
+        // 的坐标好读得多。单位方（没有动作）按「未校正」显示，不报 0.0%。
+        //
+        // The status line reports how much narrower the top edge is than the bottom: that ratio is
+        // the whole point of keystone correction and reads far better than four corner coordinates.
+        // The unit square (no action) shows as "not corrected" rather than 0.0%.
+        match state.params.upright {
+            Some(q) if !q.is_identity() => {
+                let top = (q.p[1].0 - q.p[0].0).abs();
+                let bottom = (q.p[2].0 - q.p[3].0).abs();
+                let pct = if bottom > 1e-9 {
+                    (bottom - top) / bottom * 100.0
+                } else {
+                    0.0
+                };
+                let label = if pct.abs() < 0.05 {
+                    crate::i18n::t!("已启用（四边形接近整幅）").to_owned()
+                } else if pct > 0.0 {
+                    crate::i18n::tr_fmt("已拉正 · 上边比下边窄 {:.1}%", &[&pct])
+                } else {
+                    crate::i18n::tr_fmt("已拉正 · 上边比下边宽 {:.1}%", &[&(-pct)])
+                };
+                kv(ui, "状态", label, text());
+            }
+            _ => kv(ui, "状态", crate::i18n::t!("未校正"), dim()),
+        }
         if state.upright_editing {
             note(
                 ui,
@@ -128,102 +128,102 @@ pub(super) fn adjust_retouch(state: &mut AppState, ui: &mut Ui) -> bool {
             return false;
         }
         let mut changed = false;
-    let mode = ui
-        .horizontal(|ui| {
-            let mut hit = false;
-            if bar_chip(ui, "修复", !state.heal_clone).clicked() && state.heal_clone {
-                state.heal_clone = false;
-                state.heal_src = None;
-                hit = true;
-            }
-            if bar_chip(ui, "仿制", state.heal_clone).clicked() && !state.heal_clone {
-                state.heal_clone = true;
-                state.heal_src = None;
-                hit = true;
-            }
-            hit
-        })
-        .inner;
-    changed |= mode;
+        let mode = ui
+            .horizontal(|ui| {
+                let mut hit = false;
+                if bar_chip(ui, "修复", !state.heal_clone).clicked() && state.heal_clone {
+                    state.heal_clone = false;
+                    state.heal_src = None;
+                    hit = true;
+                }
+                if bar_chip(ui, "仿制", state.heal_clone).clicked() && !state.heal_clone {
+                    state.heal_clone = true;
+                    state.heal_src = None;
+                    hit = true;
+                }
+                hit
+            })
+            .inner;
+        changed |= mode;
 
-    changed |= slider_row(
-        ui,
-        "heal-radius",
-        "半径",
-        &mut state.heal_radius,
-        0.5,
-        8.0,
-        2.0,
-        1,
-        false,
-        "%",
-        None,
-        true,
-        "占画面长边的百分比：拖到 2% 大致是一颗灰尘，6% 以上是抹掉一根电线",
-    );
-    changed |= slider_row(
-        ui,
-        "heal-feather",
-        "羽化",
-        &mut state.heal_feather,
-        0.0,
-        100.0,
-        35.0,
-        0,
-        false,
-        "%",
-        None,
-        true,
-        "边缘过渡占半径的比例：0 是硬边，100 从中心淡到边",
-    );
+        changed |= slider_row(
+            ui,
+            "heal-radius",
+            "半径",
+            &mut state.heal_radius,
+            0.5,
+            8.0,
+            2.0,
+            1,
+            false,
+            "%",
+            None,
+            true,
+            "占画面长边的百分比：拖到 2% 大致是一颗灰尘，6% 以上是抹掉一根电线",
+        );
+        changed |= slider_row(
+            ui,
+            "heal-feather",
+            "羽化",
+            &mut state.heal_feather,
+            0.0,
+            100.0,
+            35.0,
+            0,
+            false,
+            "%",
+            None,
+            true,
+            "边缘过渡占半径的比例：0 是硬边，100 从中心淡到边",
+        );
 
-    let n = state.params.retouch.len();
-    kv(
-        ui,
-        "笔触",
-        if n == 0 {
-            crate::i18n::t!("还没有").to_owned()
-        } else {
-            crate::i18n::tr_fmt("{} 笔", &[&n])
-        },
-        if n == 0 { dim() } else { text() },
-    );
-    let mut undo = false;
-    let mut clear = false;
-    ui.horizontal(|ui| {
-        undo = bar_chip(ui, "撤销一笔", false)
-            .on_hover_text(crate::i18n::t!("去掉最后落下的那一笔"))
-            .clicked();
-        clear = bar_chip(ui, "全部清空", false)
-            .on_hover_text(crate::i18n::t!("去掉这台相机这一帧上的全部修复笔触"))
-            .clicked();
-    });
-    if undo {
-        changed |= state.heal_undo();
-    }
-    if clear {
-        changed |= state.heal_clear();
-    }
-
-    // 仿制模式下报一句「下一步是取源」：不然点了没反应，人会以为坏了。
-    //
-    // In clone mode, say "next tap picks the source": otherwise the first tap does nothing and
-    // reads as broken.
-    if state.heal_clone {
+        let n = state.params.retouch.len();
         kv(
             ui,
-            "仿制源",
-            match state.heal_src {
-                Some(_) => crate::i18n::t!("已取；再点画面即落笔").to_owned(),
-                None => crate::i18n::t!("在画面上点一下取源").to_owned(),
-            },
-            if state.heal_src.is_some() {
-                accent()
+            "笔触",
+            if n == 0 {
+                crate::i18n::t!("还没有").to_owned()
             } else {
-                dim()
+                crate::i18n::tr_fmt("{} 笔", &[&n])
             },
+            if n == 0 { dim() } else { text() },
         );
-    }
+        let mut undo = false;
+        let mut clear = false;
+        ui.horizontal(|ui| {
+            undo = bar_chip(ui, "撤销一笔", false)
+                .on_hover_text(crate::i18n::t!("去掉最后落下的那一笔"))
+                .clicked();
+            clear = bar_chip(ui, "全部清空", false)
+                .on_hover_text(crate::i18n::t!("去掉这台相机这一帧上的全部修复笔触"))
+                .clicked();
+        });
+        if undo {
+            changed |= state.heal_undo();
+        }
+        if clear {
+            changed |= state.heal_clear();
+        }
+
+        // 仿制模式下报一句「下一步是取源」：不然点了没反应，人会以为坏了。
+        //
+        // In clone mode, say "next tap picks the source": otherwise the first tap does nothing and
+        // reads as broken.
+        if state.heal_clone {
+            kv(
+                ui,
+                "仿制源",
+                match state.heal_src {
+                    Some(_) => crate::i18n::t!("已取；再点画面即落笔").to_owned(),
+                    None => crate::i18n::t!("在画面上点一下取源").to_owned(),
+                },
+                if state.heal_src.is_some() {
+                    accent()
+                } else {
+                    dim()
+                },
+            );
+        }
         if !state.heal_can_place() {
             note(
                 ui,
@@ -306,66 +306,66 @@ fn lens_body(state: &mut AppState, ui: &mut Ui) -> bool {
 pub(super) fn adjust_frame(state: &mut AppState, ui: &mut Ui) {
     group_card(ui, |ui| {
         if group_header(ui, state, "frame", "画幅", true) {
-                // 比例胶囊 9 枚，336px 面板一行装不下——horizontal_wrapped 会在第 8 枚
-                // 后孤行挂一枚「2:3」，读作排版事故。改成 5+4 两行均衡排。
-                //
-                // Nine aspect chips do not fit one row of the 336 px panel; horizontal wrap
-                // stranded "2:3" alone on line two, which reads as a layout accident. Lay
-                // them out as two balanced rows of 5 and 4.
-                for row in Aspect::ALL.chunks(5) {
-                    ui.horizontal(|ui| {
-                        for &a in row {
-                            if bar_chip(ui, a.label(), state.aspect == a).clicked() {
-                                state.set_aspect(a);
-                            }
+            // 比例胶囊 9 枚，336px 面板一行装不下——horizontal_wrapped 会在第 8 枚
+            // 后孤行挂一枚「2:3」，读作排版事故。改成 5+4 两行均衡排。
+            //
+            // Nine aspect chips do not fit one row of the 336 px panel; horizontal wrap
+            // stranded "2:3" alone on line two, which reads as a layout accident. Lay
+            // them out as two balanced rows of 5 and 4.
+            for row in Aspect::ALL.chunks(5) {
+                ui.horizontal(|ui| {
+                    for &a in row {
+                        if bar_chip(ui, a.label(), state.aspect == a).clicked() {
+                            state.set_aspect(a);
                         }
-                    });
-                }
-                if state.resolution.is_some() {
-                    ui.add_space(4.0);
-                    // 推子只管取值，0 附近吸附和重画标记都交给 set_rotate。
-                    let mut deg = state.rotate;
-                    if slider(
-                        ui,
-                        "frame.rotate",
-                        "拉直",
-                        &mut deg,
-                        -45.0,
-                        45.0,
-                        0.0,
-                        1,
-                        true,
-                    ) {
-                        state.set_rotate(deg);
                     }
-                }
+                });
+            }
+            if state.resolution.is_some() {
                 ui.add_space(4.0);
-                if state.resolution.is_some() {
-                    let sel = state.crop_box();
-                    kv(
-                        ui,
-                        "取景框",
-                        format!("{} × {} @ {}, {}", sel.w, sel.h, sel.x, sel.y),
-                        text(),
-                    );
-                    match state.aspect.ratio() {
-                        Some(r) => kv(ui, "画幅比例", format!("{r:.3}"), muted()),
-                        None => kv(ui, "画幅比例", "跟随原生", muted()),
-                    }
-                    ui.horizontal_wrapped(|ui| {
-                        if bar_chip(ui, "拖框裁剪", state.tool == Tool::Crop).clicked() {
-                            state.set_tool(Tool::Crop);
-                        }
-                        if (state.user_crop.is_some() || state.rotate != 0.0)
-                            && ui.small_button(crate::i18n::t!("取消取景")).clicked()
-                        {
-                            state.crop_reset();
-                            state.set_rotate(0.0);
-                        }
-                    });
-                } else {
-                    kv(ui, "画幅比例", "跟随原生", muted());
+                // 推子只管取值，0 附近吸附和重画标记都交给 set_rotate。
+                let mut deg = state.rotate;
+                if slider(
+                    ui,
+                    "frame.rotate",
+                    "拉直",
+                    &mut deg,
+                    -45.0,
+                    45.0,
+                    0.0,
+                    1,
+                    true,
+                ) {
+                    state.set_rotate(deg);
                 }
+            }
+            ui.add_space(4.0);
+            if state.resolution.is_some() {
+                let sel = state.crop_box();
+                kv(
+                    ui,
+                    "取景框",
+                    format!("{} × {} @ {}, {}", sel.w, sel.h, sel.x, sel.y),
+                    text(),
+                );
+                match state.aspect.ratio() {
+                    Some(r) => kv(ui, "画幅比例", format!("{r:.3}"), muted()),
+                    None => kv(ui, "画幅比例", "跟随原生", muted()),
+                }
+                ui.horizontal_wrapped(|ui| {
+                    if bar_chip(ui, "拖框裁剪", state.tool == Tool::Crop).clicked() {
+                        state.set_tool(Tool::Crop);
+                    }
+                    if (state.user_crop.is_some() || state.rotate != 0.0)
+                        && ui.small_button(crate::i18n::t!("取消取景")).clicked()
+                    {
+                        state.crop_reset();
+                        state.set_rotate(0.0);
+                    }
+                });
+            } else {
+                kv(ui, "画幅比例", "跟随原生", muted());
+            }
         }
     });
     group_card(ui, |ui| {

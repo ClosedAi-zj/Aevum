@@ -514,6 +514,7 @@ impl AppState {
             def_means: Vec::new(),
             exif: Vec::new(),
             selected: 0,
+            bench: crate::shell::Bench::Develop,
             module: Module::Sequence,
             tool: Tool::Hand,
             dock_tab: DockTab::Adjust,
@@ -870,6 +871,42 @@ impl AppState {
 
     pub fn frame_count(&self) -> usize {
         self.seq.as_ref().map(|s| s.len()).unwrap_or(0)
+    }
+
+    /// 切工作台（显影 / 帧表 / 导出 / 任务）。
+    ///
+    /// 只改路由，不动任何数据：四个工作台读的是同一份序列与参数，切回来时
+    /// 画布、选中帧、滚动位置都还在原处。
+    ///
+    /// Switch benches (develop / table / export / tasks).
+    ///
+    /// Routing only: all four read the same sequence and parameters, so the canvas,
+    /// selected frame and scroll positions are still where they were when you switch back.
+    pub fn set_bench(&mut self, bench: crate::shell::Bench) {
+        self.bench = bench;
+    }
+
+    /// 正在跑的后台任务数：工作台导航的角标用。
+    ///
+    /// 只数真在跑的那几个（队列渲染 / 导出 / 合成 / 剔除复制 / 对齐），已完成的
+    /// 任务不占角标——角标读作「还有几件事没完」。
+    ///
+    /// Number of background jobs in flight, for the bench nav badge.
+    ///
+    /// Only the ones actually running are counted (queue render / export / merge / cull
+    /// copy / align); finished jobs do not hold the badge, which reads as "how many things
+    /// are still going".
+    pub fn running_jobs(&self) -> usize {
+        [
+            self.queue_busy,
+            self.export_busy,
+            self.merge_busy,
+            self.cull_export_busy,
+            self.align_busy,
+        ]
+        .into_iter()
+        .filter(|busy| *busy)
+        .count()
     }
 
     /// 素材是不是只有一张照片。序列级的功能（对齐、去闪）靠邻居帧才有意义。

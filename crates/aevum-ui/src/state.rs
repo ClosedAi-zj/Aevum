@@ -1339,6 +1339,10 @@ pub struct AppState {
     pub exif: Vec<Exif>,
 
     pub selected: usize,
+    /// 当前工作台（显影 / 帧表 / 导出 / 任务）。
+    ///
+    /// The current bench (develop / table / export / tasks).
+    pub bench: crate::shell::Bench,
     pub module: Module,
     pub tool: Tool,
     pub dock_tab: DockTab,

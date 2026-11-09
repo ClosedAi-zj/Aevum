@@ -37,6 +37,7 @@ use crate::theme::*;
 
 // ---- 模块划分（性能重构设计-2026-10-30 §7/§10）----
 mod adjust;
+mod bench;
 mod canvas;
 mod canvas_cards;
 mod chrome;
@@ -44,6 +45,7 @@ mod common;
 mod dialogs;
 mod dock;
 pub(crate) mod export_dialog;
+mod export_ws;
 pub(crate) mod flow;
 mod flow_panel;
 mod library;
@@ -52,7 +54,9 @@ mod mask;
 mod menu;
 mod pages;
 mod palette;
+mod seq_table;
 mod tabs;
+mod tasks_ws;
 mod timeline;
 mod toolbar;
 mod windows;
@@ -64,6 +68,10 @@ mod windows;
 // 的话，普通构建下这条重导出没人引用，clippy 会当作 unused import 报警。
 #[cfg(test)]
 pub(crate) use adjust::reset_group;
+/// 编号工作台（显影 / 帧表 / 导出 / 任务）：外壳与状态共用同一个枚举。
+///
+/// The numbered bench (develop / table / export / tasks): shell and state share one enum.
+pub(crate) use bench::Bench;
 pub(crate) use mask::{
     DeflCurveCache, HistMeshCache, MaskGeo, MaskGeoCache, mask_comp_object, mask_geo_fingerprint,
     mask_geos, mask_handles, mask_radial_points, mask_stroke_lines,
@@ -188,6 +196,34 @@ fn debug_apply_window(state: &mut AppState) {
     }
 }
 
+/// 首帧切工作台：`AEVUM_BENCH=develop|table|export|tasks`。
+///
+/// `--shot` 点不了导航卡，四个工作台因此拍不到证据图；这与 `AEVUM_WORKSPACE`
+/// 是同一类只读钩子（只读环境变量，不落盘、不进工程）。
+///
+/// Switch benches on the first frame: `AEVUM_BENCH=develop|table|export|tasks`.
+///
+/// `--shot` cannot click the nav card, so the four benches would have no screenshots;
+/// this is the same class of read-only hook as `AEVUM_WORKSPACE`.
+fn debug_apply_bench(state: &mut AppState) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Some(raw) = std::env::var_os("AEVUM_BENCH") else {
+        return;
+    };
+    let b = match raw.to_string_lossy().trim().to_ascii_lowercase().as_str() {
+        "table" | "帧表" => Bench::Table,
+        "export" | "导出" => Bench::Export,
+        "tasks" | "任务" => Bench::Tasks,
+        "develop" | "显影" => Bench::Develop,
+        _ => return,
+    };
+    state.set_bench(b);
+}
+
 fn debug_apply_workspace(state: &mut AppState) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static DONE: AtomicBool = AtomicBool::new(false);
@@ -222,6 +258,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // same class of hook as `AEVUM_PALETTE` and `AEVUM_DBG_RECT` (reads the environment only;
     // nothing is persisted and nothing enters the project file).
     debug_apply_workspace(state);
+    debug_apply_bench(state);
     debug_apply_flow(state);
     debug_apply_window(state);
     debug_export_confirm(&ctx);
@@ -258,6 +295,12 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     }
 
     // 2 工具栏：当前工具 │ 工具参数 │ 上下文 ……… 右侧缩放。
+    // 只在显影工作台出现：帧表/导出/任务是整页视图，一条工具参数栏在那里既没有
+    // 对象（没有当前工具）也没有意义（design `.wsview` 只有页头 + 二级工具条）。
+    //
+    // The options bar belongs to the develop bench only: table / export / tasks are
+    // full-page views, and a tool-options row there has neither a subject (no current
+    // tool) nor meaning (the design's `.wsview` is page head + secondary tool strip).
     // 底色用 dock 而不是 chrome（B0 裁决）：选项栏服务于右侧参数面板，与面板同层
     // 才读得出「骨架（菜单行/状态栏，header）→ 内容（选项栏/dock，dock）→ 控件
     // （elev）」三级；chrome 让给工具轨，形成「外框稍亮、内容沉下去」的 ACR 结构。
@@ -267,15 +310,19 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // reading work -- skeleton (menu/status bar, header) -> content (options bar and
     // dock) -> controls (elev). `chrome` is left to the tool rail, so the outer frame
     // reads slightly brighter than the content, as in ACR.
-    egui::Panel::top("options-bar")
-        .exact_size(OPTIONS_H)
-        .frame(egui::Frame::NONE.fill(dock()).inner_margin(egui::Margin {
-            left: 8,
-            right: 8,
-            top: 0,
-            bottom: 0,
-        }))
-        .show(root, |ui| options_bar(state, ui, &ctx));
+    let bench = state.bench;
+    let develop = bench == Bench::Develop;
+    if develop {
+        egui::Panel::top("options-bar")
+            .exact_size(OPTIONS_H)
+            .frame(egui::Frame::NONE.fill(dock()).inner_margin(egui::Margin {
+                left: 8,
+                right: 8,
+                top: 0,
+                bottom: 0,
+            }))
+            .show(root, |ui| options_bar(state, ui, &ctx));
+    }
 
     // 顶部步骤栏（LapseOne 式）：多帧序列才摆，单张与空工程没有流程。
     // 声明在选项栏之后，正好落在它下面一条。
@@ -288,7 +335,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     //
     // Always on: the LapseOne-style tabs ARE the primary navigation, never hidden
     // behind the panel switch (user measured "nothing is there" while show_flow was off).
-    if state.frame_count() > 1 {
+    if develop && state.frame_count() > 1 {
         egui::Panel::top("flow-top")
             .exact_size(30.0)
             .frame(egui::Frame::NONE.fill(header()).inner_margin(egui::Margin {
@@ -308,14 +355,14 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // the filmstrip stacks above it. Declared the other way round it would float above
     // the strip, a whole row off the design. With nothing to report the whole bar is not
     // declared at all and the edge is given back (user, 2026-11-08).
-    if layout.status == StatusSlot::Bottom && status_bar_needed(state) {
+    if develop && layout.status == StatusSlot::Bottom && status_bar_needed(state) {
         egui::Panel::bottom("status-bar")
             .exact_size(STATUS_H)
             .frame(egui::Frame::NONE.fill(header()))
             .show(root, |ui| status_bar(state, ui));
     }
     // 整页视图（项目库 / 设置）不摆胶片条与走带：它们与「当前序列的帧」无关，
-    if layout.film.allowed() && state.frame_count() > 0 {
+    if develop && layout.film.allowed() && state.frame_count() > 0 {
         // 面板高度跟内容走：头行 26 + 间距 4 + [曲线 54 + 间距 6] + 胶片条实际
         // 高度 + 间距 4 + 走带 36。胶片条高度由首帧比例决定，面板就照着它收——
         // 固定 188 会把多出来的三四十像素全塞给走带，读作一条空带（用户截图）。
@@ -351,60 +398,68 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     let dock_left = layout.dock_side.is_left();
     let panels_on_right = !rail_left;
 
-    // 右缘：贴边的那一根先声明，坞再向内叠。
-    let (right_id, right_half) = if panels_on_right {
-        ("rail-panels", RailHalf::Panels)
-    } else {
-        ("rail-tools", RailHalf::Tools)
-    };
-    egui::Panel::right(right_id)
-        .exact_size(TOOL_W)
-        .resizable(false)
-        .frame(egui::Frame::NONE.fill(chrome()))
-        .show(root, |ui| tool_rail(state, ui, right_half, false));
-    if state.show_dock && !dock_left {
-        egui::Panel::right("dock")
-            .exact_size(state.dock_w)
-            .resizable(false)
-            .frame(egui::Frame::NONE.fill(dock()))
-            .show(root, |ui| dock_panel(state, ui));
-    }
-
-    // 左缘：另一根贴边；左坞与工作流面板依次向内。
-    let (left_id, left_half) = if panels_on_right {
-        ("rail-tools", RailHalf::Tools)
-    } else {
-        ("rail-panels", RailHalf::Panels)
-    };
-    egui::Panel::left(left_id)
-        .exact_size(TOOL_W)
-        .resizable(false)
-        .frame(egui::Frame::NONE.fill(chrome()))
-        .show(root, |ui| tool_rail(state, ui, left_half, true));
-    if state.show_dock && dock_left {
-        egui::Panel::left("dock")
-            .exact_size(state.dock_w)
-            .resizable(false)
-            .frame(egui::Frame::NONE.fill(dock()))
-            .show(root, |ui| dock_panel(state, ui));
-    }
-    // 5 工作流面板：最后声明，所以贴着画布（同侧先声明的在外）。窄窗强制收起；
-    // 没导入序列时不收起——面板会给出「导入照片…」，不能点了开关却什么都没有。
+    // 工具轨、右坞、工作流面板都只属于显影工作台。帧表 / 导出 / 任务是整页视图
+    // （design `.wsview`），任何侧栏在那里都会把 300px 宽的表格挤出屏幕。
     //
-    // 5 Workflow panel: declared last so it sits next to the canvas (on the same side the
-    // first declaration is outermost). Forced closed on narrow windows, but **not** when
-    // no sequence is loaded -- the panel then offers "Import photos...", because a toggle
-    // that visibly does nothing is a silent failure.
-    if flow_panel::flow_panel_visible(state, full.width()) {
-        egui::Panel::left("flow-panel")
-            .exact_size(FLOW_W)
+    // Rails, the dock and the flow panel belong to the develop bench. Table / export /
+    // tasks are full-page views (the design's `.wsview`); any side panel there would
+    // squeeze the 300 px-wide table off screen.
+    if develop {
+        // 右缘：贴边的那一根先声明，坞再向内叠。
+        let (right_id, right_half) = if panels_on_right {
+            ("rail-panels", RailHalf::Panels)
+        } else {
+            ("rail-tools", RailHalf::Tools)
+        };
+        egui::Panel::right(right_id)
+            .exact_size(TOOL_W)
             .resizable(false)
-            .frame(
-                egui::Frame::NONE
-                    .fill(dock())
-                    .inner_margin(egui::Margin::symmetric(10, 6)),
-            )
-            .show(root, |ui| flow_panel::flow_panel(state, ui, &ctx));
+            .frame(egui::Frame::NONE.fill(chrome()))
+            .show(root, |ui| tool_rail(state, ui, right_half, false));
+        if state.show_dock && !dock_left {
+            egui::Panel::right("dock")
+                .exact_size(state.dock_w)
+                .resizable(false)
+                .frame(egui::Frame::NONE.fill(dock()))
+                .show(root, |ui| dock_panel(state, ui));
+        }
+
+        // 左缘：另一根贴边；左坞与工作流面板依次向内。
+        let (left_id, left_half) = if panels_on_right {
+            ("rail-tools", RailHalf::Tools)
+        } else {
+            ("rail-panels", RailHalf::Panels)
+        };
+        egui::Panel::left(left_id)
+            .exact_size(TOOL_W)
+            .resizable(false)
+            .frame(egui::Frame::NONE.fill(chrome()))
+            .show(root, |ui| tool_rail(state, ui, left_half, true));
+        if state.show_dock && dock_left {
+            egui::Panel::left("dock")
+                .exact_size(state.dock_w)
+                .resizable(false)
+                .frame(egui::Frame::NONE.fill(dock()))
+                .show(root, |ui| dock_panel(state, ui));
+        }
+        // 5 工作流面板：最后声明，所以贴着画布（同侧先声明的在外）。窄窗强制收起；
+        // 没导入序列时不收起——面板会给出「导入照片…」，不能点了开关却什么都没有。
+        //
+        // 5 Workflow panel: declared last so it sits next to the canvas (on the same side the
+        // first declaration is outermost). Forced closed on narrow windows, but **not** when
+        // no sequence is loaded -- the panel then offers "Import photos...", because a toggle
+        // that visibly does nothing is a silent failure.
+        if flow_panel::flow_panel_visible(state, full.width()) {
+            egui::Panel::left("flow-panel")
+                .exact_size(FLOW_W)
+                .resizable(false)
+                .frame(
+                    egui::Frame::NONE
+                        .fill(dock())
+                        .inner_margin(egui::Margin::symmetric(10, 6)),
+                )
+                .show(root, |ui| flow_panel::flow_panel(state, ui, &ctx));
+        }
     }
 
     // 画布右边界按已知的右侧面板宽度夹一次：切模块时 dock 内容一换，egui 的
@@ -450,10 +505,18 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // overflow). Handing CentralPanel a computed max_rect keeps it off the panel no
     // matter how long the panel's content gets.
     let available = root.available_rect_before_wrap();
-    let centre = crate::layout::centre_rect(full, available, insets);
+    let centre = if develop {
+        crate::layout::centre_rect(full, available, insets)
+    } else {
+        // 整页工作台：没有侧栏，内容区就是顶栏以下的全部（design `.wsview{inset:44px 0 0 0}`）。
+        //
+        // Full-page bench: no side panels, so the content area is everything below the top
+        // bar (the design's `.wsview{inset:44px 0 0 0}`).
+        available
+    };
     let mut centre_ui = root.new_child(egui::UiBuilder::new().max_rect(centre).id_salt("centre"));
     egui::CentralPanel::default()
-        .frame(egui::Frame::NONE.fill(surround()))
+        .frame(egui::Frame::NONE.fill(if develop { surround() } else { bench_bg() }))
         .show(&mut centre_ui, |ui| {
             // 三步三页（用户 2026-11-09）：序列管理看整条序列、调色与修复看画布、
             // 导出视频看队列与设置。单张与空工程恒为画布。
@@ -473,6 +536,10 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
                 Ok("sequence") => Some(flow_panel::FlowPage::Sequence),
                 _ => None,
             };
+            if !develop {
+                pages::bench_page(state, ui, &ctx);
+                return;
+            }
             match forced.unwrap_or_else(|| flow_panel::current_page(state)) {
                 flow_panel::FlowPage::Sequence => pages::sequence_page(state, ui, &ctx),
                 flow_panel::FlowPage::Export => pages::export_page(state, ui, &ctx),
@@ -486,15 +553,33 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // The gutter between dock and canvas: neutral surround grey with a hairline on the
     // dock's inner edge. Drawn only across the document area, never over the menu row,
     // options bar or bottom filmstrip.
-    if let Some((band, line_x)) = crate::layout::canvas_gutter(available, centre, insets) {
-        let p = root.painter().clone();
-        p.rect_filled(band, 0.0, surround());
-        let x = line_x.round() + 0.5;
-        p.line_segment(
-            [Pos2::new(x, band.top()), Pos2::new(x, band.bottom())],
-            Stroke::new(1.0, border()),
-        );
+    if develop {
+        if let Some((band, line_x)) = crate::layout::canvas_gutter(available, centre, insets) {
+            let p = root.painter().clone();
+            p.rect_filled(band, 0.0, surround());
+            let x = line_x.round() + 0.5;
+            p.line_segment(
+                [Pos2::new(x, band.top()), Pos2::new(x, band.bottom())],
+                Stroke::new(1.0, border()),
+            );
+        }
     }
+
+    // 工作台导航卡：浮在内容之上（design `.wsbar{position:absolute;top:56px;z-index:45}`），
+    // 顶栏下 12px、水平居中。放在 Content 之后画，才压得住媒体与整页视图。
+    //
+    // The bench nav card floats above the content (design `.wsbar`: absolute, top 56 px,
+    // z-index 45) -- 12 px under the top bar, horizontally centred. Painted after the
+    // content so it sits above both the media and the full-page views.
+    let nav_top = full.top() + MENU_H + 12.0;
+    egui::Area::new(egui::Id::unique("bench-nav"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(Pos2::new(full.center().x - 300.0, nav_top))
+        .show(&ctx, |ui| {
+            ui.set_min_size(Vec2::new(600.0, 34.0));
+            ui.set_max_width(600.0);
+            bench::nav(state, ui, Pos2::new(full.center().x, nav_top));
+        });
 
     state.history_commit();
     // 新错误抬成弹窗：四十余处 `state.error = Some(...)` 靠这一处统一兜住。

@@ -269,214 +269,206 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
         if !group_header(ui, state, "basic", "基本", true) {
             return;
         }
-                        // 快捷动作行（LR 的 Treatment / Auto 位）：三枚文字动作，与推子同一条左缘。
-                        // 自动住在这里而不是面板顶栏——它改的就是下面这堆推子，动作贴着自己的
-                        // 结果放，按完抬眼就能看见哪几根动了。
+        // 快捷动作行（LR 的 Treatment / Auto 位）：三枚文字动作，与推子同一条左缘。
+        // 自动住在这里而不是面板顶栏——它改的就是下面这堆推子，动作贴着自己的
+        // 结果放，按完抬眼就能看见哪几根动了。
+        //
+        // Quick actions (LR's treatment / auto slot): three text actions on the slider
+        // rail. Auto lives here rather than the panel's top bar because it drives
+        // exactly the sliders below -- the action sits next to its outcome.
+        ui.add_space(2.0);
+        let mut auto = false;
+        let mut mono_toggle = false;
+        let mut hdr = false;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_space(6.0);
+            // 设计稿 `.segmini`：三枚动作坐在一块 `--field` 凹槽里，
+            // 2px 内距 + 2px 间隔，整组读成一颗分段控件。旧版三枚
+            // 裸文字浮在卡面上，和下面的推子分不出「动作 / 参数」。
+            //
+            // The design's `.segmini`: the three actions sit inside one
+            // `--field` trough with 2 px padding and 2 px gaps, reading as a
+            // single segmented control. The old bare trio floated on the card
+            // and did not separate "actions" from "parameters".
+            egui::Frame::NONE
+                .fill(field())
+                .corner_radius(radius_control())
+                .inner_margin(egui::Margin::same(2))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        // 自动结果（「+1.17 EV · 对比 …」）进悬停提示，不铺在面板里：那是一串
+                        // 读数，摊开会把推子推下去。
                         //
-                        // Quick actions (LR's treatment / auto slot): three text actions on the slider
-                        // rail. Auto lives here rather than the panel's top bar because it drives
-                        // exactly the sliders below -- the action sits next to its outcome.
-                        ui.add_space(2.0);
-                        let mut auto = false;
-                        let mut mono_toggle = false;
-                        let mut hdr = false;
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            ui.add_space(6.0);
-                            // 设计稿 `.segmini`：三枚动作坐在一块 `--field` 凹槽里，
-                            // 2px 内距 + 2px 间隔，整组读成一颗分段控件。旧版三枚
-                            // 裸文字浮在卡面上，和下面的推子分不出「动作 / 参数」。
-                            //
-                            // The design's `.segmini`: the three actions sit inside one
-                            // `--field` trough with 2 px padding and 2 px gaps, reading as a
-                            // single segmented control. The old bare trio floated on the card
-                            // and did not separate "actions" from "parameters".
-                            egui::Frame::NONE
-                                .fill(field())
-                                .corner_radius(radius_control())
-                                .inner_margin(egui::Margin::same(2))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 2.0;
-                                        // 自动结果（「+1.17 EV · 对比 …」）进悬停提示，不铺在面板里：那是一串
-                                        // 读数，摊开会把推子推下去。
-                                        //
-                                        // The auto result ("+1.17 EV · contrast …") stays in the tooltip rather than
-                                        // the panel body: it is a wall of readings that would push the sliders down.
-                                        let chip = quiet_action(ui, "自动", false);
-                                        auto = match state.auto_note.as_deref() {
-                                            Some(note) => chip.on_hover_text(note).clicked(),
-                                            None => chip.clicked(),
-                                        };
-                                        mono_toggle =
-                                            quiet_action(ui, "黑白", state.params.mono >= 50.0)
-                                                .on_hover_text(crate::i18n::t!(
-                                                    "在彩色与黑白之间切换；黑白后可到「颜色混合器 → 黑白」逐色相调明暗"
-                                                ))
-                                                .clicked();
-                                        hdr = quiet_action(ui, "HDR", false)
-                                            .on_hover_text(crate::i18n::t!(
-                                                "切到合成模块的 HDR 合并：同一场景的包围曝光帧合成一张"
-                                            ))
-                                            .clicked();
-                                    });
-                                });
-                        });
-                        if auto {
-                            state.auto_exposure(ui.ctx());
+                        // The auto result ("+1.17 EV · contrast …") stays in the tooltip rather than
+                        // the panel body: it is a wall of readings that would push the sliders down.
+                        let chip = quiet_action(ui, "自动", false);
+                        auto = match state.auto_note.as_deref() {
+                            Some(note) => chip.on_hover_text(note).clicked(),
+                            None => chip.clicked(),
+                        };
+                        mono_toggle = quiet_action(ui, "黑白", state.params.mono >= 50.0)
+                            .on_hover_text(crate::i18n::t!(
+                                "在彩色与黑白之间切换；黑白后可到「颜色混合器 → 黑白」逐色相调明暗"
+                            ))
+                            .clicked();
+                        hdr = quiet_action(ui, "HDR", false)
+                            .on_hover_text(crate::i18n::t!(
+                                "切到合成模块的 HDR 合并：同一场景的包围曝光帧合成一张"
+                            ))
+                            .clicked();
+                    });
+                });
+        });
+        if auto {
+            state.auto_exposure(ui.ctx());
+        }
+        if mono_toggle {
+            let to_mono = state.params.mono < 50.0;
+            state.params.mono = if to_mono { 100.0 } else { 0.0 };
+            history::note(
+                "mono",
+                crate::i18n::tr(if to_mono { "黑白" } else { "彩色" }).to_owned(),
+            );
+            changed = true;
+        }
+        if hdr {
+            state.module = Module::Merge;
+            state.dock_tab = crate::state::DockTab::Adjust;
+            state.dock_focus = Some("hdr".to_owned());
+            state.collapsed.remove("hdr");
+        }
+        // 照片风格（LR 的 Profile 位）：所有滑块之下的渲染基调。换风格不动任何
+        // 参数值，也不进「N 项调整」徽标——它是基调，不是调整。
+        //
+        // Photo style (LR's Profile slot): the rendering basis beneath every slider.
+        // Switching touches no slider value and never enters the "N adjusted" badge --
+        // it is a basis, not an adjustment.
+        ui.add_space(2.0);
+        // 风格行照设计稿的 `.kv + .combo`：一行 28px，标签 12px 次级色，
+        // 下拉紧接标签、占满余宽，26px 高、`--field` 实底、无描边。
+        // 旧版标签 13px 正文白、下拉 18px 且带 1px 边框，读起来像一枚
+        // 缩在角落的输入框，和下面的推子不是同一套材质。
+        //
+        // Style row per the design's `.kv + .combo`: a 28 px row, a 12 px
+        // secondary label, and a 26 px dropdown filling the rest, `--field`
+        // fill and no stroke. The old 13 px white label over an 18 px
+        // outlined box read as a stray input widget.
+        let (row, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::hover());
+        let lab = ui.painter().layout_no_wrap(
+            crate::i18n::t!("风格").to_owned(),
+            font(SIZE_LABEL),
+            muted(),
+        );
+        let lab_x = row.left() + 6.0;
+        ui.painter().galley(
+            Pos2::new(lab_x, row.center().y - lab.size().y * 0.5),
+            lab.clone(),
+            muted(),
+        );
+        let combo = Rect::from_min_max(
+            Pos2::new(lab_x + lab.size().x + 8.0, row.top() + 1.0),
+            Pos2::new(row.right() - 6.0, row.bottom() - 1.0),
+        );
+        let current = state.params.style;
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(combo)
+                .layout(Layout::left_to_right(Align::Center)),
+            |ui| {
+                ui.spacing_mut().interact_size.y = 26.0;
+                ui.spacing_mut().icon_width = 10.0;
+                {
+                    let v = &mut ui.style_mut().visuals;
+                    v.override_text_color = Some(text());
+                    v.widgets.inactive.bg_fill = field();
+                    v.widgets.inactive.weak_bg_fill = field();
+                    v.widgets.inactive.bg_stroke = Stroke::NONE;
+                    v.widgets.hovered.bg_fill = field_hover();
+                    v.widgets.hovered.weak_bg_fill = field_hover();
+                    v.widgets.hovered.bg_stroke = Stroke::NONE;
+                    v.widgets.active.bg_fill = field_hover();
+                    v.widgets.active.weak_bg_fill = field_hover();
+                    v.widgets.active.bg_stroke = Stroke::NONE;
+                }
+                egui::ComboBox::from_id_salt("dev-style")
+                    .selected_text(crate::i18n::tr(
+                        aevum_core::style::NAME_KEYS
+                            [current.min(aevum_core::style::COUNT - 1) as usize],
+                    ))
+                    .width(combo.width())
+                    .show_ui(ui, |ui| {
+                        combo_style(ui);
+                        for (i, key) in aevum_core::style::NAME_KEYS.iter().enumerate() {
+                            let idx = i as u8;
+                            if ui
+                                .selectable_label(state.params.style == idx, crate::i18n::tr(key))
+                                .clicked()
+                                && state.params.style != idx
+                            {
+                                state.params.style = idx;
+                                state.preview_dirty = true;
+                                history::note(
+                                    "style",
+                                    crate::i18n::tr_fmt(
+                                        "风格 {}",
+                                        &[&crate::i18n::tr(key).to_owned()],
+                                    ),
+                                );
+                            }
                         }
-                        if mono_toggle {
-                            let to_mono = state.params.mono < 50.0;
-                            state.params.mono = if to_mono { 100.0 } else { 0.0 };
-                            history::note(
-                                "mono",
-                                crate::i18n::tr(if to_mono { "黑白" } else { "彩色" }).to_owned(),
-                            );
-                            changed = true;
-                        }
-                        if hdr {
-                            state.module = Module::Merge;
-                            state.dock_tab = crate::state::DockTab::Adjust;
-                            state.dock_focus = Some("hdr".to_owned());
-                            state.collapsed.remove("hdr");
-                        }
-                        // 照片风格（LR 的 Profile 位）：所有滑块之下的渲染基调。换风格不动任何
-                        // 参数值，也不进「N 项调整」徽标——它是基调，不是调整。
-                        //
-                        // Photo style (LR's Profile slot): the rendering basis beneath every slider.
-                        // Switching touches no slider value and never enters the "N adjusted" badge --
-                        // it is a basis, not an adjustment.
-                        ui.add_space(2.0);
-                        // 风格行照设计稿的 `.kv + .combo`：一行 28px，标签 12px 次级色，
-                        // 下拉紧接标签、占满余宽，26px 高、`--field` 实底、无描边。
-                        // 旧版标签 13px 正文白、下拉 18px 且带 1px 边框，读起来像一枚
-                        // 缩在角落的输入框，和下面的推子不是同一套材质。
-                        //
-                        // Style row per the design's `.kv + .combo`: a 28 px row, a 12 px
-                        // secondary label, and a 26 px dropdown filling the rest, `--field`
-                        // fill and no stroke. The old 13 px white label over an 18 px
-                        // outlined box read as a stray input widget.
-                        let (row, _) = ui.allocate_exact_size(
-                            Vec2::new(ui.available_width(), 28.0),
-                            Sense::hover(),
-                        );
-                        let lab = ui.painter().layout_no_wrap(
-                            crate::i18n::t!("风格").to_owned(),
-                            font(SIZE_LABEL),
-                            muted(),
-                        );
-                        let lab_x = row.left() + 6.0;
-                        ui.painter().galley(
-                            Pos2::new(lab_x, row.center().y - lab.size().y * 0.5),
-                            lab.clone(),
-                            muted(),
-                        );
-                        let combo = Rect::from_min_max(
-                            Pos2::new(lab_x + lab.size().x + 8.0, row.top() + 1.0),
-                            Pos2::new(row.right() - 6.0, row.bottom() - 1.0),
-                        );
-                        let current = state.params.style;
-                        ui.scope_builder(
-                            egui::UiBuilder::new()
-                                .max_rect(combo)
-                                .layout(Layout::left_to_right(Align::Center)),
-                            |ui| {
-                                ui.spacing_mut().interact_size.y = 26.0;
-                                ui.spacing_mut().icon_width = 10.0;
-                                {
-                                    let v = &mut ui.style_mut().visuals;
-                                    v.override_text_color = Some(text());
-                                    v.widgets.inactive.bg_fill = field();
-                                    v.widgets.inactive.weak_bg_fill = field();
-                                    v.widgets.inactive.bg_stroke = Stroke::NONE;
-                                    v.widgets.hovered.bg_fill = field_hover();
-                                    v.widgets.hovered.weak_bg_fill = field_hover();
-                                    v.widgets.hovered.bg_stroke = Stroke::NONE;
-                                    v.widgets.active.bg_fill = field_hover();
-                                    v.widgets.active.weak_bg_fill = field_hover();
-                                    v.widgets.active.bg_stroke = Stroke::NONE;
-                                }
-                                egui::ComboBox::from_id_salt("dev-style")
-                                    .selected_text(crate::i18n::tr(
-                                        aevum_core::style::NAME_KEYS
-                                            [current.min(aevum_core::style::COUNT - 1) as usize],
-                                    ))
-                                    .width(combo.width())
-                                    .show_ui(ui, |ui| {
-                                        combo_style(ui);
-                                        for (i, key) in
-                                            aevum_core::style::NAME_KEYS.iter().enumerate()
-                                        {
-                                            let idx = i as u8;
-                                            if ui
-                                                .selectable_label(
-                                                    state.params.style == idx,
-                                                    crate::i18n::tr(key),
-                                                )
-                                                .clicked()
-                                                && state.params.style != idx
-                                            {
-                                                state.params.style = idx;
-                                                state.preview_dirty = true;
-                                                history::note(
-                                                    "style",
-                                                    crate::i18n::tr_fmt(
-                                                        "风格 {}",
-                                                        &[&crate::i18n::tr(key).to_owned()],
-                                                    ),
-                                                );
-                                            }
-                                        }
-                                    });
-                            },
-                        );
-                        // 相机配置行（LR 的 Profile 行）：DCP 决定 RAW 解码后的白平衡、颜色矩阵
-                        // 与色调曲线，是所有推子底下的地基，所以从光学组搬到基本组。镜头配置
-                        // 留在光学组——那是整幅画面的几何与暗角校正，和调色不是一件事。
-                        //
-                        // Camera-profile row (LR's Profile row): DCP takes over white balance, colour
-                        // matrix and tone curve after RAW decode, i.e. it sits beneath every slider, so
-                        // it moves from Optics into Basic. The lens profile stays in Optics -- it is a
-                        // whole-frame geometry/vignetting correction, not grading.
-                        let ctx = ui.ctx().clone();
-                        camera_profile_row(state, &ctx, ui);
-                        sub_head(ui, crate::i18n::t!("白平衡"));
-                        for f in [Field::Temperature, Field::Tint] {
-                            changed |= spec_field(ui, state, f);
-                        }
-                        // 小标题用「影调」而不是「色调」：中文里 tone 与 tint 都叫「色调」，
-                        // 而 i18n 表以中文为键——同一个键只能有一条英文，区标题会被译成 Tint。
-                        //
-                        // The heading says 影调 (tonal range) rather than 色调: in Chinese both tone
-                        // and tint are called 色调, and the i18n table keys on Chinese, so one key can
-                        // only carry one English string -- the section title would read "Tint".
-                        sub_head(ui, crate::i18n::t!("影调"));
-                        for f in [
-                            Field::Exposure,
-                            Field::HlRolloff,
-                            Field::Contrast,
-                            Field::ContrastLinear,
-                            Field::Highlights,
-                            Field::Shadows,
-                            Field::Whites,
-                            Field::Blacks,
-                            Field::BlackSoft,
-                            Field::WhiteSoft,
-                        ] {
-                            changed |= spec_field(ui, state, f);
-                        }
-                        sub_head(ui, crate::i18n::t!("偏好"));
-                        for f in [
-                            Field::Texture,
-                            Field::Clarity,
-                            Field::Dehaze,
-                            Field::DehazeDark,
-                            Field::DehazeContrast,
-                            Field::Vibrance,
-                            Field::Saturation,
-                        ] {
-                            changed |= spec_field(ui, state, f);
-                        }
+                    });
+            },
+        );
+        // 相机配置行（LR 的 Profile 行）：DCP 决定 RAW 解码后的白平衡、颜色矩阵
+        // 与色调曲线，是所有推子底下的地基，所以从光学组搬到基本组。镜头配置
+        // 留在光学组——那是整幅画面的几何与暗角校正，和调色不是一件事。
+        //
+        // Camera-profile row (LR's Profile row): DCP takes over white balance, colour
+        // matrix and tone curve after RAW decode, i.e. it sits beneath every slider, so
+        // it moves from Optics into Basic. The lens profile stays in Optics -- it is a
+        // whole-frame geometry/vignetting correction, not grading.
+        let ctx = ui.ctx().clone();
+        camera_profile_row(state, &ctx, ui);
+        sub_head(ui, crate::i18n::t!("白平衡"));
+        for f in [Field::Temperature, Field::Tint] {
+            changed |= spec_field(ui, state, f);
+        }
+        // 小标题用「影调」而不是「色调」：中文里 tone 与 tint 都叫「色调」，
+        // 而 i18n 表以中文为键——同一个键只能有一条英文，区标题会被译成 Tint。
+        //
+        // The heading says 影调 (tonal range) rather than 色调: in Chinese both tone
+        // and tint are called 色调, and the i18n table keys on Chinese, so one key can
+        // only carry one English string -- the section title would read "Tint".
+        sub_head(ui, crate::i18n::t!("影调"));
+        for f in [
+            Field::Exposure,
+            Field::HlRolloff,
+            Field::Contrast,
+            Field::ContrastLinear,
+            Field::Highlights,
+            Field::Shadows,
+            Field::Whites,
+            Field::Blacks,
+            Field::BlackSoft,
+            Field::WhiteSoft,
+        ] {
+            changed |= spec_field(ui, state, f);
+        }
+        sub_head(ui, crate::i18n::t!("偏好"));
+        for f in [
+            Field::Texture,
+            Field::Clarity,
+            Field::Dehaze,
+            Field::DehazeDark,
+            Field::DehazeContrast,
+            Field::Vibrance,
+            Field::Saturation,
+        ] {
+            changed |= spec_field(ui, state, f);
+        }
     });
     // 子区返回「参数动了」就顺手摘掉该组的旁路：推子路径已在 spec_slider 里
     // 自清，这里接的是曲线/色阶拖点、外观卸下这类非推子路径。
@@ -891,56 +883,56 @@ fn adjust_grade(state: &mut AppState, ui: &mut Ui) -> bool {
         }
         let mut changed = false;
         let w = ui.available_width();
-    // 参考图逐项实测（内容宽 316.5px 的面板）：轮径 92.5（29.2%）、下排缝 34.5
-    // （10.9%）、标签中心到盘顶 21（6.7%）、盘底到明度轨 21.5（6.8%）、明度轨宽
-    // 为盘径的 93%。旧版按 28% 取值，三枚轮整体偏小、标签又贴住盘顶，读起来比
-    // 参考图「紧一档、小一档」。
-    //
-    // Measured item by item on the reference (316.5 px content width): disc 92.5
-    // (29.2 %), bottom-pair gap 34.5 (10.9 %), label centre to disc top 21 (6.7 %),
-    // disc bottom to luminance rail 21.5 (6.8 %), rail width 93 % of the disc. The old
-    // 28 % made all three wheels a notch small and the labels sat right on the disc.
-    let size = (w * 0.30).clamp(88.0, 124.0);
-    let gap = (w * 0.11).clamp(24.0, 44.0);
-    ui.vertical_centered(|ui| {
-        changed |= widgets::grade_wheel(
-            ui,
-            "grade.mid",
-            "中间调",
-            &mut state.params.grade_mid_h,
-            &mut state.params.grade_mid_s,
-            &mut state.params.grade_mid_l,
-            size,
-        );
-    });
-    // 中调轮与下排之间：参考图轨道中线到下一行标签中心 27.8（8.8%）。轮子自身
-    // 的分配已经包含轨下的余量，这里只补 8。
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        // 显式留白居中：关掉默认项距，两枚轮 + 缝精确落在面板中轴。
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.add_space(((w - size * 2.0 - gap) * 0.5).max(0.0));
-        changed |= widgets::grade_wheel(
-            ui,
-            "grade.sh",
-            "阴影",
-            &mut state.params.grade_sh_h,
-            &mut state.params.grade_sh_s,
-            &mut state.params.grade_sh_l,
-            size,
-        );
-        ui.add_space(gap);
-        changed |= widgets::grade_wheel(
-            ui,
-            "grade.hi",
-            "高光",
-            &mut state.params.grade_hi_h,
-            &mut state.params.grade_hi_s,
-            &mut state.params.grade_hi_l,
-            size,
-        );
-    });
-    ui.add_space(4.0);
+        // 参考图逐项实测（内容宽 316.5px 的面板）：轮径 92.5（29.2%）、下排缝 34.5
+        // （10.9%）、标签中心到盘顶 21（6.7%）、盘底到明度轨 21.5（6.8%）、明度轨宽
+        // 为盘径的 93%。旧版按 28% 取值，三枚轮整体偏小、标签又贴住盘顶，读起来比
+        // 参考图「紧一档、小一档」。
+        //
+        // Measured item by item on the reference (316.5 px content width): disc 92.5
+        // (29.2 %), bottom-pair gap 34.5 (10.9 %), label centre to disc top 21 (6.7 %),
+        // disc bottom to luminance rail 21.5 (6.8 %), rail width 93 % of the disc. The old
+        // 28 % made all three wheels a notch small and the labels sat right on the disc.
+        let size = (w * 0.30).clamp(88.0, 124.0);
+        let gap = (w * 0.11).clamp(24.0, 44.0);
+        ui.vertical_centered(|ui| {
+            changed |= widgets::grade_wheel(
+                ui,
+                "grade.mid",
+                "中间调",
+                &mut state.params.grade_mid_h,
+                &mut state.params.grade_mid_s,
+                &mut state.params.grade_mid_l,
+                size,
+            );
+        });
+        // 中调轮与下排之间：参考图轨道中线到下一行标签中心 27.8（8.8%）。轮子自身
+        // 的分配已经包含轨下的余量，这里只补 8。
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            // 显式留白居中：关掉默认项距，两枚轮 + 缝精确落在面板中轴。
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.add_space(((w - size * 2.0 - gap) * 0.5).max(0.0));
+            changed |= widgets::grade_wheel(
+                ui,
+                "grade.sh",
+                "阴影",
+                &mut state.params.grade_sh_h,
+                &mut state.params.grade_sh_s,
+                &mut state.params.grade_sh_l,
+                size,
+            );
+            ui.add_space(gap);
+            changed |= widgets::grade_wheel(
+                ui,
+                "grade.hi",
+                "高光",
+                &mut state.params.grade_hi_h,
+                &mut state.params.grade_hi_s,
+                &mut state.params.grade_hi_l,
+                size,
+            );
+        });
+        ui.add_space(4.0);
         for s in controls::specs_of_group("grade") {
             changed |= spec_slider(ui, state, s);
         }

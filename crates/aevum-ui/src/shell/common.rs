@@ -1101,7 +1101,11 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     } else {
         5.0
     };
-    p.circle_filled(knob + Vec2::new(0.0, 1.2), r + 0.4, Color32::from_black_alpha(55));
+    p.circle_filled(
+        knob + Vec2::new(0.0, 1.2),
+        r + 0.4,
+        Color32::from_black_alpha(55),
+    );
     p.circle_filled(knob, r, if t.dragged() { accent() } else { theme::knob() });
     // 复位点只在悬停这一行时画：每条推子常年挂一颗蓝点，整列看起来像一排指示灯，
     // 既挤又吵；需要时它就在读数框左边。
