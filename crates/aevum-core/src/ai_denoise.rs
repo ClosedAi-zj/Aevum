@@ -96,6 +96,27 @@ static CK3: std::sync::LazyLock<Vec<f32>> =
 static CK4: std::sync::LazyLock<Vec<f32>> =
     std::sync::LazyLock::new(|| transpose(&cw::W4, CC, 2, 2));
 
+/// AVX2 版本的 12×12 卷积行。
+///
+/// # Safety
+///
+/// 调用方必须保证：
+/// 1. 运行在支持 `avx2` + `fma` 的 CPU 上（`conv_row` 的分发处已用
+///    `is_x86_feature_detected!` 判定，本函数自身不再检测）；
+/// 2. `input` 至少覆盖 `(y + 11) * pw + w + 11` 个 `f32`（含左侧 `pw` 与右侧
+///    11 列填充），`orow` 至少 `PAD` 个 `f32`，`wts`/`bias` 长度与常量表一致。
+///    越界读会直接落到未定义行为，而不是 panic。
+///
+/// AVX2 row convolution.
+///
+/// # Safety
+///
+/// The caller must guarantee: (1) the CPU supports `avx2` + `fma` (the dispatcher in
+/// `conv_row` already checks with `is_x86_feature_detected!`; this function does not
+/// re-check); (2) `input` covers at least `(y + 11) * pw + w + 11` floats including the
+/// left `pw` padding and 11 right-hand columns, `orow` holds at least `PAD` floats, and
+/// `wts` / `bias` match the constant tables. An out-of-bounds read here is undefined
+/// behaviour, not a panic.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 #[allow(clippy::too_many_arguments)]
