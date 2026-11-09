@@ -1054,6 +1054,12 @@ fn queue_table(state: &mut AppState, ui: &mut Ui, busy: bool) {
     theme::rule(&p, head.left(), head.right(), head.bottom(), divider());
 
     let mut remove = None;
+    // 进度只问一次：放在行循环里就是每行一次 `queue_progress()`，队列一长
+    // 变成 O(n²)/帧，而它对整张表是同一个值（与 `pages::local_queue_table` 同修）。
+    //
+    // Ask once: inside the row loop it ran per row, making the table O(n^2) per frame
+    // even though the value is identical for every row (same fix as `pages`).
+    let progress = if busy { state.queue_progress() } else { None };
     egui::ScrollArea::vertical()
         .max_height(150.0)
         .auto_shrink([false, true])
@@ -1066,9 +1072,7 @@ fn queue_table(state: &mut AppState, ui: &mut Ui, busy: bool) {
                 }
                 let (frac, status) = if current {
                     let (done, total, _) =
-                        state
-                            .queue_progress()
-                            .unwrap_or((0, 0, aevum_core::export::Stage::Frames));
+                        progress.unwrap_or((0, 0, aevum_core::export::Stage::Frames));
                     (
                         if total > 0 {
                             (done as f32 / total as f32).clamp(0.0, 1.0)
