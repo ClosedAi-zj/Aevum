@@ -183,7 +183,15 @@ fn cell(state: &mut AppState, ui: &mut Ui, i: usize, w: f32, h: f32) {
     if let Some(t) = state.thumb(i) {
         let tex = t.texture.clone();
         let size = t.size;
-        let scale = (w / size[0] as f32).min(h / size[1] as f32);
+        // 尺寸为 0 时 `w / 0` 会得 inf/NaN，随后 `from_center_size` 拿到 NaN 矩形——
+        // 轻则这一格空白，重则 egui 的几何断言失败。给分母兜一个 1。
+        //
+        // A zero-sized texture makes `w / 0` inf/NaN, and `from_center_size` then gets a
+        // NaN rect: at best the cell is blank, at worst egui's geometry assert fires.
+        // Floor the divisor at 1.
+        let sw = size[0].max(1) as f32;
+        let sh = size[1].max(1) as f32;
+        let scale = (w / sw).min(h / sh);
         let draw = Vec2::new(size[0] as f32 * scale, size[1] as f32 * scale);
         let r = egui::Rect::from_center_size(rect.center(), draw);
         p.image(
@@ -568,7 +576,16 @@ fn primary_button(ui: &mut Ui, label: &str) -> egui::Response {
 /// a progress bar.
 fn local_queue_table(state: &mut AppState, ui: &mut Ui) {
     let mut remove: Option<usize> = None;
-    let n = state.queue.len();
+    // 进度只问一次：放在循环里就是每行一次 `queue_progress()`，队列一长变成
+    // O(n²)/帧，而它的结果对整张表是同一个值。
+    //
+    // Ask for the progress once: inside the loop it ran per row, turning the table
+    // into O(n^2) per frame even though the answer is the same for every row.
+    let progress = if state.queue_busy {
+        state.queue_progress()
+    } else {
+        None
+    };
     for (i, item) in state.queue.iter().enumerate() {
         ui.horizontal(|ui| {
             ui.label(
@@ -606,8 +623,7 @@ fn local_queue_table(state: &mut AppState, ui: &mut Ui) {
             });
         });
         if state.queue_current == Some(i)
-            && state.queue_busy
-            && let Some((done, total, _)) = state.queue_progress()
+            && let Some((done, total, _)) = progress
         {
             let frac = if total > 0 {
                 done as f32 / total as f32
@@ -621,7 +637,6 @@ fn local_queue_table(state: &mut AppState, ui: &mut Ui) {
     if let Some(i) = remove {
         state.remove_queue_at(i);
     }
-    let _ = n;
 }
 
 /// 跳到调色页：把当前工作流的「调色与修复」段设为手选步，并切到显影模块。
