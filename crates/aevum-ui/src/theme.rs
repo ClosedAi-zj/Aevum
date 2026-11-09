@@ -751,6 +751,16 @@ pub fn radius_control() -> f32 {
     (appearance().radius + crate::platform::chrome().radius_bias).clamp(0.0, 18.0)
 }
 
+/// 小徽标/芯片圆角：比控件再收 2px。全应用的字面量 2.0/3.0/8.0 都收到这一档，
+/// 避免"小方块圆角肉眼可见地不一致"（审计 #37）。
+///
+/// Corner radius for chips and small badges: control radius minus 2 px. The literals
+/// 2.0 / 3.0 / 8.0 all collapse to this one step so small blocks stop looking randomly
+/// rounded.
+pub fn radius_chip() -> f32 {
+    (radius_control() - 2.0).max(2.0)
+}
+
 pub fn radius_window() -> f32 {
     radius_control() + 4.0
 }

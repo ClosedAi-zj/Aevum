@@ -726,7 +726,10 @@ fn market_row(
     } else {
         field()
     };
-    p.rect_filled(sw, 8.0, track);
+    // 滑轨用胶囊圆角（高度的一半），不再写死 8.0——字面量圆角是「手工感」来源之一。
+    //
+    // The track uses a pill radius (half its height) instead of a hard-coded 8.0.
+    p.rect_filled(sw, sw.height() * 0.5, track);
     if !enabled {
         p.rect_stroke(
             sw,

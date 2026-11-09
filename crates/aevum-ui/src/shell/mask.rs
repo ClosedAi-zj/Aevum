@@ -951,7 +951,8 @@ pub(super) fn adjust_masks(state: &mut AppState, ui: &mut Ui) {
                 state.mask_pick = !state.mask_pick;
             }
             let (rect, _) = ui.allocate_exact_size(Vec2::new(30.0, 15.0), Sense::hover());
-            ui.painter().rect_filled(rect, 3.0, hue_color(view.hue[0]));
+            ui.painter()
+                .rect_filled(rect, radius_chip(), hue_color(view.hue[0]));
             ui.label(
                 RichText::new(format!("{:.0}°", view.hue[0]))
                     .size(SIZE_SMALL)

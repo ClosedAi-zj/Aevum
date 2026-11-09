@@ -434,9 +434,9 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         }
         if gresp.hovered() || gresp.dragged() {
             ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
-            p.rect_filled(grip, 2.0, accent().gamma_multiply(0.55));
+            p.rect_filled(grip, radius_chip(), accent().gamma_multiply(0.55));
         } else {
-            p.rect_filled(grip, 2.0, divider());
+            p.rect_filled(grip, radius_chip(), divider());
         }
         filmstrip(
             state,
@@ -712,7 +712,7 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                         );
                         // 单元对齐界面稿 .th：gap 2、圆角 3、canvas 底、
                         // 外圈 1px 白 5% 的极淡环，没有内衬黑卡。
-                        p.rect_filled(cell, 3.0, canvas());
+                        p.rect_filled(cell, radius_chip(), canvas());
                         p.rect_stroke(
                             cell,
                             3.0,

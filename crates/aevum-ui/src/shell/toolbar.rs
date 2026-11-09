@@ -128,7 +128,7 @@ fn ctx_seg(ui: &mut Ui, name: &str, note: &str, warn: Option<String>) {
         let galley = ui.painter().layout_no_wrap(text, font(SIZE_LABEL), ink);
         let size = galley.size() + Vec2::new(10.0, 4.0);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().rect_filled(rect, 3.0, field());
+        ui.painter().rect_filled(rect, radius_chip(), field());
         ui.painter().galley(
             Pos2::new(rect.left() + 5.0, rect.center().y - galley.size().y * 0.5),
             galley,
@@ -191,7 +191,7 @@ pub(super) fn doc_tab(state: &mut AppState, p: &egui::Painter, ui: &mut Ui, rect
         );
         let cr = ui.interact(close, ui.make_persistent_id("doc-close"), Sense::click());
         if cr.hovered() {
-            p.rect_filled(close, 3.0, theme::overlay_white(header(), 26));
+            p.rect_filled(close, radius_chip(), theme::overlay_white(header(), 26));
         }
         // 裸「✕」+ dim() 曾经让用户看不出这是什么、点了会怎样（「x 也看不懂」）。
         // 换成有语义的关闭图标、默认态抬到 muted()、悬停说明动作。

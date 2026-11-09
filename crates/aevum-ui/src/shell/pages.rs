@@ -173,7 +173,7 @@ fn cell(state: &mut AppState, ui: &mut Ui, i: usize, w: f32, h: f32) {
     if state.keyframes.contains_key(&i) {
         let chip =
             egui::Rect::from_min_size(rect.left_top() + Vec2::new(4.0, 4.0), Vec2::new(14.0, 14.0));
-        p.rect_filled(chip, 3.0, accent());
+        p.rect_filled(chip, radius_chip(), accent());
         p.text(
             chip.center(),
             egui::Align2::CENTER_CENTER,
