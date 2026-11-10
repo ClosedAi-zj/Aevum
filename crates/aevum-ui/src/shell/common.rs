@@ -226,7 +226,9 @@ pub(super) fn group_help(key: &str) -> Option<&'static str> {
         "mixer" => {
             "两种模式：HSL 按颜色范围调整色相、饱和度与明亮度；黑白混合决定各色相在灰度中的权重。"
         }
-        "grade" => "中间调大轮在上，阴影 / 高光小轮并列在下（ACR 的品字布局）；三只轮各带色相、饱和度与亮度。",
+        "grade" => {
+            "中间调大轮在上，阴影 / 高光小轮并列在下（ACR 的品字布局）；三只轮各带色相、饱和度与亮度。"
+        }
         "detail" => {
             "锐化、降噪与蒙版。\n锐化保护（对齐 LR）：按噪声底自适应保护平坦区，与蒙版叠加生效。"
         }
@@ -237,9 +239,7 @@ pub(super) fn group_help(key: &str) -> Option<&'static str> {
             "暗角（含中点、圆度、羽化与高光保护）与胶片颗粒。\n颗粒亮度（对齐 LR）：颗粒强度随亮度分级，正值暗部更重、负值反转（高光更重）。"
         }
         "look" => "载入 .cube 3D LUT 作为外观层，不改动底层调色参数。",
-        "profile" => {
-            "渲染基调：风格与相机配置（DCP）定颜色的起点；眼睛只旁路预览，不删除参数。"
-        }
+        "profile" => "渲染基调：风格与相机配置（DCP）定颜色的起点；眼睛只旁路预览，不删除参数。",
         "tone-extra" => {
             "基本组让位后的十三根推子：高光过渡、线性对比、黑白场及其软化、纹理、清晰度、去朦胧与色彩浓度。"
         }
@@ -558,12 +558,21 @@ pub(super) fn group_header(
         if iresp.hovered() {
             p.rect_filled(ir, radius_control(), elev_hover());
         }
-        let base = if iresp.hovered() { accent_hover() } else { dim() };
+        let base = if iresp.hovered() {
+            accent_hover()
+        } else {
+            dim()
+        };
         icons::paint(
             p,
             ir.shrink(5.0),
             Glyph::Info,
-            Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), (base.a() as f32 * t) as u8),
+            Color32::from_rgba_unmultiplied(
+                base.r(),
+                base.g(),
+                base.b(),
+                (base.a() as f32 * t) as u8,
+            ),
         );
         iresp.on_hover_text(help);
     }

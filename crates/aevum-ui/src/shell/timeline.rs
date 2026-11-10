@@ -1191,51 +1191,56 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     // `hint` is the keyboard hint (the design's title wording): arrows step frames,
     // space toggles playback -- both really wired (menu.rs's global key handling),
     // not decorative copy.
-    let mut mini =
-        |ui: &mut Ui, glyph: Glyph, active: bool, tint: Color32, enabled: bool, hint: &str| -> bool {
-            // 走带按钮 22×22（设计 `.tp .ibtn`），按 26px 一格排。
-            //
-            // Transport buttons are 22x22 per the design's `.tp .ibtn`, on a 26 px pitch.
-            let r = Rect::from_center_size(
-                Pos2::new(rect.left() + 11.0 + idx as f32 * 26.0, cy),
-                Vec2::splat(22.0),
-            );
-            let resp = ui.interact(
-                r,
-                ui.make_persistent_id(("transport", idx)),
-                if enabled {
-                    Sense::click()
-                } else {
-                    Sense::hover()
-                },
-            );
-            idx += 1;
-            if enabled && resp.hovered() {
-                p.rect_filled(r, radius_control(), elev());
-            }
-            icons::paint(
-                &p,
-                r.shrink(5.0),
-                glyph,
-                if !enabled {
-                    dim()
-                } else if active {
-                    tint
-                } else if resp.hovered() {
-                    text()
-                } else {
-                    muted()
-                },
-            );
-            let clicked = resp.clicked();
-            // hint 是中文字面量，这里统一过 tr()：英文模式才有译文。
-            if !enabled {
-                resp.on_hover_text(crate::i18n::t!("至少需要两帧才能播放"));
+    let mut mini = |ui: &mut Ui,
+                    glyph: Glyph,
+                    active: bool,
+                    tint: Color32,
+                    enabled: bool,
+                    hint: &str|
+     -> bool {
+        // 走带按钮 22×22（设计 `.tp .ibtn`），按 26px 一格排。
+        //
+        // Transport buttons are 22x22 per the design's `.tp .ibtn`, on a 26 px pitch.
+        let r = Rect::from_center_size(
+            Pos2::new(rect.left() + 11.0 + idx as f32 * 26.0, cy),
+            Vec2::splat(22.0),
+        );
+        let resp = ui.interact(
+            r,
+            ui.make_persistent_id(("transport", idx)),
+            if enabled {
+                Sense::click()
             } else {
-                resp.on_hover_text(crate::i18n::tr(hint));
-            }
-            clicked && enabled
-        };
+                Sense::hover()
+            },
+        );
+        idx += 1;
+        if enabled && resp.hovered() {
+            p.rect_filled(r, radius_control(), elev());
+        }
+        icons::paint(
+            &p,
+            r.shrink(5.0),
+            glyph,
+            if !enabled {
+                dim()
+            } else if active {
+                tint
+            } else if resp.hovered() {
+                text()
+            } else {
+                muted()
+            },
+        );
+        let clicked = resp.clicked();
+        // hint 是中文字面量，这里统一过 tr()：英文模式才有译文。
+        if !enabled {
+            resp.on_hover_text(crate::i18n::t!("至少需要两帧才能播放"));
+        } else {
+            resp.on_hover_text(crate::i18n::tr(hint));
+        }
+        clicked && enabled
+    };
 
     let has = state.frame_count() > 0;
     // 播放至少要两帧：一帧的「播放」既不动、又会把画面切成代理，纯属误导。
@@ -1314,20 +1319,25 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         let rec_g = p.layout_no_wrap(rec_lab, font(MICRO), Color32::WHITE);
         let rec_w = 12.0 + 4.0 + rec_g.size().x + 10.0;
         let rr = Rect::from_min_size(Pos2::new(x, cy - 10.0), Vec2::new(rec_w, 20.0));
-        let rresp = ui.interact(rr, ui.make_persistent_id("transport-record"), Sense::click());
+        let rresp = ui.interact(
+            rr,
+            ui.make_persistent_id("transport-record"),
+            Sense::click(),
+        );
         if rresp.hovered() {
             p.rect_filled(rr, 4.0, elev());
         }
         if recorded {
             // 12% 琥珀底（设计 rgba(245,184,61,.12)），label 与 glyph 同升琥珀。
-            p.rect_filled(rr, 4.0, Color32::from_rgba_unmultiplied(0xF5, 0xB8, 0x3D, 31));
+            p.rect_filled(
+                rr,
+                4.0,
+                Color32::from_rgba_unmultiplied(0xF5, 0xB8, 0x3D, 31),
+            );
         }
         icons::paint(
             &p,
-            Rect::from_center_size(
-                Pos2::new(rr.left() + 7.0, cy),
-                Vec2::splat(11.0),
-            ),
+            Rect::from_center_size(Pos2::new(rr.left() + 7.0, cy), Vec2::splat(11.0)),
             if recorded {
                 Glyph::KeyframeSet
             } else {
@@ -1471,17 +1481,16 @@ mod transport_tests {
         assert!(state.frame_count() > 0, "demo 状态应有帧可走带");
         let rect = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(680.0, 26.0));
         let amber_rect = |out: &egui::FullOutput| {
-            out.shapes.iter().any(|c| matches!(
-                &c.shape,
-                egui::Shape::Rect(rs) if rs.fill
-                    == Color32::from_rgba_unmultiplied(0xF5, 0xB8, 0x3D, 31)
-            ))
+            out.shapes.iter().any(|c| {
+                matches!(
+                    &c.shape,
+                    egui::Shape::Rect(rs) if rs.fill
+                        == Color32::from_rgba_unmultiplied(0xF5, 0xB8, 0x3D, 31)
+                )
+            })
         };
         let mut out = ctx.run_ui(input(), |ui| transport(&mut state, ui, rect));
-        assert!(
-            !amber_rect(&out),
-            "没记录关键帧，记录钮不该亮琥珀底"
-        );
+        assert!(!amber_rect(&out), "没记录关键帧，记录钮不该亮琥珀底");
         out.textures_delta.clear();
         state.add_keyframe();
         let mut out = ctx.run_ui(input(), |ui| transport(&mut state, ui, rect));

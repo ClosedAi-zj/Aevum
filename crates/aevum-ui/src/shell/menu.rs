@@ -1193,7 +1193,12 @@ mod chrome_labels_tests {
                 text.push('\n');
             }
         }
-        for want in ["显示工具轨", "显示工具选项栏", "显示流程步骤条", "画布铺满窗口"] {
+        for want in [
+            "显示工具轨",
+            "显示工具选项栏",
+            "显示流程步骤条",
+            "画布铺满窗口",
+        ] {
             assert!(text.contains(want), "视图菜单缺「{want}」：\n{text}");
         }
         // 与 painted_text 同一条口径：textures_delta 不清会在 Drop 时炸断言。

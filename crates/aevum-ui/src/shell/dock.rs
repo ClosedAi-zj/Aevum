@@ -1155,7 +1155,7 @@ mod dock_paint_tests {
         assert_ne!(value_color(0.0), value_color(0.75), "两种状态必须分得开");
     }
 
-        /// 显影十二组每组必须有一枚 ⓘ 与一段真实说明（设计稿 `.grp-h .help`）：
+    /// 显影十二组每组必须有一枚 ⓘ 与一段真实说明（设计稿 `.grp-h .help`）：
     /// 漏一组，那组的「这是什么、动了对吗」就只剩参数名可以猜。
     ///
     /// Every one of the twelve develop groups must carry an info glyph with a real
