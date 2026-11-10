@@ -30,26 +30,45 @@ const TP_H: f32 = 34.0;
 /// Summary row height; the design uses 23, stepped to 22 to share the table's rhythm.
 const KV_H: f32 = 22.0;
 
-/// 画整列三张卡。
+/// 画整列两张卡（用户 2026-11-10：除显影外分模块太多）。
 ///
-/// Draw the whole column of three cards.
+/// 预览卡 + 一张「序列信息」卡：摘要键值与自动过渡同属「这条序列现在的状态」，
+/// 拆成两张卡只是多了两层壳——合并后一条分节线足够分层，左列从三张卡减到两张。
+///
+/// Draw the column as two cards (user, 2026-11-10: too many module boxes outside
+/// develop). The preview plus one "sequence info" card: the summary key/values and the
+/// auto-transition segments both describe "where this sequence stands", so the extra
+/// card shell bought nothing -- one section rule layers them just as well.
 pub(super) fn column(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     if rect.width() < 40.0 || rect.height() < 80.0 {
         return;
     }
-    // 设计稿里预览卡是 `flex:1`（吃剩余高度），摘要与过渡卡按内容高。这里给预览
-    // 一个上限：4:3 起步、最多 7:5——300px 宽的列若照抄 `flex:1`，1000px 高的窗口
-    // 会把横构图裁成一条竖片，读数全错。剩下的高度归过渡卡。
+    // 设计稿里预览卡是 `flex:1`（吃剩余高度）。这里给预览一个上限：4:3 起步、
+    // 最多 7:5——300px 宽的列若照抄 `flex:1`，1000px 高的窗口会把横构图裁成
+    // 一条竖片，读数全错。剩下的高度归信息卡。
     //
     // The design lets the preview card flex; here it is clamped between 4:3 and 7:5.
     // Copying `flex:1` at a 300 px column and a 1000 px window would crop a landscape
-    // frame into a vertical strip. The leftover height goes to the transition card.
+    // frame into a vertical strip. The leftover height goes to the info card.
     let summary_h = summary_height(state);
-    let auto_need = auto_need_height(state);
-    let slack = rect.height() - summary_h - auto_need - GAP * 2.0 - TP_H;
-    let img_h = slack
-        .clamp(rect.width() * 0.75, rect.width() * 1.4)
-        .max(120.0);
+    let slack = rect.height() - summary_h - GAP - TP_H;
+    // 预览窗高度优先**贴合已知画幅**（分辨率 → w×h/w）：Fit 之下窗子比照片高
+    // 出的部分全是灰底，贴合影后照片占满预览窗，剩余高度让给信息卡。分辨率
+    // 未知才回落到 4:3–7:5 的旧夹法。
+    //
+    // The preview height first **hugs the known aspect** (resolution -> w*h/w): under
+    // Fit every pixel above the photo is grey matte, so hugging fills the window and
+    // the leftover goes to the info card. Fall back to the old 4:3-7:5 clamp only
+    // when the resolution is unknown.
+    let ideal = state
+        .resolution
+        .map(|(rw, rh)| rect.width() * rh as f32 / rw.max(1) as f32);
+    let img_h = match ideal {
+        Some(h) => h.min(slack).max(90.0),
+        None => slack
+            .clamp(rect.width() * 0.75, rect.width() * 1.4)
+            .max(120.0),
+    };
 
     let prev_h = preview_card(
         state,
@@ -57,10 +76,8 @@ pub(super) fn column(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         Rect::from_min_size(rect.left_top(), Vec2::new(rect.width(), 0.0)),
         img_h,
     );
-    let mut y = rect.top() + prev_h + GAP;
-    let sum_h = summary_card(state, ui, Pos2::new(rect.left(), y), rect.width());
-    y += sum_h + GAP;
-    auto_card(
+    let y = rect.top() + prev_h + GAP;
+    info_card(
         state,
         ui,
         Pos2::new(rect.left(), y),
@@ -69,9 +86,9 @@ pub(super) fn column(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     );
 }
 
-/// 摘要卡高度：10 上距 + 22 标题 + 2 + 五行 × 22 + 芯片行 + 10 下距。
+/// 摘要块高度：10 上距 + 22 标题 + 2 + 五行 × 22 + 芯片行 + 10 下距。
 ///
-/// Summary card height: padding, title, five rows and the chip row.
+/// Summary block height: padding, title, five rows and the chip row.
 fn summary_height(state: &AppState) -> f32 {
     let chips = if state.keyframes.is_empty() {
         0.0
@@ -79,14 +96,6 @@ fn summary_height(state: &AppState) -> f32 {
         25.0
     };
     10.0 + 22.0 + 2.0 + 5.0 * KV_H + chips + 10.0
-}
-
-/// 自动过渡卡的内容高：表头 24 + 每段 24 + 至少一行提示。
-///
-/// Content height of the transition card: header plus one row per segment.
-fn auto_need_height(state: &AppState) -> f32 {
-    let segs = state.keyframes.len().saturating_sub(1).max(1);
-    10.0 + 22.0 + 2.0 + segs.min(8) as f32 * 24.0 + 10.0
 }
 
 /// 预览卡：预览图 + 叠印徽标/文件名 + 走带。返回卡片高度。
@@ -107,6 +116,11 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
     let n = state.frame_count();
     let sel = if n == 0 { 0 } else { state.selected.min(n - 1) };
     let img = Rect::from_min_size(card.left_top(), Vec2::new(w, img_h));
+    // Fit 的衬底用中性灰 matte（与主画布同一口径），不用纯黑：黑边会被读成
+    // 「视频坏了」，灰边读作「画幅比预览窗宽」。
+    //
+    // The Fit letterbox uses the neutral matte (same rule as the main canvas), not
+    // pure black: black reads as a broken stream, grey reads as a wider frame.
     p.rect_filled(
         img,
         CornerRadius {
@@ -115,7 +129,7 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
             sw: 0,
             se: 0,
         },
-        thumb_bg(),
+        matte(),
     );
 
     // 预览优先用 640px 播放代理，回落到 128px 缩略图：卡宽 276，128px 已经糊成一片。
@@ -134,10 +148,15 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
     if let Some((id, size)) = tex {
         let sw = size[0].max(1) as f32;
         let sh = size[1].max(1) as f32;
-        // object-fit:cover —— 铺满卡片，多出来的边裁掉。
+        // object-fit:contain（Fit，与主画布 `.min(1.0)` 同一条规矩）：整幅可见、
+        // 等比、不裁切。此前的 cover 把 3:2 横幅塞进竖长预览窗，两侧裁掉大半，
+        // 用户读成「预览的视频画面比例不对」（2026-11-10）。
         //
-        // object-fit: cover — fill the card and crop the overflow.
-        let scale = (img.width() / sw).max(img.height() / sh);
+        // object-fit: contain (Fit, the same rule as the main canvas's `.min(1.0)`):
+        // the whole frame stays visible, proportional, uncropped. cover used to jam
+        // a 3:2 landscape into the tall preview window, cropping most of both sides
+        // -- read as "the preview video's aspect ratio is wrong" (2026-11-10).
+        let scale = (img.width() / sw).min(img.height() / sh);
         let draw = Rect::from_center_size(img.center(), Vec2::new(sw * scale, sh * scale));
         let ip = p.with_clip_rect(img.intersect(p.clip_rect()));
         ip.image(
@@ -349,10 +368,13 @@ fn transport_button(
     resp
 }
 
-/// 摘要卡：相机 + 五行键值 + 关键帧芯片。返回卡片高度。
+/// 序列信息卡：摘要键值 + 关键帧芯片 + 分节线 + 自动过渡分段。
+/// 两块信息合用一张卡（2026-11-10 减模块），高度吃满剩余。
 ///
-/// Summary card: camera line, five key/value rows and the keyframe chips.
-fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
+/// Sequence info card: summary key/values, keyframe chips, a section rule, then the
+/// auto-transition segments. Two blocks share one card (fewer module boxes,
+/// 2026-11-10); the height fills what is left.
+fn info_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32, h: f32) -> f32 {
     let n = state.frame_count();
     let sel = if n == 0 { 0 } else { state.selected.min(n - 1) };
     let fps = state.output_fps;
@@ -389,7 +411,7 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
         .map(|(rw, rh)| format!("{rw} × {rh}"))
         .unwrap_or_else(|| "—".to_owned());
     let keys = state.keyframes.len();
-    let segs = keys.saturating_sub(1);
+    let segs_n = keys.saturating_sub(1);
     let chips: Vec<(usize, String)> = state
         .keyframes
         .keys()
@@ -405,11 +427,10 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
         ("分辨率", res),
         (
             "关键帧 / 过渡",
-            crate::i18n::tr_fmt("{} · {} 段", &[&keys, &segs]),
+            crate::i18n::tr_fmt("{} · {} 段", &[&keys, &segs_n]),
         ),
     ];
 
-    let h = summary_height(state);
     let card = Rect::from_min_size(at, Vec2::new(w, h));
     let p = ui.painter().clone();
     p.rect_filled(card, radius_panel(), panel());
@@ -426,7 +447,7 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
     p.text(
         Pos2::new(card.left() + PAD, card.top() + 10.0 + 11.0),
         Align2::LEFT_CENTER,
-        crate::i18n::t!("序列摘要"),
+        crate::i18n::t!("序列信息"),
         bold(12.0),
         text(),
     );
@@ -526,29 +547,41 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
                 dim(),
             );
         }
+        y += 25.0;
     }
 
-    h
-}
-
-/// 自动过渡卡：表头 + 分段行，高度吃满剩余（设计稿第二张 `.seqsum`）。返回高度。
-///
-/// Auto-transition card: header plus one row per keyframe segment; fills the rest.
-fn auto_card(state: &AppState, ui: &mut Ui, at: Pos2, w: f32, h: f32) -> f32 {
-    let card = Rect::from_min_size(at, Vec2::new(w, h));
-    let p = ui.painter().clone();
-    p.rect_filled(card, radius_panel(), panel());
-    p.rect_stroke(
-        card,
-        radius_panel(),
-        Stroke::new(1.0, group_ring()),
-        StrokeKind::Inside,
+    // 分节线 + 「自动过渡」小节：同一张卡内的第二层，不再单独包壳。
+    //
+    // Section rule + the auto-transition block: a second layer inside the same card,
+    // no extra shell.
+    y += 4.0;
+    p.line_segment(
+        [
+            Pos2::new(card.left() + PAD, y - 0.5),
+            Pos2::new(card.right() - PAD, y - 0.5),
+        ],
+        Stroke::new(1.0, divider()),
     );
+    y += 6.0;
+    p.text(
+        Pos2::new(card.left() + PAD, y + 9.0),
+        Align2::LEFT_CENTER,
+        crate::i18n::t!("自动过渡"),
+        font(11.0),
+        text(),
+    );
+    p.text(
+        Pos2::new(card.right() - PAD, y + 9.0),
+        Align2::RIGHT_CENTER,
+        crate::i18n::tr_fmt("{} 个关键帧 · {} 段", &[&keys, &segs_n]),
+        font(9.0),
+        dim(),
+    );
+    y += 22.0;
 
-    let keys: Vec<usize> = state.keyframes.keys().copied().collect();
-    let fps = state.output_fps;
+    let keys_list: Vec<usize> = state.keyframes.keys().copied().collect();
     let mut segs: Vec<(usize, usize, f64, f32)> = Vec::new();
-    for pair in keys.windows(2) {
+    for pair in keys_list.windows(2) {
         let (Some(&a), Some(&b)) = (pair.first(), pair.get(1)) else {
             continue;
         };
@@ -561,23 +594,7 @@ fn auto_card(state: &AppState, ui: &mut Ui, at: Pos2, w: f32, h: f32) -> f32 {
         segs.push((a, b, ev, secs));
     }
 
-    p.text(
-        Pos2::new(card.left() + PAD, card.top() + 10.0 + 11.0),
-        Align2::LEFT_CENTER,
-        crate::i18n::t!("自动过渡"),
-        bold(12.0),
-        text(),
-    );
-    p.text(
-        Pos2::new(card.right() - PAD, card.top() + 10.0 + 11.0),
-        Align2::RIGHT_CENTER,
-        crate::i18n::tr_fmt("{} 个关键帧 · {} 段", &[&keys.len(), &segs.len()]),
-        font(9.0),
-        dim(),
-    );
-
     let clip = p.with_clip_rect(card.shrink(1.0).intersect(p.clip_rect()));
-    let mut y = card.top() + 10.0 + 22.0 + 2.0;
     if segs.is_empty() {
         clip.text(
             Pos2::new(card.left() + PAD, y + 12.0),

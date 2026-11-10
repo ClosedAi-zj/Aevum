@@ -848,49 +848,94 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
                 card = Rect::from_min_size(card.min, Vec2::new(w, card.height().max(h)));
             }
 
-            // ---- 拖动把手：页签行右侧的空白区 ----
-            // 页签到 `right-52`、× 钮在 `right-25`，中间这 22px 见方没有任何
-            // 卡内控件；把手画在内容之后但落在这块空白上，既不拦页签/推子/按钮，
-            // 也用一个独立 id 与卡内所有 interact 区分开。
+            // ---- 页签行空白区：整段可拖 + 还原/放大按钮（用户 2026-11-10）----
+            // 此前整卡只有页签行右端 22px 暗点把手能拖——用户按住卡片拖不动，
+            // 读成「调色板不能移动」。页签改为内容宽右对齐后，左端空出的槽位
+            // 放一颗明确的「放大 / 还原」钮，按钮右侧到页签左缘的空白整段注册
+            // 为拖动区；缩小之后不用去找右下角的缩放手柄，一键回默认尺寸与位置。
+            // 旧暗点把手已删：拖动由本区承担，省回的 22px 让给页签全名。
             //
-            // Drag handle: the gap at the right end of the tab row. Tabs end at
-            // `right-52` and the close button sits at `right-25`, so this 22 px square
-            // holds no other widget. Registered after the content but landing on that
-            // empty gap, it never swallows a tab / slider / button click, and its own
-            // id is distinct from every interact inside the card.
-            let grip = Rect::from_min_size(
-                Pos2::new(card.right() - 50.0, card.top() + 3.0),
-                Vec2::new(22.0, 22.0),
+            // ---- Tab-strip blank: draggable as a whole + restore button ----
+            // Only a 22 px dotted grip at the strip's right end could move the card,
+            // so dragging the card body read as "the panel cannot be moved". With
+            // content-sized right-aligned tabs, the slot at the strip's left end holds
+            // an explicit maximise / restore button and the blank between it and the
+            // first tab is one drag zone; a shrunken card grows back without hunting
+            // for the corner handle. The old dotted grip is gone: this zone owns the
+            // dragging, and its 22 px go back to full tab labels.
+            let widths = dock::tab_widths(&ui.painter().clone(), w, !state.keyframes.is_empty());
+            let tabs_left = card.right() - dock::TAB_RESERVE_W - widths.iter().sum::<f32>();
+            let zone = Rect::from_min_max(
+                Pos2::new(card.left() + dock::TAB_SLOT_W + 2.0, card.top() + 2.0),
+                Pos2::new(
+                    (tabs_left - 4.0).max(card.left() + dock::TAB_SLOT_W + 6.0),
+                    card.top() + 26.0,
+                ),
             );
-            let drag = ui.interact(grip, ui.make_persistent_id("dock-drag"), Sense::drag());
-            let drag_delta = drag.drag_delta();
-            let drag_on = drag.dragged();
-            let drag_hover = drag.hovered();
-            if drag_hover || drag_on {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-            }
-            // 两列三行的小点：一眼认得出「这里能抓」。
-            //
-            // Two by three dots: reads as "grab here" at a glance.
-            for gx in 0..2 {
-                for gy in 0..3 {
-                    wide.circle_filled(
-                        Pos2::new(
-                            grip.left() + 7.0 + gx as f32 * 7.0,
-                            grip.top() + 6.0 + gy as f32 * 5.0,
-                        ),
-                        1.2,
-                        if drag_on { accent() } else { dim() },
-                    );
-                }
-            }
-            if drag_on {
+            let strip_drag = ui.interact(
+                zone,
+                ui.make_persistent_id("dock-strip-drag"),
+                Sense::click_and_drag(),
+            );
+            if strip_drag.dragged() {
                 state.dock_pos = Some(Pos2::new(
-                    (pos.x + drag_delta.x).clamp(min_pos.x, max_pos.x),
-                    (pos.y + drag_delta.y).clamp(min_pos.y, max_pos.y),
+                    (pos.x + strip_drag.drag_delta().x).clamp(min_pos.x, max_pos.x),
+                    (pos.y + strip_drag.drag_delta().y).clamp(min_pos.y, max_pos.y),
                 ));
             }
-            drag.on_hover_text(crate::i18n::t!("拖动检查器浮卡"));
+            if strip_drag.hovered() || strip_drag.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                wide.rect_filled(
+                    zone,
+                    DOCK_RADIUS,
+                    Color32::from_white_alpha(if strip_drag.dragged() { 14 } else { 8 }),
+                );
+            }
+            strip_drag.on_hover_text(crate::i18n::t!("拖动检查器浮卡"));
+
+            // 还原 / 放大：钉住过（拖过位置或高度）就回默认；在默认位就钉满
+            // 可用高度。四角括号图标两态共用，动作由 tooltip 说明。
+            //
+            // Restore / maximise: a pinned card (moved or height-pinned) returns to
+            // default; a default card pins to the full available height. One
+            // corner-bracket icon for both states; the tooltip names the action.
+            let pinned = state.dock_pos.is_some() || state.dock_h >= DOCK_MIN_H;
+            let btn = Rect::from_min_size(
+                Pos2::new(card.left() + 4.0, card.top() + 5.0),
+                Vec2::splat(18.0),
+            );
+            let br = ui.interact(btn, ui.make_persistent_id("dock-restore"), Sense::click());
+            if br.hovered() {
+                wide.rect_filled(btn, radius_chip(), elev());
+            }
+            let ink = if br.hovered() { text() } else { dim() };
+            // 四角括号：↖ 与 ↘ 两只 L，读作「调整尺寸」。
+            //
+            // Corner brackets: two L hooks reading as "resize".
+            let a = 5.0;
+            for (cx, cy, dx, dy) in [
+                (btn.left(), btn.top(), 1.0, 1.0),
+                (btn.right(), btn.bottom(), -1.0, -1.0),
+            ] {
+                wide.line_segment(
+                    [Pos2::new(cx + dx * a, cy), Pos2::new(cx, cy)],
+                    Stroke::new(1.2, ink),
+                );
+                wide.line_segment(
+                    [Pos2::new(cx, cy), Pos2::new(cx, cy + dy * a)],
+                    Stroke::new(1.2, ink),
+                );
+            }
+            if br.clicked() {
+                if pinned {
+                    state.dock_pos = None;
+                    state.dock_h = 0.0;
+                    state.dock_w = DOCK_MIN_W;
+                } else {
+                    state.dock_h = default_cap;
+                }
+            }
+            br.on_hover_text(crate::i18n::t!("还原检查器大小与位置"));
 
             // ---- 右下角 14px resize 手柄：同时改宽与高 ----
             //

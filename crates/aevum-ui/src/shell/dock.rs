@@ -176,6 +176,63 @@ fn dock_tools(state: &mut AppState, ui: &mut Ui) {
     resp.on_hover_text(crate::i18n::t!("只显示已偏离默认值的参数"));
 }
 
+/// 页签左端槽位：还原/放大钮（18px）+ 两侧空气。mod.rs 的还原钮与拖动区、
+/// dock_panel 的页签排布都从这条常量推导，两层不会打架。
+///
+/// Left slot of the tab strip: the restore button (18 px) plus air on both sides.
+/// mod.rs's button and drag zone and dock_panel's tab layout all derive from this
+/// one constant, so the two layers cannot collide.
+pub(super) const TAB_SLOT_W: f32 = 26.0;
+
+/// 页签行右端预留：只放 ×（18px + 两侧空气）。旧值 52 还要容一组暗点把手；
+/// 拖动已由左端槽位 + 空白拖动区承担，暗点成了冗余装饰，省回 22px 给页签。
+///
+/// Right reserve of the tab strip: just the × (18 px plus air). The old 52 also
+/// carried the dotted grip; dragging now lives in the left slot and the blank zone,
+/// so the dots were redundant decoration -- 22 px go back to the tabs.
+pub(super) const TAB_RESERVE_W: f32 = 30.0;
+
+/// 每个页签的实测宽：文字宽 + 12px 内距（关键帧页签带计数徽标时再加 18px），
+/// 夹在 30 与「均分上限」之间。dock_panel 与 mod.rs 共用同一条公式——页签
+/// 右对齐后，左端空出的槽位才是还原钮与拖动区；两边各算各的就会重叠。
+///
+/// Measured width of each tab: label + 12 px padding (plus 18 px when the Keyframes
+/// tab carries its count badge), clamped between 30 and the even-share cap.
+/// dock_panel and mod.rs share one formula -- the tab strip is right-aligned, and
+/// the slot left free belongs to the restore button and the drag zone; two
+/// independent estimates would overlap.
+pub(super) fn tab_widths(p: &egui::Painter, width: f32, keys_badge: bool) -> Vec<f32> {
+    let avail_total = (width - TAB_RESERVE_W - TAB_SLOT_W).max(120.0);
+    let mut out: Vec<f32> = DockTab::ALL
+        .iter()
+        .map(|tab| {
+            let g = p.layout_no_wrap(
+                crate::i18n::tr(tab.cn()).to_owned(),
+                font(SIZE_SMALL),
+                text(),
+            );
+            let badge = keys_badge && *tab == DockTab::Keys;
+            (g.size().x + 12.0 + if badge { 18.0 } else { 0.0 }).max(30.0)
+        })
+        .collect();
+    // 先按内容宽排（放得下时每个页签都显全名）；总宽真的超出可用区才等比
+    // 压缩——逐个夹「均分上限」会把最长的页签（关键帧/Keyframes）先截掉，
+    // 明明总宽还放得下。
+    //
+    // Lay out at content width first (every tab shows its full name when it fits);
+    // only when the total really overflows, shrink proportionally. Clamping each tab
+    // to an even-share cap truncates the longest label (关键帧 / Keyframes) first,
+    // even while the row still has room.
+    let total: f32 = out.iter().sum();
+    if total > avail_total {
+        let k = avail_total / total;
+        for wtab in &mut out {
+            *wtab = (*wtab * k).max(28.0);
+        }
+    }
+    out
+}
+
 /// 检查器卡体：页签条贴顶，下面是可滚动的内容区。
 ///
 /// `width` 是卡的宽度（`state.dock_w`），`max_h` 是卡的**高度上限**（窗口高减
@@ -252,15 +309,18 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
     // 面板页签用下划线而不是分段胶囊：一条 HEADER 上排六个名字，
     // 选中项靠白字 + 2px 强调线认，和 PS 的调板页签同一套读法。
     // 页签靠右缘排（用户 2026-11-09）：右缘留给 ×，页签从右往左铺。
-    let seg_w = (width - 52.0) / DockTab::ALL.len() as f32;
+    // 页签按**内容实测宽**排列（2026-11-10）：旧公式把整条页签行撑满，
+    // 左端连一颗「放大/还原」钮和拖动区都放不下；内容宽 + 右对齐后，左端
+    // 空出的槽位归 mod.rs 的还原钮与整段拖动区（同一条 `tab_widths` 公式）。
+    let widths = tab_widths(&p, width, !state.keyframes.is_empty());
+    let total: f32 = widths.iter().sum();
+    let mut tx = strip.right() - TAB_RESERVE_W - total + 1.0;
     for (i, tab) in DockTab::ALL.iter().enumerate() {
         let r = Rect::from_min_size(
-            Pos2::new(
-                strip.right() - 52.0 - (DockTab::ALL.len() - i) as f32 * seg_w + 1.0,
-                strip.top() + 4.0,
-            ),
-            Vec2::new(seg_w - 2.0, strip.height() - 8.0),
+            Pos2::new(tx, strip.top() + 4.0),
+            Vec2::new(widths[i] - 2.0, strip.height() - 8.0),
         );
+        tx += widths[i];
         let resp = ui.interact(r, ui.make_persistent_id(("dock-tab", i)), Sense::click());
         let active = state.dock_tab == *tab;
         if active {
@@ -344,12 +404,14 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
             },
         );
         // 关键帧页签带计数徽标（设计稿 `关键帧 1`）：页签本身是入口，数字是
-        // 「已经记了几帧」——进页面之前就能判断要不要去看。
+        // 「已经记了几帧」——进页面之前就能判断要不要去看。徽标宽度已在
+        // `tab_widths` 里预留，内容宽页签下不再用 52px 阈值卡条件。
         //
-        // The keyframes tab carries a count badge (the design's `关键帧 1`): the tab is an
-        // entry and the number says how many frames are already recorded, so the decision
-        // "do I need that page" is made before opening it.
-        if *tab == DockTab::Keys && !state.keyframes.is_empty() && r.width() > 52.0 {
+        // The keyframes tab carries a count badge (the design's `关键帧 1`): the tab is
+        // an entry and the number says how many frames are already recorded, so the
+        // decision "do I need that page" is made before opening it. The badge width is
+        // reserved in `tab_widths`; no 52 px threshold under content-sized tabs.
+        if *tab == DockTab::Keys && !state.keyframes.is_empty() {
             let badge = Rect::from_min_size(
                 Pos2::new(r.right() - 22.0, r.center().y - 7.0),
                 Vec2::new(14.0, 14.0),

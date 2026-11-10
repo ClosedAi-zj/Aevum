@@ -300,21 +300,21 @@ fn tasks_pill_width(p: &egui::Painter, running: usize) -> f32 {
 }
 
 /// 右簇链式左缘：从导出按钮右缘往左，逐级减去实测宽度与间隙
-/// （导出 76 → 任务胶囊 → 齿轮 24 → 菜单 28）。工具簇的锚点由这里推导，
+/// （导出 76 → 任务胶囊 → 齿轮 24）。工具簇的锚点由这里推导，
 /// 不再靠目测调一个 `-125` 魔数；语言或角标一变，两段会一起移动。
+/// 菜单字排已挪到顶栏最左，链里不再有菜单段。
 ///
 /// Chained left edge of the right cluster, walking left from the export button by measured
-/// widths and gaps (export 76 -> tasks pill -> gear 24 -> menu 28). The tool cluster anchor
+/// widths and gaps (export 76 -> tasks pill -> gear 24). The tool cluster anchor
 /// is derived from this instead of a hand-tuned `-125`; a language or badge change moves
-/// both sections together.
+/// both sections together. The menu bar now lives at the far left, so the chain no longer
+/// carries a menu segment.
 fn right_chain_left(zone_right: f32, tasks_w: f32) -> f32 {
     const EXPORT_W: f32 = 76.0;
     const PILL_GAP: f32 = 8.0;
     const GEAR_GAP: f32 = 6.0;
     const GEAR_W: f32 = 24.0;
-    const HUB_GAP: f32 = 6.0;
-    const HUB_W: f32 = 28.0;
-    zone_right - EXPORT_W - PILL_GAP - tasks_w - GEAR_GAP - GEAR_W - HUB_GAP - HUB_W
+    zone_right - EXPORT_W - PILL_GAP - tasks_w - GEAR_GAP - GEAR_W
 }
 
 pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
@@ -382,6 +382,72 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         text(),
     );
     x += brand_galley.size().x + 14.0;
+
+    // 传统菜单字排（用户 2026-11-10：按传统设置选项布局，选项放最左边）：
+    // 品牌 → 文件 编辑 视图 插件 帮助，与每款桌面软件一致的顺序。此前五项藏
+    // 在右端 ☰ 里，找「导入」「视图开关」要先认出那枚图标；字排放在最左，
+    // 第一眼就是熟悉的菜单栏。Undo/Redo 等动作簇紧随其后。
+    //
+    // Traditional menu bar (user, 2026-11-10: classic options layout, options at the
+    // far left): brand -> File Edit View Plugins Help, the order every desktop app
+    // uses. The five menus used to hide behind the right-edge ☰; spelled out at the
+    // far left they read as the familiar menu bar at first glance.
+    let menu_bar = ui.scope_builder(
+        UiBuilder::new()
+            .id_salt("menubar")
+            .max_rect(Rect::from_min_size(
+                Pos2::new(x, full.top()),
+                Vec2::new(360.0, full.height()),
+            ))
+            .layout(Layout::left_to_right(Align::Center)),
+        |ui| {
+            let w = &mut ui.style_mut().visuals.widgets;
+            w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+            w.inactive.bg_stroke = Stroke::NONE;
+            w.inactive.fg_stroke = Stroke::new(1.0, muted());
+            w.hovered.weak_bg_fill = elev();
+            w.hovered.bg_stroke = Stroke::NONE;
+            w.hovered.fg_stroke = Stroke::new(1.0, text());
+            ui.spacing_mut().button_padding = Vec2::new(7.0, 4.0);
+            ui.menu_button(
+                RichText::new(crate::i18n::t!("文件")).size(SIZE_CHROME_LABEL),
+                |ui| {
+                    menu_style(ui);
+                    file_menu(state, ui, ctx);
+                },
+            );
+            ui.menu_button(
+                RichText::new(crate::i18n::t!("编辑")).size(SIZE_CHROME_LABEL),
+                |ui| {
+                    menu_style(ui);
+                    edit_menu(state, ui, ctx);
+                },
+            );
+            ui.menu_button(
+                RichText::new(crate::i18n::t!("视图")).size(SIZE_CHROME_LABEL),
+                |ui| {
+                    menu_style(ui);
+                    view_menu(state, ui, ctx);
+                },
+            );
+            ui.menu_button(
+                RichText::new(crate::i18n::t!("插件")).size(SIZE_CHROME_LABEL),
+                |ui| {
+                    menu_style(ui);
+                    plugin_menu(state, ui, ctx);
+                },
+            );
+            ui.menu_button(
+                RichText::new(crate::i18n::t!("帮助")).size(SIZE_CHROME_LABEL),
+                |ui| {
+                    menu_style(ui);
+                    help_menu(state, ui);
+                },
+            );
+        },
+    );
+    x = menu_bar.response.rect.right() + 8.0;
+
     let actions: [(Glyph, bool, &str, &str); 3] = [
         (
             Glyph::Undo,
@@ -551,6 +617,17 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // Zoom: 64 px track + 46 px readout. Dragging the track sets `state.zoom`; clicking
     // the readout resets to 100%.
     let zoom_pct = (state.zoom * state.fit_scale.max(1e-4) * 100.0).clamp(1.0, 400.0);
+    // 窄窗紧凑：≤1340px 时缩放轨道 64→48、百分比 46→40，给中段 chips 多让出
+    // 二十余像素——否则左段把中段挤没，chips 与工具簇在窄窗双双消失。宽窗仍是
+    // 设计稿原尺寸。
+    //
+    // Narrow-window compacting: at <=1340 px the zoom track shrinks 64->48 and the
+    // readout 46->40, freeing ~24 px for the middle chips; otherwise the left section
+    // starves the middle and both chips and the tool cluster vanish. Wide windows keep
+    // the design's original sizes.
+    let narrow = full.width() < 1340.0;
+    let zoom_track_w = if narrow { 48.0 } else { 64.0 };
+    let zoom_pct_w = if narrow { 40.0 } else { 46.0 };
     // 设计稿 `.zoomc`：[−][64px 轨道][+] [百分比]。−/+ 各 18px，点一次 ×0.8 / ×1.25。
     //
     // Design `.zoomc`: minus, 64 px track, plus, then the readout. Each tap steps the
@@ -571,9 +648,12 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         state.zoom = (state.zoom * 0.8).clamp(0.2, 24.0);
     }
     let mut x = minus.right() + 4.0;
-    let track = Rect::from_min_size(Pos2::new(x, mid - 1.5), Vec2::new(64.0, 3.0));
+    let track = Rect::from_min_size(Pos2::new(x, mid - 1.5), Vec2::new(zoom_track_w, 3.0));
     let zr = ui.interact(
-        Rect::from_min_size(Pos2::new(x - 4.0, mid - 8.0), Vec2::new(72.0, 16.0)),
+        Rect::from_min_size(
+            Pos2::new(x - 4.0, mid - 8.0),
+            Vec2::new(zoom_track_w + 8.0, 16.0),
+        ),
         ui.make_persistent_id("tb-zoom"),
         Sense::click_and_drag(),
     );
@@ -590,7 +670,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     let pct = Rect::from_min_size(
         Pos2::new(track.right() + 8.0, mid - 13.0),
-        Vec2::new(46.0, 26.0),
+        Vec2::new(zoom_pct_w, 26.0),
     );
     let pr = ui.interact(pct, ui.make_persistent_id("tb-pct"), Sense::click());
     if pr.hovered() {
@@ -624,6 +704,20 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     x = plus.right() + 10.0;
 
+    // 右簇链左缘：先把导出→任务→齿轮的实测宽算出来，chips 与工具簇都从这里
+    // 推导，三者共用一份宽度，语言/角标一变一起挪，绝不会互相叠压（窄窗回归
+    // 根因：chips 只按 `zone_right_pre` 判可绘，越过右簇一直画到窗控前，把工具
+    // 簇的 `max(tc_after_chips)` 兜底顶到导出右侧压住窗控）。
+    //
+    // Right cluster's chained left edge computed up front so chips and the tool cluster
+    // both derive from it; they share one measured width and can never overlap. The
+    // narrow-window regression was chips gated only on `zone_right_pre`, overflowing
+    // into the right cluster and shoving the tool cluster past the export button.
+    let running = state.running_jobs();
+    let tasks_w = tasks_pill_width(&p, running);
+    let chain_left = right_chain_left(zone_right_pre(full, &c), tasks_w);
+    let tc_compact_w = Tool::ALL.len() as f32 * 24.0 + (Tool::ALL.len() as f32 - 1.0) * 4.0 + 2.0;
+
     // 中央模块 chips（设计稿 `.seg`：`#26282c` 槽、24px 按钮、选中 `#3a3d43`）。
     // 七个模块横向铺开；「更多」不另设假入口——合成就是设计的「更多」。
     //
@@ -644,21 +738,61 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         Module::Render,
     ];
     let more_label = crate::i18n::t!("更多");
+    // 窄窗 chips 内距 24→16（「更多」30→22），与缩放紧凑同档触发：中段被挤时
+    // 先压内距保住常用四页，而不是整段消失。
+    //
+    // Narrow-window chip padding 24->16 (and "more" 30->22), gated with the zoom
+    // compaction: when the middle is starved, padding yields before the whole block
+    // disappears.
+    let chip_pad = if narrow { 16.0 } else { 24.0 };
+    let more_pad = if narrow { 22.0 } else { 30.0 };
     let mut widths = Vec::with_capacity(HEAD_CHIPS.len() + 1);
     for m in HEAD_CHIPS {
         let g = p.layout_no_wrap(crate::i18n::tr(m.cn()).to_string(), font(12.0), text());
-        widths.push(g.size().x + 24.0);
+        widths.push(g.size().x + chip_pad);
     }
     widths.push(
         p.layout_no_wrap(more_label.to_string(), font(12.0), text())
             .size()
             .x
-            + 30.0,
+            + more_pad,
     );
-    let seg_w: f32 = widths.iter().sum::<f32>() + 2.0 * (widths.len() as f32 - 1.0) + 4.0;
+    let seg_w_all: f32 = widths.iter().sum::<f32>() + 2.0 * (widths.len() as f32 - 1.0) + 4.0;
+    // 省略「更多」后的四枚宽（设计稿五枚里最后一格是弹层入口，窄窗先丢它保住
+    // 常用四页；工具簇在连四枚都快放不下时才隐藏）。
+    //
+    // Width of the four head chips without "more" -- the popup entry is the first to
+    // drop at narrow widths so the four common pages survive; the tool cluster hides
+    // only when even the four do not fit.
+    let seg_w_no_more: f32 = widths[0..HEAD_CHIPS.len()].iter().sum::<f32>()
+        + 2.0 * (HEAD_CHIPS.len() as f32 - 1.0)
+        + 4.0;
     let seg_h = 28.0;
-    let seg_x = x + 16.0;
-    let seg_drawn = seg_x + seg_w < zone_right_pre(full, &c);
+    let seg_x = x + if narrow { 10.0 } else { 16.0 };
+    // 中段空间分配：先保证「chips + 工具簇」都画；放不下就丢「更多」保四枚 +
+    // 工具簇；再放不下就四枚独自占用中段、工具簇隐藏；最极端四枚都挤不下就整段
+    // 不画——任何一档都不允许中段压到右簇或窗控。
+    //
+    // Middle-space split: first keep chips + tool cluster both drawn; else drop "more"
+    // to keep four chips + tool cluster; else four chips alone with the tool cluster
+    // hidden; at the extreme hide chips entirely. No tier may crush the right cluster
+    // or the window controls.
+    let alone_limit = chain_left - 8.0;
+    let both_limit = alone_limit - tc_compact_w - 24.0;
+    let (chip_count, tool_allowed) = if seg_x + seg_w_all <= both_limit {
+        (5, true)
+    } else if seg_x + seg_w_no_more <= both_limit {
+        (4, true)
+    } else if seg_x + seg_w_all <= alone_limit {
+        (5, false)
+    } else if seg_x + seg_w_no_more <= alone_limit {
+        (4, false)
+    } else {
+        (0, false)
+    };
+    let seg_drawn = chip_count > 0;
+    let show_more = chip_count == 5;
+    let seg_w = if show_more { seg_w_all } else { seg_w_no_more };
     if seg_drawn {
         let seg = Rect::from_min_size(Pos2::new(seg_x, mid - seg_h / 2.0), Vec2::new(seg_w, seg_h));
         p.rect_filled(seg, 8.0, Color32::from_rgb(0x26, 0x28, 0x2c));
@@ -689,53 +823,57 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             }
             resp.on_hover_text(format!("{} (Alt+{})", crate::i18n::tr(m.cn()), i + 1));
         }
-        // 更多：槽内最后一格，点开列出另外三个模块。
-        let r = Rect::from_min_size(
-            Pos2::new(cx, seg.top() + 2.0),
-            Vec2::new(widths[HEAD_CHIPS.len()], seg_h - 4.0),
-        );
-        let more_on = !HEAD_CHIPS.contains(&state.module);
-        if more_on {
-            p.rect_filled(r, 6.0, Color32::from_rgb(0x3a, 0x3d, 0x43));
+        // 更多：槽内最后一格，点开列出另外三个模块（窄窗芯片数 < 5 时整体不画）。
+        // The "more" slot lists the other three modules; skipped entirely when the
+        // narrow window dropped it from the chip count.
+        if show_more {
+            let r = Rect::from_min_size(
+                Pos2::new(cx, seg.top() + 2.0),
+                Vec2::new(widths[HEAD_CHIPS.len()], seg_h - 4.0),
+            );
+            let more_on = !HEAD_CHIPS.contains(&state.module);
+            if more_on {
+                p.rect_filled(r, 6.0, Color32::from_rgb(0x3a, 0x3d, 0x43));
+            }
+            ui.scope_builder(
+                UiBuilder::new()
+                    .id_salt("more-chips")
+                    .max_rect(r)
+                    .layout(Layout::left_to_right(Align::Center)),
+                |ui| {
+                    let w = &mut ui.style_mut().visuals.widgets;
+                    w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                    w.inactive.bg_stroke = Stroke::NONE;
+                    w.inactive.fg_stroke = Stroke::new(1.0, if more_on { text() } else { dim() });
+                    w.hovered.weak_bg_fill = elev();
+                    w.hovered.bg_stroke = Stroke::NONE;
+                    w.hovered.fg_stroke = Stroke::new(1.0, text());
+                    ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
+                    ui.menu_button(
+                        RichText::new(format!("{more_label} ▼")).size(SIZE_CHROME_LABEL),
+                        |ui| {
+                            menu_style(ui);
+                            for (i, m) in Module::ALL.iter().enumerate() {
+                                if HEAD_CHIPS.contains(m) {
+                                    continue;
+                                }
+                                let on = state.module == *m;
+                                let label = if on {
+                                    format!("✓ {}", crate::i18n::tr(m.cn()))
+                                } else {
+                                    format!("   {}", crate::i18n::tr(m.cn()))
+                                };
+                                if menu_item(ui, &label, &format!("Alt+{}", i + 1)) {
+                                    state.set_bench(Bench::Develop);
+                                    state.set_module(*m);
+                                    ui.close();
+                                }
+                            }
+                        },
+                    );
+                },
+            );
         }
-        ui.scope_builder(
-            UiBuilder::new()
-                .id_salt("more-chips")
-                .max_rect(r)
-                .layout(Layout::left_to_right(Align::Center)),
-            |ui| {
-                let w = &mut ui.style_mut().visuals.widgets;
-                w.inactive.weak_bg_fill = Color32::TRANSPARENT;
-                w.inactive.bg_stroke = Stroke::NONE;
-                w.inactive.fg_stroke = Stroke::new(1.0, if more_on { text() } else { dim() });
-                w.hovered.weak_bg_fill = elev();
-                w.hovered.bg_stroke = Stroke::NONE;
-                w.hovered.fg_stroke = Stroke::new(1.0, text());
-                ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
-                ui.menu_button(
-                    RichText::new(format!("{more_label} ▼")).size(SIZE_CHROME_LABEL),
-                    |ui| {
-                        menu_style(ui);
-                        for (i, m) in Module::ALL.iter().enumerate() {
-                            if HEAD_CHIPS.contains(m) {
-                                continue;
-                            }
-                            let on = state.module == *m;
-                            let label = if on {
-                                format!("✓ {}", crate::i18n::tr(m.cn()))
-                            } else {
-                                format!("   {}", crate::i18n::tr(m.cn()))
-                            };
-                            if menu_item(ui, &label, &format!("Alt+{}", i + 1)) {
-                                state.set_bench(Bench::Develop);
-                                state.set_module(*m);
-                                ui.close();
-                            }
-                        }
-                    },
-                );
-            },
-        );
     }
 
     // 工具簇（设计稿 `.toolcluster`，html 750 行）：chips 右侧的六枚工具图标。
@@ -772,13 +910,11 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // edge with 8 px of air. It used to be a hand-tuned `-125`, unrelated to the real
     // export-tasks-gear-menu widths, so a language change could overlap the gear (the
     // same root cause as B1). Both sections now share one measured width.
-    let running = state.running_jobs();
-    let chain_left = right_chain_left(zone_right_pre(full, &c), tasks_pill_width(&p, running));
     let tc_right_limit = chain_left - 8.0;
     let tc_after_chips = if seg_drawn {
         seg_x + seg_w + 8.0
     } else {
-        full.left() + 12.0
+        x + 10.0
     };
     let room = tc_right_limit - tc_after_chips;
     let (tc_btn, tc_gap, tc_icon) = if room < 6.0 * 28.0 + 5.0 * 8.0 + 18.0 {
@@ -797,7 +933,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // -- half of the "icons are gone" report was this position. It falls back to just
     // after the chips only when there is not enough room.
     let tc_left = (tc_right_limit - tc_w - 18.0).max(tc_after_chips);
-    if seg_drawn && full.width() > 900.0 {
+    if seg_drawn && tool_allowed && full.width() > 900.0 {
         // 左隔线：`.vdiv{width:1px;height:20px;background:var(--hair)}`。
         p.rect_filled(
             Rect::from_min_size(Pos2::new(tc_left, mid - 10.0), Vec2::new(1.0, 20.0)),
@@ -909,7 +1045,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // Both sections must agree on one number or the chain and the painting drift apart.
     let tid = format!("{}", running);
     let tlabel = crate::i18n::t!("任务");
-    let tw = tasks_pill_width(&p, running);
+    let tw = tasks_w;
     let pill = Rect::from_min_size(
         Pos2::new(export.left() - 8.0 - tw, mid - 13.0),
         Vec2::new(tw, 26.0),
@@ -978,36 +1114,12 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         state.look_open = true;
     }
 
-    // ☰：五项菜单（文件/编辑/视图/插件/帮助）全部保留在弹出层里。
+    // ☰ 已移除：五个菜单提升为顶栏最左的传统菜单字排（2026-11-10），右簇只剩
+    // 齿轮 → 任务 → 导出，链式推导同步去掉菜单段。
     //
-    // ☰: all five menus stay reachable in the popup.
-    let hub = Rect::from_center_size(Pos2::new(gear.left() - 20.0, mid), Vec2::splat(28.0));
-    ui.scope_builder(
-        UiBuilder::new()
-            .id_salt("hub-menu")
-            .max_rect(hub)
-            .layout(Layout::left_to_right(Align::Center)),
-        |ui| {
-            let w = &mut ui.style_mut().visuals.widgets;
-            w.inactive.weak_bg_fill = Color32::TRANSPARENT;
-            w.inactive.bg_stroke = Stroke::NONE;
-            w.inactive.fg_stroke = Stroke::new(1.0, muted());
-            w.hovered.weak_bg_fill = elev();
-            w.hovered.bg_stroke = Stroke::NONE;
-            w.hovered.fg_stroke = Stroke::new(1.0, text());
-            ui.spacing_mut().button_padding = Vec2::new(6.0, 4.0);
-            ui.menu_button(RichText::new("···").size(SIZE_TITLE), |ui| {
-                menu_style(ui);
-                ui.menu_button(crate::i18n::t!("文件"), |ui| file_menu(state, ui, ctx));
-                ui.menu_button(crate::i18n::t!("编辑"), |ui| edit_menu(state, ui, ctx));
-                ui.menu_button(crate::i18n::t!("视图"), |ui| view_menu(state, ui, ctx));
-                ui.menu_button(crate::i18n::t!("插件"), |ui| plugin_menu(state, ui, ctx));
-                ui.menu_button(crate::i18n::t!("帮助"), |ui| help_menu(state, ui));
-            })
-            .response
-            .on_hover_text(crate::i18n::t!("菜单"));
-        },
-    );
+    // The ☰ is gone: the five menus moved to the far-left traditional menu bar
+    // (2026-11-10); the right cluster keeps gear -> tasks -> export and the chain
+    // drops the menu segment accordingly.
 
     window_buttons(ui, ctx, full);
 }
