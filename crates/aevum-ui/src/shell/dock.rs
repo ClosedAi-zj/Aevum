@@ -14,7 +14,9 @@ use crate::icons::{self, Glyph};
 use crate::state::{AppState, DockTab};
 use crate::theme::{self, *};
 use crate::widgets;
-use egui::{Align2, Color32, Pos2, Rect, ScrollArea, Sense, Shape, Stroke, Ui, UiBuilder, Vec2};
+use egui::{
+    Align2, Color32, Pos2, Rect, ScrollArea, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
+};
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
 // ---------------------------------------------------------------- 右侧面板
@@ -53,6 +55,59 @@ fn dock_resize_handle(state: &mut AppState, ui: &mut Ui) {
         let delta = if side_left { dx } else { -dx };
         state.dock_w = (state.dock_w + delta).clamp(MIN_W, MAX_W);
     }
+}
+
+/// 「仅显示已改动」开关行：设计稿 `.dock-tools{height:24px;justify-content:flex-end}`
+/// + `.onlychg`（20px 高、10px 字、圆角 4；开启时蓝底蓝字 + 前置 4px 圆点）。
+///
+/// 这一行在参数区之上、页签之下，右对齐——它是「看什么」的过滤器，不是参数，
+/// 所以不占分组卡内的位置。
+///
+/// The "only show changed" switch row, per the design's `.dock-tools` / `.onlychg`
+/// (20 px high, 10 px text, 4 px radius; when on: blue wash, blue text and a 4 px
+/// leading dot).
+///
+/// It sits between the tabs and the parameter area, right-aligned: it filters what is
+/// *shown*, so it must not sit inside any group card.
+fn dock_tools(state: &mut AppState, ui: &mut Ui) {
+    let (row, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::hover());
+    let galley = ui.painter().layout_no_wrap(
+        crate::i18n::t!("仅显示已改动").to_owned(),
+        font(10.0),
+        if state.only_changed { accent() } else { dim() },
+    );
+    let dot_w = if state.only_changed { 9.0 } else { 0.0 };
+    let w = galley.size().x + 12.0 + dot_w;
+    let chip = Rect::from_min_max(
+        Pos2::new(row.right() - w, row.center().y - 10.0),
+        Pos2::new(row.right(), row.center().y + 10.0),
+    );
+    let resp = ui.interact(chip, ui.make_persistent_id("only-changed"), Sense::click());
+    let p = ui.painter().clone();
+    if state.only_changed {
+        p.rect_filled(chip, 4.0, accent_dim());
+        p.rect_stroke(
+            chip,
+            4.0,
+            Stroke::new(1.0, accent().gamma_multiply(0.34)),
+            StrokeKind::Inside,
+        );
+        p.circle_filled(Pos2::new(chip.left() + 7.0, chip.center().y), 2.0, accent());
+    } else if resp.hovered() {
+        p.rect_filled(chip, 4.0, elev());
+    }
+    p.text(
+        Pos2::new(chip.left() + 6.0 + dot_w, chip.center().y),
+        Align2::LEFT_CENTER,
+        crate::i18n::t!("仅显示已改动"),
+        font(10.0),
+        if state.only_changed { text() } else { dim() },
+    );
+    if resp.clicked() {
+        state.only_changed = !state.only_changed;
+    }
+    resp.on_hover_text(crate::i18n::t!("只显示已偏离默认值的参数"));
 }
 
 pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
@@ -228,7 +283,10 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
                     scroll.show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         match state.dock_tab {
-                            DockTab::Adjust => adjust_tab(state, ui),
+                            DockTab::Adjust => {
+                                dock_tools(state, ui);
+                                adjust_tab(state, ui)
+                            }
                             DockTab::Info => info_tab(state, ui),
                             DockTab::Keys => keys_tab(state, ui),
                             DockTab::Ai => ai_tab(state, ui),

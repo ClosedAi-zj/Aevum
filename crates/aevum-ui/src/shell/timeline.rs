@@ -120,7 +120,10 @@ fn filter_widths(state: &AppState, p: &egui::Painter) -> FilterW {
         .x;
     let count = if filters_on(state) {
         p.layout_no_wrap(
-            crate::i18n::tr_fmt("已筛选 {} / {} 帧", &[&state.film_visible_count(), &state.frame_count()]),
+            crate::i18n::tr_fmt(
+                "已筛选 {} / {} 帧",
+                &[&state.film_visible_count(), &state.frame_count()],
+            ),
             mono(MICRO),
             dim(),
         )
@@ -221,10 +224,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, ctx: &Context, max_w: f32)
         state,
         ui,
         &p,
-        Rect::from_min_size(
-            Pos2::new(inner.left(), y),
-            Vec2::new(inner.width(), HEAD_H),
-        ),
+        Rect::from_min_size(Pos2::new(inner.left(), y), Vec2::new(inner.width(), HEAD_H)),
     );
     y += HEAD_H;
 
@@ -249,10 +249,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, ctx: &Context, max_w: f32)
             state,
             ui,
             ctx,
-            Rect::from_min_size(
-                Pos2::new(inner.left(), y),
-                Vec2::new(inner.width(), sh),
-            ),
+            Rect::from_min_size(Pos2::new(inner.left(), y), Vec2::new(inner.width(), sh)),
         );
         y += sh;
     }
@@ -261,10 +258,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, ctx: &Context, max_w: f32)
     //
     // Transport, with the hairline on its top edge.
     y += TP_MT;
-    let tp = Rect::from_min_size(
-        Pos2::new(inner.left(), y),
-        Vec2::new(inner.width(), TP_H),
-    );
+    let tp = Rect::from_min_size(Pos2::new(inner.left(), y), Vec2::new(inner.width(), TP_H));
     theme::rule(
         &p,
         inner.left(),
@@ -334,7 +328,11 @@ fn header(state: &mut AppState, ui: &mut Ui, p: &egui::Painter, hd: Rect) {
         Pos2::new(hd.right() - CURVE_W, cy - 10.0),
         Vec2::new(CURVE_W, 20.0),
     );
-    let curve_resp = ui.interact(curve_rect, ui.make_persistent_id("tl-curve"), Sense::click());
+    let curve_resp = ui.interact(
+        curve_rect,
+        ui.make_persistent_id("tl-curve"),
+        Sense::click(),
+    );
     if curve_resp.hovered() {
         p.rect_filled(curve_rect, radius_control(), elev());
     }
@@ -647,10 +645,7 @@ fn curve_block(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     let mut tx = rect.left() + 7.0;
     while tx < rect.right() - 7.0 {
         p.line_segment(
-            [
-                Pos2::new(tx, ticks_top),
-                Pos2::new(tx, ticks_top + 3.0),
-            ],
+            [Pos2::new(tx, ticks_top), Pos2::new(tx, ticks_top + 3.0)],
             Stroke::new(1.0, Color32::from_white_alpha(14)),
         );
         tx += 8.0;
@@ -1189,47 +1184,48 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     //
     // With `enabled` false the control only senses hover: not clickable, icon dimmed,
     // with a hint. That is the play button on a one-frame sequence.
-    let mut mini = |ui: &mut Ui, glyph: Glyph, active: bool, tint: Color32, enabled: bool| -> bool {
-        // 走带按钮 22×22（设计 `.tp .ibtn`），按 26px 一格排。
-        //
-        // Transport buttons are 22x22 per the design's `.tp .ibtn`, on a 26 px pitch.
-        let r = Rect::from_center_size(
-            Pos2::new(rect.left() + 11.0 + idx as f32 * 26.0, cy),
-            Vec2::splat(22.0),
-        );
-        let resp = ui.interact(
-            r,
-            ui.make_persistent_id(("transport", idx)),
-            if enabled {
-                Sense::click()
-            } else {
-                Sense::hover()
-            },
-        );
-        idx += 1;
-        if enabled && resp.hovered() {
-            p.rect_filled(r, radius_control(), elev());
-        }
-        icons::paint(
-            &p,
-            r.shrink(5.0),
-            glyph,
+    let mut mini =
+        |ui: &mut Ui, glyph: Glyph, active: bool, tint: Color32, enabled: bool| -> bool {
+            // 走带按钮 22×22（设计 `.tp .ibtn`），按 26px 一格排。
+            //
+            // Transport buttons are 22x22 per the design's `.tp .ibtn`, on a 26 px pitch.
+            let r = Rect::from_center_size(
+                Pos2::new(rect.left() + 11.0 + idx as f32 * 26.0, cy),
+                Vec2::splat(22.0),
+            );
+            let resp = ui.interact(
+                r,
+                ui.make_persistent_id(("transport", idx)),
+                if enabled {
+                    Sense::click()
+                } else {
+                    Sense::hover()
+                },
+            );
+            idx += 1;
+            if enabled && resp.hovered() {
+                p.rect_filled(r, radius_control(), elev());
+            }
+            icons::paint(
+                &p,
+                r.shrink(5.0),
+                glyph,
+                if !enabled {
+                    dim()
+                } else if active {
+                    tint
+                } else if resp.hovered() {
+                    text()
+                } else {
+                    muted()
+                },
+            );
+            let clicked = resp.clicked();
             if !enabled {
-                dim()
-            } else if active {
-                tint
-            } else if resp.hovered() {
-                text()
-            } else {
-                muted()
-            },
-        );
-        let clicked = resp.clicked();
-        if !enabled {
-            resp.on_hover_text(crate::i18n::t!("至少需要两帧才能播放"));
-        }
-        clicked && enabled
-    };
+                resp.on_hover_text(crate::i18n::t!("至少需要两帧才能播放"));
+            }
+            clicked && enabled
+        };
 
     let has = state.frame_count() > 0;
     // 播放至少要两帧：一帧的「播放」既不动、又会把画面切成代理，纯属误导。
@@ -1270,7 +1266,11 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         mono(SIZE_SMALL),
         if n > 0 { text() } else { dim() },
     );
-    p.galley(Pos2::new(x, cy - frame_g.size().y * 0.5), frame_g.clone(), text());
+    p.galley(
+        Pos2::new(x, cy - frame_g.size().y * 0.5),
+        frame_g.clone(),
+        text(),
+    );
     x += frame_g.size().x + 8.0;
 
     // 去闪读数：`去闪 −0.01 EV`，有实际修正时抬成强调色。
@@ -1280,7 +1280,11 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     let ev_text = crate::i18n::tr_fmt("去闪 {} EV", &[&format!("{off:+.2}")]);
     let ev_color = if off.abs() > 0.02 { accent() } else { dim() };
     let ev_g = p.layout_no_wrap(ev_text, mono(SIZE_SMALL), ev_color);
-    p.galley(Pos2::new(x, cy - ev_g.size().y * 0.5), ev_g.clone(), ev_color);
+    p.galley(
+        Pos2::new(x, cy - ev_g.size().y * 0.5),
+        ev_g.clone(),
+        ev_color,
+    );
     x += ev_g.size().x + 8.0;
 
     // 本帧星级：与上方「星级筛选」是两件事——这里改的是当前帧的评级。
@@ -1288,11 +1292,7 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     // This frame's rating: distinct from the header's star filter -- this writes the
     // rating of the selected frame.
     let rating = state.selected_rating();
-    let cap = p.layout_no_wrap(
-        crate::i18n::t!("本帧").to_owned(),
-        font(SIZE_SMALL),
-        dim(),
-    );
+    let cap = p.layout_no_wrap(crate::i18n::t!("本帧").to_owned(), font(SIZE_SMALL), dim());
     let star_w = 13.0;
     let stars_w = 5.0 * star_w;
     let fps_g = p.layout_no_wrap(format!("{:.0} fps", state.output_fps), mono(MICRO), muted());

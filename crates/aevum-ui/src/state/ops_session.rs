@@ -518,6 +518,7 @@ impl AppState {
             module: Module::Sequence,
             tool: Tool::Hand,
             dock_tab: DockTab::Adjust,
+            only_changed: false,
             collapsed: default_collapsed(),
             panel_solo: false,
             hdr_preview: false,

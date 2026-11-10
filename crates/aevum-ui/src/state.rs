@@ -300,6 +300,8 @@ pub const GROUP_SPECS: &[GroupSpec] = &[
     // 落盘的旧折叠键由 `legacy_group_key` 映射过来，用户的折叠偏好不丢。
     // 首屏只有基本/细节/蒙版展开——ACR 默认也只有基本展开，其余是深加工。
     in_module("basic", Module::Develop, true),
+    // 基本组让位给设计稿的六行后，其余影调/偏好推子收在这里，默认折叠。
+    in_module("tone-extra", Module::Develop, false),
     in_module("curve", Module::Develop, false),
     in_module("mixer", Module::Develop, false),
     in_module("grade", Module::Develop, false),
@@ -1346,6 +1348,17 @@ pub struct AppState {
     pub module: Module,
     pub tool: Tool,
     pub dock_tab: DockTab,
+    /// 只显示已改动：设计稿 `.dock-tools` 的「仅显示已改动」开关。
+    ///
+    /// 打开后参数行只留偏离默认值的那几根——一屏八组推子时，真正要复查的常常只有
+    /// 动过的那几根。默认关：第一次打开面板要看得见完整的参数谱。
+    ///
+    /// Only show changed: the design's "仅显示已改动" switch in `.dock-tools`.
+    ///
+    /// When on, parameter rows keep only the ones away from their default -- with eight
+    /// groups on screen, what needs re-checking is usually just the handful that moved.
+    /// Off by default: the first look at a panel should show the full parameter map.
+    pub only_changed: bool,
     /// 折叠中的面板分组。初值来自 [`default_collapsed`]（低频组首屏折起来），
     /// 之后以用户点出来的为准，并随 `settings.json` 落盘——面板记得住你的摆法是
     /// 「减少信息负担」的一半，另一半是首屏别全摊开。

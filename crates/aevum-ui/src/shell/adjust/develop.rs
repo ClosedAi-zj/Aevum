@@ -367,31 +367,21 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
             state.dock_focus = Some("hdr".to_owned());
             state.collapsed.remove("hdr");
         }
-        for f in [Field::Temperature, Field::Tint] {
-            changed |= spec_field(ui, state, f);
-        }
+        // 基本组按设计稿只留六根：色温 / 色调 / 曝光 / 对比度 / 高光 / 阴影。
+        // 其余十三根（过渡、线性对比、黑白场、软化、纹理、清晰度、去朦胧、
+        // 自然饱和度、饱和度）收进下方「影调细节」折叠组——首屏因此和设计稿的
+        // 版式一致，功能一根不少。
+        //
+        // Basic keeps exactly the design's six rows; the other thirteen live in the
+        // collapsible "tone detail" group below, so the first screen matches the design
+        // while every parameter stays one click away.
         for f in [
+            Field::Temperature,
+            Field::Tint,
             Field::Exposure,
-            Field::HlRolloff,
             Field::Contrast,
-            Field::ContrastLinear,
             Field::Highlights,
             Field::Shadows,
-            Field::Whites,
-            Field::Blacks,
-            Field::BlackSoft,
-            Field::WhiteSoft,
-        ] {
-            changed |= spec_field(ui, state, f);
-        }
-        for f in [
-            Field::Texture,
-            Field::Clarity,
-            Field::Dehaze,
-            Field::DehazeDark,
-            Field::DehazeContrast,
-            Field::Vibrance,
-            Field::Saturation,
         ] {
             changed |= spec_field(ui, state, f);
         }
@@ -461,10 +451,52 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     // A sub-section reporting "parameters moved" also lifts that group's bypass: slider
     // paths self-clear in spec_slider, this catches the non-slider ones -- curve and
     // levels point-dragging, dropping a LUT.
+    // 色彩分级紧跟配置文件：设计稿首屏的第三张卡就是它（折叠态）。
+    //
+    // Colour grading follows Profile directly: it is the design's third card on the
+    // first screen (collapsed).
+    {
+        let hit = adjust_grade(state, ui);
+        changed |= hit;
+        if hit {
+            state.bypassed.remove("grade");
+        }
+    }
+
+    // ── 影调细节 ────────────────────────────────────────────────────────
+    // 基本组让位给设计稿的六行后，多出来的十三根推子落在这里，默认折叠。
+    //
+    // Tone detail: the thirteen sliders that Basic gave up, collapsed by default.
+    group_card(ui, |ui| {
+        if !group_header(ui, state, "tone-extra", "影调细节", false) {
+            return;
+        }
+        for f in [
+            Field::HlRolloff,
+            Field::ContrastLinear,
+            Field::Whites,
+            Field::Blacks,
+            Field::BlackSoft,
+            Field::WhiteSoft,
+        ] {
+            changed |= spec_field(ui, state, f);
+        }
+        for f in [
+            Field::Texture,
+            Field::Clarity,
+            Field::Dehaze,
+            Field::DehazeDark,
+            Field::DehazeContrast,
+            Field::Vibrance,
+            Field::Saturation,
+        ] {
+            changed |= spec_field(ui, state, f);
+        }
+    });
+
     for (group, hit) in [
         ("curve", adjust_curve(state, ui)),
         ("mixer", adjust_mixer(state, ui)),
-        ("grade", adjust_grade(state, ui)),
         ("detail", adjust_detail(state, ui)),
         ("optics", adjust_optics(state, ui)),
         ("geometry", adjust_geometry(state, ui)),
@@ -1370,7 +1402,9 @@ mod only_changed_tests {
         let n = out
             .shapes
             .iter()
-            .filter(|cs| matches!(&cs.shape, egui::Shape::Rect(r) if r.fill == theme::slider_rail()))
+            .filter(
+                |cs| matches!(&cs.shape, egui::Shape::Rect(r) if r.fill == theme::slider_rail()),
+            )
             .count();
         out.textures_delta.clear();
         n

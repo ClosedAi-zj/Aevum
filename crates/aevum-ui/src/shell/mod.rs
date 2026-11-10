@@ -245,6 +245,26 @@ fn debug_apply_bench(state: &mut AppState) {
     state.set_bench(b);
 }
 
+/// 首帧打开「仅显示已改动」：`AEVUM_ONLY_CHANGED=1`。
+///
+/// 开关在检查器里，`--shot` 点不到；没有这个钩子就拍不到「过滤后只剩改动项」
+/// 的证据图。只读环境变量，不落盘。
+///
+/// Turn on "only show changed" on the first frame: `AEVUM_ONLY_CHANGED=1`.
+///
+/// The switch lives in the inspector and `--shot` cannot click it; without this hook
+/// there is no screenshot proving the filter drops untouched rows. Environment only.
+fn debug_only_changed(state: &mut AppState) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    if std::env::var_os("AEVUM_ONLY_CHANGED").is_some() {
+        state.only_changed = true;
+    }
+}
+
 fn debug_apply_workspace(state: &mut AppState) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static DONE: AtomicBool = AtomicBool::new(false);
@@ -280,6 +300,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // nothing is persisted and nothing enters the project file).
     debug_apply_workspace(state);
     debug_apply_bench(state);
+    debug_only_changed(state);
     debug_show_curves(state);
     debug_apply_flow(state);
     debug_apply_window(state);
