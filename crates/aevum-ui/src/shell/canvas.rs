@@ -105,11 +105,24 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     // gains 28 px of height.
     let body = full;
 
-    p.rect_filled(body, 0, surround());
+    // Fit（默认）露出的余量用中性中灰衬底，不叫「黑边」；Fill 才用原来的深色。
+    //
+    // Fit (default) exposes spare space on a neutral mid-grey matte rather than a
+    // black border; only Fill uses the old deep surround.
+    let backdrop = if state.canvas_fill {
+        surround()
+    } else {
+        matte()
+    };
+    p.rect_filled(body, 0, backdrop);
 
     let gutter = if state.rulers { RULER } else { 0.0 };
     let content = Rect::from_min_max(body.min + Vec2::splat(gutter), body.max);
-    p.rect_filled(content, 0, canvas());
+    p.rect_filled(
+        content,
+        0,
+        if state.canvas_fill { canvas() } else { matte() },
+    );
 
     if state.seq.is_none() {
         if state.rulers {
@@ -131,17 +144,21 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         (16.0, 9.0)
     };
     let avail = content.shrink(CANVAS_PAD);
-    // 铺满（cover）还是整幅可见（contain）：设计稿 `.hero{object-fit:cover}` 让照片
-    // 盖满窗口；contain 会在两侧/上下留黑边，正是用户说的「周围的黑边」。
-    // 裁切类操作要看全画面时，视图菜单可切回 contain。
+    // 四档缩放里的前两档（Adobe Lightroom Classic 导航器：符合 Fit / 填满 Fill /
+    // 1:1 实际像素 / 自定义）。默认 **Fit**：整幅可见、等比、尊重任意原始宽高比。
+    // `.min(1.0)` 保证小图按原尺寸显示、绝不被放大重采样（IrfanView「只缩小大图」
+    // 同一口径）；点顶栏百分比读数进 1:1，视图菜单的「画布铺满窗口」才是 Fill
+    // （会裁切，只作预览）。Fill 不设 1.0 上限。
     //
-    // Cover or contain: the design's `.hero{object-fit:cover}` fills the window, while
-    // contain letterboxes -- exactly the black border the user pointed at. The View menu
-    // switches back to contain when a crop needs the whole frame.
+    // The first two of Lightroom Classic's four zoom levels (Fit / Fill / 1:1 / custom).
+    // Default is **Fit**: whole frame visible, proportional, respecting any native
+    // aspect ratio. `.min(1.0)` keeps small photos at native size and never upsamples
+    // them (IrfanView's "fit only large images" rule); the top-bar readout enters 1:1,
+    // and the View menu's fill toggle is Fill (which crops, preview only).
     let fit = if state.canvas_fill {
         (avail.width() / iw).max(avail.height() / ih)
     } else {
-        (avail.width() / iw).min(avail.height() / ih)
+        (avail.width() / iw).min(avail.height() / ih).min(1.0)
     }
     .max(0.01);
     state.fit_scale = fit;

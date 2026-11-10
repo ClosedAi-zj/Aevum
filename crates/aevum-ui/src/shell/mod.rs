@@ -750,7 +750,19 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
     // the height the user pinned. The cap handed to `dock_panel` bounds the ScrollArea:
     // a pinned height shows that much content at once, otherwise the window cap.
     let user_h = (state.dock_h >= DOCK_MIN_H).then_some(state.dock_h.min(win_max_h));
-    let cap = user_h.unwrap_or(win_max_h);
+    // 默认上限 = 窗口高减去右下角视图工具条的预留带。按「比例砍」会把内容
+    // 截在组中间（色彩分级/更多分组看不见）；真正的约束只是卡片底边不能压住
+    // 工具条。窗口够高时内容一次显示完，窗口矮时卡内滚动。用户拖过 resize
+    // 手柄后以他钉住的高度为准（仍夹在窗口内）。
+    //
+    // Default cap = window height minus the bottom-right view toolbar's reserve.
+    // A percentage cut chops content in the middle of a group; the real constraint
+    // is only that the card's bottom edge must not cover the toolbar. Tall windows
+    // show everything at once, short ones scroll inside the card. A user-pinned
+    // height still wins (clamped to the window).
+    const VIEWTOOLS_RESERVE: f32 = 60.0;
+    let default_cap = (win_max_h - VIEWTOOLS_RESERVE).max(DOCK_MIN_H);
+    let cap = user_h.unwrap_or(default_cap);
 
     let default_pos = Pos2::new(
         if right {

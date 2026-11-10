@@ -67,7 +67,7 @@ pub(super) fn sub_head(ui: &mut Ui, label: &str) {
 /// "Fewer groups" at the end of the expanded list: folds the extra parameter groups back
 /// to the reference's three-card first screen.
 fn collapse_groups_chip(ui: &mut Ui, state: &mut AppState) {
-    let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
+    let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::click());
     let p = ui.painter().clone();
     if resp.hovered() {
         p.rect_filled(row, radius_control(), elev());
@@ -89,7 +89,7 @@ fn collapse_groups_chip(ui: &mut Ui, state: &mut AppState) {
 /// A one-row "more groups" disclosure: centred, 26 px tall; clicking it expands the
 /// remaining parameter groups.
 fn more_groups_chip(ui: &mut Ui, state: &mut AppState) {
-    let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
+    let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::click());
     let p = ui.painter().clone();
     let label = format!("{} ▸", crate::i18n::t!("更多分组"));
     if resp.hovered() {

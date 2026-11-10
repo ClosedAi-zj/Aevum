@@ -520,7 +520,7 @@ impl AppState {
             dock_tab: DockTab::Adjust,
             only_changed: false,
             show_more_groups: false,
-            canvas_fill: true,
+            canvas_fill: false,
             show_options: false,
             show_rails: false,
             slider_drag: false,

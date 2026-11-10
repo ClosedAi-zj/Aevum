@@ -854,6 +854,22 @@ pub fn bench_bg() -> Color32 {
     }
 }
 
+/// 画布衬底（Fit 模式露出照片外的区域）：严格中性中灰，R=G=B。
+/// 不同宽高比的照片在固定视窗里必然留下余量，衬底若是纯黑或带色相，会形成
+/// 「黑边」并污染色彩判断；中性中灰是 Lightroom / Capture One 的同一套做法。
+///
+/// Canvas matte (the area exposed around a photo in Fit mode): strictly neutral
+/// grey, R=G=B. Photos with different aspect ratios inevitably leave spare space
+/// in a fixed viewport; a black or tinted matte becomes a "black border" and
+/// biases colour judgement. Neutral mid-grey is what Lightroom/Capture One use.
+pub fn matte() -> Color32 {
+    if is_light() {
+        Color32::from_rgb(0xE6, 0xE6, 0xE6)
+    } else {
+        Color32::from_rgb(0x1F, 0x1F, 0x1F)
+    }
+}
+
 pub fn group_fill() -> Color32 {
     // 深色石墨直接用设计稿 `.grp{background:#2a2d32}`：从 panel 往白叠出来的
     // 灰是中性灰(40,40,41)，而设计稿的卡面带蓝(42,45,50)。这 5~9 个蓝通道差

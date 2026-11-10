@@ -88,7 +88,7 @@ fn dock_tools(state: &mut AppState, ui: &mut Ui) {
     // whole panel, so it must rank with the group headers. 10 -> 13 px, dim -> muted,
     // row 24 -> 28.
     let (row, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), egui::Sense::hover());
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::hover());
     let galley = ui.painter().layout_no_wrap(
         crate::i18n::t!("仅显示已改动").to_owned(),
         font(SIZE_BODY),

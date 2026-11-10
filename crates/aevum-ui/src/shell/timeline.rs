@@ -28,18 +28,18 @@ use std::sync::Arc;
 /// 卡片内距（设计稿 `padding:6px`）。
 const PAD: f32 = 6.0;
 /// 头行高度（`.film-h{height:24px}`）。
-const HEAD_H: f32 = 24.0;
+const HEAD_H: f32 = 22.0;
 /// 曲线块高度（`.curve` 标题 10 + 图 26 + 刻度 3 + 内距）。
-const CURVE_H: f32 = 48.0;
+const CURVE_H: f32 = 36.0;
 /// 曲线块与缩略图行之间的间距（`.curve{margin-bottom:5px}`）。
 const GAP: f32 = 5.0;
 /// 缩略图格宽 / 格高 / 格距（`.th{72×56}`、`.thumbs{gap:4}`）。
 const THUMB_W: f32 = 72.0;
-const THUMB_H: f32 = 56.0;
+const THUMB_H: f32 = 52.0;
 const THUMB_GAP: f32 = 4.0;
 /// 走带行上缘留白与行高（`.tp{margin-top:6px;height:26px}`）。
-const TP_MT: f32 = 6.0;
-const TP_H: f32 = 26.0;
+const TP_MT: f32 = 4.0;
+const TP_H: f32 = 24.0;
 /// 卡片最小宽度：头行（标题 + 折叠钮 + 筛选整组 + 曲线开关）放得下。
 /// 设计稿 7 帧时卡宽 535（由缩略图撑开），4 帧时由头行撑到 400。
 const CARD_MIN_W: f32 = 400.0;
