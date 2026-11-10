@@ -249,6 +249,26 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
                 muted()
             },
         );
+        // 关键帧页签带计数徽标（设计稿 `关键帧 1`）：页签本身是入口，数字是
+        // 「已经记了几帧」——进页面之前就能判断要不要去看。
+        //
+        // The keyframes tab carries a count badge (the design's `关键帧 1`): the tab is an
+        // entry and the number says how many frames are already recorded, so the decision
+        // "do I need that page" is made before opening it.
+        if *tab == DockTab::Keys && !state.keyframes.is_empty() && r.width() > 52.0 {
+            let badge = Rect::from_min_size(
+                Pos2::new(r.right() - 22.0, r.center().y - 7.0),
+                Vec2::new(14.0, 14.0),
+            );
+            p.rect_filled(badge, 4.0, elev());
+            p.text(
+                badge.center(),
+                Align2::CENTER_CENTER,
+                format!("{}", state.keyframes.len()),
+                font(9.0),
+                if active { text() } else { muted() },
+            );
+        }
         if resp.clicked() {
             state.dock_tab = *tab;
         }
