@@ -285,6 +285,38 @@ fn zone_right_pre(full: Rect, c: &platform::Chrome) -> f32 {
     }
 }
 
+/// 任务胶囊宽度：文字实测宽 + 内距（有角标时再留 14px 徽标位）。中英文各测各的，
+/// 不能写死常量——英文 "Tasks" 比中文「任务」宽，写死就会让齿轮重新压到字上。
+///
+/// Tasks pill width: measured label plus padding (and a 14 px badge slot when a count is
+/// present). Each language is measured; a constant would let the gear drift back onto the
+/// longer English label.
+fn tasks_pill_width(p: &egui::Painter, running: usize) -> f32 {
+    let label = crate::i18n::t!("任务");
+    p.layout_no_wrap(label.to_string(), font(SIZE_CHROME_LABEL), text())
+        .size()
+        .x
+        + if running > 0 { 30.0 } else { 16.0 }
+}
+
+/// 右簇链式左缘：从导出按钮右缘往左，逐级减去实测宽度与间隙
+/// （导出 76 → 任务胶囊 → 齿轮 24 → 菜单 28）。工具簇的锚点由这里推导，
+/// 不再靠目测调一个 `-125` 魔数；语言或角标一变，两段会一起移动。
+///
+/// Chained left edge of the right cluster, walking left from the export button by measured
+/// widths and gaps (export 76 -> tasks pill -> gear 24 -> menu 28). The tool cluster anchor
+/// is derived from this instead of a hand-tuned `-125`; a language or badge change moves
+/// both sections together.
+fn right_chain_left(zone_right: f32, tasks_w: f32) -> f32 {
+    const EXPORT_W: f32 = 76.0;
+    const PILL_GAP: f32 = 8.0;
+    const GEAR_GAP: f32 = 6.0;
+    const GEAR_W: f32 = 24.0;
+    const HUB_GAP: f32 = 6.0;
+    const HUB_W: f32 = 28.0;
+    zone_right - EXPORT_W - PILL_GAP - tasks_w - GEAR_GAP - GEAR_W - HUB_GAP - HUB_W
+}
+
 pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let c = platform::chrome();
     let full = ui.max_rect();
@@ -732,12 +764,17 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // 根因是右簇估宽太保守、锚点被 chips 右缘的 max() 吃掉。收到 90 会压到「任务」
     // 上，回到 150 又偏左；125 是实测不重叠且离目标最近的一档（差约 40px）。
     //
-    // Right-group whitespace anchor: a 2x top-bar comparison measured the tool cluster
-    // ~95 px left of the target because the estimated right-group width was too
-    // conservative and the anchor was swallowed by max() at the chips' right edge.
-    // 90 overlaps the tasks pill, 150 sits too far left; 125 measured as the closest
-    // non-overlapping value (~40 px from the target).
-    let tc_right_limit = zone_right_pre(full, &c) - 125.0;
+    // 工具簇右锚由右簇链左缘推导，留 8px 呼吸。此前是目测调出的 `-125` 常量：
+    // 它与「导出-任务-齿轮-菜单」的实际宽度无关，语言一变就可能与齿轮/任务胶囊
+    // 叠压（B1 的同源隐患）。链式之后两段共用同一份实测宽度，中英都自洽。
+    //
+    // The tool cluster's right anchor is derived from the right cluster's chained left
+    // edge with 8 px of air. It used to be a hand-tuned `-125`, unrelated to the real
+    // export-tasks-gear-menu widths, so a language change could overlap the gear (the
+    // same root cause as B1). Both sections now share one measured width.
+    let running = state.running_jobs();
+    let chain_left = right_chain_left(zone_right_pre(full, &c), tasks_pill_width(&p, running));
+    let tc_right_limit = chain_left - 8.0;
     let tc_after_chips = if seg_drawn {
         seg_x + seg_w + 8.0
     } else {
@@ -865,14 +902,14 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     //
     // The tasks pill (the design's "任务 14"): count of running background jobs, click to
     // switch to the tasks bench. With none running it stays a plain entry, no empty 0.
-    let running = state.running_jobs();
+    // `running` 与胶囊宽度已在工具簇锚点处算过，这里复用同一份——两段必须用
+    // 同一个数，否则链式推导与绘制会各按各的宽度排，又叠到一起。
+    //
+    // `running` and the pill width were measured at the tool-cluster anchor; reuse them.
+    // Both sections must agree on one number or the chain and the painting drift apart.
     let tid = format!("{}", running);
     let tlabel = crate::i18n::t!("任务");
-    let tw = p
-        .layout_no_wrap(tlabel.to_string(), font(SIZE_CHROME_LABEL), text())
-        .size()
-        .x
-        + if running > 0 { 30.0 } else { 16.0 };
+    let tw = tasks_pill_width(&p, running);
     let pill = Rect::from_min_size(
         Pos2::new(export.left() - 8.0 - tw, mid - 13.0),
         Vec2::new(tw, 26.0),
@@ -914,7 +951,14 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // 齿轮：外观/布局/语言的唯一常驻入口。
     //
     // The gear: the single permanent entry to appearance / layout / language.
-    let gear = Rect::from_center_size(Pos2::new(export.left() - 22.0, mid), Vec2::splat(24.0));
+    // 齿轮钉在任务胶囊**左缘之外**（留 6px），不再用 `export.left()-22` 这个
+    // 绝对锚点：后者落在胶囊文字右段上，且齿轮后画，把「任务 / Tasks」最后一
+    // 两个字盖花（中英都中）。链式位置随语言实测宽度一起变。
+    //
+    // The gear sits outside the tasks pill's left edge (6 px of air) instead of the
+    // absolute `export.left()-22`: that anchor landed on the label's right end and,
+    // being painted later, smeared the last glyphs of 任务 / Tasks in both languages.
+    let gear = Rect::from_center_size(Pos2::new(pill.left() - 6.0 - 12.0, mid), Vec2::splat(24.0));
     let gr = ui.interact(gear, ui.make_persistent_id("tb-look"), Sense::click());
     if gr.hovered() {
         p.rect_filled(gear, radius_control(), elev());

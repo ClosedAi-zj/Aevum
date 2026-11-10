@@ -1288,3 +1288,96 @@ fn every_file_dialog_carries_the_window_owner() {
         "对话框中枢缺入队 / 起飞 / 收账三件套"
     );
 }
+
+/// 顶栏矢量图标不许压到「任务 / Tasks」文字。
+///
+/// `text_never_overlaps_in_any_module` 只收集 `Shape::Text`，所以齿轮这种
+/// `Shape::Path` / `LineSegment` 盖在字上是它的盲区：中文「务」被齿轮打花、英文
+/// "Tasks" 的 ks 上骑着齿轮，两个判据都全绿过。这里补上图标侧，取每个图标
+/// **叶子线段/路径**的可见包围盒（不取 `Shape::Vec` 的并集，否则一个大包围盒会
+/// 把整条顶栏都算成图标），与任务胶囊文字做同排水平相交判定。
+///
+/// Top-bar vector icons must not cover the "任务 / Tasks" label. The existing text-vs-text
+/// check only collects `Shape::Text`, so a gear drawn as paths over the glyphs slipped
+/// through in both languages. Collect each icon's leaf segment/path bounding box instead
+/// (not the `Shape::Vec` union, which would swallow the whole bar) and compare on the
+/// same baseline.
+#[test]
+fn top_bar_icons_never_cover_the_tasks_label() {
+    use aevum_ui::state::AppState;
+    let _lang_guard = crate::common::i18n_guard();
+    let mut hits: Vec<String> = Vec::new();
+    for lang in [aevum_ui::i18n::Lang::ZH, aevum_ui::i18n::Lang::EN] {
+        aevum_ui::i18n::set(lang);
+        let ctx = egui::Context::default();
+        aevum_ui::theme::apply(&ctx, 1.0);
+        let mut state = AppState::demo();
+        state.install_demo_textures(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1600.0, 1000.0),
+            )),
+            max_texture_side: Some(8192),
+            ..Default::default()
+        };
+        // 与文字重叠判据同一套热身：首帧 galley 宽度未收敛，排布是暂态。
+        for _ in 0..3 {
+            let mut warm = ctx.run_ui(input.clone(), |ui| aevum_ui::shell::ui(&mut state, ui));
+            warm.textures_delta.clear();
+        }
+        let mut out = ctx.run_ui(input, |ui| aevum_ui::shell::ui(&mut state, ui));
+        let mut texts = Vec::new();
+        collect_text_rects(&out.shapes, &mut texts);
+        let mut icons = Vec::new();
+        for cs in &out.shapes {
+            walk_icon_shapes(&cs.shape, &mut icons);
+        }
+        out.textures_delta.clear();
+        let tasks: Vec<_> = texts
+            .iter()
+            .filter(|t| t.0 < 60.0 && matches!(t.3.trim(), "任务" | "Tasks"))
+            .collect();
+        assert!(
+            !tasks.is_empty(),
+            "{lang:?} 顶栏没画任务胶囊文字，判据取样失效"
+        );
+        for t in &tasks {
+            for r in &icons {
+                if (r.center().y - t.0).abs() > 20.0 {
+                    continue;
+                }
+                let overlap = t.2.min(r.max.x) - t.1.max(r.min.x);
+                if overlap > 1.0 {
+                    hits.push(format!(
+                        "{lang:?} 「{}」被图标包围盒 {:.0?} 压住 {:.1}px",
+                        t.3, r, overlap
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "顶栏图标压住了任务胶囊文字（齿轮必须锚在胶囊左缘之外）：\n{}",
+        hits.join("\n")
+    );
+}
+
+/// 只收图标的叶子线段 / 路径：背景块、下划线、滚动条都是 `Shape::Rect`，不进这里。
+fn walk_icon_shapes(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {
+    match shape {
+        egui::Shape::Vec(v) => {
+            for s in v {
+                walk_icon_shapes(s, out);
+            }
+        }
+        egui::Shape::LineSegment { .. } | egui::Shape::Path(_) => {
+            let r = shape.visual_bounding_rect();
+            if r.width() <= 32.0 && r.height() <= 32.0 && r.center().y < 60.0 {
+                out.push(r);
+            }
+        }
+        _ => {}
+    }
+}
