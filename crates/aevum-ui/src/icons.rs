@@ -35,6 +35,16 @@ pub enum Glyph {
     Sliders,
     Info,
     Key,
+    /// 关键帧记录钮的空态（设计稿 `.tp .record` 的 ◇）：当前帧没有关键帧。
+    ///
+    /// Empty state of the record-keyframe chip (the design's `.tp .record` glyph ◇):
+    /// the current frame carries no keyframe.
+    Keyframe,
+    /// 关键帧记录钮的已记录态（◇ 升 ◆，整颗琥珀）：当前帧已有关键帧。
+    ///
+    /// Recorded state of the chip (◇ becomes ◆, amber throughout): the current frame
+    /// already carries a keyframe.
+    KeyframeSet,
     Reset,
     History,
     Close,
@@ -412,6 +422,25 @@ pub fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32) {
             painter.circle_stroke(pt(r, 0.5, 0.5), s * 0.4, st);
             painter.circle_filled(pt(r, 0.5, 0.31), sw * 0.9, color);
             seg(painter, pt(r, 0.5, 0.45), pt(r, 0.5, 0.72), st);
+        }
+        Glyph::Keyframe | Glyph::KeyframeSet => {
+            let c = pt(r, 0.5, 0.5);
+            let d = s * 0.32;
+            let pts = vec![
+                Pos2::new(c.x, c.y - d),
+                Pos2::new(c.x + d, c.y),
+                Pos2::new(c.x, c.y + d),
+                Pos2::new(c.x - d, c.y),
+            ];
+            if glyph == Glyph::KeyframeSet {
+                painter.add(Shape::convex_polygon(pts, color, Stroke::NONE));
+            } else {
+                painter.add(Shape::convex_polygon(
+                    pts,
+                    Color32::TRANSPARENT,
+                    Stroke::new(sw, color),
+                ));
+            }
         }
         Glyph::Key => {
             for (x, y) in [(0.3, 0.28), (0.7, 0.72)] {

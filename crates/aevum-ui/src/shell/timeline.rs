@@ -1184,8 +1184,15 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     //
     // With `enabled` false the control only senses hover: not clickable, icon dimmed,
     // with a hint. That is the play button on a one-frame sequence.
+    //
+    // `hint` 是键盘提示（设计稿 title 的口径）：←/→ 翻帧、空格播放暂停，
+    // 两者都是真实接线（menu.rs 的全局键处理），不是装饰文案。
+    //
+    // `hint` is the keyboard hint (the design's title wording): arrows step frames,
+    // space toggles playback -- both really wired (menu.rs's global key handling),
+    // not decorative copy.
     let mut mini =
-        |ui: &mut Ui, glyph: Glyph, active: bool, tint: Color32, enabled: bool| -> bool {
+        |ui: &mut Ui, glyph: Glyph, active: bool, tint: Color32, enabled: bool, hint: &str| -> bool {
             // 走带按钮 22×22（设计 `.tp .ibtn`），按 26px 一格排。
             //
             // Transport buttons are 22x22 per the design's `.tp .ibtn`, on a 26 px pitch.
@@ -1221,8 +1228,11 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
                 },
             );
             let clicked = resp.clicked();
+            // hint 是中文字面量，这里统一过 tr()：英文模式才有译文。
             if !enabled {
                 resp.on_hover_text(crate::i18n::t!("至少需要两帧才能播放"));
+            } else {
+                resp.on_hover_text(crate::i18n::tr(hint));
             }
             clicked && enabled
         };
@@ -1233,7 +1243,14 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     // Playback needs at least two frames: "playing" a single frame neither moves nor
     // means anything.
     let can_play = state.frame_count() >= 2;
-    if mini(ui, Glyph::Prev, false, text(), has) {
+    if mini(
+        ui,
+        Glyph::Prev,
+        false,
+        text(),
+        has,
+        "上一帧（←；Shift 一次十帧）",
+    ) {
         state.step(-1);
     }
     if mini(
@@ -1246,10 +1263,18 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         state.playing,
         accent(),
         can_play,
+        "播放 / 暂停（空格）",
     ) {
         state.toggle_play();
     }
-    if mini(ui, Glyph::Next, false, text(), has) {
+    if mini(
+        ui,
+        Glyph::Next,
+        false,
+        text(),
+        has,
+        "下一帧（→；Shift 一次十帧）",
+    ) {
         state.step(1);
     }
 
@@ -1272,6 +1297,59 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         text(),
     );
     x += frame_g.size().x + 8.0;
+
+    // 记录关键帧（设计 `.tp .record`）：◇ 记录，贴在帧号右侧。当前帧已有关键帧
+    // 时整颗转琥珀底、◇ 升 ◆（`.record.recorded`）——「这帧记过了」在走路带时
+    // 一眼可见，不用翻关键帧页。点击走 add_keyframe 同一条路径：同帧再点即覆写。
+    //
+    // Record keyframe (the design's `.tp .record`): ◇ + label, right of the counter.
+    // When the current frame already carries a keyframe the chip turns amber and the
+    // glyph rises to ◆ (`.record.recorded`) -- "this frame is already recorded" is
+    // visible while scrubbing, no need to open the Keys tab. Clicking shares the
+    // add_keyframe path: clicking again on the same frame overwrites.
+    if n > 0 {
+        const REC_AMBER: Color32 = Color32::from_rgb(0xF5, 0xB8, 0x3D); // 设计 --amber
+        let recorded = state.keyframes.contains_key(&state.selected);
+        let rec_lab = crate::i18n::t!("记录").to_owned();
+        let rec_g = p.layout_no_wrap(rec_lab, font(MICRO), Color32::WHITE);
+        let rec_w = 12.0 + 4.0 + rec_g.size().x + 10.0;
+        let rr = Rect::from_min_size(Pos2::new(x, cy - 10.0), Vec2::new(rec_w, 20.0));
+        let rresp = ui.interact(rr, ui.make_persistent_id("transport-record"), Sense::click());
+        if rresp.hovered() {
+            p.rect_filled(rr, 4.0, elev());
+        }
+        if recorded {
+            // 12% 琥珀底（设计 rgba(245,184,61,.12)），label 与 glyph 同升琥珀。
+            p.rect_filled(rr, 4.0, Color32::from_rgba_unmultiplied(0xF5, 0xB8, 0x3D, 31));
+        }
+        icons::paint(
+            &p,
+            Rect::from_center_size(
+                Pos2::new(rr.left() + 7.0, cy),
+                Vec2::splat(11.0),
+            ),
+            if recorded {
+                Glyph::KeyframeSet
+            } else {
+                Glyph::Keyframe
+            },
+            REC_AMBER,
+        );
+        p.galley(
+            Pos2::new(rr.left() + 14.0, cy - rec_g.size().y * 0.5),
+            rec_g.clone(),
+            if recorded { REC_AMBER } else { muted() },
+        );
+        if rresp.clicked() {
+            state.add_keyframe();
+        }
+        rresp.on_hover_text(if recorded {
+            crate::i18n::t!("这一帧已有关键帧，再点以当前参数覆写")
+        } else {
+            crate::i18n::t!("把当前帧的全部显影参数记录为关键帧")
+        });
+        x += rec_w + 8.0;
+    }
 
     // 去闪读数：`去闪 −0.01 EV`，有实际修正时抬成强调色。
     //
@@ -1360,5 +1438,54 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
                 dim(),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use egui::Context;
+
+    fn input() -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1200.0, 800.0))),
+            max_texture_side: Some(8192),
+            ..Default::default()
+        }
+    }
+
+    /// 记录钮的琥珀底只在当前帧已有关键帧时出现（设计 `.record.recorded` 的
+    /// rgba(245,184,61,.12)）：没记录就不该亮，亮了就必须是记录过的帧——
+    /// 「这帧记过了」是走带时扫一眼的判据，亮错比不亮更害人。
+    ///
+    /// The record chip's amber fill appears only when the selected frame carries a
+    /// keyframe (the design's `.record.recorded`): no record, no glow -- and the glow
+    /// must never light up on an unrecorded frame, which would be worse than never
+    /// lighting at all.
+    #[test]
+    fn record_chip_lights_up_only_when_the_frame_is_recorded() {
+        let ctx = Context::default();
+        crate::theme::apply(&ctx, 1.0);
+        let mut state = AppState::demo();
+        state.install_demo_textures(&ctx);
+        assert!(state.frame_count() > 0, "demo 状态应有帧可走带");
+        let rect = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(680.0, 26.0));
+        let amber_rect = |out: &egui::FullOutput| {
+            out.shapes.iter().any(|c| matches!(
+                &c.shape,
+                egui::Shape::Rect(rs) if rs.fill
+                    == Color32::from_rgba_unmultiplied(0xF5, 0xB8, 0x3D, 31)
+            ))
+        };
+        let mut out = ctx.run_ui(input(), |ui| transport(&mut state, ui, rect));
+        assert!(
+            !amber_rect(&out),
+            "没记录关键帧，记录钮不该亮琥珀底"
+        );
+        out.textures_delta.clear();
+        state.add_keyframe();
+        let mut out = ctx.run_ui(input(), |ui| transport(&mut state, ui, rect));
+        assert!(amber_rect(&out), "已记录关键帧，记录钮没有琥珀底");
+        out.textures_delta.clear();
     }
 }
