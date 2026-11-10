@@ -263,9 +263,7 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
             Align2::CENTER_CENTER,
             label,
             font_id,
-            if active {
-                text()
-            } else if resp.hovered() {
+            if active || resp.hovered() {
                 text()
             } else {
                 muted()
@@ -1155,6 +1153,33 @@ mod dock_paint_tests {
             "改过的读数应是设计稿琥珀 #f5b83d"
         );
         assert_ne!(value_color(0.0), value_color(0.75), "两种状态必须分得开");
+    }
+
+        /// 显影十二组每组必须有一枚 ⓘ 与一段真实说明（设计稿 `.grp-h .help`）：
+    /// 漏一组，那组的「这是什么、动了对吗」就只剩参数名可以猜。
+    ///
+    /// Every one of the twelve develop groups must carry an info glyph with a real
+    /// note (the design's `.grp-h .help`): miss one and that group's "what is this,
+    /// did I break it" is left to guessing from parameter names alone.
+    #[test]
+    fn every_develop_group_has_a_real_help_note() {
+        for key in [
+            "basic",
+            "profile",
+            "grade",
+            "tone-extra",
+            "curve",
+            "mixer",
+            "detail",
+            "optics",
+            "geometry",
+            "retouch",
+            "effects",
+            "look",
+        ] {
+            let help = group_help(key).unwrap_or_else(|| panic!("{key} 缺 ⓘ 说明"));
+            assert!(help.chars().count() >= 16, "{key} 的说明太短，等于没写");
+        }
     }
 
     /// 整段说明只许待在 ⓘ 的悬停提示里：正文铺回去，面板又变成一列散文。

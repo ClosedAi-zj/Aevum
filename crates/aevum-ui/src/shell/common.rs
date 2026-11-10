@@ -218,7 +218,7 @@ pub(super) fn group_help(key: &str) -> Option<&'static str> {
             "把一组不同对焦距离的帧融成一张全景深。深度图法：逐像素取测度最强的帧，测度低于阈值的无细节区整块判给参考帧（序列中位帧），深度跳变处按羽化宽度交叠——保色彩、平坦区不出斑块；加权平均法：测度四次方当权重直接混，最简单但对强纹理可能轻微发糊。测度在 γ2.0 亮度上算，半径是分析窗口（越大抗噪、越小分辨近邻深度）。\n阈值按全图最佳测度的分位数表达（0 = 关闭），跨序列可迁移——这就是 DMap 那根对比度滑杆的口径。"
         }
         "basic" => {
-            "白平衡与影调范围：先定冷暖（色温）与绿品（色调），再拉曝光 / 对比 / 高光 / 阴影 / 黑白场，最后是纹理、清晰度、去朦胧与色彩浓度。\n曝光以 EV 计，其余参数相对中间调调整。\n高光过渡（对齐 LR）：曝光推过 1 的区域走有理肩部缓收，不再硬剪。\n线性对比（对齐 LR）：对比度改在线性光域计算，暗部响应更接近 LR。\n黑场/白场软化（对齐 LR）：两端用抛物线软拐点收进 [0,1]，直方图边缘不再堆尖。"
+            "基本影调与色彩；眼睛只旁路预览，不删除参数。\n曝光以 EV 计，其余参数相对中间调调整。\n高光过渡（对齐 LR）：曝光推过 1 的区域走有理肩部缓收，不再硬剪。\n线性对比（对齐 LR）：对比度改在线性光域计算，暗部响应更接近 LR。\n黑场/白场软化（对齐 LR）：两端用抛物线软拐点收进 [0,1]，直方图边缘不再堆尖。"
         }
         "curve" => {
             "三种调法：参数曲线按亮度区间（阴影、中间调、高光）拉起落，另有三条分界；点曲线是 RGB 与三条单通道，坐标即输入输出值；色阶在输入黑白场、灰度系数与输出范围上直接拖动。\nHDR 尾部（对齐 LR）：x>1 的过曝层次按曲线末端斜率延伸进曲线，不再硬截。"
@@ -226,7 +226,7 @@ pub(super) fn group_help(key: &str) -> Option<&'static str> {
         "mixer" => {
             "两种模式：HSL 按颜色范围调整色相、饱和度与明亮度；黑白混合决定各色相在灰度中的权重。"
         }
-        "grade" => "阴影、中间调、高光四向色彩分级，可分别指定色轮与亮度。",
+        "grade" => "中间调大轮在上，阴影 / 高光小轮并列在下（ACR 的品字布局）；三只轮各带色相、饱和度与亮度。",
         "detail" => {
             "锐化、降噪与蒙版。\n锐化保护（对齐 LR）：按噪声底自适应保护平坦区，与蒙版叠加生效。"
         }
@@ -237,6 +237,18 @@ pub(super) fn group_help(key: &str) -> Option<&'static str> {
             "暗角（含中点、圆度、羽化与高光保护）与胶片颗粒。\n颗粒亮度（对齐 LR）：颗粒强度随亮度分级，正值暗部更重、负值反转（高光更重）。"
         }
         "look" => "载入 .cube 3D LUT 作为外观层，不改动底层调色参数。",
+        "profile" => {
+            "渲染基调：风格与相机配置（DCP）定颜色的起点；眼睛只旁路预览，不删除参数。"
+        }
+        "tone-extra" => {
+            "基本组让位后的十三根推子：高光过渡、线性对比、黑白场及其软化、纹理、清晰度、去朦胧与色彩浓度。"
+        }
+        "geometry" => {
+            "透视校正：自动直立只修上下透视（竖线收敛），四角是手动兜底；不修旋转与畸变。"
+        }
+        "retouch" => {
+            "修复与仿制两种模式，笔刷半径与羽化在这里调；落点在画布上（工具条选「修复」）。"
+        }
         "masks" => {
             "局部调整：线性、径向与画笔蒙版，参数独立于全局调色。选中后在画布上拖两端、圆心与半径，或用画笔涂抹；画笔大小按短边百分比计。"
         }
@@ -402,49 +414,12 @@ pub(super) fn group_header(
     // group name, painted only when some parameter in the group deviates from its
     // default. The design puts it after `.lb` and before `.help`, not against the right
     // edge -- there it crowds the eye and reset and reads as their label.
-    let dot_span = if changed {
+    if changed {
         p.circle_filled(
             Pos2::new(title_x + title_galley.size().x + 8.0, rect.center().y),
             2.5,
             DOT_AMBER,
         );
-        9.0
-    } else {
-        0.0
-    };
-    // 说明入口贴着标题放，但默认不显形（效果图里组头只有图标和标题）：悬停
-    // 标题条时才亮出来，仍然占着同一块热区，帮助没有丢。
-    //
-    // The help entry keeps its slot next to the title but stays invisible until the
-    // header is hovered (the mockup shows only glyph + title): the hit area is still
-    // there, so the help is not lost.
-    if let Some(help) = group_help(key).map(crate::i18n::tr) {
-        let ir = Rect::from_center_size(
-            Pos2::new(
-                title_x + title_galley.size().x + 11.0 + dot_span,
-                rect.center().y,
-            ),
-            Vec2::splat(14.0),
-        );
-        let iresp = ui.interact(
-            ir,
-            ui.make_persistent_id(("group-help", key)),
-            Sense::hover(),
-        );
-        if iresp.hovered() {
-            p.rect_filled(ir, radius_control(), elev_hover());
-        }
-        icons::paint(
-            p,
-            ir.shrink(4.0),
-            Glyph::Info,
-            if iresp.hovered() {
-                accent_hover()
-            } else {
-                Color32::TRANSPARENT
-            },
-        );
-        iresp.on_hover_text(help);
     }
     // 眼睛旁路（ACR 的面板开关）：点一下，这一组的调整退出预览渲染，再点恢复。
     // 只在显影八组出现——序列、成片那些组的参数不在调色管线里，旁路无定义。
@@ -549,6 +524,48 @@ pub(super) fn group_header(
             reset_group(state, key);
         }
         rresp.on_hover_text(crate::i18n::t!("重置这一分组"));
+    }
+    // ⓘ（设计稿 `.grp-h .help`）：右缘图标排的第三格——眼睛最右、复位次之、
+    // ⓘ 再左一格；没有眼睛/复位的组，ⓘ 直接占最右一格。10px 字形，20px 热区。
+    // 显形随组头悬停 0→1（设计稿 `.grp-h:hover .help{opacity:1}`），0.12s 与
+    // 页签下划线的 --tc 同一节奏；热区常驻——帮助不因「看不见」而丢。
+    //
+    // The info glyph (design `.grp-h .help`): the third slot in the right-edge row --
+    // eye rightmost, reset next, info one further left; a group without eye/reset lets
+    // info own the rightmost slot. A 10 px glyph on a 20 px hit area. Reveal follows the
+    // header hover 0->1 (the design's `.grp-h:hover .help{opacity:1}`) on a 0.12 s ease
+    // shared with the tab underline's --tc; the hit area is resident, so help is never
+    // lost to invisibility.
+    if let Some(help) = group_help(key).map(crate::i18n::tr) {
+        let help_x = if bypassable {
+            rect.right() - 55.0
+        } else if resettable {
+            rect.right() - 34.0
+        } else {
+            rect.right() - 13.0
+        };
+        let ir = Rect::from_center_size(Pos2::new(help_x, rect.center().y), Vec2::splat(20.0));
+        let iresp = ui.interact(
+            ir,
+            ui.make_persistent_id(("group-help", key)),
+            Sense::hover(),
+        );
+        let t = ui.ctx().animate_bool_with_time(
+            ui.make_persistent_id(("group-help-anim", key)),
+            resp.hovered(),
+            0.12,
+        );
+        if iresp.hovered() {
+            p.rect_filled(ir, radius_control(), elev_hover());
+        }
+        let base = if iresp.hovered() { accent_hover() } else { dim() };
+        icons::paint(
+            p,
+            ir.shrink(5.0),
+            Glyph::Info,
+            Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), (base.a() as f32 * t) as u8),
+        );
+        iresp.on_hover_text(help);
     }
     if resp.clicked() {
         if state.collapsed.contains(key) {
