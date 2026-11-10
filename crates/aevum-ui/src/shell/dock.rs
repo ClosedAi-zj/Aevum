@@ -487,7 +487,15 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
                     let overflowing = out.content_size.y > out.inner_rect.height() + 0.5;
                     let fade_bottom = ui.min_rect().bottom();
                     let fade_left = ui.min_rect().left();
-                    let fade_right = ui.min_rect().right();
+                    // 常驻滚动条占 `bar_width`：渐隐铺到 min_rect().right() 会把
+                    // 滚动条底部 14px 一并压暗。`ScrollArea` 从内容右侧切走了这一列，
+                    // 渐隐必须同样收进来，否则滚动条像断了一截。
+                    //
+                    // The always-visible scrollbar occupies `bar_width`: fading out to
+                    // min_rect().right() dims its bottom 14 px too. The scroll area takes
+                    // that column from the content's right edge, so the fade must stop
+                    // there as well or the bar looks broken.
+                    let fade_right = ui.min_rect().right() - ui.spacing().scroll.bar_width;
                     let pf = ui.painter();
                     if overflowing {
                         for s in 0..6u8 {

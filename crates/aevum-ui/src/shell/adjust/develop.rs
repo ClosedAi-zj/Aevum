@@ -295,6 +295,28 @@ fn dock_action(ui: &mut Ui, label: &str, fill: Color32, width: f32) -> egui::Res
 /// organisation moved.
 pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     ui.add_space(4.0);
+    // 「仅显示已改动」把参数全过滤掉时，面板只剩几张空组壳（快捷动作与配置文件
+    // 行不是参数，保留是对的），却没有任何一行解释「为什么空」。真的一条改动
+    // 都没有时补一句 dim 说明；只要有一根推子偏离默认就不画。
+    //
+    // With "only show changed" on and every parameter at its default the panel keeps
+    // empty group shells (quick actions and profile rows are not parameters and stay),
+    // but nothing explains why. Add one dim line only when nothing has changed.
+    if state.only_changed
+        && !crate::controls::SPECS
+            .iter()
+            .any(|s| (crate::controls::param_get(&state.params, s.field) - s.default).abs() > 1e-9)
+    {
+        let (row, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
+        ui.painter().text(
+            row.center(),
+            Align2::CENTER_CENTER,
+            crate::i18n::t!("没有已改动的参数"),
+            font(SIZE_SMALL),
+            dim(),
+        );
+    }
     let mut import_xmp = false;
     let mut export_xmp = false;
     // 面板顶部不再有动作条：设计稿里「复位」在基本组的 `.segmini` 凹槽右端，
@@ -1472,6 +1494,64 @@ mod only_changed_tests {
             .count();
         out.textures_delta.clear();
         n
+    }
+
+    /// 收集这一帧画出来的文字（含 Shape::Vec 里的嵌套层）。
+    fn painted_strings(ctx: &Context, state: &mut AppState) -> Vec<String> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+                egui::Shape::Vec(v) => {
+                    for s in v {
+                        walk(s, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(360.0, 3000.0))),
+                max_texture_side: Some(8192),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    adjust_develop(state, ui);
+                });
+            },
+        );
+        let mut texts = Vec::new();
+        for cs in &out.shapes {
+            walk(&cs.shape, &mut texts);
+        }
+        out.textures_delta.clear();
+        texts
+    }
+
+    /// 过滤后一个参数都不剩时要给解释，有一条改动时不能留着这句解释。
+    /// 用 `t!` 取当前语言的文案，判据跟语言切换无关。
+    ///
+    /// An empty filtered panel explains itself; once a parameter changes the line
+    /// must disappear. Resolve the text through `t!` so the assertion is language-safe.
+    #[test]
+    fn empty_filter_explains_why_the_panel_is_empty() {
+        let ctx = Context::default();
+        theme::apply(&ctx, 1.0);
+        let hint = crate::i18n::t!("没有已改动的参数").to_owned();
+        let mut state = AppState::new();
+        state.only_changed = true;
+        let empty = painted_strings(&ctx, &mut state);
+        assert!(
+            empty.iter().any(|t| t == &hint),
+            "过滤后全空，却没有一句解释（面板会像坏了）"
+        );
+        state.params.exposure = 0.35;
+        let busy = painted_strings(&ctx, &mut state);
+        assert!(
+            !busy.iter().any(|t| t == &hint),
+            "已经有一条改动了，还挂着「没有已改动的参数」"
+        );
     }
 
     /// 「仅显示已改动」：开关打开后，等于默认值的字段整行消失（不占行高），
