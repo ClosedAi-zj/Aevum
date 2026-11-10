@@ -222,27 +222,49 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
         // 页签文字按**实测宽度**截断：窄坞（280px）下英文 "Keyframes" 会压到
         // 相邻页签上；而三个汉字实际放得下，按字符数估算会误截成「关…」。
         //
+        // 选中页签对齐设计稿 `.grp-h .lb{font-weight:600}` 同一套：加粗 + 正文白
+        // （下划线保留）。测量与绘制必须用同一个 FontId——bold 更宽，拿常规
+        // 字体量出来的宽度去截粗体字，会截少不截多。
+        //
         // Truncate by **measured width**: on a 280 px dock the English "Keyframes"
         // bleeds into the next tab, while three CJK glyphs do fit -- a char-count
         // estimate wrongly cuts "关键帧" down to "关…".
+        //
+        // The active tab follows the design's `.grp-h .lb{font-weight:600}` family:
+        // bold + body-white text (underline stays). Measurement and painting must
+        // share one FontId -- bold is wider, so measuring with the regular face and
+        // clipping the bold paint truncates too late, never too early.
+        let font_id = if active {
+            bold(SIZE_SMALL)
+        } else {
+            font(SIZE_SMALL)
+        };
         let full = crate::i18n::tr(tab.cn());
         let avail = (r.width() - 6.0).max(1.0);
         let measured = p
-            .layout_no_wrap(full.to_owned(), font(SIZE_SMALL), text())
+            .layout_no_wrap(full.to_owned(), font_id.clone(), text())
             .size()
             .x;
+        // 截断字符数用**实测平均字宽**（measured / 字符数），不用字号常量：
+        // 粗体比常规宽一档，常量会估少宽度、截少字符，粗体页签仍可能压到邻签。
+        //
+        // The truncation budget uses the **measured average glyph width**
+        // (measured / char count), not a font-size constant: bold runs wider than
+        // regular, so a constant under-estimates and the clipped bold label can
+        // still bleed into the next tab.
         let label = if measured <= avail {
             full.to_owned()
         } else {
-            crate::theme::ellipsis(full, ((avail / SIZE_SMALL) as usize).max(1))
+            let per_char = measured / full.chars().count() as f32;
+            crate::theme::ellipsis(full, ((avail / per_char) as usize).max(1))
         };
         p.text(
             r.center(),
             Align2::CENTER_CENTER,
             label,
-            font(SIZE_SMALL),
+            font_id,
             if active {
-                on_selected()
+                text()
             } else if resp.hovered() {
                 text()
             } else {
