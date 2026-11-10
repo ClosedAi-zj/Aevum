@@ -997,6 +997,14 @@ fn view_menu(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
         &mut state.split,
         RichText::new(crate::i18n::t!("前后对比")).size(SIZE_BODY),
     );
+    // 画布铺满是画布这一族的观看方式，跟标尺/网格放一起，不和面板开关混排。
+    //
+    // Canvas fill is a way of *viewing the canvas*, same family as rulers/grid --
+    // keep it with those, not with the panel toggles below.
+    ui.checkbox(
+        &mut state.canvas_fill,
+        RichText::new(crate::i18n::t!("画布铺满窗口")).size(SIZE_BODY),
+    );
     menu_sep(ui);
     ui.checkbox(
         &mut state.show_left,
@@ -1013,6 +1021,26 @@ fn view_menu(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
     ui.checkbox(
         &mut state.show_film,
         RichText::new(crate::i18n::t!("胶片条")).size(SIZE_BODY),
+    );
+    // 工具轨 / 选项栏 / 流程条三个状态早就存在（show_rails / show_options /
+    // show_flow），只是菜单里没有入口，用户开不了——断头路。这里把它们接回：
+    // 勾选即开，取消即收，与 state 里的默认值（设计稿不画这三条带子）互补。
+    //
+    // The tool rails / options bar / flow strip have existed as state all along
+    // (show_rails / show_options / show_flow) but had no menu entry, so nobody
+    // could turn them on -- a dead end. Wire them back here: check to show,
+    // uncheck to hide; the state defaults (strips hidden) still match the design.
+    ui.checkbox(
+        &mut state.show_rails,
+        RichText::new(crate::i18n::t!("显示工具轨")).size(SIZE_BODY),
+    );
+    ui.checkbox(
+        &mut state.show_options,
+        RichText::new(crate::i18n::t!("显示工具选项栏")).size(SIZE_BODY),
+    );
+    ui.checkbox(
+        &mut state.show_flow,
+        RichText::new(crate::i18n::t!("显示流程步骤条")).size(SIZE_BODY),
     );
     ui.checkbox(
         &mut state.show_curves,
@@ -1139,6 +1167,37 @@ mod chrome_labels_tests {
                 tab.cn()
             );
         }
+    }
+
+    /// 视图菜单必须把四个早已有状态、却没有入口的布局开关接回来（show_rails /
+    /// show_options / show_flow / canvas_fill）：状态在而入口无，用户永远开不了，
+    /// 是断头路。菜单画得出这四行字，就是入口存在性的判据；勾选态由 egui
+    /// checkbox 自带，这里不重复断言勾选图形。
+    ///
+    /// The view menu must wire back the four layout switches that existed as state but
+    /// had no entry (show_rails / show_options / show_flow / canvas_fill): state without
+    /// an entry is a dead end nobody can open. The menu painting these four labels is
+    /// the evidence that the entries exist; the checkmark itself is egui's, not ours to
+    /// assert again.
+    #[test]
+    fn view_menu_carries_the_four_layout_switches() {
+        let ctx = Context::default();
+        theme::apply(&ctx, 1.0);
+        let mut state = AppState::demo();
+        state.install_demo_textures(&ctx);
+        let mut out = ctx.run_ui(input(vec![]), |ui| view_menu(&mut state, ui, &ctx));
+        let mut text = String::new();
+        for clipped in &out.shapes {
+            if let egui::Shape::Text(t) = &clipped.shape {
+                text.push_str(t.galley.text());
+                text.push('\n');
+            }
+        }
+        for want in ["显示工具轨", "显示工具选项栏", "显示流程步骤条", "画布铺满窗口"] {
+            assert!(text.contains(want), "视图菜单缺「{want}」：\n{text}");
+        }
+        // 与 painted_text 同一条口径：textures_delta 不清会在 Drop 时炸断言。
+        out.textures_delta.clear();
     }
 
     /// 队列表格：列头 + 每行自己的进度。整屏只有一行总进度时，
