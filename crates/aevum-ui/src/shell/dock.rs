@@ -98,14 +98,47 @@ fn dock_tools(state: &mut AppState, ui: &mut Ui) {
             muted()
         },
     );
+    // 开关 affordance：一枚 12px 复选框 + 选中勾。纯右对齐文字看不出能点。
+    //
+    // Toggle affordance: a 12 px checkbox with a tick. Right-aligned plain text
+    // does not read as clickable.
+    const BOX: f32 = 12.0;
     let dot_w = if state.only_changed { 9.0 } else { 0.0 };
-    let w = galley.size().x + 12.0 + dot_w;
+    let w = galley.size().x + 12.0 + dot_w + BOX + 6.0;
     let chip = Rect::from_min_max(
         Pos2::new(row.right() - w, row.center().y - 12.0),
         Pos2::new(row.right(), row.center().y + 12.0),
     );
     let resp = ui.interact(chip, ui.make_persistent_id("only-changed"), Sense::click());
     let p = ui.painter().clone();
+    let box_r = Rect::from_min_size(
+        Pos2::new(chip.left() + 6.0, chip.center().y - BOX * 0.5),
+        Vec2::splat(BOX),
+    );
+    if state.only_changed {
+        p.rect_filled(box_r, 3.0, accent());
+        p.line_segment(
+            [
+                Pos2::new(box_r.left() + 2.5, box_r.center().y),
+                Pos2::new(box_r.center().x - 1.0, box_r.bottom() - 3.0),
+            ],
+            Stroke::new(1.4, Color32::WHITE),
+        );
+        p.line_segment(
+            [
+                Pos2::new(box_r.center().x - 1.0, box_r.bottom() - 3.0),
+                Pos2::new(box_r.right() - 2.0, box_r.top() + 2.5),
+            ],
+            Stroke::new(1.4, Color32::WHITE),
+        );
+    } else {
+        p.rect_stroke(
+            box_r,
+            3.0,
+            Stroke::new(1.0, border_strong()),
+            StrokeKind::Inside,
+        );
+    }
     if state.only_changed {
         p.rect_filled(chip, 4.0, accent_dim());
         p.rect_stroke(
@@ -119,7 +152,7 @@ fn dock_tools(state: &mut AppState, ui: &mut Ui) {
         p.rect_filled(chip, 4.0, elev());
     }
     p.text(
-        Pos2::new(chip.left() + 6.0 + dot_w, chip.center().y),
+        Pos2::new(chip.left() + 6.0 + BOX + 6.0 + dot_w, chip.center().y),
         Align2::LEFT_CENTER,
         crate::i18n::t!("仅显示已改动"),
         font(SIZE_BODY),
@@ -366,7 +399,7 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
                     left: 10,
                     right: 10,
                     top: 10,
-                    bottom: 12,
+                    bottom: 8,
                 })
                 .show(ui, |ui| {
                     // 直方图已搬到画布左上浮动卡片（设计稿 .histcard）：
@@ -386,9 +419,17 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
                     // what it holds; it only reaches the cap (and starts scrolling) when the
                     // content asks for more. Never shrink horizontally ([false, _]): the card
                     // is exactly `dock_w` wide, or short content would narrow it.
+                    // 短窗内容超出视口时常驻一条细滚动条：没有它用户会以为右栏
+                    // 只有两组，看不到「色彩分级 / 更多分组」在下面。
+                    //
+                    // Keep a thin scrollbar visible when content overflows in short
+                    // windows: without it users think the panel only has two groups.
                     let mut scroll = ScrollArea::vertical()
                         .id_salt("dock-scroll")
-                        .auto_shrink([false, true]);
+                        .auto_shrink([false, true])
+                        .scroll_bar_visibility(
+                            egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                        );
                     if state.dock_scroll_end {
                         // 只推一次：每一帧都写超大偏移会把内容画到裁剪区外。
                         // egui 在本帧末把偏移钳到底部，后面的帧就停在底部。

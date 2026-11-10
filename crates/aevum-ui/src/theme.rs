@@ -902,7 +902,7 @@ pub fn group_ring() -> Color32 {
         } else {
             Color32::WHITE
         },
-        if is_light() { 22 } else { 15 },
+        if is_light() { 30 } else { 26 },
     )
 }
 

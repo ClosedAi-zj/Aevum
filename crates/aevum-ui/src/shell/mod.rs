@@ -992,6 +992,28 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
                 bg,
                 egui::Shape::Vec(vec![egui::Shape::Rect(shadow), egui::Shape::Rect(body)]),
             );
+            // 短窗内容被截断时，细滚动条在深底上几乎看不见：再叠一条 12px
+            // 由透明到卡底色的渐隐带，明确告诉用户「下面还有分组」。内容能
+            // 完整显示时不画，避免凭空多一条灰带。
+            //
+            // In short windows the thin scrollbar is nearly invisible on a dark
+            // surface: add a 12 px transparent-to-card fade at the bottom to say
+            // "there are more groups below". Not drawn when everything fits.
+            if card.height() >= cap - 2.0 {
+                let overlay = ui.painter().clone();
+                for k in 0..4 {
+                    let alpha = ((k + 1) as f32 / 4.0 * 225.0) as u8;
+                    let band = Rect::from_min_size(
+                        Pos2::new(card.left(), card.bottom() - 12.0 + k as f32 * 3.0),
+                        Vec2::new(card.width(), 3.0),
+                    );
+                    overlay.rect_filled(
+                        band,
+                        0.0,
+                        Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha),
+                    );
+                }
+            }
         });
 }
 
@@ -1126,7 +1148,15 @@ pub(super) fn view_tools(state: &mut AppState, ui: &mut Ui, content: Rect) {
             Vec2::new(ICON, ICON),
         );
         let resp = ui.interact(r, ui.make_persistent_id(("viewtool", i)), Sense::click());
-        if resp.hovered() {
+        // 背景层必须画在图标之前：选中态填充若后画会盖住 glyph，短窗里就读成
+        // 一块没有图标的深色方块。选中优先于 hover，只铺一次。
+        //
+        // The background layer must precede the glyph: painting the active fill
+        // afterwards covers the icon and reads as a blank dark square in short
+        // windows. Active wins over hover, painted once.
+        if *on {
+            p.rect_filled(r, radius_control(), elev());
+        } else if resp.hovered() {
             p.rect_filled(r, radius_control(), elev_hover());
         }
         // 14px 图标：24 的槽里各边收 5。
@@ -1148,6 +1178,10 @@ pub(super) fn view_tools(state: &mut AppState, ui: &mut Ui, content: Rect) {
         //
         // Active state: a 2 px blue bar at the bottom (the design's `.ibtn.on`).
         if *on {
+            // 选中态的抬升底已在背景层铺过；这里只补蓝弧。
+            //
+            // The raised active fill is already in the background layer; only the
+            // blue arc remains here.
             // 效果图是短而圆头的蓝弧：收窄到 12px、圆角 3，比一条通宽的直条
             // 更像「选中」而不是「进度」。
             //

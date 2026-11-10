@@ -75,7 +75,7 @@ fn collapse_groups_chip(ui: &mut Ui, state: &mut AppState) {
     p.text(
         row.center(),
         Align2::CENTER_CENTER,
-        format!("{} ▴", crate::i18n::t!("收起分组")),
+        format!("{} ▲", crate::i18n::t!("收起分组")),
         font(SIZE_SMALL),
         if resp.hovered() { text() } else { dim() },
     );
@@ -91,7 +91,7 @@ fn collapse_groups_chip(ui: &mut Ui, state: &mut AppState) {
 fn more_groups_chip(ui: &mut Ui, state: &mut AppState) {
     let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::click());
     let p = ui.painter().clone();
-    let label = format!("{} ▸", crate::i18n::t!("更多分组"));
+    let label = format!("{} ▼", crate::i18n::t!("更多分组"));
     if resp.hovered() {
         p.rect_filled(row, radius_control(), elev());
     }

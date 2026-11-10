@@ -456,3 +456,51 @@ fn options_bar_sits_on_the_dock_layer() {
         "选项栏又用回 chrome（三档交错回归）"
     );
 }
+
+/// 绘制文本里不许出现豆腐块 glyph：小三角 / 汉堡符不在可靠字族的字形表里，
+/// 会渲染成空方框，直接毁掉「做完了」的观感（见 shell/library.rs 的同类修复）。
+/// 只扫代码行；文档注释里举例说明这个坑的句子由注释行排除，和 `clean()` 同口径。
+///
+/// No tofu glyphs in painted text: small triangles / hamburger marks are not in the
+/// reliable font tables and render as empty boxes (same fix as shell/library.rs).
+/// Only code lines are scanned; doc lines explaining the trap are excluded, like `clean()`.
+#[test]
+fn widget_text_never_uses_tofu_glyphs() {
+    fn rs_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    rs_files(&p, out);
+                } else if p.extension().and_then(|x| x.to_str()) == Some("rs") {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rs_files(&root, &mut files);
+    assert!(files.len() > 20, "没扫到源码：{} 个文件", files.len());
+    const BAD: [char; 4] = ['\u{25b8}', '\u{25be}', '\u{2630}', '\u{25b4}'];
+    let mut hits = Vec::new();
+    for f in &files {
+        let raw = std::fs::read_to_string(f).unwrap_or_default();
+        for (i, line) in raw.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            if BAD.iter().any(|c| line.contains(*c)) {
+                hits.push(format!(
+                    "{}:{}",
+                    f.strip_prefix(&root).unwrap_or(f).display(),
+                    i + 1
+                ));
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "绘制文本里出现豆腐块 glyph（▸ ▾ ☰ ▴），改成自绘或字体确有的字形：\n{hits:?}"
+    );
+}

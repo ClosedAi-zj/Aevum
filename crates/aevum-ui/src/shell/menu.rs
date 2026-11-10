@@ -368,6 +368,18 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     for (glyph, enabled, id, hint) in actions {
         let r = Rect::from_center_size(Pos2::new(x + 12.0, mid), Vec2::splat(24.0));
         let resp = ui.interact(r, ui.make_persistent_id(id), Sense::click());
+        // 禁用态也给一圈极淡的底框：纯 dim 图标会融进背景、看不出这里能点。
+        //
+        // Even the disabled state gets a faint outline: a bare dim icon melts into
+        // the background and hides the fact that a button exists here.
+        if !enabled {
+            p.rect_stroke(
+                r.shrink(1.0),
+                radius_control(),
+                Stroke::new(1.0, group_ring()),
+                egui::StrokeKind::Inside,
+            );
+        }
         if resp.hovered() && enabled {
             p.rect_filled(r, radius_control(), elev());
         }
@@ -421,11 +433,11 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         Pos2::new(x, full.top() + 6.0),
         Vec2::new(doc_w, full.height() - 12.0),
     );
-    p.text(
+    let name_galley = p.layout_no_wrap(doc_name.clone(), crate::theme::bold(13.0), text());
+    let title_w = name_galley.size().x;
+    p.galley(
         Pos2::new(doc.left(), doc.center().y - 7.0),
-        Align2::LEFT_CENTER,
-        doc_name,
-        crate::theme::bold(13.0),
+        name_galley,
         text(),
     );
     // 副标题：`1,387 帧 · 24 fps · DC-S5M2`（设计稿 `.doc span`）。机型取当前帧 EXIF，
@@ -458,9 +470,11 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         Pos2::new(doc.left(), doc.center().y + 8.0),
         Vec2::new(badge_w, 14.0),
     );
-    p.rect_filled(badge, 3.0, elev());
+    // 元数据是纯文本，不是禁用按钮：去掉那块 pill 底。
+    //
+    // Metadata is plain text, not a disabled button: drop the pill fill.
     p.text(
-        Pos2::new(badge.left() + 4.0, badge.center().y),
+        Pos2::new(badge.left(), badge.center().y),
         Align2::LEFT_CENTER,
         badge_label,
         font(9.0),
@@ -472,7 +486,10 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // Close-sequence X: calls `state.close()` (saves the project, clears in-memory
     // state, never touches footage on disk). With no sequence it is not drawn at all.
     if state.seq.is_some() {
-        let close_r = Rect::from_center_size(Pos2::new(doc.right() + 12.0, mid), Vec2::splat(20.0));
+        let close_r = Rect::from_center_size(
+            Pos2::new(doc.left() + title_w.max(badge_w) + 12.0, mid),
+            Vec2::splat(20.0),
+        );
         let cr = ui.interact(
             close_r,
             ui.make_persistent_id("tb-close-doc"),
@@ -664,7 +681,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 w.hovered.fg_stroke = Stroke::new(1.0, text());
                 ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
                 ui.menu_button(
-                    RichText::new(format!("{more_label} ▾")).size(SIZE_CHROME_LABEL),
+                    RichText::new(format!("{more_label} ▼")).size(SIZE_CHROME_LABEL),
                     |ui| {
                         menu_style(ui);
                         for (i, m) in Module::ALL.iter().enumerate() {
@@ -935,7 +952,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             w.hovered.bg_stroke = Stroke::NONE;
             w.hovered.fg_stroke = Stroke::new(1.0, text());
             ui.spacing_mut().button_padding = Vec2::new(6.0, 4.0);
-            ui.menu_button(RichText::new("☰").size(SIZE_TITLE), |ui| {
+            ui.menu_button(RichText::new("···").size(SIZE_TITLE), |ui| {
                 menu_style(ui);
                 ui.menu_button(crate::i18n::t!("文件"), |ui| file_menu(state, ui, ctx));
                 ui.menu_button(crate::i18n::t!("编辑"), |ui| edit_menu(state, ui, ctx));

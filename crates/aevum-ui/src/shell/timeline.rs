@@ -48,7 +48,7 @@ const CURVE_W: f32 = 34.0;
 /// 筛选组里星级 / 旗标 / 色标的格距（`.star-filter button{width:14px}`）。
 const DOT: f32 = 14.0;
 /// 筛选组内元素间距（`.filters{gap:4px}`）。
-const FGAP: f32 = 4.0;
+const FGAP: f32 = 6.0;
 
 /// 缩略图行高：由 `state.film_height()` 决定（它按首帧比例算），但卡片里的一格
 /// 固定到设计稿的 56px——超出的部分不再把整张卡撑高。
