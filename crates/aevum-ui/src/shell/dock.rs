@@ -953,7 +953,11 @@ mod dock_paint_tests {
         state.hist = Some(spiky_hist());
         let mut draw = |ui: &mut Ui| histogram(ui, &mut state);
         let mut out = ctx.run_ui(input(320.0, 200.0), &mut draw);
-        let well = widgets::mix(theme::field(), Color32::BLACK, 0.42);
+        let well = if theme::is_light() {
+            widgets::mix(theme::field(), Color32::BLACK, 0.12)
+        } else {
+            theme::field()
+        };
         let mut well_rect = None;
         for clipped in &out.shapes {
             if let egui::Shape::Rect(r) = &clipped.shape
@@ -1060,7 +1064,16 @@ mod dock_paint_tests {
                     // not come back. The histogram's own inset well is exempt: it is one
                     // near-black slab with a faint tint that the literal "opaque coloured
                     // rect" criterion would otherwise catch.
-                    let well = widgets::mix(theme::field(), Color32::BLACK, 0.42);
+                    // 豁免色必须跟实现同步：深色主题凹槽底现在就是 field 本身
+                    // （见 histogram 内注释），浅色主题仍压 12%。
+                    //
+                    // The exemption must track the implementation: the dark-theme well is
+                    // field itself now (see histogram), light still darkens 12%.
+                    let well = if theme::is_light() {
+                        widgets::mix(theme::field(), Color32::BLACK, 0.12)
+                    } else {
+                        theme::field()
+                    };
                     let opaque_colored = r.fill.a() > 100
                         && (r.fill[0] != r.fill[1] || r.fill[1] != r.fill[2])
                         && r.fill != well;
