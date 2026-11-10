@@ -1765,4 +1765,9 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("更多分组", "More groups"),
     ("收起分组", "Fewer groups"),
     ("曲线 / 颜色混合器 / 细节 / 光学 / 效果 / 蒙版", "Curve / Colour mixer / Detail / Optics / Effects / Masks"),
+    ("恒晷", "Aevum"),
+    ("撤销 (Ctrl+Z)", "Undo (Ctrl+Z)"),
+    ("重做 (Ctrl+Shift+Z)", "Redo (Ctrl+Shift+Z)"),
+    ("切换面板左右", "Swap panel side"),
+    ("关闭当前序列", "Close current sequence"),
 ];

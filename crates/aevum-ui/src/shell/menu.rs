@@ -334,6 +334,78 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         x = tile.right() + 10.0;
     }
 
+    // 品牌名 + 文档动作簇（设计稿 `.toolbar` 左段：logo 恒晷 → 撤销/重做/面板 →
+    // 文档名 → 关闭）。此前顶栏只有 logo 和文档名，整段比设计稿短了约 160px，
+    // chips 与工具簇因此整体左移；四枚按钮全部接真实入口，不放摆设。
+    //
+    // Brand name + document action cluster (the design's `.toolbar` left section:
+    // logo/name -> undo/redo/panels -> doc name -> close). The bar used to carry only
+    // the logo and the doc name, ~160 px shorter than the design, which pulled the
+    // chips and tool cluster to the left. All four buttons hit real entry points.
+    let brand_label = crate::i18n::t!("恒晷");
+    let brand_galley = p.layout_no_wrap(brand_label.to_string(), crate::theme::bold(13.0), text());
+    p.galley(
+        Pos2::new(x, mid - brand_galley.size().y * 0.5),
+        brand_galley.clone(),
+        text(),
+    );
+    x += brand_galley.size().x + 14.0;
+    let actions: [(Glyph, bool, &str, &str); 3] = [
+        (
+            Glyph::Undo,
+            state.history.can_undo(),
+            "tb-undo",
+            "撤销 (Ctrl+Z)",
+        ),
+        (
+            Glyph::Redo,
+            state.history.can_redo(),
+            "tb-redo",
+            "重做 (Ctrl+Shift+Z)",
+        ),
+        (Glyph::Panels, true, "tb-panels", "切换面板左右"),
+    ];
+    for (glyph, enabled, id, hint) in actions {
+        let r = Rect::from_center_size(Pos2::new(x + 12.0, mid), Vec2::splat(24.0));
+        let resp = ui.interact(r, ui.make_persistent_id(id), Sense::click());
+        if resp.hovered() && enabled {
+            p.rect_filled(r, radius_control(), elev());
+        }
+        icons::paint(
+            &p,
+            r.shrink(5.0),
+            glyph,
+            if !enabled {
+                dim()
+            } else if resp.hovered() {
+                text()
+            } else {
+                muted()
+            },
+        );
+        if resp.clicked() && enabled {
+            match glyph {
+                Glyph::Undo => {
+                    run_history_command(state, ctx, "history.undo", &serde_json::json!({}));
+                }
+                Glyph::Redo => {
+                    run_history_command(state, ctx, "history.redo", &serde_json::json!({}));
+                }
+                Glyph::Panels => {
+                    state.layout.dock_side = if state.layout.dock_side.is_left() {
+                        crate::layout::Side::Right
+                    } else {
+                        crate::layout::Side::Left
+                    };
+                }
+                _ => {}
+            }
+        }
+        resp.on_hover_text(crate::i18n::tr(hint));
+        x += 28.0;
+    }
+    x += 6.0;
+
     // 文档块：文件名 + 类型徽标 + 帧数/帧率（设计稿 `.doc{flex-direction:column}`）。
     // 名称取序列根目录名；没有序列时写「未打开序列」，不摆假文件名。
     //
@@ -394,7 +466,35 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         font(9.0),
         muted(),
     );
-    x = doc.right() + 12.0;
+    // 关闭序列 ×：走 `state.close()`（存工程后清空，不动磁盘素材）。没有序列时
+    // 不画空按钮——一个点了没东西可关的 × 就是假控件。
+    //
+    // Close-sequence X: calls `state.close()` (saves the project, clears in-memory
+    // state, never touches footage on disk). With no sequence it is not drawn at all.
+    if state.seq.is_some() {
+        let close_r = Rect::from_center_size(Pos2::new(doc.right() + 12.0, mid), Vec2::splat(20.0));
+        let cr = ui.interact(
+            close_r,
+            ui.make_persistent_id("tb-close-doc"),
+            Sense::click(),
+        );
+        if cr.hovered() {
+            p.rect_filled(close_r, radius_control(), elev());
+        }
+        icons::paint(
+            &p,
+            close_r.shrink(6.0),
+            Glyph::Close,
+            if cr.hovered() { text() } else { muted() },
+        );
+        if cr.clicked() {
+            state.close();
+        }
+        cr.on_hover_text(crate::i18n::t!("关闭当前序列"));
+        x = close_r.right() + 14.0;
+    } else {
+        x = doc.right() + 12.0;
+    }
 
     // 缩放：64px 轨道 + 46px 百分比（设计稿 `.zoomc .mini{width:64px} .pct{width:46px}`）。
     // 拖动轨道改 `state.zoom`；点百分比回 100%。轨道上的滑块位置按 0..=400% 映射。
@@ -509,7 +609,8 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let seg_w: f32 = widths.iter().sum::<f32>() + 2.0 * (widths.len() as f32 - 1.0) + 4.0;
     let seg_h = 28.0;
     let seg_x = x + 16.0;
-    if seg_x + seg_w < zone_right_pre(full, &c) {
+    let seg_drawn = seg_x + seg_w < zone_right_pre(full, &c);
+    if seg_drawn {
         let seg = Rect::from_min_size(Pos2::new(seg_x, mid - seg_h / 2.0), Vec2::new(seg_w, seg_h));
         p.rect_filled(seg, 8.0, Color32::from_rgb(0x26, 0x28, 0x2c));
         let mut cx = seg.left() + 2.0;
@@ -585,6 +686,125 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     },
                 );
             },
+        );
+    }
+
+    // 工具簇（设计稿 `.toolcluster`，html 750 行）：chips 右侧的六枚工具图标。
+    // 每枚是 28×28 的 `.ibtn`（图标 16、圆角 `--rk` 6、簇内 gap 8），两侧各一条
+    // `.vdiv`（1×20，`--hair`）细隔线；选中 = `--blue-soft`（accent 18% 罩在顶栏
+    // `--bar` 上）+ 底缘 2px 强调条（`.ibtn.on` 的 `inset 0 -2px 0 var(--blue)`）。
+    // 此前工具轨默认收起后这簇图标跟着消失，切工具只剩键盘——加回顶栏，工具
+    // 永远有一个可见的落点，与设计稿顶栏构图逐枚对齐。
+    //
+    // The tool cluster (the design's `.toolcluster`, html line 750): six tool icons to
+    // the right of the chips. Each is a 28x28 `.ibtn` (16 px icon, `--rk` 6 radius, 8 px
+    // gap), flanked by two 1x20 `.vdiv` hairlines (`--hair`); the active one takes
+    // `--blue-soft` (18% accent over the bar fill) plus a 2 px accent strip on the bottom
+    // edge (`.ibtn.on`'s `inset 0 -2px 0 var(--blue)`). With the tool rails folded away
+    // by default this cluster used to vanish and tools became keyboard-only -- bringing
+    // it back gives every tool a visible home in the top bar, per the design.
+    // 设计稿在 ≤1400px 用媒体查询整簇隐藏。用户明确要求「图标常驻」，所以这里不
+    // 隐藏，改成压缩：空间不够时 28/8 收成 24/4，宁可小一点也不让工具消失。
+    // 旧实现用严格 `<` 做空间判据，右锚后边界恰好相等就把整簇静默吞掉。
+    //
+    // The design hides the whole cluster under 1400 px via a media query. The user
+    // explicitly wants the icons to stay, so instead of hiding we compact: 28/8 becomes
+    // 24/4 when space is tight. The old strict `<` space test silently swallowed the
+    // whole cluster once right-anchoring made the boundary exactly equal.
+    // 右簇留白锚点：视觉比对（顶栏右半 2×）实测工具簇落在目标左侧约 95px，
+    // 根因是右簇估宽太保守、锚点被 chips 右缘的 max() 吃掉。收到 90 会压到「任务」
+    // 上，回到 150 又偏左；125 是实测不重叠且离目标最近的一档（差约 40px）。
+    //
+    // Right-group whitespace anchor: a 2x top-bar comparison measured the tool cluster
+    // ~95 px left of the target because the estimated right-group width was too
+    // conservative and the anchor was swallowed by max() at the chips' right edge.
+    // 90 overlaps the tasks pill, 150 sits too far left; 125 measured as the closest
+    // non-overlapping value (~40 px from the target).
+    let tc_right_limit = zone_right_pre(full, &c) - 125.0;
+    let tc_after_chips = if seg_drawn {
+        seg_x + seg_w + 8.0
+    } else {
+        full.left() + 12.0
+    };
+    let room = tc_right_limit - tc_after_chips;
+    let (tc_btn, tc_gap, tc_icon) = if room < 6.0 * 28.0 + 5.0 * 8.0 + 18.0 {
+        (24.0, 4.0, 14.0)
+    } else {
+        (28.0, 8.0, 16.0)
+    };
+    let tc_w = Tool::ALL.len() as f32 * tc_btn + (Tool::ALL.len() as f32 - 1.0) * tc_gap;
+    // 右锚：设计稿顶栏是「左段 / 中段 / 右段」的弹性排布，工具簇紧贴右侧动作簇，
+    // 不是紧跟在 chips 后面。之前按左排画，簇整体比目标偏左约 300px——用户说的
+    // 「图标全被搞丢了」有一半是这个位置问题。空间不够时才退回 chips 后面。
+    //
+    // Right-anchored: the design's bar is a flex layout of left / centre / right
+    // sections, with the tool cluster hugging the right action group instead of
+    // following the chips. Left-aligned painting put it ~300 px left of the reference
+    // -- half of the "icons are gone" report was this position. It falls back to just
+    // after the chips only when there is not enough room.
+    let tc_left = (tc_right_limit - tc_w - 18.0).max(tc_after_chips);
+    if seg_drawn && full.width() > 900.0 {
+        // 左隔线：`.vdiv{width:1px;height:20px;background:var(--hair)}`。
+        p.rect_filled(
+            Rect::from_min_size(Pos2::new(tc_left, mid - 10.0), Vec2::new(1.0, 20.0)),
+            0.0,
+            border(),
+        );
+        let mut tx = tc_left + 1.0 + tc_gap;
+        for (ti, t) in Tool::ALL.iter().enumerate() {
+            let r = Rect::from_min_size(Pos2::new(tx, mid - tc_btn * 0.5), Vec2::splat(tc_btn));
+            tx += tc_btn + tc_gap;
+            let resp = ui.interact(r, ui.make_persistent_id(("top-tool", ti)), Sense::click());
+            let on = state.tool == *t;
+            if on {
+                // `--blue-soft: rgba(10,132,255,.18)`：accent 以 18% 透明罩在顶栏底上，
+                // 等价于把 alpha 46 的 accent 直接叠画在已铺好的 bar() 上。
+                //
+                // `--blue-soft` is 18% accent over the bar fill; painting the accent at
+                // alpha 46 over the already-filled bar is the same blend.
+                let a = accent();
+                p.rect_filled(
+                    r,
+                    radius_control(),
+                    Color32::from_rgba_unmultiplied(a[0], a[1], a[2], 46),
+                );
+                // `inset 0 -2px 0 var(--blue)`：底缘 2px 强调条；圆角 6 的两端各收
+                // 4px，避免直角条戳出圆角外。
+                //
+                // The 2 px bottom accent strip per the inset shadow; inset 4 px on both
+                // ends so the square strip stays inside the 6 px rounded corners.
+                p.rect_filled(
+                    Rect::from_min_max(
+                        Pos2::new(r.left() + 4.0, r.bottom() - 2.0),
+                        Pos2::new(r.right() - 4.0, r.bottom()),
+                    ),
+                    1.0,
+                    accent(),
+                );
+            } else if resp.hovered() {
+                // `.ibtn:hover{background:var(--raised)}`。
+                p.rect_filled(r, radius_control(), elev());
+            }
+            icons::paint(
+                &p,
+                Rect::from_center_size(r.center(), Vec2::splat(tc_icon)),
+                t.glyph(),
+                if on || resp.hovered() {
+                    text()
+                } else {
+                    muted()
+                },
+            );
+            if resp.clicked() {
+                state.set_tool(*t);
+            }
+            resp.on_hover_text(crate::i18n::tr(t.hint()).to_string());
+        }
+        // 右隔线。
+        p.rect_filled(
+            Rect::from_min_size(Pos2::new(tx, mid - 10.0), Vec2::new(1.0, 20.0)),
+            0.0,
+            border(),
         );
     }
 

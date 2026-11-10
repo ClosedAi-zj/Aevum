@@ -92,15 +92,31 @@ const SN: f32 = 16.0;
 pub(super) fn nav(state: &mut AppState, ui: &mut egui::Ui, top_center: Pos2) {
     let p = ui.painter().clone();
     // 先量宽：卡片要按内容居中，而不是先摆一个固定宽再塞文字。
+    // `.cnt` 徽标占位也要算进按钮宽（设计稿里徽标在 flow 里：gap 8 + 徽标自身宽），
+    // 否则角标会压在名称或右内距上——任务数是一位数时徽标 min-width 14，
+    // 两位数起按字宽 + 左右各 3px 放宽。
     //
-    // Measure first: the card centres on its content instead of a fixed width.
+    // Measure first: the card centres on its content instead of a fixed width. The `.cnt`
+    // badge takes part in the button width (in the design it sits in flow: 8 px gap plus
+    // the badge itself); otherwise the badge lands on the label or the right padding. The
+    // badge is min-width 14 with 3 px side padding, widening with digits from two up.
+    let running = state.running_jobs();
     let mut widths = Vec::with_capacity(Bench::ALL.len());
     for b in Bench::ALL {
         let label = crate::i18n::tr(b.cn());
         let galley =
             ui.painter()
                 .layout_no_wrap(label.to_string(), FontId::proportional(12.0), text());
-        widths.push(6.0 + SN + 8.0 + galley.size().x + 10.0);
+        let mut w = 6.0 + SN + 8.0 + galley.size().x + 10.0;
+        if b == Bench::Tasks && running > 0 {
+            let cnt = ui.painter().layout_no_wrap(
+                format!("{running}"),
+                FontId::proportional(9.0),
+                warn(),
+            );
+            w += 8.0 + (cnt.size().x + 6.0).max(14.0);
+        }
+        widths.push(w);
     }
     let total: f32 = widths.iter().sum::<f32>() + 2.0 * (Bench::ALL.len() as f32 - 1.0);
     let card_w = total + PAD * 2.0;
@@ -139,9 +155,19 @@ pub(super) fn nav(state: &mut AppState, ui: &mut egui::Ui, top_center: Pos2) {
         let resp = ui.interact(r, ui.make_persistent_id(("bench", b.no())), Sense::click());
         let on = state.bench == *b;
         if on {
+            // `.wsbar button.on{background:var(--raised)}`：选中与 hover 同一档抬升，
+            // 选中语义由 `.sn` 的强调底承担。
+            //
+            // `.wsbar button.on` takes `--raised`: selection reads through the accent
+            // number badge, so the fill stays on the same raised step as hover.
             p.rect_filled(r, BTN_R, elev());
         } else if resp.hovered() {
-            p.rect_filled(r, BTN_R, elev_hover());
+            // `.wsbar button:hover{background:var(--raised)}`（旧版用了更亮一档的
+            // raised2，和选中态脱节）。
+            //
+            // `.wsbar button:hover` is also `--raised`; the old code took the brighter
+            // raised2 step and drifted apart from the selected state.
+            p.rect_filled(r, BTN_R, elev());
         }
         // 编号块。
         let sn = Rect::from_min_size(
@@ -165,28 +191,31 @@ pub(super) fn nav(state: &mut AppState, ui: &mut egui::Ui, top_center: Pos2) {
             if on || resp.hovered() { text() } else { dim() },
         );
         // 任务数角标（设计稿 `.cnt`）：只在任务工作台有进行中的任务时出现。
+        // 徽标贴着右内距（10px）收边，宽度量字定：min-width 14、左右各 3px，
+        // 两位数不再挤在 14px 的方框里。
         //
-        // Badge per `.cnt`: only when the tasks bench has something running.
-        if *b == Bench::Tasks {
-            let running = state.running_jobs();
-            if running > 0 {
-                let badge = Rect::from_min_size(
-                    Pos2::new(r.right() - 20.0, r.center().y - 7.0),
-                    Vec2::new(14.0, 14.0),
-                );
-                p.rect_filled(
-                    badge,
-                    4.0,
-                    Color32::from_rgba_unmultiplied(245, 184, 61, 41),
-                );
-                p.text(
-                    badge.center(),
-                    Align2::CENTER_CENTER,
-                    format!("{running}"),
-                    FontId::proportional(9.0),
-                    warn(),
-                );
-            }
+        // Badge per `.cnt`: only when the tasks bench has something running. It closes
+        // against the 10 px right padding with a measured width -- min-width 14 plus 3 px
+        // per side -- so multi-digit counts no longer squeeze into a fixed 14 px box.
+        if *b == Bench::Tasks && running > 0 {
+            let cnt_gal = p.layout_no_wrap(format!("{running}"), FontId::proportional(9.0), warn());
+            let badge_w = (cnt_gal.size().x + 6.0).max(14.0);
+            let badge = Rect::from_min_size(
+                Pos2::new(r.right() - 10.0 - badge_w, r.center().y - 7.0),
+                Vec2::new(badge_w, 14.0),
+            );
+            p.rect_filled(
+                badge,
+                4.0,
+                Color32::from_rgba_unmultiplied(245, 184, 61, 41),
+            );
+            p.text(
+                badge.center(),
+                Align2::CENTER_CENTER,
+                format!("{running}"),
+                FontId::proportional(9.0),
+                warn(),
+            );
         }
         if resp.clicked() {
             pick = Some(*b);

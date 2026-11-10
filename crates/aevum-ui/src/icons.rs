@@ -47,6 +47,13 @@ pub enum Glyph {
     KeyframeSet,
     Reset,
     History,
+    /// 顶栏文档动作簇（设计稿 `.toolbar` 左段）：撤销 / 重做 / 面板左右 / 关闭序列。
+    ///
+    /// Top-bar document action cluster (the design's `.toolbar` left section): undo,
+    /// redo, swap panel side, close sequence.
+    Undo,
+    Redo,
+    Panels,
     Close,
     Export,
     Help,
@@ -483,6 +490,28 @@ pub fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32) {
                 color,
                 Stroke::NONE,
             ));
+        }
+        Glyph::Undo | Glyph::Redo => {
+            // 一条回头弧 + 两笔箭头；重做就是左右镜像，不另画一套。
+            //
+            // A turning arc plus two arrow strokes; redo is just the horizontal mirror.
+            let mirror = matches!(glyph, Glyph::Redo);
+            let f = |x: f32| if mirror { 1.0 - x } else { x };
+            let a = pt(r, f(0.86), 0.62);
+            let b = pt(r, f(0.62), 0.78);
+            let c = pt(r, f(0.32), 0.66);
+            let d = pt(r, f(0.20), 0.40);
+            painter.add(Shape::line(vec![a, b, c, d], st));
+            seg(painter, d, pt(r, f(0.08), 0.52), st);
+            seg(painter, d, pt(r, f(0.34), 0.36), st);
+        }
+        Glyph::Panels => {
+            // 带中缝的双栏：点它在左右之间搬检查器。
+            //
+            // Two columns split by a seam: clicking it moves the inspector between sides.
+            let body = scaled(r, 0.10, 0.16, 0.90, 0.84);
+            painter.rect_stroke(body, 1, st, StrokeKind::Inside);
+            seg(painter, pt(r, 0.5, 0.16), pt(r, 0.5, 0.84), st);
         }
         Glyph::History => {
             // macOS 的「时间 + 回头」：几乎一整个表盘，缺口在左上，箭头逆时针指回去，
