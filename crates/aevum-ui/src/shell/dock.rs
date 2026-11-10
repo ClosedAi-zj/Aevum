@@ -69,24 +69,25 @@ fn dock_resize_handle(state: &mut AppState, ui: &mut Ui, card: Rect) {
 }
 
 /// 「仅显示已改动」开关行：设计稿 `.dock-tools{height:24px;justify-content:flex-end}`
-/// + `.onlychg`（20px 高、10px 字、圆角 4；开启时蓝底蓝字 + 前置 4px 圆点）。
+/// + `.onlychg`（24px 行、13px 字、圆角 4；开启时蓝底 + 12px 复选框白勾）。
 ///
 /// 这一行在参数区之上、页签之下，右对齐——它是「看什么」的过滤器，不是参数，
-/// 所以不占分组卡内的位置。
+/// 所以不占分组卡内的位置。绘制顺序固定为 背景 → 控件 → 文字：ON 的蓝底与
+/// OFF hover 的抬升底都是不透明实色，画在控件之后会把复选框和白勾整个埋掉。
 ///
 /// The "only show changed" switch row, per the design's `.dock-tools` / `.onlychg`
-/// (20 px high, 10 px text, 4 px radius; when on: blue wash, blue text and a 4 px
-/// leading dot).
+/// (24 px row, 13 px text, 4 px radius; when on: blue wash plus a 12 px checkbox tick).
 ///
 /// It sits between the tabs and the parameter area, right-aligned: it filters what is
-/// *shown*, so it must not sit inside any group card.
+/// *shown*, so it must not sit inside any group card. Paint order is fixed as
+/// background -> control -> text: the opaque ON wash and OFF-hover fill would bury the
+/// checkbox and its tick if drawn after them.
 fn dock_tools(state: &mut AppState, ui: &mut Ui) {
     // 设计稿里这行是「亮色正文」，不是 10px 的灰注释：它是会改变整个面板内容的
-    // 过滤器，权重必须和组头同级。字号 10 -> 13、未选中 dim -> muted、行高 24 -> 28。
+    // 过滤器，权重必须和组头同级。
     //
     // In the design this is bright body text, not a 10 px grey caption: it filters the
-    // whole panel, so it must rank with the group headers. 10 -> 13 px, dim -> muted,
-    // row 24 -> 28.
+    // whole panel, so it must rank with the group headers.
     let (row, _) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::hover());
     let galley = ui.painter().layout_no_wrap(
@@ -99,18 +100,39 @@ fn dock_tools(state: &mut AppState, ui: &mut Ui) {
         },
     );
     // 开关 affordance：一枚 12px 复选框 + 选中勾。纯右对齐文字看不出能点。
+    // 状态由复选框自己表达，不再画前置圆点——它落在框内会压住左缘，
+    // 为它留的 9px 也是死空。
     //
-    // Toggle affordance: a 12 px checkbox with a tick. Right-aligned plain text
-    // does not read as clickable.
+    // Toggle affordance: a 12 px checkbox with a tick. Right-aligned plain text does
+    // not read as clickable. The checkbox alone carries the state; the extra leading
+    // dot sat inside the box and only wasted 9 px of width.
     const BOX: f32 = 12.0;
-    let dot_w = if state.only_changed { 9.0 } else { 0.0 };
-    let w = galley.size().x + 12.0 + dot_w + BOX + 6.0;
+    let w = galley.size().x + 12.0 + BOX + 6.0;
     let chip = Rect::from_min_max(
         Pos2::new(row.right() - w, row.center().y - 12.0),
         Pos2::new(row.right(), row.center().y + 12.0),
     );
     let resp = ui.interact(chip, ui.make_persistent_id("only-changed"), Sense::click());
     let p = ui.painter().clone();
+
+    // ① 背景层：必须最先画。accent_dim()/elev() 都是不透明实色，画在复选框之后
+    //    会让 ON 态只剩一片蓝底、OFF hover 时框直接消失（审阅 B2）。
+    //
+    // ① Background first: accent_dim()/elev() are opaque. Painted after the checkbox
+    //    they erase the tick in the ON state and the outline on OFF hover (review B2).
+    if state.only_changed {
+        p.rect_filled(chip, 4.0, accent_dim());
+        p.rect_stroke(
+            chip,
+            4.0,
+            Stroke::new(1.0, accent().gamma_multiply(0.34)),
+            StrokeKind::Inside,
+        );
+    } else if resp.hovered() {
+        p.rect_filled(chip, 4.0, elev());
+    }
+
+    // ② 控件层：12px 复选框 + 白勾 / 空框描边。
     let box_r = Rect::from_min_size(
         Pos2::new(chip.left() + 6.0, chip.center().y - BOX * 0.5),
         Vec2::splat(BOX),
@@ -139,20 +161,10 @@ fn dock_tools(state: &mut AppState, ui: &mut Ui) {
             StrokeKind::Inside,
         );
     }
-    if state.only_changed {
-        p.rect_filled(chip, 4.0, accent_dim());
-        p.rect_stroke(
-            chip,
-            4.0,
-            Stroke::new(1.0, accent().gamma_multiply(0.34)),
-            StrokeKind::Inside,
-        );
-        p.circle_filled(Pos2::new(chip.left() + 7.0, chip.center().y), 2.0, accent());
-    } else if resp.hovered() {
-        p.rect_filled(chip, 4.0, elev());
-    }
+
+    // ③ 文字层。
     p.text(
-        Pos2::new(chip.left() + 6.0 + BOX + 6.0 + dot_w, chip.center().y),
+        Pos2::new(chip.left() + 6.0 + BOX + 6.0, chip.center().y),
         Align2::LEFT_CENTER,
         crate::i18n::t!("仅显示已改动"),
         font(SIZE_BODY),
@@ -999,6 +1011,50 @@ mod dock_paint_tests {
         assert!(capture_line_pub(None, None, None, None).is_empty());
         // 坏 EXIF 的 0 值当缺项：不出 `f / 0.0` 或 `1/inf`。
         assert!(capture_line_pub(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).is_empty());
+    }
+
+    /// ON 态 chip 底色必须画在白勾**之前**：`accent_dim()` 是不透明实色，
+    /// 后画会把复选框与勾整个埋掉，用户只看到一片蓝底（审阅 B2）。
+    /// 这条锁的是绘制顺序，不是颜色值——改 token 不该让它红，挪代码就该红。
+    ///
+    /// The ON wash must be painted before the tick: `accent_dim()` is opaque, so
+    /// painting it afterwards buries the checkbox. This locks paint order, not colour.
+    #[test]
+    fn only_changed_background_precedes_the_tick() {
+        let ctx = Context::default();
+        theme::apply(&ctx, 1.0);
+        let mut state = AppState::new();
+        state.only_changed = true;
+        let mut draw = |ui: &mut Ui| dock_tools(&mut state, ui);
+        let mut out = ctx.run_ui(input(320.0, 40.0), &mut draw);
+        let mut wash: Option<usize> = None;
+        let mut tick: Option<usize> = None;
+        for (i, clipped) in out.shapes.iter().enumerate() {
+            match &clipped.shape {
+                egui::Shape::Rect(r) if r.fill == accent_dim() => wash = Some(i),
+                egui::Shape::LineSegment { points, stroke }
+                    if stroke.color == Color32::WHITE && tick.is_none() =>
+                {
+                    let r = Rect::from_min_max(
+                        Pos2::new(points[0].x.min(points[1].x), points[0].y.min(points[1].y)),
+                        Pos2::new(points[0].x.max(points[1].x), points[0].y.max(points[1].y)),
+                    );
+                    if r.width() <= 12.0 && r.height() <= 12.0 {
+                        tick = Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.textures_delta.clear();
+        assert!(wash.is_some(), "ON 态没画 chip 底色，取样失效");
+        assert!(tick.is_some(), "ON 态没画白勾，取样失效");
+        assert!(
+            wash.unwrap() < tick.unwrap(),
+            "ON 态底色 (Rect#{}) 画在白勾 (Line#{}) 之后，会把勾埋掉",
+            wash.unwrap(),
+            tick.unwrap()
+        );
     }
 
     fn input(w: f32, h: f32) -> egui::RawInput {
