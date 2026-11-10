@@ -519,6 +519,7 @@ impl AppState {
             tool: Tool::Hand,
             dock_tab: DockTab::Adjust,
             only_changed: false,
+            show_more_groups: false,
             canvas_fill: true,
             show_options: false,
             show_rails: false,

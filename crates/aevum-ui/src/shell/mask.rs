@@ -1880,6 +1880,10 @@ mod mask_panel_tests {
         let ctx = egui::Context::default();
         theme::apply(&ctx, 1.0);
         let mut state = AppState::demo();
+        // 蒙版组现在收在「更多分组」后面：本判据看的是蒙版面板的内容，先展开。
+        // The mask group sits behind "more groups" now; this assertion is about the
+        // panel's content, so open it first.
+        state.show_more_groups = true;
         state.install_demo_textures(&ctx);
         // 走两遍，跟 --selftest 一样把字体与纹理的冷启动排除掉。
         let one = paint_count(&ctx, &mut state);

@@ -62,6 +62,54 @@ pub(super) fn sub_head(ui: &mut Ui, label: &str) {
 /// leaving a blank band. The default comes from the spec table (the single source of
 /// truth per the `controls` module docs; `spec_defaults_match_grade_defaults` pins it to
 /// `GradeParams::default()`).
+/// 展开态末尾的「收起分组」：把其余参数组重新收回，回到目标图的三卡首屏。
+///
+/// "Fewer groups" at the end of the expanded list: folds the extra parameter groups back
+/// to the reference's three-card first screen.
+fn collapse_groups_chip(ui: &mut Ui, state: &mut AppState) {
+    let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
+    let p = ui.painter().clone();
+    if resp.hovered() {
+        p.rect_filled(row, radius_control(), elev());
+    }
+    p.text(
+        row.center(),
+        Align2::CENTER_CENTER,
+        format!("{} ▴", crate::i18n::t!("收起分组")),
+        font(SIZE_SMALL),
+        if resp.hovered() { text() } else { dim() },
+    );
+    if resp.clicked() {
+        state.show_more_groups = false;
+    }
+}
+
+/// 「更多分组」折叠口：一行 26px，居中「更多分组 ▸」，点开展开其余参数组。
+///
+/// A one-row "more groups" disclosure: centred, 26 px tall; clicking it expands the
+/// remaining parameter groups.
+fn more_groups_chip(ui: &mut Ui, state: &mut AppState) {
+    let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
+    let p = ui.painter().clone();
+    let label = format!("{} ▸", crate::i18n::t!("更多分组"));
+    if resp.hovered() {
+        p.rect_filled(row, radius_control(), elev());
+    }
+    p.text(
+        row.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font(SIZE_SMALL),
+        if resp.hovered() { text() } else { dim() },
+    );
+    if resp.clicked() {
+        state.show_more_groups = true;
+    }
+    resp.on_hover_text(crate::i18n::t!(
+        "曲线 / 颜色混合器 / 细节 / 光学 / 效果 / 蒙版"
+    ));
+}
+
 pub(super) fn spec_field(ui: &mut Ui, state: &mut AppState, field: Field) -> bool {
     match controls::spec_by_field(field) {
         Some(s) => {
@@ -463,53 +511,69 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
         }
     }
 
-    // ── 影调细节 ────────────────────────────────────────────────────────
-    // 基本组让位给设计稿的六行后，多出来的十三根推子落在这里，默认折叠。
+    // 首屏只留 基本 / 配置文件 / 色彩分级（目标图就是这三张卡）；曲线、混合器、
+    // 细节、光学、修复、效果、外观、蒙版与影调细节收在「更多分组」后面。
+    // 点一下全部展开，参数一个没少——这是披露，不是删除。
     //
-    // Tone detail: the thirteen sliders that Basic gave up, collapsed by default.
-    group_card(ui, |ui| {
-        if !group_header(ui, state, "tone-extra", "影调细节", false) {
-            return;
-        }
-        for f in [
-            Field::HlRolloff,
-            Field::ContrastLinear,
-            Field::Whites,
-            Field::Blacks,
-            Field::BlackSoft,
-            Field::WhiteSoft,
-        ] {
-            changed |= spec_field(ui, state, f);
-        }
-        for f in [
-            Field::Texture,
-            Field::Clarity,
-            Field::Dehaze,
-            Field::DehazeDark,
-            Field::DehazeContrast,
-            Field::Vibrance,
-            Field::Saturation,
-        ] {
-            changed |= spec_field(ui, state, f);
-        }
-    });
+    // The first screen keeps exactly Basic / Profile / Colour grading (the reference has
+    // those three cards); curve, mixer, detail, optics, retouch, effects, look, masks and
+    // tone detail sit behind "more groups". One click expands them all -- disclosure,
+    // not deletion.
+    if state.show_more_groups {
+        // ── 影调细节 ────────────────────────────────────────────────────────
+        // 基本组让位给设计稿的六行后，多出来的十三根推子落在这里，默认折叠。
+        //
+        // Tone detail: the thirteen sliders that Basic gave up, collapsed by default.
+        group_card(ui, |ui| {
+            if !group_header(ui, state, "tone-extra", "影调细节", false) {
+                return;
+            }
+            for f in [
+                Field::HlRolloff,
+                Field::ContrastLinear,
+                Field::Whites,
+                Field::Blacks,
+                Field::BlackSoft,
+                Field::WhiteSoft,
+            ] {
+                changed |= spec_field(ui, state, f);
+            }
+            for f in [
+                Field::Texture,
+                Field::Clarity,
+                Field::Dehaze,
+                Field::DehazeDark,
+                Field::DehazeContrast,
+                Field::Vibrance,
+                Field::Saturation,
+            ] {
+                changed |= spec_field(ui, state, f);
+            }
+        });
 
-    for (group, hit) in [
-        ("curve", adjust_curve(state, ui)),
-        ("mixer", adjust_mixer(state, ui)),
-        ("detail", adjust_detail(state, ui)),
-        ("optics", adjust_optics(state, ui)),
-        ("geometry", adjust_geometry(state, ui)),
-        ("retouch", adjust_retouch(state, ui)),
-        ("effects", adjust_effects(state, ui)),
-        ("look", adjust_look(state, ui)),
-    ] {
-        changed |= hit;
-        if hit {
-            state.bypassed.remove(group);
+        for (group, hit) in [
+            ("curve", adjust_curve(state, ui)),
+            ("mixer", adjust_mixer(state, ui)),
+            ("detail", adjust_detail(state, ui)),
+            ("optics", adjust_optics(state, ui)),
+            ("geometry", adjust_geometry(state, ui)),
+            ("retouch", adjust_retouch(state, ui)),
+            ("effects", adjust_effects(state, ui)),
+            ("look", adjust_look(state, ui)),
+        ] {
+            changed |= hit;
+            if hit {
+                state.bypassed.remove(group);
+            }
         }
+        adjust_masks(state, ui);
+    } else {
+        more_groups_chip(ui, state);
     }
-    adjust_masks(state, ui);
+    if state.show_more_groups {
+        collapse_groups_chip(ui, state);
+    }
+
     // 文件级工具沉到底部：第一屏先给基本/色彩，和 LR 的阅读顺序一致。
     // 2026-11-04 起 HDR/全景/堆栈/时间合成/焦点合成五组搬去「合成」模块
     // （docs/界面布局-ACR化-2026-11-04.md §4），调色副本搬去「预设与快照」
@@ -1425,6 +1489,9 @@ mod only_changed_tests {
         let ctx = Context::default();
         theme::apply(&ctx, 1.0);
         let mut state = AppState::new();
+        // 其余分组现在收在「更多分组」后面；本判据要数全部推子，先展开。
+        // The extra groups now sit behind "more groups"; this count needs them open.
+        state.show_more_groups = true;
         let all = rail_count(&ctx, &mut state);
         state.only_changed = true;
         let none = rail_count(&ctx, &mut state);

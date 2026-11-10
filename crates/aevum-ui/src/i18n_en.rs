@@ -1750,4 +1750,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("更多", "More"),
     ("仍有可见抖动：试试加大窗口或开多遍", "Still visible jitter: try a larger window or more passes"),
     ("序列亮度已平整", "Sequence luminance is flat"),
+    ("更多分组", "More groups"),
+    ("收起分组", "Fewer groups"),
+    ("曲线 / 颜色混合器 / 细节 / 光学 / 效果 / 蒙版", "Curve / Colour mixer / Detail / Optics / Effects / Masks"),
 ];

@@ -1359,6 +1359,14 @@ pub struct AppState {
     /// groups on screen, what needs re-checking is usually just the handful that moved.
     /// Off by default: the first look at a panel should show the full parameter map.
     pub only_changed: bool,
+    /// 展开「更多分组」：曲线 / 混合器 / 细节 / 光学 / 效果 / 外观 / 蒙版 等折叠在
+    /// 基本、配置文件、色彩分级之后。默认收起——目标图首屏只有那三张卡，其余
+    /// 参数一点即开，不是删掉。
+    ///
+    /// Reveal the extra groups (curve / mixer / detail / optics / effects / look / masks)
+    /// that follow Basic, Profile and Colour grading. Folded by default: the reference's
+    /// first screen has exactly those three cards, and one click opens the rest.
+    pub show_more_groups: bool,
     /// 画布铺满：设计稿 `.stage .hero{object-fit:cover}`——照片盖满窗口，不再留黑边。
     ///
     /// 关掉就回到「整幅可见」的 contain（裁切类操作需要看全画面时用）。
