@@ -1326,7 +1326,6 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("羽化", "Feather"),
     ("胶片", "Filmstrip"),
     ("胶片条", "Filmstrip"),
-    ("胶片条 · {} 帧 · 已评级 {}", "Filmstrip · {} frames · {} rated"),
     ("胶片条 · 无序列", "Filmstrip · no sequence"),
     ("自动", "Auto"),
     ("自动匹配", "Auto match"),
@@ -1736,4 +1735,16 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("还没有完成的任务 · 结果会在这里保留", "Nothing finished yet · results will stay here"),
     ("跟随源尺寸", "Source size"),
     ("渲染队列 · {}", "Render queue · {}"),
+    // 胶片浮卡（设计稿 `.filmcard`）：头行标题、曲线块标题、走带读数。
+    //
+    // The film card (design `.filmcard`): header title, curve block title, transport.
+    ("胶片条 · {} 帧", "Filmstrip · {} frames"),
+    ("逐帧亮度", "Frame luminance"),
+    ("去闪 {} EV · K {}", "Deflicker {} EV · K {}"),
+    ("本帧", "This frame"),
+    // 显影面板「影调细节」折叠组（2026-11-10 补）：原本只有中文，英文界面回退中文。
+    //
+    // The develop panel's "tonal detail" group had no English entry and fell back to
+    // Chinese in the English UI.
+    ("影调细节", "Tonal detail"),
 ];

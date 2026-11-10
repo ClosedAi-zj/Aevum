@@ -17,7 +17,6 @@ use self::chrome::window_resize;
 use self::dock::dock_panel;
 use self::menu::handle_input;
 use self::menu::menu_row;
-use self::timeline::timeline;
 use self::toolbar::options_bar;
 use self::toolbar::status_bar;
 use self::toolbar::status_bar_needed;
@@ -196,6 +195,28 @@ fn debug_apply_window(state: &mut AppState) {
     }
 }
 
+/// 首帧打开逐帧亮度曲线：`AEVUM_CURVES=1`。
+///
+/// 曲线块的开关在胶片卡的头行里，`--shot` 点不了它。没有这个只读钩子，截图回归
+/// 永远只拍得到「曲线关着」的卡，而设计稿的默认态是开着的。与 `AEVUM_BENCH`
+/// 同一类用途：只读环境变量，不落盘、不进工程。
+///
+/// Turns the frame-luminance curve on for the first frame: `AEVUM_CURVES=1`.
+///
+/// The toggle lives in the film card's header and `--shot` cannot click it, so without
+/// this read-only hook screenshot regression would only ever capture the card with the
+/// curve off. Same class as `AEVUM_BENCH`: reads the environment, persists nothing.
+fn debug_show_curves(state: &mut AppState) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    if std::env::var_os("AEVUM_CURVES").is_some() {
+        state.show_curves = true;
+    }
+}
+
 /// 首帧切工作台：`AEVUM_BENCH=develop|table|export|tasks`。
 ///
 /// `--shot` 点不了导航卡，四个工作台因此拍不到证据图；这与 `AEVUM_WORKSPACE`
@@ -259,6 +280,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // nothing is persisted and nothing enters the project file).
     debug_apply_workspace(state);
     debug_apply_bench(state);
+    debug_show_curves(state);
     debug_apply_flow(state);
     debug_apply_window(state);
     debug_export_confirm(&ctx);
@@ -347,42 +369,17 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .show(root, |ui| flow_panel::flow_top_bar(state, ui));
     }
 
-    // 3 底部两行：**先声明状态栏**，它才拿得到窗口最底边；胶片条压在它上面。
-    //   反过来声明就成了"状态栏飘在胶片条之上"，与界面稿差出整整一行。
-    //   没有告警 / 任务时整条不声明——底边留白还回来（用户 2026-11-08）。
+    // 3 底部状态栏：只在真有话要说时占窗口最底边。胶片条已改成画布上的浮卡
+    //   （见中央面板之后的 `film-card`），不再与它争这一行。
     //
-    // Two bottom rows: the status bar is declared **first** so it gets the very bottom;
-    // the filmstrip stacks above it. Declared the other way round it would float above
-    // the strip, a whole row off the design. With nothing to report the whole bar is not
-    // declared at all and the edge is given back (user, 2026-11-08).
+    // The bottom status bar only takes the window's bottom edge when it has something
+    // to say; the filmstrip is a card over the canvas now (see `film-card` after the
+    // centre panel) and no longer competes for that row.
     if develop && layout.status == StatusSlot::Bottom && status_bar_needed(state) {
         egui::Panel::bottom("status-bar")
             .exact_size(STATUS_H)
             .frame(egui::Frame::NONE.fill(header()))
             .show(root, |ui| status_bar(state, ui));
-    }
-    // 整页视图（项目库 / 设置）不摆胶片条与走带：它们与「当前序列的帧」无关，
-    if develop && layout.film.allowed() && state.frame_count() > 0 {
-        // 面板高度跟内容走：头行 26 + 间距 4 + [曲线 54 + 间距 6] + 胶片条实际
-        // 高度 + 间距 4 + 走带 36。胶片条高度由首帧比例决定，面板就照着它收——
-        // 固定 188 会把多出来的三四十像素全塞给走带，读作一条空带（用户截图）。
-        //
-        // The panel height follows the content: header 26 + gap 4 + [curve 54 + gap 6]
-        // + the strip's actual height + gap 4 + transport 36. The strip height comes
-        // from the first frame's aspect and the panel hugs it; a fixed 188 handed the
-        // leftover thirty-odd pixels to the transport, reading as an empty band (user
-        // screenshot).
-        let tl_h = match (state.show_film, state.show_curves) {
-            (true, curves) => {
-                26.0 + 4.0 + if curves { 60.0 } else { 0.0 } + state.film_height() + 4.0 + 36.0
-            }
-            (false, true) => 26.0 + 4.0 + 60.0 + 36.0,
-            (false, false) => 66.0,
-        };
-        egui::Panel::bottom("timeline")
-            .exact_size(tl_h)
-            .frame(egui::Frame::NONE.fill(surround()))
-            .show(root, |ui| timeline(state, ui, &ctx));
     }
 
     // 4 侧栏。同一侧「先声明的在外」，顺序即由外到内。
@@ -540,12 +537,38 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             }
         });
 
+    // 胶片卡：浮在画布左下角（设计稿 `.filmcard{left:12;bottom:12}`）。声明在
+    // 中央面板之后，所以它压在照片上；`Order::Middle` 让它高于画布、低于工作台
+    // 导航卡与各类浮窗。锚点贴**画布**左缘与下缘：左侧那根 24px 工具轨一直伸到
+    // 窗口底（用窗口左缘会把轨底的设置钮压住），底部可能还有一条状态栏。
+    // 整页视图（项目库 / 设置）不摆——它们与「当前序列的帧」无关。
+    //
+    // The film card floats over the canvas' bottom-left corner (design `.filmcard`).
+    // Declared after the centre panel so it sits on the photo; `Order::Middle` keeps it
+    // above the canvas and below the bench nav card and the floating windows. It hugs
+    // the **canvas'** left and bottom edges: the 24 px tool rail runs to the window
+    // bottom (the window edge would bury its foot button) and a status bar may sit
+    // below. Full-page benches get no card -- they have no "current sequence frame".
+    if develop && layout.film.allowed() && state.frame_count() > 0 {
+        let card_h = timeline::card_height(state);
+        let pos = Pos2::new(centre.left() + 12.0, centre.bottom() - 12.0 - card_h);
+        // 卡宽不超过窗口一半：再宽就把画布切成两半，浮卡也就失去意义。
+        //
+        // Never wider than half the window: any wider splits the canvas and the
+        // floating card loses its point.
+        let max_w = (full.width() * 0.5).max(320.0);
+        egui::Area::new(egui::Id::unique("film-card"))
+            .order(egui::Order::Middle)
+            .fixed_pos(pos)
+            .show(&ctx, |ui| timeline::card(state, ui, &ctx, max_w));
+    }
+
     // 面板与画布之间那条呼吸带：与画布同底色的中性灰，面板内缘压一根发丝线。
-    // 只画在文档区高度内，不越过菜单行 / 选项栏 / 底部胶片条。
+    // 只画在文档区高度内，不越过菜单行 / 选项栏。
     //
     // The gutter between dock and canvas: neutral surround grey with a hairline on the
-    // dock's inner edge. Drawn only across the document area, never over the menu row,
-    // options bar or bottom filmstrip.
+    // dock's inner edge. Drawn only across the document area, never over the menu row
+    // or options bar.
     if develop && let Some((band, line_x)) = crate::layout::canvas_gutter(available, centre, insets)
     {
         let p = root.painter().clone();

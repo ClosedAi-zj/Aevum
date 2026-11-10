@@ -1,75 +1,304 @@
-//! 底部两行：时间线、曲线、色标、胶片条与走带控制。
+//! 画布左下角的浮动胶片卡：头行、逐帧亮度曲线、缩略图行与走带。
 //!
-//! The two bottom rows: timeline, curve, colour scale, filmstrip and transport
-//! controls.
+//! The floating film card at the canvas' bottom-left: header, frame curve,
+//! thumbnail row and transport. 设计稿 `.filmcard`（`left:12 bottom:12 padding:6
+//! radius 12 shadow`），内容自上而下：`胶片条 · N 帧` + 折叠钮 + 筛选/星级 →
+//! 逐帧亮度曲线 → 缩略图行（72×56，选中 2px 蓝环）→ 走带行。
 
-// 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::MICRO;
-use super::UV;
 use super::mask::DeflCurveCache;
 use super::menu::menu_style;
 use crate::icons::{self, Glyph};
 use crate::state::AppState;
 use crate::theme::{self, *};
 use egui::{
-    Align, Align2, Color32, Context, CursorIcon, Layout, Pos2, Rect, RichText, ScrollArea, Sense,
-    Stroke, StrokeKind, Ui, UiBuilder, Vec2,
+    Align, Align2, Color32, Context, Layout, Pos2, Rect, RichText, ScrollArea, Sense, Stroke,
+    StrokeKind, Ui, UiBuilder, Vec2,
 };
 use std::sync::Arc;
-// 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
-// ---------------------------------------------------------------- 时间线
+// ---------------------------------------------------------------- 卡片尺寸
+//
+// 全部对齐设计稿：`.filmcard{padding:6px}`、`.film-h{height:24px}`、
+// `.curve`（48px 整块）、`.th{width:72px;height:56px}`、`.tp{height:26px}`。
+//
+// Every number below is the design's: card padding 6, header 24, curve block 48,
+// thumbnail 72x56, transport 26.
 
-pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
-    let full = ui.max_rect();
-    let p = ui.painter().clone();
-    // 头部行：整条 26px header 底 + 下缘发丝线，文字 11px dim —— 对齐界面稿 .tl-hd。
-    let hd = Rect::from_min_size(full.min, Vec2::new(full.width(), TL_HD_H));
-    p.rect_filled(hd, 0, header());
-    theme::rule(&p, hd.left(), hd.right(), hd.bottom(), divider());
+/// 卡片内距（设计稿 `padding:6px`）。
+const PAD: f32 = 6.0;
+/// 头行高度（`.film-h{height:24px}`）。
+const HEAD_H: f32 = 24.0;
+/// 曲线块高度（`.curve` 标题 10 + 图 26 + 刻度 3 + 内距）。
+const CURVE_H: f32 = 48.0;
+/// 曲线块与缩略图行之间的间距（`.curve{margin-bottom:5px}`）。
+const GAP: f32 = 5.0;
+/// 缩略图格宽 / 格高 / 格距（`.th{72×56}`、`.thumbs{gap:4}`）。
+const THUMB_W: f32 = 72.0;
+const THUMB_H: f32 = 56.0;
+const THUMB_GAP: f32 = 4.0;
+/// 走带行上缘留白与行高（`.tp{margin-top:6px;height:26px}`）。
+const TP_MT: f32 = 6.0;
+const TP_H: f32 = 26.0;
+/// 卡片最小宽度：头行（标题 + 折叠钮 + 筛选整组 + 曲线开关）放得下。
+/// 设计稿 7 帧时卡宽 535（由缩略图撑开），4 帧时由头行撑到 400。
+const CARD_MIN_W: f32 = 400.0;
+/// 右端「曲线」开关宽度。
+const CURVE_W: f32 = 34.0;
+/// 筛选组里星级 / 旗标 / 色标的格距（`.star-filter button{width:14px}`）。
+const DOT: f32 = 14.0;
+/// 筛选组内元素间距（`.filters{gap:4px}`）。
+const FGAP: f32 = 4.0;
 
-    let cy = hd.center().y;
+/// 缩略图行高：由 `state.film_height()` 决定（它按首帧比例算），但卡片里的一格
+/// 固定到设计稿的 56px——超出的部分不再把整张卡撑高。
+///
+/// `film_height()` 的语义没有变：它仍然是「缩略图该多高」的唯一来源，用户把它
+/// 调矮过（`film_h`）时这里也跟着变矮。
+///
+/// Thumbnail row height: still derived from `state.film_height()` (the single source
+/// for "how tall are the thumbnails"), folded into the design's fixed 56 px cell so
+/// the card never grows past the mockup.
+fn strip_h(state: &AppState) -> f32 {
+    state.film_height().min(THUMB_H)
+}
+
+/// 卡片高度 = 内距 + 头行 + [曲线 + 间距] + [缩略图行] + 走带。
+///
+/// Card height = paddings + header + [curve + gap] + [thumb row] + transport.
+pub(super) fn card_height(state: &AppState) -> f32 {
+    let mut h = PAD * 2.0 + HEAD_H + TP_MT + TP_H;
+    if state.show_curves {
+        h += CURVE_H + GAP;
+    }
+    if state.show_film {
+        h += strip_h(state);
+    }
+    h
+}
+
+fn title_text(state: &AppState) -> String {
     let n = state.frame_count();
-    let title_text = if n > 0 {
-        crate::i18n::tr_fmt("胶片条 · {} 帧 · 已评级 {}", &[&n, &state.rated_count()])
+    if n > 0 {
+        crate::i18n::tr_fmt("胶片条 · {} 帧", &[&n])
     } else {
         crate::i18n::tr("胶片条 · 无序列").to_owned()
+    }
+}
+
+fn filters_on(state: &AppState) -> bool {
+    state.film_filter_stars > 0 || state.film_filter_flag != 0 || state.film_filter_label > 0
+}
+
+/// 筛选组各段宽度：`筛选` 字样、五颗星、旗标、色标、清除、计数。
+///
+/// Widths of the filter group, measured once and reused by both the card-sizing and
+/// the painting path so the two can never disagree.
+struct FilterW {
+    label: f32,
+    clear: f32,
+    count: f32,
+    total: f32,
+}
+
+fn filter_widths(state: &AppState, p: &egui::Painter) -> FilterW {
+    let label = p
+        .layout_no_wrap(
+            crate::i18n::tr("筛选").to_owned(),
+            font(SIZE_SMALL),
+            muted(),
+        )
+        .size()
+        .x;
+    let clear = p
+        .layout_no_wrap(
+            crate::i18n::tr("清除筛选").to_owned(),
+            font(SIZE_SMALL),
+            muted(),
+        )
+        .size()
+        .x;
+    let count = if filters_on(state) {
+        p.layout_no_wrap(
+            crate::i18n::tr_fmt("已筛选 {} / {} 帧", &[&state.film_visible_count(), &state.frame_count()]),
+            mono(MICRO),
+            dim(),
+        )
+        .size()
+        .x
+    } else {
+        0.0
     };
-    // 标题先量宽：收起按钮要钉在它右边，跟着文字长短走。
+    let stars = 5.0 * DOT;
+    let flags = 2.0 * DOT;
+    let labels = 4.0 * DOT;
+    let mut total = label + FGAP + stars + FGAP + flags + FGAP + labels + FGAP + clear;
+    if count > 0.0 {
+        total += FGAP + count;
+    }
+    FilterW {
+        label,
+        clear,
+        count,
+        total,
+    }
+}
+
+/// 头行需要的最小内容宽度（不含卡片内距）。
+fn head_need(state: &AppState, p: &egui::Painter) -> f32 {
+    let title = p
+        .layout_no_wrap(title_text(state), font(SIZE_SMALL), dim())
+        .size()
+        .x;
+    // 2 左缩进 + 标题 + 8 + 折叠钮 22 + 10 + 筛选组 + 8 + 曲线开关
+    2.0 + title + 8.0 + 22.0 + 10.0 + filter_widths(state, p).total + 8.0 + CURVE_W
+}
+
+/// 卡宽随内容：头行所需与缩略图自然宽取大，且不超过 `max_w`（窗口一半）。
+///
+/// Width follows the content: the header's need versus the thumbnails' natural run,
+/// clamped to `max_w` (half the window) so the card can never split the canvas.
+fn card_width(state: &AppState, ui: &Ui, max_w: f32) -> f32 {
+    let p = ui.painter();
+    let mut w = head_need(state, p).max(CARD_MIN_W - PAD * 2.0);
+    if state.show_film && state.frame_count() > 0 {
+        let n = state.frame_count() as f32;
+        w = w.max(n * (THUMB_W + THUMB_GAP) - THUMB_GAP);
+    }
+    (w + PAD * 2.0).min(max_w.max(CARD_MIN_W))
+}
+
+// ---------------------------------------------------------------- 卡片
+
+/// 画整张卡。`rect` 由调用方按 `card_height()` 定好，`max_w` 是窗口宽的一半。
+///
+/// Paints the whole card; `rect` is pre-sized from `card_height()` and `max_w` is half
+/// the window width.
+pub(super) fn card(state: &mut AppState, ui: &mut Ui, ctx: &Context, max_w: f32) {
+    let w = card_width(state, ui, max_w);
+    let h = card_height(state);
+    let rect = Rect::from_min_size(ui.min_rect().min, Vec2::new(w, h));
+    ui.set_min_size(Vec2::new(w, h));
+    ui.set_max_size(Vec2::new(w, h));
+
+    let p = ui.painter().clone();
+    // 深投影 + 1px 内环：设计稿 `--sh: 0 8px 24px rgba(0,0,0,.45), 0 0 0 1px #fff0f`。
     //
-    // Measure the title first: the collapse button is pinned right after it and follows
-    // whatever width the text needs.
-    p.text(
-        Pos2::new(hd.left() + 10.0, cy),
-        Align2::LEFT_CENTER,
-        title_text,
-        font(SIZE_SMALL),
+    // Deep shadow plus a 1 px inner ring, per the design's `--sh`.
+    p.add(
+        egui::epaint::Shadow {
+            offset: [0, 8],
+            blur: 24,
+            spread: 0,
+            color: Color32::from_black_alpha(115),
+        }
+        .as_shape(rect, 12.0),
+    );
+    p.rect_filled(rect, 12.0, panel());
+    p.rect_stroke(
+        rect,
+        12.0,
+        Stroke::new(1.0, group_ring()),
+        StrokeKind::Inside,
+    );
+
+    let inner = rect.shrink(PAD);
+    let mut y = inner.top();
+
+    // 卡片自己先吃掉指针：浮在画布上，空白处的拖动不能漏给下面的画布（否则
+    // 会变成平移画面）。子控件注册在它之后，命中优先级更高，互不影响。
+    //
+    // The card swallows pointer input first: floating over the canvas, a drag on its
+    // empty area must not fall through and pan the image. Children are registered after
+    // it and therefore win the hit test.
+    let _ = ui.interact(
+        rect,
+        ui.make_persistent_id("film-card-bg"),
+        Sense::click_and_drag(),
+    );
+
+    header(
+        state,
+        ui,
+        &p,
+        Rect::from_min_size(
+            Pos2::new(inner.left(), y),
+            Vec2::new(inner.width(), HEAD_H),
+        ),
+    );
+    y += HEAD_H;
+
+    if state.show_curves {
+        // 设计稿 `.curve{margin:0 2px 5px}`：曲线块比缩略图行左右各内缩 2px。
+        //
+        // The design inset the curve block 2 px on each side.
+        curve_block(
+            state,
+            ui,
+            Rect::from_min_size(
+                Pos2::new(inner.left() + 2.0, y),
+                Vec2::new(inner.width() - 4.0, CURVE_H),
+            ),
+        );
+        y += CURVE_H + GAP;
+    }
+
+    if state.show_film {
+        let sh = strip_h(state);
+        filmstrip(
+            state,
+            ui,
+            ctx,
+            Rect::from_min_size(
+                Pos2::new(inner.left(), y),
+                Vec2::new(inner.width(), sh),
+            ),
+        );
+        y += sh;
+    }
+
+    // 走带：上缘一条发丝线（设计 `.tp{box-shadow:0 -1px 0 var(--hair)}`）。
+    //
+    // Transport, with the hairline on its top edge.
+    y += TP_MT;
+    let tp = Rect::from_min_size(
+        Pos2::new(inner.left(), y),
+        Vec2::new(inner.width(), TP_H),
+    );
+    theme::rule(
+        &p,
+        inner.left(),
+        inner.right(),
+        tp.top() - 0.5,
+        Color32::from_white_alpha(20),
+    );
+    transport(state, ui, tp);
+}
+
+// ---------------------------------------------------------------- 头行
+
+/// 头行：`胶片条 · N 帧` + 折叠钮 + 筛选/星级（右对齐）+ 曲线开关。
+///
+/// Header: title, collapse button, filter group (right aligned) and the curve toggle.
+fn header(state: &mut AppState, ui: &mut Ui, p: &egui::Painter, hd: Rect) {
+    // 设计稿 `.film-h` 有 5px 下内距，文字因此比几何中线高半格。
+    let cy = hd.center().y - 2.0;
+    let g = p.layout_no_wrap(title_text(state), font(SIZE_SMALL), dim());
+    p.galley(
+        Pos2::new(hd.left() + 2.0, cy - g.size().y * 0.5),
+        g.clone(),
         dim(),
     );
 
-    // 收起入口做成**真按钮**，紧跟标题钉在头部左端：112 × 24，有填充底色与描边，
-    // Chevron 与文案随 show_film 切换，静置走 text()、悬停抬起。
+    // 折叠钮：真按钮、22px 圆形图标钮、名字进 tooltip（功能与旧版一致）。
     //
-    // 之前它是右端一枚「降为 ghost」的淡灰小字（透明底 + dim + 悬停才抬起），
-    // 用户三轮反馈「这里应该有个按钮直接把预览图收起」——功能在、但看不见，
-    // 等于没有。现在按控制件规范做成一眼能认、能点的按钮。
-    //
-    // The collapse entry is a **real button** pinned to the left of the header right after
-    // the title: 112 x 24, filled and stroked, with the chevron and label driven by
-    // show_film, text() at rest and lifting on hover.
-    //
-    // It used to be a dim ghost chip at the far right (transparent, dim text, only lifting
-    // on hover). The user asked three times for "a button that collapses the preview" --
-    // the feature existed but was invisible, which is the same as not having it.
-    // 收起/展开按钮（用户 2026-11-07 拍板）：**只此一个功能**、头行水平居中、
-    // 22px 圆形图标钮、不写字——名字进悬停提示。静置是低调的灰圆（不与标题/星级
-    // 抢注意），悬停抬起并亮起，tooltip 说明收起/展开。
-    //
-    // The collapse control (user decision): one function, horizontally centred on the
-    // header, a 22 px round icon button with no text -- the name lives in the tooltip.
-    // At rest it is a quiet grey disc; hover lifts and lights it.
+    // The collapse control: a real 22 px round icon button whose name lives in the
+    // tooltip -- same behaviour as before, just pinned right after the title.
     let btn = 22.0;
-    let film_rect = Rect::from_center_size(Pos2::new(full.center().x, cy), Vec2::splat(btn));
+    let film_rect = Rect::from_center_size(
+        Pos2::new(hd.left() + 2.0 + g.size().x + 8.0 + btn * 0.5, cy),
+        Vec2::splat(btn),
+    );
     let film_resp = ui.interact(film_rect, ui.make_persistent_id("tl-film"), Sense::click());
     let hovered = film_resp.hovered();
     if hovered {
@@ -84,7 +313,7 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         p.circle_filled(film_rect.center(), btn * 0.5, panel().gamma_multiply(1.35));
     }
     icons::paint(
-        &p,
+        p,
         Rect::from_center_size(film_rect.center(), Vec2::splat(13.0)),
         if state.show_film {
             Glyph::ChevronDown
@@ -97,282 +326,15 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         state.show_film = !state.show_film;
     }
     film_resp.on_hover_text(crate::i18n::t!("收起 / 展开底部预览栏"));
-    // 右端「曲线」开关的宽度常量（星级筛选/说明行的右边界都要用它）。
-    let curve_w = 40.0;
 
-    // 缩略图与主画布同一口径（用户 2026-11-07：「预览图应该跟主图一致」）：胶片条
-    // 的每一格都由同一份显影参数渲染，所以这里不再需要「缩略图是未显影原片」的
-    // 说明字，也不再给每格贴「原片」角标。
+    // 右端「曲线」开关：设计稿把它放在筛选组之后、头行最右。
     //
-    // Thumbnails share the canvas's convention (user, 2026-11-07): every filmstrip cell
-    // is developed with the same parameters, so the "undeveloped original" caption and
-    // the per-cell "ORIG" chip are gone.
-
-    // 筛选（LR 胶片条筛选栏同构）：星级下限、旗标、色标三组判据并排放在头行
-    // 右段，三组同时成立才画那一格。只在显示层收窄，不动真实帧序。
-    //
-    // Filters (Lightroom's filmstrip filter bar): minimum stars, flag and colour label
-    // share the header's right band, and a cell is drawn only when all three hold. They
-    // narrow the display only and never reorder the sequence.
-    let right_cursor = hd.right() - 10.0 - curve_w - 10.0;
-    {
-        let clear_text = crate::i18n::t!("清除筛选");
-        let label_text = crate::i18n::t!("筛选");
-        let count_text =
-            crate::i18n::tr_fmt("已筛选 {} / {} 帧", &[&state.film_visible_count(), &n]);
-        let clear_g = p.layout_no_wrap(clear_text.to_owned(), font(SIZE_SMALL), muted());
-        let count_g = p.layout_no_wrap(count_text.clone(), mono(SIZE_SMALL), dim());
-        let label_g = p.layout_no_wrap(label_text.to_owned(), font(SIZE_SMALL), muted());
-        const DOT: f32 = 15.0;
-        let star_w = 5.0 * DOT;
-        let flag_w = 2.0 * DOT;
-        let color_w = 4.0 * DOT;
-        // 筛选是否真的在生效：决定「清除筛选」与「已筛选 n / N 帧」要不要占位。
-        // 没筛选时那句读数和左上角的「12 帧」是同一件事，白占 80px，还把
-        // 「清除筛选」淹在一串无关文字里（用户 2026-11-07 的视觉走查）。
-        //
-        // Whether a filter is actually narrowing the strip; it decides whether the
-        // "clear" and "x of N" readouts take any space at all. With no filter the count
-        // repeats the "12 frames" on the left, costs 80 px, and drowns "clear filters".
-        let filters_on = state.film_filter_stars > 0
-            || state.film_filter_flag != 0
-            || state.film_filter_label > 0;
-        let group_w = label_g.size().x
-            + 8.0
-            + star_w
-            + 6.0
-            + flag_w
-            + 6.0
-            + color_w
-            + 8.0
-            + clear_g.size().x
-            + if filters_on {
-                8.0 + count_g.size().x
-            } else {
-                0.0
-            };
-        let group_left = right_cursor - group_w;
-        // 窄窗整组收起：宁可看不见筛选器，也不让它压住标题与收起按钮。但筛选**正在
-        // 生效**时不能一起收掉——那样整条胶片条会莫名其妙地空着，界面上却找不到
-        // 原因（用户截图「突然底部没有预览图了」）。这时退成一枚「已筛选 x / y ·
-        // 清除筛选」的窄读数，让状态始终可见、可一键恢复。
-        //
-        // Collapse the whole group in a narrow window: better invisible than overlapping
-        // the title and the collapse button. An **active** filter must not vanish with it,
-        // or the strip goes inexplicably empty with no cause on screen (user screenshot:
-        // "the filmstrip previews suddenly disappeared"). It falls back to a compact
-        // "x of y · clear filters" readout so the state stays visible and reversible.
-        if group_left > film_rect.right() + 12.0 {
-            p.text(
-                Pos2::new(group_left, cy),
-                Align2::LEFT_CENTER,
-                label_text,
-                font(SIZE_SMALL),
-                muted(),
-            );
-            let mut sx = group_left + label_g.size().x + 8.0;
-            for level in 1..=5u8 {
-                let r = Rect::from_center_size(Pos2::new(sx + 7.0, cy), Vec2::splat(DOT));
-                let resp = ui.interact(
-                    r,
-                    ui.make_persistent_id(("film-star-filter", level)),
-                    Sense::click(),
-                );
-                let on = state.film_filter_stars >= level;
-                icons::paint(
-                    &p,
-                    r.shrink(2.0),
-                    if on { Glyph::Star } else { Glyph::StarEmpty },
-                    if on {
-                        star()
-                    } else if resp.hovered() {
-                        text()
-                    } else {
-                        muted()
-                    },
-                );
-                if resp.clicked() {
-                    state.film_filter_stars = if state.film_filter_stars == level {
-                        0
-                    } else {
-                        level
-                    };
-                }
-                sx += DOT;
-            }
-            // 旗标：一枚勾（选用）一枚叉（排除），再点一次取消。勾/叉用线段画，
-            // 不赌字体里有没有 ✓ / ✕。
-            //
-            // Flags: a tick (pick) and a cross (reject); clicking again clears. Both are
-            // line segments so no font is trusted to carry ✓ / ✕.
-            sx += 6.0;
-            for (flag, tip) in [(1i8, "只看选用"), (-1i8, "只看排除")] {
-                let r = Rect::from_center_size(Pos2::new(sx + 7.0, cy), Vec2::splat(DOT));
-                let resp = ui.interact(
-                    r,
-                    ui.make_persistent_id(("film-flag-filter", flag)),
-                    Sense::click(),
-                );
-                let on = state.film_filter_flag == flag;
-                let tint = if flag > 0 {
-                    label_color(3)
-                } else {
-                    label_color(1)
-                };
-                if on {
-                    p.rect_filled(r, radius_control(), tint.gamma_multiply(0.22));
-                }
-                let col = if on {
-                    tint
-                } else if resp.hovered() {
-                    text()
-                } else {
-                    muted()
-                };
-                let c = r.center();
-                if flag > 0 {
-                    p.add(egui::Shape::line(
-                        vec![
-                            Pos2::new(c.x - 3.4, c.y + 0.2),
-                            Pos2::new(c.x - 0.8, c.y + 2.8),
-                            Pos2::new(c.x + 3.4, c.y - 2.8),
-                        ],
-                        Stroke::new(1.4, col),
-                    ));
-                } else {
-                    for (a, b) in [
-                        (Vec2::new(-3.2, -3.2), Vec2::new(3.2, 3.2)),
-                        (Vec2::new(3.2, -3.2), Vec2::new(-3.2, 3.2)),
-                    ] {
-                        p.line_segment([c + a, c + b], Stroke::new(1.4, col));
-                    }
-                }
-                if resp.clicked() {
-                    state.film_filter_flag = if on { 0 } else { flag };
-                }
-                resp.on_hover_text(crate::i18n::tr(tip));
-                sx += DOT;
-            }
-            // 色标：四颗圆点，选中的加一圈正文色描边（颜色本身不能当选中态，
-            // 红点打不打标都是红的）。
-            //
-            // Colour labels: four dots; the selected one gets a body-colour ring, since
-            // the dot's own colour cannot double as the selected state.
-            sx += 6.0;
-            for k in 1..=4u8 {
-                let r = Rect::from_center_size(Pos2::new(sx + 7.0, cy), Vec2::splat(DOT));
-                let resp = ui.interact(
-                    r,
-                    ui.make_persistent_id(("film-label-filter", k)),
-                    Sense::click(),
-                );
-                let on = state.film_filter_label == k;
-                p.circle_filled(
-                    r.center(),
-                    if resp.hovered() { 5.5 } else { 4.5 },
-                    label_color(k),
-                );
-                if on {
-                    p.circle_stroke(r.center(), 6.5, Stroke::new(1.0, text()));
-                }
-                if resp.clicked() {
-                    state.film_filter_label = if on { 0 } else { k };
-                }
-                resp.on_hover_text(crate::i18n::tr_fmt(
-                    "只看{}色标",
-                    &[&crate::i18n::tr(crate::state::LABEL_NAMES[k as usize])],
-                ));
-                sx += DOT;
-            }
-            let clear_rect = Rect::from_min_size(
-                Pos2::new(sx + 8.0, cy - 9.0),
-                Vec2::new(clear_g.size().x + 8.0, 18.0),
-            );
-            let clear_resp = ui.interact(
-                clear_rect,
-                ui.make_persistent_id("film-filter-clear"),
-                Sense::click(),
-            );
-            p.text(
-                Pos2::new(clear_rect.left() + 4.0, cy),
-                Align2::LEFT_CENTER,
-                clear_text,
-                font(SIZE_SMALL),
-                if clear_resp.hovered() {
-                    text()
-                } else {
-                    muted()
-                },
-            );
-            if clear_resp.clicked() {
-                state.film_filter_stars = 0;
-                state.film_filter_flag = 0;
-                state.film_filter_label = 0;
-            }
-            if filters_on {
-                p.text(
-                    Pos2::new(clear_rect.right() + 8.0, cy),
-                    Align2::LEFT_CENTER,
-                    count_text,
-                    mono(SIZE_SMALL),
-                    dim(),
-                );
-            }
-        } else if filters_on {
-            // 窄窗下的紧凑筛选读数：右对齐，只留「已筛选 x / y」与一枚可点的清除。
-            //
-            // Compact filter readout for narrow windows: right-aligned, just the
-            // "x of y" count and a clickable clear.
-            let clear_left = right_cursor - 6.0 - clear_g.size().x;
-            let count_left = clear_left - 10.0 - count_g.size().x;
-            let clear_rect = Rect::from_min_size(
-                Pos2::new(clear_left - 4.0, cy - 9.0),
-                Vec2::new(clear_g.size().x + 8.0, 18.0),
-            );
-            let clear_resp = ui.interact(
-                clear_rect,
-                ui.make_persistent_id("film-filter-clear-compact"),
-                Sense::click(),
-            );
-            p.text(
-                Pos2::new(count_left, cy),
-                Align2::LEFT_CENTER,
-                count_text,
-                mono(SIZE_SMALL),
-                dim(),
-            );
-            p.text(
-                Pos2::new(clear_rect.left() + 4.0, cy),
-                Align2::LEFT_CENTER,
-                clear_text,
-                font(SIZE_SMALL),
-                if clear_resp.hovered() {
-                    text()
-                } else {
-                    muted()
-                },
-            );
-            if clear_resp.clicked() {
-                state.film_filter_stars = 0;
-                state.film_filter_flag = 0;
-                state.film_filter_label = 0;
-            }
-        }
-    }
-
-    // 右端「曲线」开关：锚在头部右缘，不随左端的收起按钮移动。
-    //
-    // The right-hand "Curve" toggle: anchored to the header's right edge, it does not
-    // follow the collapse button to the left.
+    // The curve toggle sits after the filter group, at the header's right end.
     let curve_rect = Rect::from_min_size(
-        Pos2::new(hd.right() - 10.0 - curve_w, cy - 9.0),
-        Vec2::new(curve_w, 18.0),
+        Pos2::new(hd.right() - CURVE_W, cy - 10.0),
+        Vec2::new(CURVE_W, 20.0),
     );
-    let curve_resp = ui.interact(
-        curve_rect,
-        ui.make_persistent_id("tl-curve"),
-        Sense::click(),
-    );
+    let curve_resp = ui.interact(curve_rect, ui.make_persistent_id("tl-curve"), Sense::click());
     if curve_resp.hovered() {
         p.rect_filled(curve_rect, radius_control(), elev());
     }
@@ -387,109 +349,340 @@ pub(super) fn timeline(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         state.show_curves = !state.show_curves;
     }
 
-    let mut y = hd.bottom() + 4.0;
-    let pad = 8.0;
-    if state.show_curves {
-        // 波形是检视工具，打开时宁可挤缩略图也不换行：一开就跳布局最难受。
-        let h = 54.0;
-        curves(
-            state,
-            ui,
-            Rect::from_min_size(
-                Pos2::new(full.left() + pad, y),
-                Vec2::new(full.width() - pad * 2.0, h),
-            ),
-        );
-        y += h + 6.0;
+    // 筛选组右对齐；窄窗退成「已筛选 x / y · 清除筛选」的紧凑读数——筛选**正在
+    // 生效**时不能整组消失，否则胶片条会莫名其妙空着而界面上没有原因。
+    //
+    // The filter group is right aligned; a narrow window falls back to the compact
+    // "x of y / clear" readout, because an active filter must never vanish silently.
+    let fw = filter_widths(state, p);
+    let gx = curve_rect.left() - 8.0 - fw.total;
+    if gx >= film_rect.right() + 8.0 {
+        draw_filters(state, ui, p, gx, cy, &fw);
+    } else if filters_on(state) {
+        compact_filters(state, ui, p, curve_rect.left() - 8.0, cy, &fw);
     }
-    if state.show_film {
-        // 高度优先级：用户拖过的高度 > 按首帧比例自动适配 > 兜底 56。
-        // 走带是固定 36 高的一行，胶片条只吃自己需要的高度——以前剩余高度全被
-        // 走带吞掉，单帧序列底下会留出半条空带（用户截图：走带里只有两撮字的
-        // 大空白）。
-        //
-        // Height priority: user drag > first-frame aspect > 56 fallback. The transport is
-        // a fixed 36 px row and the strip takes only what it needs; the leftover used to
-        // be swallowed by the transport, leaving half a band of empty space under a
-        // one-frame sequence (user screenshot: two clumps of text in a wide blank row).
-        let avail_h = (full.bottom() - y - 40.0).max(56.0);
-        let h = state.film_height().clamp(48.0, avail_h);
-        // 上边缘 5px 的拖动条：上下拉自定义高度，双击回到自动适配。
-        let grip = Rect::from_min_max(
-            Pos2::new(full.left() + pad, y - 2.0),
-            Pos2::new(full.right() - pad, y + 3.0),
-        );
-        let gresp = ui.interact(
-            grip,
-            ui.make_persistent_id("film-h"),
-            Sense::click_and_drag(),
-        );
-        if gresp.dragged()
-            && let Some(pt) = gresp.interact_pointer_pos()
-        {
-            state.film_h = Some((pt.y - y + h).clamp(48.0, avail_h));
-        }
-        if gresp.double_clicked() {
-            state.film_h = None;
-        }
-        if gresp.hovered() || gresp.dragged() {
-            ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
-            p.rect_filled(grip, radius_chip(), accent().gamma_multiply(0.55));
-        } else {
-            p.rect_filled(grip, radius_chip(), divider());
-        }
-        filmstrip(
-            state,
-            ui,
-            ctx,
-            Rect::from_min_size(
-                Pos2::new(full.left() + pad, y),
-                Vec2::new(full.width() - pad * 2.0, h),
-            ),
-        );
-        y += h + 4.0;
-    }
-    transport(
-        state,
-        ui,
-        Rect::from_min_size(
-            Pos2::new(full.left() + pad, y),
-            Vec2::new(full.width() - pad * 2.0, 36.0),
-        ),
-    );
 }
 
-fn curves(state: &mut AppState, ui: &mut Ui, rect: Rect) {
-    let resp = ui.interact(
+/// 完整筛选组：`筛选` + 五颗星级下限 + 两面旗 + 四个色标 + 清除 [+ 计数]。
+///
+/// The full filter group: label, five star levels, two flags, four colour labels,
+/// clear, and the count when a filter is live.
+fn draw_filters(
+    state: &mut AppState,
+    ui: &mut Ui,
+    p: &egui::Painter,
+    x0: f32,
+    cy: f32,
+    fw: &FilterW,
+) {
+    let mut x = x0;
+    p.text(
+        Pos2::new(x, cy),
+        Align2::LEFT_CENTER,
+        crate::i18n::tr("筛选"),
+        font(SIZE_SMALL),
+        muted(),
+    );
+    x += fw.label + FGAP;
+
+    for level in 1..=5u8 {
+        let r = Rect::from_center_size(Pos2::new(x + DOT * 0.5, cy), Vec2::splat(DOT));
+        let resp = ui.interact(
+            r,
+            ui.make_persistent_id(("film-star-filter", level)),
+            Sense::click(),
+        );
+        let on = state.film_filter_stars >= level;
+        icons::paint(
+            p,
+            r.shrink(2.0),
+            if on { Glyph::Star } else { Glyph::StarEmpty },
+            if on {
+                star()
+            } else if resp.hovered() {
+                text()
+            } else {
+                muted()
+            },
+        );
+        if resp.clicked() {
+            state.film_filter_stars = if state.film_filter_stars == level {
+                0
+            } else {
+                level
+            };
+        }
+        x += DOT;
+    }
+    x += FGAP;
+
+    // 旗标：一枚勾（选用）一枚叉（排除），再点一次取消。勾/叉用线段画，
+    // 不赌字体里有没有 ✓ / ✕。
+    //
+    // Flags: a tick (pick) and a cross (reject); clicking again clears. Both are line
+    // segments so no font is trusted to carry the glyphs.
+    for (flag, tip) in [(1i8, "只看选用"), (-1i8, "只看排除")] {
+        let r = Rect::from_center_size(Pos2::new(x + DOT * 0.5, cy), Vec2::splat(DOT));
+        let resp = ui.interact(
+            r,
+            ui.make_persistent_id(("film-flag-filter", flag)),
+            Sense::click(),
+        );
+        let on = state.film_filter_flag == flag;
+        let tint = if flag > 0 {
+            label_color(3)
+        } else {
+            label_color(1)
+        };
+        if on {
+            p.rect_filled(r, radius_control(), tint.gamma_multiply(0.22));
+        }
+        let col = if on {
+            tint
+        } else if resp.hovered() {
+            text()
+        } else {
+            muted()
+        };
+        let c = r.center();
+        if flag > 0 {
+            p.add(egui::Shape::line(
+                vec![
+                    Pos2::new(c.x - 3.4, c.y + 0.2),
+                    Pos2::new(c.x - 0.8, c.y + 2.8),
+                    Pos2::new(c.x + 3.4, c.y - 2.8),
+                ],
+                Stroke::new(1.4, col),
+            ));
+        } else {
+            for (a, b) in [
+                (Vec2::new(-3.2, -3.2), Vec2::new(3.2, 3.2)),
+                (Vec2::new(3.2, -3.2), Vec2::new(-3.2, 3.2)),
+            ] {
+                p.line_segment([c + a, c + b], Stroke::new(1.4, col));
+            }
+        }
+        if resp.clicked() {
+            state.film_filter_flag = if on { 0 } else { flag };
+        }
+        resp.on_hover_text(crate::i18n::tr(tip));
+        x += DOT;
+    }
+    x += FGAP;
+
+    // 色标：四颗圆点，选中的加一圈正文色描边（颜色本身不能当选中态，
+    // 红点打不打标都是红的）。
+    //
+    // Colour labels: four dots; the selected one gets a body-colour ring, since the
+    // dot's own colour cannot double as the selected state.
+    for k in 1..=4u8 {
+        let r = Rect::from_center_size(Pos2::new(x + DOT * 0.5, cy), Vec2::splat(DOT));
+        let resp = ui.interact(
+            r,
+            ui.make_persistent_id(("film-label-filter", k)),
+            Sense::click(),
+        );
+        let on = state.film_filter_label == k;
+        p.circle_filled(
+            r.center(),
+            if resp.hovered() { 4.5 } else { 3.6 },
+            label_color(k),
+        );
+        if on {
+            p.circle_stroke(r.center(), 5.6, Stroke::new(1.0, text()));
+        }
+        if resp.clicked() {
+            state.film_filter_label = if on { 0 } else { k };
+        }
+        resp.on_hover_text(crate::i18n::tr_fmt(
+            "只看{}色标",
+            &[&crate::i18n::tr(crate::state::LABEL_NAMES[k as usize])],
+        ));
+        x += DOT;
+    }
+    x += FGAP;
+
+    let clear_rect = Rect::from_min_size(
+        Pos2::new(x - 4.0, cy - 9.0),
+        Vec2::new(fw.clear + 8.0, 18.0),
+    );
+    let clear_resp = ui.interact(
+        clear_rect,
+        ui.make_persistent_id("film-filter-clear"),
+        Sense::click(),
+    );
+    p.text(
+        Pos2::new(clear_rect.left() + 4.0, cy),
+        Align2::LEFT_CENTER,
+        crate::i18n::tr("清除筛选"),
+        font(SIZE_SMALL),
+        if clear_resp.hovered() {
+            text()
+        } else {
+            muted()
+        },
+    );
+    if clear_resp.clicked() {
+        state.film_filter_stars = 0;
+        state.film_filter_flag = 0;
+        state.film_filter_label = 0;
+    }
+
+    if fw.count > 0.0 {
+        p.text(
+            Pos2::new(clear_rect.right() + FGAP, cy),
+            Align2::LEFT_CENTER,
+            crate::i18n::tr_fmt(
+                "已筛选 {} / {} 帧",
+                &[&state.film_visible_count(), &state.frame_count()],
+            ),
+            mono(MICRO),
+            dim(),
+        );
+    }
+}
+
+/// 窄窗下的紧凑筛选读数：右对齐，只留「已筛选 x / y」与一枚可点的清除。
+///
+/// Compact filter readout for narrow cards: right aligned, just the count and a
+/// clickable clear.
+fn compact_filters(
+    state: &mut AppState,
+    ui: &mut Ui,
+    p: &egui::Painter,
+    right: f32,
+    cy: f32,
+    fw: &FilterW,
+) {
+    let clear_left = right - 4.0 - fw.clear;
+    let count_left = clear_left - 8.0 - fw.count;
+    if fw.count > 0.0 {
+        p.text(
+            Pos2::new(count_left, cy),
+            Align2::LEFT_CENTER,
+            crate::i18n::tr_fmt(
+                "已筛选 {} / {} 帧",
+                &[&state.film_visible_count(), &state.frame_count()],
+            ),
+            mono(MICRO),
+            dim(),
+        );
+    }
+    let clear_rect = Rect::from_min_size(
+        Pos2::new(clear_left - 4.0, cy - 9.0),
+        Vec2::new(fw.clear + 8.0, 18.0),
+    );
+    let clear_resp = ui.interact(
+        clear_rect,
+        ui.make_persistent_id("film-filter-clear-compact"),
+        Sense::click(),
+    );
+    p.text(
+        Pos2::new(clear_rect.left() + 4.0, cy),
+        Align2::LEFT_CENTER,
+        crate::i18n::tr("清除筛选"),
+        font(SIZE_SMALL),
+        if clear_resp.hovered() {
+            text()
+        } else {
+            muted()
+        },
+    );
+    if clear_resp.clicked() {
+        state.film_filter_stars = 0;
+        state.film_filter_flag = 0;
+        state.film_filter_label = 0;
+    }
+}
+
+// ---------------------------------------------------------------- 逐帧亮度曲线
+
+/// 曲线块：标题行（逐帧亮度 / 去闪 EV · K 数）+ 折线图 + 刻度。
+///
+/// 行为与旧版一致：悬停读数、点击 / 拖动跳帧、关键帧菱形、当前帧竖线、两条折线
+/// （灰=原片亮度，蓝=去闪修正后）。
+///
+/// The curve block: title row, plot and ticks. Behaviour is unchanged from the old
+/// timeline -- hover readout, click/drag to seek, keyframe diamonds, playhead, and the
+/// two polylines (grey raw, blue corrected).
+fn curve_block(state: &mut AppState, ui: &mut Ui, rect: Rect) {
+    let p = ui.painter().clone();
+    p.rect_filled(rect, 6.0, field());
+    p.rect_stroke(
         rect,
+        6.0,
+        Stroke::new(1.0, group_ring()),
+        StrokeKind::Inside,
+    );
+
+    let head = Rect::from_min_size(
+        Pos2::new(rect.left() + 7.0, rect.top() + 4.0),
+        Vec2::new(rect.width() - 14.0, 10.0),
+    );
+    p.text(
+        head.left_center(),
+        Align2::LEFT_CENTER,
+        crate::i18n::tr("逐帧亮度"),
+        font(MICRO),
+        dim(),
+    );
+    p.text(
+        head.right_center(),
+        Align2::RIGHT_CENTER,
+        crate::i18n::tr_fmt(
+            "去闪 {} EV · K {}",
+            &[
+                &format!("{:+.2}", state.offset_at(state.selected)),
+                &state.keyframes.len(),
+            ],
+        ),
+        mono(MICRO),
+        dim(),
+    );
+
+    // 刻度：底部一条 3px 高的密排发丝线（设计 `.curve-ticks`）。
+    //
+    // Ticks: a 3 px band of hairlines along the bottom edge.
+    let ticks_top = rect.bottom() - 5.0;
+    let mut tx = rect.left() + 7.0;
+    while tx < rect.right() - 7.0 {
+        p.line_segment(
+            [
+                Pos2::new(tx, ticks_top),
+                Pos2::new(tx, ticks_top + 3.0),
+            ],
+            Stroke::new(1.0, Color32::from_white_alpha(14)),
+        );
+        tx += 8.0;
+    }
+
+    let inner = Rect::from_min_max(
+        Pos2::new(rect.left() + 7.0, head.bottom() + 3.0),
+        Pos2::new(rect.right() - 28.0, ticks_top - 1.0),
+    );
+    let resp = ui.interact(
+        inner.expand2(Vec2::new(0.0, 2.0)),
         ui.make_persistent_id("curves"),
         Sense::click_and_drag(),
     );
-    let p = ui.painter();
-    p.rect_filled(rect, 0, canvas());
-    p.rect_stroke(rect, 0, Stroke::new(1.0, divider()), StrokeKind::Inside);
 
     let n = state.frame_count();
     if n == 0 {
         p.text(
-            rect.center(),
+            inner.center(),
             Align2::CENTER_CENTER,
-            "打开序列后这里显示逐帧亮度与去闪修正",
-            font(SIZE_SMALL),
+            crate::i18n::tr("打开序列后这里显示逐帧亮度与去闪修正"),
+            font(MICRO),
             dim(),
         );
         return;
     }
 
-    let inner = Rect::from_min_max(
-        Pos2::new(rect.left() + 8.0, rect.top() + 5.0),
-        Pos2::new(rect.right() - 36.0, rect.bottom() - 13.0),
-    );
     for k in 1..4 {
         let y = inner.top() + inner.height() * k as f32 / 4.0;
         p.line_segment(
             [Pos2::new(inner.left(), y), Pos2::new(inner.right(), y)],
-            Stroke::new(1.0, divider()),
+            Stroke::new(1.0, Color32::from_white_alpha(10)),
         );
     }
 
@@ -500,8 +693,8 @@ fn curves(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         p.text(
             inner.center(),
             Align2::CENTER_CENTER,
-            "测光中…",
-            font(SIZE_SMALL),
+            crate::i18n::tr("测光中…"),
+            font(MICRO),
             accent(),
         );
         return;
@@ -580,8 +773,8 @@ fn curves(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     }
 
     for i in state.keyframes.keys() {
-        let c = Pos2::new(x_at(*i), inner.top() + 4.0);
-        let d = 3.2;
+        let c = Pos2::new(x_at(*i), inner.top() + 3.0);
+        let d = 3.0;
         p.add(egui::Shape::convex_polygon(
             vec![
                 Pos2::new(c.x, c.y - d),
@@ -638,7 +831,7 @@ fn curves(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         } else {
             crate::i18n::tr_fmt("帧 {} · 缺帧", &[&format!("{:04}", i + 1)])
         };
-        let galley = p.layout_no_wrap(text.clone(), mono(SIZE_SMALL), palette().text);
+        let galley = p.layout_no_wrap(text.clone(), mono(MICRO), palette().text);
         let bg = Rect::from_min_size(
             Pos2::new(inner.left() + 2.0, rect.top() + 2.0),
             galley.size() + Vec2::new(10.0, 4.0),
@@ -661,10 +854,17 @@ pub(super) fn label_color(label: u8) -> Color32 {
     }
 }
 
+// ---------------------------------------------------------------- 缩略图行
+
+/// 缩略图行：72×56、圆角 6、gap 4、选中 2px 强调环；放不下时横向滚动，
+/// 绝不把卡片撑宽。
+///
+/// Thumbnail row: 72x56 cells, 6 px radius, 4 px gaps, a 2 px accent ring on the
+/// selection. It scrolls horizontally instead of widening the card.
 fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
     let n = state.frame_count();
-    let cell_w = 92.0;
     let h = rect.height();
+    let pitch = THUMB_W + THUMB_GAP;
     let mut visible = 0..0;
 
     ui.scope_builder(
@@ -676,126 +876,100 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
             ScrollArea::horizontal()
                 .id_salt("film")
                 .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                 .show(ui, |ui| {
+                    // 左右各留 2px：选中环画在格子**外**（设计 `.th.on` 的
+                    // `box-shadow:0 0 0 2px`），不留这点余量滚动区会把它裁掉。
+                    //
+                    // 2 px of air on both sides: the selection ring is painted outside
+                    // the cell, so without it the scroll viewport clips the ring.
                     let (strip, _) = ui.allocate_exact_size(
-                        Vec2::new(cell_w * n.max(1) as f32, h),
+                        Vec2::new(pitch * n.max(1) as f32 + 2.0, h),
                         Sense::hover(),
                     );
+                    let x0 = strip.left() + 2.0;
                     let clip = ui.clip_rect();
-                    let lo =
-                        (((clip.left() - strip.left()) / cell_w).floor() as isize).max(0) as usize;
-                    let hi =
-                        ((((clip.right() - strip.left()) / cell_w).ceil() as usize) + 1).min(n);
+                    let lo = (((clip.left() - x0) / pitch).floor() as isize).max(0) as usize;
+                    let hi = ((((clip.right() - x0) / pitch).ceil() as usize) + 1).min(n);
                     // 虚拟化窗口退化时至少留一格：旧滚动偏移把视口推到内容之外、或窗口
                     // 极窄时，算出来的区间会是空集，整条胶片条就画成一片空白。
                     //
-                    // Keep at least one cell when the virtualisation window degenerates: a
-                    // stale scroll offset or a very narrow window can yield an empty range,
-                    // and the whole strip would paint as a blank band.
+                    // Keep at least one cell when the virtualisation window degenerates.
                     let lo = lo.min(n.saturating_sub(1));
                     visible = lo..hi.max(lo + 1).min(n);
 
-                    let p = ui.painter();
+                    let p = ui.painter().clone();
                     for i in lo..hi {
-                        // 筛选只决定「画不画」，不改真实帧序：i 仍是序列里的真帧号，
-                        // 所以播放范围、导出范围、缩略图预热都还是原来的语义。
-                        //
-                        // The filter only decides whether a cell is drawn; `i` stays the
-                        // real sequence index, so playback, export and thumbnail warm-up
-                        // keep their original meaning.
                         if !state.film_visible(i) {
                             continue;
                         }
                         let cell = Rect::from_min_size(
-                            Pos2::new(strip.left() + i as f32 * cell_w + 1.0, strip.top()),
-                            Vec2::new(cell_w - 2.0, h),
+                            Pos2::new(x0 + i as f32 * pitch, strip.top()),
+                            Vec2::new(THUMB_W, h),
                         );
-                        // 单元对齐界面稿 .th：gap 2、圆角 3、canvas 底、
-                        // 外圈 1px 白 5% 的极淡环，没有内衬黑卡。
-                        p.rect_filled(cell, radius_chip(), canvas());
-                        p.rect_stroke(
+                        let cell_resp = ui.interact(
                             cell,
-                            3.0,
-                            Stroke::new(1.0, Color32::from_white_alpha(13)),
-                            StrokeKind::Inside,
+                            ui.make_persistent_id(("film-cell", i)),
+                            Sense::click(),
                         );
-                        let inner = Rect::from_min_max(
-                            cell.min + Vec2::new(3.0, 3.0),
-                            cell.max - Vec2::new(3.0, 15.0),
-                        );
+
+                        // 底：画布色打底（缺帧时留一块空窗），圆角 6。
+                        p.rect_filled(cell, 6.0, canvas());
                         if let Some(t) = state.thumb(i) {
                             let (tw, th) = (t.size[0] as f32, t.size[1] as f32);
-                            let scale = (inner.width() / tw).min(inner.height() / th);
-                            let size = Vec2::new(tw * scale, th * scale);
-                            let img = Rect::from_center_size(inner.center(), size);
-                            p.image(t.texture.id(), img, UV, Color32::WHITE);
+                            // object-fit: cover —— 切片居中裁满整格，不拉变形。
+                            //
+                            // object-fit: cover -- centre-crop to fill the cell.
+                            let uv = cover_uv(tw, th, cell.size());
+                            p.add(egui::Shape::Rect(
+                                egui::epaint::RectShape::filled(cell, 6.0, Color32::WHITE)
+                                    .with_texture(t.texture.id(), uv),
+                            ));
                         } else {
                             icons::paint(
-                                p,
-                                Rect::from_center_size(inner.center(), Vec2::splat(16.0)),
+                                &p,
+                                Rect::from_center_size(cell.center(), Vec2::splat(16.0)),
                                 Glyph::Sequence,
                                 dim().gamma_multiply(0.7),
                             );
                         }
+
+                        // 色标：底缘 3px 色条（缩略图上的色标读法，与帧表同形）。
                         let label = state.label_at(i);
                         if label > 0 {
                             p.rect_filled(
                                 Rect::from_min_size(
-                                    Pos2::new(cell.left() + 3.0, cell.bottom() - 16.0),
+                                    Pos2::new(cell.left() + 3.0, cell.bottom() - 3.0),
                                     Vec2::new(cell.width() - 6.0, 2.0),
                                 ),
-                                0,
+                                1.0,
                                 label_color(label),
                             );
                         }
-                        let rating = state.rating_at(i);
-                        // 星级右对齐、序号左对齐：两者同在底缘带里，早先都从左起画，
-                        // 星级（bottom-14..-7）压着序号字顶（MICRO 10px，顶到
-                        // bottom-11）——每格都叠。水平分道后互不相交。
+
+                        // 序号：左下角，白字 + 1px 黑投影（设计 `.th .no`）。
                         //
-                        // Stars hug the right edge, the number the left: both live in the
-                        // bottom band, and painting both from the left made the star row
-                        // (bottom-14..-7) overlap the number's cap height (MICRO, up to
-                        // bottom-11) in every cell. Splitting horizontally fixes it.
-                        for s in 0..5u8 {
-                            let sr = Rect::from_min_size(
-                                Pos2::new(
-                                    cell.right() - 3.0 - (5 - s) as f32 * 8.0,
-                                    cell.bottom() - 14.0,
-                                ),
-                                Vec2::splat(7.0),
-                            );
-                            icons::paint(
-                                p,
-                                sr,
-                                if s < rating {
-                                    Glyph::Star
-                                } else {
-                                    Glyph::StarEmpty
-                                },
-                                if s < rating {
-                                    // 星级升作主信息（B4）：48 格 × 5 枚黄点曾是整条
-                                    // 胶片条最吵的一层彩色。改用正文白后，「评级」与
-                                    // 「未评级（dim 空星）」的对比反而更清楚，彩色只
-                                    // 留给色标与旗标。
-                                    //
-                                    // Stars become the primary readout (B4): 48 cells x 5
-                                    // yellow fills were the noisiest colour band on the
-                                    // strip. Body white keeps "rated vs not" (dim hollow
-                                    // stars) legible and leaves colour to flags and labels.
-                                    if i == state.selected {
-                                        on_selected()
-                                    } else {
-                                        text()
-                                    }
-                                } else {
-                                    dim()
-                                },
-                            );
-                        }
+                        // Frame number bottom-left, white with a 1 px shadow.
+                        let num = format!("{:04}", i + 1);
+                        p.text(
+                            Pos2::new(cell.left() + 5.0, cell.bottom() - 2.0),
+                            Align2::LEFT_BOTTOM,
+                            &num,
+                            font(MICRO),
+                            Color32::from_black_alpha(130),
+                        );
+                        p.text(
+                            Pos2::new(cell.left() + 4.0, cell.bottom() - 3.0),
+                            Align2::LEFT_BOTTOM,
+                            &num,
+                            font(MICRO),
+                            Color32::from_white_alpha(235),
+                        );
+
+                        // 旗标：左上角一枚小图标，选用绿勾 / 排除红叉。
                         match state.flag_at(i) {
                             1 => icons::paint(
-                                p,
+                                &p,
                                 Rect::from_min_size(
                                     Pos2::new(cell.left() + 4.0, cell.top() + 4.0),
                                     Vec2::splat(10.0),
@@ -804,7 +978,7 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                                 ok(),
                             ),
                             -1 => icons::paint(
-                                p,
+                                &p,
                                 Rect::from_min_size(
                                     Pos2::new(cell.left() + 4.0, cell.top() + 4.0),
                                     Vec2::splat(10.0),
@@ -814,88 +988,44 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                             ),
                             _ => {}
                         }
-                        // 序号：左下角，dim 配黑投影（B4 让位给星级）；
-                        // 先画偏移 1px 的黑影再画字，缩略图再亮也压得住。
-                        //
-                        // The frame number sits bottom-left in dim (B4 hands the
-                        // primary readout to the stars); a 1px offset shadow keeps it
-                        // legible over bright thumbnails.
-                        let num = format!("{:04}", i + 1);
-                        p.text(
-                            Pos2::new(cell.left() + 4.0, cell.bottom() - 1.0),
-                            Align2::LEFT_BOTTOM,
-                            num.clone(),
-                            font(MICRO),
-                            Color32::from_black_alpha(120),
-                        );
-                        p.text(
-                            Pos2::new(cell.left() + 3.0, cell.bottom() - 2.0),
-                            Align2::LEFT_BOTTOM,
-                            num,
-                            font(MICRO),
-                            if i == state.selected {
-                                on_selected()
-                            } else {
-                                dim()
-                            },
-                        );
 
-                        let cell_resp = ui.interact(
-                            cell,
-                            ui.make_persistent_id(("film-cell", i)),
-                            Sense::click(),
-                        );
-                        if i == state.selected {
-                            // 选中 = 1px 强调色外框 + 内圈 surround 压边（设计稿 B4）：
-                            // 2px 外框在 48 格上一排读作「一圈蓝条」，1px 描边配一圈
-                            // 压暗既清楚又不抢；绿色留给旗标，蓝色才是"你在哪"。
-                            //
-                            // Selected = 1px accent outline plus an inner surround ring
-                            // (design spec B4): a 2px outline read as a blue band across
-                            // the whole strip; 1px with an inner darkening stays legible
-                            // without shouting. Green is for flags, blue is "where you are".
-                            p.rect_stroke(
-                                cell.shrink(1.0),
-                                3.0,
-                                Stroke::new(1.0, accent()),
-                                StrokeKind::Inside,
+                        // 关键帧角标：右上角 13×13 琥珀 K（设计 `.kf`）。
+                        //
+                        // Keyframe badge: 13x13 amber K at the top-right (design `.kf`).
+                        if state.keyframes.contains_key(&i) {
+                            let chip = Rect::from_min_size(
+                                Pos2::new(cell.right() - 17.0, cell.top() + 4.0),
+                                Vec2::splat(13.0),
                             );
+                            p.rect_filled(chip, 3.0, star());
+                            p.text(
+                                chip.center(),
+                                Align2::CENTER_CENTER,
+                                "K",
+                                font(MICRO),
+                                Color32::from_rgb(0x21, 0x1B, 0x0D),
+                            );
+                        }
+
+                        if i == state.selected {
+                            // 选中 = 2px 强调色外环（设计 `.th.on`）。
+                            //
+                            // Selected = the design's 2 px accent ring.
                             p.rect_stroke(
-                                cell.shrink(2.0),
-                                2.0,
-                                Stroke::new(1.0, surround()),
+                                cell.expand(1.0),
+                                7.0,
+                                Stroke::new(2.0, accent()),
                                 StrokeKind::Inside,
                             );
                         } else if cell_resp.hovered() {
                             p.rect_stroke(
                                 cell,
-                                0,
+                                6.0,
                                 Stroke::new(1.0, border_strong()),
                                 StrokeKind::Inside,
                             );
                         }
-                        // 关键帧角标：LRT 的三重编码要求「轨道与表格行首同形同色」，
-                        // 序列页已有 K 角标，胶片条这条「轨道」也必须同形——否则
-                        // 同一批锚点在两个视图里长着两副样子。
-                        //
-                        // Keyframe badge: LRT's triple encoding requires the same shape on
-                        // the track and in the table gutter. The sequence page already has
-                        // a K badge, so the filmstrip -- the track -- must match, or the
-                        // same anchors look like two different objects in two views.
-                        if state.keyframes.contains_key(&i) {
-                            let chip = egui::Rect::from_min_size(
-                                cell.left_top() + Vec2::new(3.0, 3.0),
-                                Vec2::splat(13.0),
-                            );
-                            p.rect_filled(chip, radius_chip(), accent());
-                            p.text(
-                                chip.center(),
-                                egui::Align2::CENTER_CENTER,
-                                "K",
-                                font(SIZE_SMALL),
-                                on_accent(),
-                            );
-                        }
+
                         if cell_resp.clicked() {
                             state.set_frame(i);
                         }
@@ -945,30 +1075,22 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                     }
 
                     if state.scroll_to_selected {
-                        let x = strip.left() + state.selected as f32 * cell_w;
+                        let x = x0 + state.selected as f32 * pitch;
                         ui.scroll_to_rect(
-                            Rect::from_min_size(Pos2::new(x, strip.top()), Vec2::new(cell_w, h)),
+                            Rect::from_min_size(Pos2::new(x, strip.top()), Vec2::new(THUMB_W, h)),
                             Some(Align::Center),
                         );
                         state.scroll_to_selected = false;
                     }
                 });
 
-            // 筛选把所有帧都藏掉时不能留一片纯白（用户截图「突然底部没有
-            // 预览图了」）：在条内居中写明原因，并给一枚一键清除。
-            // 这枚提示画在滚动区**外面**：横向 ScrollArea 的内容只有 n 格宽
-            // （单帧时 92px），落在内容布局之外的控件虽然画得出来，命中区却被
-            // 内容 UI 的 clip 裁空，点了没反应。画在条自己的 Ui 上，命中区就是
-            // 整个可见条。
+            // 筛选把所有帧都藏掉时不能留一片空白：在条内居中写明原因，并给一枚
+            // 一键清除。画在滚动区**外面**——滚动内容只有 n 格宽，落在内容布局之外
+            // 的控件命中区会被 clip 裁空，点了没反应。
             //
-            // When the filter hides every frame the strip must not sit blank
-            // (user screenshot: "the filmstrip previews suddenly disappeared"):
-            // say why, centred, and offer a one-click clear. It is drawn *outside*
-            // the horizontal ScrollArea: the content is only n cells wide (92 px for
-            // a single frame), and a widget laid out beyond that content gets its
-            // interact rect clipped away while still painting — so clicks went
-            // nowhere. Painting on the strip's own Ui keeps the whole visible
-            // strip hittable.
+            // When the filter hides every frame the strip must not sit blank: say why,
+            // centred, with a one-click clear. Painted outside the ScrollArea so the
+            // hit rect is not clipped away with the narrow content.
             if n > 0 && state.film_visible_count() == 0 {
                 empty_hint(state, ui, rect);
             }
@@ -978,25 +1100,51 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
     state.ensure_thumbs(ctx, visible.start.saturating_sub(2), visible.end + 2);
 }
 
+/// `object-fit: cover` 的 UV：源比目标更宽就裁左右，更高就裁上下。
+///
+/// UV rect implementing `object-fit: cover`.
+fn cover_uv(tw: f32, th: f32, dst: Vec2) -> Rect {
+    let target = dst.x / dst.y.max(1.0);
+    let src = tw / th.max(1.0);
+    if src > target {
+        let f = target / src;
+        Rect::from_min_max(
+            Pos2::new((1.0 - f) * 0.5, 0.0),
+            Pos2::new((1.0 + f) * 0.5, 1.0),
+        )
+    } else {
+        let f = src / target;
+        Rect::from_min_max(
+            Pos2::new(0.0, (1.0 - f) * 0.5),
+            Pos2::new(1.0, (1.0 + f) * 0.5),
+        )
+    }
+}
+
 /// 空条提示：原因 + 一键清除。必须在滚动区外调用，理由见调用处。
 fn empty_hint(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     let p = ui.painter().clone();
     let hint = crate::i18n::tr("当前筛选下没有帧");
+    let hint_g = p.layout_no_wrap(hint.to_owned(), font(SIZE_SMALL), dim());
     let clear_g = p.layout_no_wrap(
         crate::i18n::tr("清除筛选").to_owned(),
         font(SIZE_SMALL),
         muted(),
     );
     let cy = rect.center().y;
-    p.text(
-        Pos2::new(rect.center().x, cy - 9.0),
-        Align2::CENTER_CENTER,
-        hint,
-        font(SIZE_SMALL),
+    // 原因 + 清除作为一个整体水平居中，读起来是一句话加一个动作。
+    //
+    // Reason and clear are centred as one group: a sentence plus one action.
+    let gap = 10.0;
+    let total = hint_g.size().x + gap + clear_g.size().x + 16.0;
+    let left = rect.center().x - total * 0.5;
+    p.galley(
+        Pos2::new(left, cy - hint_g.size().y * 0.5),
+        hint_g.clone(),
         dim(),
     );
-    let cr = Rect::from_center_size(
-        Pos2::new(rect.center().x, cy + 11.0),
+    let cr = Rect::from_min_size(
+        Pos2::new(left + hint_g.size().x + gap, cy - 10.0),
         Vec2::new(clear_g.size().x + 16.0, 20.0),
     );
     let cresp = ui.interact(
@@ -1023,69 +1171,71 @@ fn empty_hint(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     }
 }
 
+// ---------------------------------------------------------------- 走带
+
+/// 走带行：◀ ▶ 上一帧 / 下一帧、`0001 / 0004`、`−0.01 EV`、本帧星级、fps。
+///
+/// 播放 / 暂停、帧号与 EV 读数沿用旧版行为；右端读数额满则逐格让位。
+///
+/// Transport: prev/next, play/pause, frame counter, EV readout, the selected frame's
+/// stars and fps. Play/pause, the counter and the EV readout keep the old behaviour;
+/// right-hand readouts yield one by one when the row runs out of room.
 fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     let p = ui.painter().clone();
-    p.rect_filled(rect, 0, header());
-    p.rect_stroke(rect, 0, Stroke::new(1.0, border()), StrokeKind::Inside);
     let cy = rect.center().y;
     let mut idx = 0usize;
     // `enabled` 为假时只挂 hover 感：不可点、图标压到 dim、并说明为什么。
     // 播放按钮在单帧序列上就是这种状态——点了画面不动，用户会以为坏了。
     //
-    // With `enabled` false the control only senses hover: not clickable, icon dimmed, and
-    // a hover hint explains why. That is the play button on a one-frame sequence -- pressing
-    // it used to do nothing and read as a bug.
-    let mut mini =
-        |ui: &mut Ui, glyph: Glyph, active: bool, tint: Color32, enabled: bool| -> bool {
-            // 走带按钮 26×26：设计图 `.tp-btn{width:26px;height:26px}`，按 26px 一格排。
-            // 原 22 的命中区在触摸屏上偏小，也与设计图不符。
-            //
-            // Transport buttons are 26×26 per the design's `.tp-btn`, laid out on a
-            // 26 px pitch. The old 22 hit area was small for touch and did not match
-            // the design.
-            let r = Rect::from_center_size(
-                Pos2::new(rect.left() + 16.0 + idx as f32 * 26.0, cy),
-                Vec2::splat(26.0),
-            );
-            let resp = ui.interact(
-                r,
-                ui.make_persistent_id(("transport", idx)),
-                if enabled {
-                    Sense::click()
-                } else {
-                    Sense::hover()
-                },
-            );
-            idx += 1;
-            if enabled && resp.hovered() {
-                p.rect_filled(r, radius_control(), elev());
-            }
-            icons::paint(
-                &p,
-                r.shrink(5.0),
-                glyph,
-                if !enabled {
-                    dim()
-                } else if active {
-                    tint
-                } else if resp.hovered() {
-                    text()
-                } else {
-                    muted()
-                },
-            );
-            let clicked = resp.clicked();
+    // With `enabled` false the control only senses hover: not clickable, icon dimmed,
+    // with a hint. That is the play button on a one-frame sequence.
+    let mut mini = |ui: &mut Ui, glyph: Glyph, active: bool, tint: Color32, enabled: bool| -> bool {
+        // 走带按钮 22×22（设计 `.tp .ibtn`），按 26px 一格排。
+        //
+        // Transport buttons are 22x22 per the design's `.tp .ibtn`, on a 26 px pitch.
+        let r = Rect::from_center_size(
+            Pos2::new(rect.left() + 11.0 + idx as f32 * 26.0, cy),
+            Vec2::splat(22.0),
+        );
+        let resp = ui.interact(
+            r,
+            ui.make_persistent_id(("transport", idx)),
+            if enabled {
+                Sense::click()
+            } else {
+                Sense::hover()
+            },
+        );
+        idx += 1;
+        if enabled && resp.hovered() {
+            p.rect_filled(r, radius_control(), elev());
+        }
+        icons::paint(
+            &p,
+            r.shrink(5.0),
+            glyph,
             if !enabled {
-                resp.on_hover_text(crate::i18n::t!("至少需要两帧才能播放"));
-            }
-            clicked && enabled
-        };
+                dim()
+            } else if active {
+                tint
+            } else if resp.hovered() {
+                text()
+            } else {
+                muted()
+            },
+        );
+        let clicked = resp.clicked();
+        if !enabled {
+            resp.on_hover_text(crate::i18n::t!("至少需要两帧才能播放"));
+        }
+        clicked && enabled
+    };
 
     let has = state.frame_count() > 0;
     // 播放至少要两帧：一帧的「播放」既不动、又会把画面切成代理，纯属误导。
     //
-    // Playback needs at least two frames: "playing" a single frame neither moves nor means
-    // anything, and it used to swap the canvas to a proxy for no reason.
+    // Playback needs at least two frames: "playing" a single frame neither moves nor
+    // means anything.
     let can_play = state.frame_count() >= 2;
     if mini(ui, Glyph::Prev, false, text(), has) {
         state.step(-1);
@@ -1108,48 +1258,68 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     }
 
     let n = state.frame_count();
-    // 左段按实测文本宽依次排：早先是 `+94` / `+190` 两枚魔法数字——中文下刚好，
-    // 英文 "Deflicker +0.00 EV" 一出就压到帧号。宽度用 galley 量，两种语言都成立。
-    //
-    // The left run is laid out by measured text width: fixed offsets of +94/+190 fit
-    // Chinese but let English "Deflicker +0.00 EV" collide with the frame counter.
-    // Measuring galleys works for both languages.
-    let text_x = rect.left() + 16.0 + idx as f32 * 26.0;
+    let mut x = rect.left() + 11.0 + idx as f32 * 26.0;
+    // 帧号：`0001 / 0004`（设计 `.tp .display`，等宽数字）。
     let frame_text = if n > 0 {
-        crate::i18n::tr_fmt(
-            "{} / {}",
-            &[&format!("{:04}", state.selected + 1), &format!("{:04}", n)],
-        )
+        format!("{:04} / {:04}", state.selected + 1, n)
     } else {
         "— / —".to_owned()
     };
     let frame_g = p.layout_no_wrap(
         frame_text,
         mono(SIZE_SMALL),
-        if n > 0 { muted() } else { dim() },
+        if n > 0 { text() } else { dim() },
     );
-    let frame_pos = Pos2::new(text_x + 4.0, cy - frame_g.size().y * 0.5);
-    p.galley(frame_pos, frame_g.clone(), muted());
+    p.galley(Pos2::new(x, cy - frame_g.size().y * 0.5), frame_g.clone(), text());
+    x += frame_g.size().x + 8.0;
 
+    // 去闪读数：`去闪 −0.01 EV`，有实际修正时抬成强调色。
+    //
+    // Deflicker readout; it lifts to accent when there is an actual correction.
     let off = state.offset_at(state.selected);
-    let defl_text = crate::i18n::tr_fmt("去闪 {} EV", &[&format!("{off:+.2}")]);
-    let defl_color = if off.abs() > 0.02 { accent() } else { dim() };
-    let defl_g = p.layout_no_wrap(defl_text, mono(SIZE_SMALL), defl_color);
-    let defl_x = frame_pos.x + frame_g.size().x + 14.0;
-    let defl_pos = Pos2::new(defl_x, cy - defl_g.size().y * 0.5);
-    p.galley(defl_pos, defl_g.clone(), defl_color);
+    let ev_text = crate::i18n::tr_fmt("去闪 {} EV", &[&format!("{off:+.2}")]);
+    let ev_color = if off.abs() > 0.02 { accent() } else { dim() };
+    let ev_g = p.layout_no_wrap(ev_text, mono(SIZE_SMALL), ev_color);
+    p.galley(Pos2::new(x, cy - ev_g.size().y * 0.5), ev_g.clone(), ev_color);
+    x += ev_g.size().x + 8.0;
 
-    let mut x = defl_x + defl_g.size().x + 14.0;
+    // 本帧星级：与上方「星级筛选」是两件事——这里改的是当前帧的评级。
+    //
+    // This frame's rating: distinct from the header's star filter -- this writes the
+    // rating of the selected frame.
     let rating = state.selected_rating();
+    let cap = p.layout_no_wrap(
+        crate::i18n::t!("本帧").to_owned(),
+        font(SIZE_SMALL),
+        dim(),
+    );
+    let star_w = 13.0;
+    let stars_w = 5.0 * star_w;
+    let fps_g = p.layout_no_wrap(format!("{:.0} fps", state.output_fps), mono(MICRO), muted());
+    // 先给右端 fps 留出位置；「本帧」这枚说明字在窄卡里是唯一能整段让掉的东西
+    // （英文 "This frame" 比中文长一倍），星级本身是控件，不许让。
+    //
+    // Reserve room for the fps readout first. The "this frame" caption is the only
+    // thing that may drop whole in a narrow card (English is twice as wide as Chinese);
+    // the stars themselves are a control and never yield.
+    let cap_ok = x + cap.size().x + 4.0 + stars_w <= rect.right() - fps_g.size().x - 12.0;
+    if cap_ok {
+        p.galley(Pos2::new(x, cy - cap.size().y * 0.5), cap.clone(), dim());
+        x += cap.size().x + 4.0;
+    }
+    let stars_left = x;
     for s in 1..=5u8 {
-        let r = Rect::from_center_size(Pos2::new(x, cy), Vec2::splat(15.0));
+        let r = Rect::from_center_size(
+            Pos2::new(stars_left + (s as f32 - 0.5) * star_w, cy),
+            Vec2::new(star_w, 20.0),
+        );
         let resp = ui.interact(r, ui.make_persistent_id(("rate", s)), Sense::click());
         if resp.hovered() {
-            p.rect_filled(r, radius_control(), elev());
+            p.rect_filled(r, 3.0, elev());
         }
         icons::paint(
             &p,
-            r.shrink(2.0),
+            r.shrink2(Vec2::new(1.0, 4.0)),
             if s <= rating {
                 Glyph::Star
             } else {
@@ -1157,34 +1327,6 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
             },
             if s <= rating {
                 star()
-            } else {
-                if resp.hovered() { text() } else { dim() }
-            },
-        );
-        if resp.clicked() {
-            state.rate_selected(if rating == s { 0 } else { s });
-        }
-        x += 17.0;
-    }
-
-    x += 10.0;
-    let flag = state.selected_flag();
-    let flags = [
-        (1i8, Glyph::Flag, ok(), "选用 (P)"),
-        (-1, Glyph::Close, danger(), "排除 (X)"),
-    ];
-    for (f, glyph, tint, tip) in flags {
-        let r = Rect::from_center_size(Pos2::new(x + 11.0, cy), Vec2::splat(22.0));
-        let resp = ui.interact(r, ui.make_persistent_id(("flag", f)), Sense::click());
-        if resp.hovered() {
-            p.rect_filled(r, radius_control(), elev());
-        }
-        icons::paint(
-            &p,
-            r.shrink(5.0),
-            glyph,
-            if flag == f {
-                tint
             } else if resp.hovered() {
                 text()
             } else {
@@ -1192,49 +1334,25 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
             },
         );
         if resp.clicked() {
-            state.set_selected_flag(if flag == f { 0 } else { f });
+            state.rate_selected(if rating == s { 0 } else { s });
         }
-        resp.on_hover_text(tip);
-        x += 24.0;
     }
+    x = stars_left + stars_w;
 
-    x += 8.0;
-    let label = state.selected_label();
-    for l in 1..=4u8 {
-        let r = Rect::from_center_size(Pos2::new(x + 7.0, cy), Vec2::splat(16.0));
-        let resp = ui.interact(r, ui.make_persistent_id(("label", l)), Sense::click());
-        if resp.hovered() || label == l {
-            p.rect_filled(r, radius_control(), elev());
-        }
-        p.circle_filled(r.center(), 4.0, label_color(l));
-        if label == l {
-            p.circle_stroke(r.center(), 6.5, Stroke::new(1.0, text()));
-        }
-        if resp.clicked() {
-            state.set_selected_label(if label == l { 0 } else { l });
-        }
-        x += 18.0;
-    }
-
-    // 右端两格从右往左排，空间不足逐格让位：窄窗下「已评级 N」「30 fps」原是
-    // `right-62` / `right-8` 两枚固定偏移，会压到色标圆点。先保 fps（数值常看），
-    // 再保已评级；再不够就都让位——它们是读数，不是入口。
+    // 右端两格从右往左排，空间不足逐格让位：先保 fps（数值常看），再保已评级。
     //
     // The two right-side readouts chain from the right edge and yield one by one when
-    // space runs out: the old fixed offsets (right-62 / right-8) collided with the
-    // colour-label dots in narrow windows. fps yields last (it is watched live);
-    // both are readouts, never entrances, so dropping them is safe.
-    let fps_text = format!("{:.0} fps", state.output_fps);
-    let fps_g = p.layout_no_wrap(fps_text, mono(SIZE_SMALL), muted());
+    // space runs out: fps yields last, both are readouts rather than entrances.
     let rated_text = crate::i18n::tr_fmt("已评级 {}", &[&state.rated_count()]);
-    let rated_g = p.layout_no_wrap(rated_text, font(SIZE_SMALL), dim());
-    let mut rx = rect.right() - 8.0;
-    let fps_left = rx - fps_g.size().x;
+    let rated_g = p.layout_no_wrap(rated_text, font(MICRO), dim());
+    let fps_left = rect.right() - fps_g.size().x;
     if fps_left > x + 8.0 {
-        let fps_pos = Pos2::new(fps_left, cy - fps_g.size().y * 0.5);
-        p.galley(fps_pos, fps_g, muted());
-        rx = fps_left - 12.0;
-        let rated_left = rx - rated_g.size().x;
+        p.galley(
+            Pos2::new(fps_left, cy - fps_g.size().y * 0.5),
+            fps_g,
+            muted(),
+        );
+        let rated_left = fps_left - 10.0 - rated_g.size().x;
         if rated_left > x + 8.0 {
             p.galley(
                 Pos2::new(rated_left, cy - rated_g.size().y * 0.5),
