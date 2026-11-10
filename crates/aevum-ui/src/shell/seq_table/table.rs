@@ -7,9 +7,7 @@
 //! The frame-table card: 32 px head, 30 px scope bar, 30 px selection bar, 26 px column
 //! header, 26 px rows and a 22 px footer, per `#vTable .ftablecard`.
 
-use egui::{
-    Align, Align2, Color32, FontId, Pos2, Rect, ScrollArea, Sense, Stroke, StrokeKind, Ui, Vec2,
-};
+use egui::{Align, Align2, Color32, Pos2, Rect, ScrollArea, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 use crate::state::AppState;
 use crate::theme::*;
@@ -127,16 +125,16 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         Pos2::new(head.left() + 66.0, head.center().y),
         Align2::LEFT_CENTER,
         format!("{} 行 · 关键帧 {}", thousands(n), thousands(keys)),
-        FontId::proportional(10.0),
+        font(10.0),
         dim(),
     );
     let legend = "K = 关键帧";
-    let lg = p.layout_no_wrap(legend.to_owned(), FontId::proportional(9.0), dim());
+    let lg = p.layout_no_wrap(legend.to_owned(), font(9.0), dim());
     p.text(
         Pos2::new(head.right() - 10.0, head.center().y),
         Align2::RIGHT_CENTER,
         legend,
-        FontId::proportional(9.0),
+        font(9.0),
         dim(),
     );
     p.rect_filled(
@@ -200,7 +198,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         } else {
             (Pos2::new(x + PAD_X, th.center().y), Align2::LEFT_CENTER)
         };
-        p.text(at, a2, *title, FontId::proportional(10.0), dim());
+        p.text(at, a2, *title, font(10.0), dim());
         x += cw;
     }
     p.line_segment(
@@ -236,7 +234,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
             rows_rect.center(),
             Align2::CENTER_CENTER,
             msg,
-            FontId::proportional(11.0),
+            font(11.0),
             dim(),
         );
     } else {
@@ -363,14 +361,14 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
                                     kr.center(),
                                     Align2::CENTER_CENTER,
                                     "K",
-                                    FontId::proportional(7.0),
+                                    font(7.0),
                                     bench_bg(),
                                 );
                             }
                             let font = if *num || c == 1 {
                                 mono(11.0)
                             } else {
-                                FontId::proportional(11.0)
+                                font(11.0)
                             };
                             let ink = if i == sel {
                                 text()
@@ -424,14 +422,14 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
             n,
             keys
         ),
-        FontId::proportional(9.0),
+        font(9.0),
         dim(),
     );
     p.text(
         Pos2::new(foot.right() - 10.0, foot.center().y),
         Align2::RIGHT_CENTER,
         format!("显示 {} / {} 行", thousands(rows.len()), thousands(n)),
-        FontId::proportional(9.0),
+        font(9.0),
         dim(),
     );
 
@@ -476,13 +474,7 @@ fn draw_thumb(tex: &Option<(egui::TextureId, [u32; 2])>, p: &egui::Painter, row:
             );
         }
         None => {
-            p.text(
-                r.center(),
-                Align2::CENTER_CENTER,
-                "…",
-                FontId::proportional(10.0),
-                dim(),
-            );
+            p.text(r.center(), Align2::CENTER_CENTER, "…", font(10.0), dim());
         }
     }
 }
@@ -516,8 +508,8 @@ fn scope_bar(state: &AppState, ui: &mut Ui, rect: Rect) -> Scope {
     for (s, label, count) in items {
         let on = s == cur;
         let fg = if on { text() } else { dim() };
-        let lg = p.layout_no_wrap(label.to_owned(), FontId::proportional(10.0), fg);
-        let cg = p.layout_no_wrap(thousands(count), FontId::proportional(10.0), dim());
+        let lg = p.layout_no_wrap(label.to_owned(), font(10.0), fg);
+        let cg = p.layout_no_wrap(thousands(count), font(10.0), dim());
         let bw = lg.size().x + cg.size().x + 20.0;
         let r = Rect::from_min_size(Pos2::new(x, rect.center().y - 10.0), Vec2::new(bw, 20.0));
         let resp = ui.interact(r, ui.make_persistent_id(("scope", label)), Sense::click());
@@ -579,19 +571,16 @@ fn selection_bar(state: &mut AppState, ui: &mut Ui, rect: Rect, sel: usize, n: u
     let info = fit_text(
         &p,
         &info,
-        FontId::proportional(10.0),
+        font(10.0),
         muted(),
         (rect.width() * 0.5 - 60.0).max(80.0),
     );
-    let iw = p
-        .layout_no_wrap(info.clone(), FontId::proportional(10.0), muted())
-        .size()
-        .x;
+    let iw = p.layout_no_wrap(info.clone(), font(10.0), muted()).size().x;
     p.text(
         Pos2::new(rect.left() + 10.0, rect.center().y),
         Align2::LEFT_CENTER,
         info,
-        FontId::proportional(10.0),
+        font(10.0),
         muted(),
     );
 
@@ -617,7 +606,7 @@ fn selection_bar(state: &mut AppState, ui: &mut Ui, rect: Rect, sel: usize, n: u
     // than pretending to work.
     let _ = bar_button(ui, &p, r.right() + 2.0, rect, "导出所选", false);
     let cw = p
-        .layout_no_wrap("取消全选".to_owned(), FontId::proportional(10.0), dim())
+        .layout_no_wrap("取消全选".to_owned(), font(10.0), dim())
         .size()
         .x
         + 14.0;
@@ -636,7 +625,7 @@ fn bar_button(
     enabled: bool,
 ) -> (Rect, egui::Response) {
     let fg = if enabled { muted() } else { dim() };
-    let g = p.layout_no_wrap(label.to_owned(), FontId::proportional(10.0), fg);
+    let g = p.layout_no_wrap(label.to_owned(), font(10.0), fg);
     let w = g.size().x + 14.0;
     let r = Rect::from_min_size(Pos2::new(x, bar.center().y - 11.0), Vec2::new(w, 22.0));
     let resp = ui.interact(

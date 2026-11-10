@@ -340,7 +340,7 @@ pub(super) fn command_palette(state: &mut AppState, ctx: &Context) {
             let edit = egui::TextEdit::singleline(&mut state.palette_query)
                 .hint_text(crate::i18n::t!("搜索动作、模块或快捷键…"))
                 .desired_width(f32::INFINITY)
-                .font(egui::FontId::proportional(SIZE_BODY));
+                .font(crate::theme::font(SIZE_BODY));
             let resp = ui.add(edit);
             if state.palette_fresh {
                 resp.request_focus();
@@ -413,7 +413,7 @@ pub(super) fn command_palette(state: &mut AppState, ctx: &Context) {
                 Pos2::new(rect.left() + 10.0, rect.center().y),
                 Align2::LEFT_CENTER,
                 crate::i18n::tr(a.name),
-                egui::FontId::proportional(SIZE_BODY),
+                crate::theme::font(SIZE_BODY),
                 if on { text() } else { muted() },
             );
             // 分类靠右、快捷键最右：三级信息都用同一行，扫读时右缘对齐。
@@ -429,7 +429,7 @@ pub(super) fn command_palette(state: &mut AppState, ctx: &Context) {
             }
             let g = p.layout_no_wrap(
                 crate::i18n::tr(a.hint).to_owned(),
-                egui::FontId::proportional(MICRO),
+                crate::theme::font(MICRO),
                 dim(),
             );
             x -= g.size().x;

@@ -26,6 +26,11 @@ pub enum Glyph {
     Plus,
     Minus,
     ChevronDown,
+    /// 视图工具条第三枚：向上的折叠尖角（设计稿是 ∧，不是 ∨）。
+    ///
+    /// The view toolbar's third glyph: an upward fold chevron (the design shows
+    /// an up caret, not a down one).
+    ChevronUp,
     ChevronRight,
     Star,
     StarEmpty,
@@ -322,6 +327,10 @@ pub fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32) {
         Glyph::ChevronDown => {
             seg(painter, pt(r, 0.22, 0.38), pt(r, 0.5, 0.66), st);
             seg(painter, pt(r, 0.5, 0.66), pt(r, 0.78, 0.38), st);
+        }
+        Glyph::ChevronUp => {
+            seg(painter, pt(r, 0.22, 0.62), pt(r, 0.5, 0.34), st);
+            seg(painter, pt(r, 0.5, 0.34), pt(r, 0.78, 0.62), st);
         }
         Glyph::ChevronRight => {
             seg(painter, pt(r, 0.38, 0.2), pt(r, 0.66, 0.5), st);

@@ -81,18 +81,28 @@ fn dock_resize_handle(state: &mut AppState, ui: &mut Ui, card: Rect) {
 /// It sits between the tabs and the parameter area, right-aligned: it filters what is
 /// *shown*, so it must not sit inside any group card.
 fn dock_tools(state: &mut AppState, ui: &mut Ui) {
+    // 设计稿里这行是「亮色正文」，不是 10px 的灰注释：它是会改变整个面板内容的
+    // 过滤器，权重必须和组头同级。字号 10 -> 13、未选中 dim -> muted、行高 24 -> 28。
+    //
+    // In the design this is bright body text, not a 10 px grey caption: it filters the
+    // whole panel, so it must rank with the group headers. 10 -> 13 px, dim -> muted,
+    // row 24 -> 28.
     let (row, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::hover());
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), egui::Sense::hover());
     let galley = ui.painter().layout_no_wrap(
         crate::i18n::t!("仅显示已改动").to_owned(),
-        font(10.0),
-        if state.only_changed { accent() } else { dim() },
+        font(SIZE_BODY),
+        if state.only_changed {
+            accent()
+        } else {
+            muted()
+        },
     );
     let dot_w = if state.only_changed { 9.0 } else { 0.0 };
     let w = galley.size().x + 12.0 + dot_w;
     let chip = Rect::from_min_max(
-        Pos2::new(row.right() - w, row.center().y - 10.0),
-        Pos2::new(row.right(), row.center().y + 10.0),
+        Pos2::new(row.right() - w, row.center().y - 12.0),
+        Pos2::new(row.right(), row.center().y + 12.0),
     );
     let resp = ui.interact(chip, ui.make_persistent_id("only-changed"), Sense::click());
     let p = ui.painter().clone();
@@ -112,8 +122,8 @@ fn dock_tools(state: &mut AppState, ui: &mut Ui) {
         Pos2::new(chip.left() + 6.0 + dot_w, chip.center().y),
         Align2::LEFT_CENTER,
         crate::i18n::t!("仅显示已改动"),
-        font(10.0),
-        if state.only_changed { text() } else { dim() },
+        font(SIZE_BODY),
+        if state.only_changed { text() } else { muted() },
     );
     if resp.clicked() {
         state.only_changed = !state.only_changed;
@@ -173,7 +183,19 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
         },
         dock(),
     );
-    theme::rule(&p, strip.left(), strip.right(), strip.top(), divider());
+    // 顶边 1px 边缘光：深色卡片的层级靠「明度阶梯 + 上沿光」，不是靠把投影
+    // 加厚。普通分隔线会让卡片上沿糊成一条灰带，白 8% 才能读作被照亮的边。
+    //
+    // A 1 px top edge light: dark cards gain depth from value steps and a lit top
+    // edge, not a heavier shadow. A plain divider blurs the rim into a grey band;
+    // 8% white reads as a genuinely lit edge.
+    theme::rule(
+        &p,
+        strip.left(),
+        strip.right(),
+        strip.top(),
+        Color32::from_white_alpha(20),
+    );
     theme::rule(
         &p,
         strip.left(),
@@ -197,6 +219,13 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
         let resp = ui.interact(r, ui.make_persistent_id(("dock-tab", i)), Sense::click());
         let active = state.dock_tab == *tab;
         if active {
+            // 效果图的选中页签是一枚**实心圆角块**（不只是下划线）：先铺抬升底，
+            // 再画强调线。下划线单独存在时整排页签读成一条平铺的文字带，缺层级。
+            //
+            // The reference's active tab is a solid rounded chip, not just an
+            // underline: a raised fill first, then the accent line. An underline alone
+            // makes the whole row read as one flat strip of text with no hierarchy.
+            p.rect_filled(r, radius_control(), elev_hover());
             // 与顶栏步骤同一套：0.12s 从中心展开，只动宽度。
             //
             // Same rule as the top step bar: 0.12 s, grows from the centre, width only.

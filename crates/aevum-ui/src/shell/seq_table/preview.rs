@@ -8,9 +8,7 @@
 //! camera/luma badges, caption and transport), the sequence summary (key/value rows and
 //! keyframe chips) and the auto-transition segment table.
 
-use egui::{
-    Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, Vec2,
-};
+use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, Vec2};
 
 use crate::state::AppState;
 use crate::theme::*;
@@ -175,7 +173,7 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
     // 左上「相机预览」、右上「亮度 0.213」（设计稿 `.badge` / `.luma`）。
     //
     // Camera badge top-left, luma readout top-right.
-    let bfont = FontId::proportional(9.0);
+    let bfont = font(9.0);
     let gl = p.layout_no_wrap("相机预览".to_owned(), bfont.clone(), muted());
     let badge = Rect::from_min_size(
         Pos2::new(img.left() + 10.0, img.top() + 10.0),
@@ -242,7 +240,7 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
         Pos2::new(img.right() - 10.0, img.bottom() - 10.0),
         Align2::RIGHT_BOTTOM,
         format!("#{:04}", sel + 1),
-        FontId::proportional(10.0),
+        font(10.0),
         muted(),
     );
 
@@ -279,7 +277,7 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
         Pos2::new(next.rect.left() + 32.0, bar.center().y),
         Align2::LEFT_CENTER,
         format!("{:04} / {}", sel + 1, n),
-        FontId::proportional(10.0),
+        font(10.0),
         dim(),
     );
     let secs = if fps > 0.1 { sel as f32 / fps } else { 0.0 };
@@ -289,7 +287,7 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
         Pos2::new(bar.right() - 7.0, bar.center().y),
         Align2::RIGHT_CENTER,
         format!("{fps:.0} fps · {mm:02}:{ss:05.2}"),
-        FontId::proportional(9.0),
+        font(9.0),
         dim(),
     );
 
@@ -430,7 +428,7 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
             Pos2::new(card.right() - PAD, card.top() + 10.0 + 11.0),
             Align2::RIGHT_CENTER,
             camera,
-            FontId::proportional(9.0),
+            font(9.0),
             dim(),
         );
     }
@@ -443,10 +441,10 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
             Pos2::new(card.left() + PAD, mid),
             Align2::LEFT_CENTER,
             k,
-            FontId::proportional(11.0),
+            font(11.0),
             dim(),
         );
-        let vfont = FontId::proportional(11.0);
+        let vfont = font(11.0);
         let v = fit_text(
             &p,
             &v,
@@ -485,7 +483,7 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
         let cy = y + 7.0 + 9.0;
         let mut drawn = 0usize;
         for (i, label) in chips {
-            let g = p.layout_no_wrap(label, FontId::proportional(9.0), warn());
+            let g = p.layout_no_wrap(label, font(9.0), warn());
             let cw = g.size().x + 10.0;
             // 一行放不下就停：300px 宽的列最多容 5–6 枚，硬排会压到卡片外。
             //
@@ -517,7 +515,7 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
                 Pos2::new(x, cy),
                 Align2::LEFT_CENTER,
                 format!("+{}", keys - drawn),
-                FontId::proportional(9.0),
+                font(9.0),
                 dim(),
             );
         }
@@ -567,7 +565,7 @@ fn auto_card(state: &AppState, ui: &mut Ui, at: Pos2, w: f32, h: f32) -> f32 {
         Pos2::new(card.right() - PAD, card.top() + 10.0 + 11.0),
         Align2::RIGHT_CENTER,
         format!("{} 个关键帧 · {} 段", keys.len(), segs.len()),
-        FontId::proportional(9.0),
+        font(9.0),
         dim(),
     );
 
@@ -578,7 +576,7 @@ fn auto_card(state: &AppState, ui: &mut Ui, at: Pos2, w: f32, h: f32) -> f32 {
             Pos2::new(card.left() + PAD, y + 12.0),
             Align2::LEFT_CENTER,
             "还没有关键帧",
-            FontId::proportional(10.0),
+            font(10.0),
             dim(),
         );
     }
@@ -591,21 +589,21 @@ fn auto_card(state: &AppState, ui: &mut Ui, at: Pos2, w: f32, h: f32) -> f32 {
             Pos2::new(card.left() + PAD, mid),
             Align2::LEFT_CENTER,
             format!("{:04} → {:04}", a + 1, b + 1),
-            FontId::proportional(10.0),
+            font(10.0),
             muted(),
         );
         clip.text(
             Pos2::new(card.right() - PAD - 42.0, mid),
             Align2::RIGHT_CENTER,
             format!("{ev:+.3} EV"),
-            FontId::proportional(10.0),
+            font(10.0),
             warn(),
         );
         clip.text(
             Pos2::new(card.right() - PAD, mid),
             Align2::RIGHT_CENTER,
             format!("{secs:.1} s"),
-            FontId::proportional(10.0),
+            font(10.0),
             dim(),
         );
         y += 24.0;

@@ -31,7 +31,7 @@ use self::windows::update_window;
 use crate::icons::{self, Glyph};
 use crate::layout::StatusSlot;
 use crate::platform;
-use crate::state::AppState;
+use crate::state::{AppState, Tool};
 use crate::theme::*;
 
 // ---- 模块划分（性能重构设计-2026-10-30 §7/§10）----
@@ -693,9 +693,20 @@ const DOCK_GUTTER: f32 = 12.0;
 ///
 /// The floating card's corner radius (the design's `border-radius: 12px`).
 const DOCK_RADIUS: f32 = 12.0;
+/// 检查器浮卡的最小高度：约等于目标图显示到「色彩分级」分组的高度。
+///
+/// Minimum height of the floating inspector: about as tall as the reference that
+/// shows down to the Colour grading group.
+const DOCK_MIN_H: f32 = 470.0;
+/// 检查器浮卡的最小宽度：低于它推子行的「标签 + 读数」会把轨道吃光。
+///
+/// Minimum width of the floating inspector: below it the slider row's label and
+/// readout eat the rail.
+const DOCK_MIN_W: f32 = 300.0;
 
-/// 把检查器画成**浮在照片上的卡**：宽 300（`state.dock_w`）、高随内容，贴窗口
-/// 右缘 12px、顶栏下 12px。
+/// 把检查器画成**浮在照片上的卡**：宽 300（`state.dock_w`）、默认高随内容，
+/// 默认贴窗口右缘 12px、顶栏下 12px；页签行右侧的把手可拖动整卡，右下角
+/// 手柄可同时改宽与高（用户要求「不要固定这个框、可以改大小、可以移动」）。
 ///
 /// 设计稿的 `.dock` 是 `position:absolute; top:12px; right:12px; width:300px;
 /// max-height:calc(100% - 24px); overflow:auto` —— 一张**浮卡**，不是贴边侧栏。
@@ -703,14 +714,19 @@ const DOCK_RADIUS: f32 = 12.0;
 /// 浮在照片的右边一窄条上，高度只到内容为止（内容再长就在卡内滚，卡不变高）。
 ///
 /// 实现要点：
-/// * 位置：右缘 `right-12-width`、顶边 `MENU_H+12`（标题栏下 12px）；
-/// * 高度上限 `窗口高-MENU_H-24`，超过则卡内纵向滚动（见 `dock_panel`）；
+/// * 位置：默认右缘 `right-12-width`、顶边 `MENU_H+12`；拖过把手后用
+///   `state.dock_pos`，每帧夹在窗口内留 12px 边距；
+/// * 高度：默认随内容（上限 `窗口高-MENU_H-24`）；拖过右下角手柄后钉在
+///   `state.dock_h`（最小 470），ScrollArea 上限随它，内容不够则卡身留白；
+/// * 拖动把手是页签行右侧的独立小矩形、独立 id，不拦卡内推子/按钮/页签；
 /// * 底色先占一个 `Shape::Noop` 槽位、画完内容再回填——卡高是布局之后才知道的，
 ///   底色若跟着内容画就会压在文字上；
 /// * 拖动推子时整卡降到 82%（`slider-drag` 临时数据），松手立刻回到实色。
 ///
 /// Draw the inspector as a **card floating over the photo**: 300 wide (`state.dock_w`),
-/// as tall as its content, 12 px from the window's right edge and 12 px under the top bar.
+/// as tall as its content by default, 12 px from the window's right edge and 12 px under
+/// the top bar. A handle in the tab row moves it and a corner handle resizes it (the user
+/// asked for a card that is "not fixed, resizable, movable, with a minimum size").
 ///
 /// The design's `.dock` is `position:absolute; top:12px; right:12px; width:300px;
 /// max-height:calc(100% - 24px); overflow:auto` -- a **floating card**, not a docked
@@ -725,8 +741,18 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
     // Height cap: window height minus the top bar and the two 12 px gutters (the design's
     // `max-height: calc(100% - 24px)` is relative to `.dock`'s containing block; here that
     // block starts under the title bar).
-    let max_h = (full.height() - MENU_H - DOCK_GUTTER * 2.0).max(120.0);
-    let pos = Pos2::new(
+    let win_max_h = (full.height() - MENU_H - DOCK_GUTTER * 2.0).max(120.0);
+    // `dock_h` 的 `0.0` 哨兵 = 跟随内容；拖过右下角手柄后是用户钉住的高度。
+    // 传给 dock_panel 的 cap 决定 ScrollArea 上限：用户设过就用它，内容能一次
+    // 显示到那么高，否则沿用窗口上限。
+    //
+    // `0.0` in `dock_h` means "follow content"; after dragging the corner handle it is
+    // the height the user pinned. The cap handed to `dock_panel` bounds the ScrollArea:
+    // a pinned height shows that much content at once, otherwise the window cap.
+    let user_h = (state.dock_h >= DOCK_MIN_H).then_some(state.dock_h.min(win_max_h));
+    let cap = user_h.unwrap_or(win_max_h);
+
+    let default_pos = Pos2::new(
         if right {
             full.right() - DOCK_GUTTER - w
         } else {
@@ -734,13 +760,41 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
         },
         full.top() + MENU_H + DOCK_GUTTER,
     );
+    // 位置每帧夹在窗口内（留 12px）：下沿按「钉住的高度或最小高度」估计，
+    // 用户拖到角落也不会把整卡推出屏幕。
+    //
+    // Clamp the position inside the window (12 px gutter) every frame: the bottom
+    // edge is estimated from "pinned height or min height", so dragging into a corner
+    // can never push the whole card off screen.
+    let h_est = user_h.unwrap_or(DOCK_MIN_H);
+    let min_pos = Pos2::new(full.left() + DOCK_GUTTER, full.top() + MENU_H + DOCK_GUTTER);
+    let max_pos = Pos2::new(
+        (full.right() - DOCK_GUTTER - w).max(min_pos.x),
+        (full.bottom() - DOCK_GUTTER - h_est).max(min_pos.y),
+    );
+    let pos = state
+        .dock_pos
+        .map(|p| {
+            Pos2::new(
+                p.x.clamp(min_pos.x, max_pos.x),
+                p.y.clamp(min_pos.y, max_pos.y),
+            )
+        })
+        .unwrap_or(default_pos);
+
     let id = if right { "dock" } else { "dock-left" };
     egui::Area::new(egui::Id::unique(id))
         .order(egui::Order::Middle)
+        // 整卡不交给 Area 拖动：那会让卡内任意一次按下都可能变成移窗口。
+        // 拖动只认页签行右侧那枚独立把手，见下方 `dock-drag`。
+        //
+        // Do not let Area drag the whole card: that would turn any press inside the
+        // card into "move the window". Only the small handle in the tab row drags.
+        .movable(false)
         .fixed_pos(pos)
         .show(ctx, |ui| {
             ui.set_width(w);
-            ui.set_max_height(max_h);
+            ui.set_max_height(cap);
             // 卡片底色/投影/描边先占槽位，内容画完再回填：`Painter::set` 写回的是
             // 同一个绘制序号，所以它们仍排在内容**之下**，但能拿到最终高度。
             //
@@ -762,9 +816,128 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
             // enclosing panel to fall back on, so one over-wide caption would paint straight
             // onto the photo (the docked column was covered by the panel's clip rect). That
             // clip rect is also what `dock_fit` uses to tell "this text belongs to the dock".
-            ui.set_clip_rect(Rect::from_min_size(ui.min_rect().min, Vec2::new(w, max_h)));
-            dock_panel(state, ui, w, max_h);
-            let card = ui.min_rect();
+            ui.set_clip_rect(Rect::from_min_size(
+                ui.min_rect().min,
+                Vec2::new(w, win_max_h),
+            ));
+            dock_panel(state, ui, w, cap);
+            let mut card = ui.min_rect();
+            // 钉住的高度：内容不够就把卡身补到那么高（留白），ScrollArea 已按
+            // cap 限制内容，不会溢出。
+            //
+            // Pinned height: when content is shorter, pad the card up to that height;
+            // the ScrollArea already caps the content so nothing spills out.
+            if let Some(h) = user_h {
+                card = Rect::from_min_size(card.min, Vec2::new(w, card.height().max(h)));
+            }
+
+            // ---- 拖动把手：页签行右侧的空白区 ----
+            // 页签到 `right-52`、× 钮在 `right-25`，中间这 22px 见方没有任何
+            // 卡内控件；把手画在内容之后但落在这块空白上，既不拦页签/推子/按钮，
+            // 也用一个独立 id 与卡内所有 interact 区分开。
+            //
+            // Drag handle: the gap at the right end of the tab row. Tabs end at
+            // `right-52` and the close button sits at `right-25`, so this 22 px square
+            // holds no other widget. Registered after the content but landing on that
+            // empty gap, it never swallows a tab / slider / button click, and its own
+            // id is distinct from every interact inside the card.
+            let grip = Rect::from_min_size(
+                Pos2::new(card.right() - 50.0, card.top() + 3.0),
+                Vec2::new(22.0, 22.0),
+            );
+            let drag = ui.interact(grip, ui.make_persistent_id("dock-drag"), Sense::drag());
+            let drag_delta = drag.drag_delta();
+            let drag_on = drag.dragged();
+            let drag_hover = drag.hovered();
+            if drag_hover || drag_on {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+            }
+            // 两列三行的小点：一眼认得出「这里能抓」。
+            //
+            // Two by three dots: reads as "grab here" at a glance.
+            for gx in 0..2 {
+                for gy in 0..3 {
+                    wide.circle_filled(
+                        Pos2::new(
+                            grip.left() + 7.0 + gx as f32 * 7.0,
+                            grip.top() + 6.0 + gy as f32 * 5.0,
+                        ),
+                        1.2,
+                        if drag_on { accent() } else { dim() },
+                    );
+                }
+            }
+            if drag_on {
+                state.dock_pos = Some(Pos2::new(
+                    (pos.x + drag_delta.x).clamp(min_pos.x, max_pos.x),
+                    (pos.y + drag_delta.y).clamp(min_pos.y, max_pos.y),
+                ));
+            }
+            drag.on_hover_text(crate::i18n::t!("拖动检查器浮卡"));
+
+            // ---- 右下角 14px resize 手柄：同时改宽与高 ----
+            //
+            // 14 px corner resize handle: changes width and height together.
+            let corner = Rect::from_min_size(
+                Pos2::new(card.right() - 14.0, card.bottom() - 14.0),
+                Vec2::new(14.0, 14.0),
+            );
+            let rz = ui.interact(
+                corner,
+                ui.make_persistent_id("dock-corner-resize"),
+                Sense::drag(),
+            );
+            let rz_delta = rz.drag_delta();
+            let rz_on = rz.dragged();
+            let rz_hover = rz.hovered();
+            if rz_hover || rz_on {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+            }
+            // 三道斜线角标（常见的窗口缩放角）。
+            //
+            // Three diagonal ticks (the usual window-resize corner).
+            for k in 0..3 {
+                let t = 3.0 + k as f32 * 4.0;
+                wide.line_segment(
+                    [
+                        Pos2::new(corner.right() - 2.0 - t, corner.bottom() - 2.0),
+                        Pos2::new(corner.right() - 2.0, corner.bottom() - 2.0 - t),
+                    ],
+                    Stroke::new(1.0, if rz_on { accent() } else { dim() }),
+                );
+            }
+            if rz_on {
+                // 第一帧把「跟随内容」固化成当前卡高，避免高度从 0 突然跳到 470。
+                //
+                // On the first dragged frame, freeze "follow content" to the current
+                // card height so it does not jump from 0 straight to 470.
+                let base_h = if state.dock_h >= DOCK_MIN_H {
+                    state.dock_h
+                } else {
+                    card.height()
+                };
+                state.dock_h = (base_h + rz_delta.y).clamp(DOCK_MIN_H, win_max_h);
+                let w_max = 560.0_f32
+                    .min(full.width() - DOCK_GUTTER * 2.0)
+                    .max(DOCK_MIN_W);
+                state.dock_w = (state.dock_w + rz_delta.x).clamp(DOCK_MIN_W, w_max);
+            }
+            rz.on_hover_text(crate::i18n::t!("拖动调整检查器大小"));
+
+            // 帧尾用**实际卡高**把位置夹死并写回：帧首那次 clamp 用的是估计
+            // 高度（内容高要画完才知道），这里补成精确值，整卡才真的留 12px 边距。
+            //
+            // At frame end, clamp with the **actual card height** and write it back:
+            // the frame-start clamp used an estimate (content height is only known
+            // after layout), so this makes the 12 px gutter exact.
+            if let Some(p) = state.dock_pos {
+                let max_y = (full.bottom() - DOCK_GUTTER - card.height()).max(min_pos.y);
+                state.dock_pos = Some(Pos2::new(
+                    p.x.clamp(min_pos.x, max_pos.x),
+                    p.y.clamp(min_pos.y, max_y),
+                ));
+            }
+
             // 拖动推子时半透明：手在滑块上，眼睛要看得见画面怎么变。平时是不透明
             // 实色（色彩判断的参照系不能被照片染色）；一旦按住任何控件，卡片降到
             // 82% 让照片透出来，松手立刻回到实色。
@@ -810,65 +983,130 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
         });
 }
 
-// ---------------------------------------------------------------- 画布辅看浮层
+// ---------------------------------------------------------------- 画布视图工具条
 
-/// 画布右下角的辅看开关：网格 / 胶片 / 曲线。
+/// 画布右下角的浮动视图工具条（设计稿 `.viewtools`）。
 ///
-/// 这三个开关原先占一条 28px 竖条贴在窗口最右缘，问题有三：① 它把右坞从窗口
-/// 边缘切开 28px，视觉上像被裁掉一条；② 三枚无字图标挂在面板外侧，归属不明；
-/// ③ 它管的是"画布上叠加什么"，却被放进了"改什么参数"的那一列。
+/// 设计稿 `docs/aevum-v10-complete-refined.html:197` 定义
+/// `.viewtools{right:12px;bottom:12px;display:flex;gap:2px;padding:3px}`、
+/// `.viewtools .ibtn{width:24px;height:24px}` —— 一条深黑胶囊（圆角约 18）、
+/// 细边框、投影，内含 5 枚 14px 图标，选中态底部 2px 蓝色条。这条工具条在
+/// 早前的实现里丢了（右下角只剩三枚辅看开关），这里按设计稿捡回。
 ///
-/// 改成画布内的实色浮层：常驻、一键可切、归属清楚（辅看属于画布），右坞直接
-/// 贴到窗口右缘，画布还多回 28px。**必须实色**——半透明或模糊会透出图像，
-/// 干扰对明度与色相的判断。
+/// 5 枚每枚都接一个真实状态，不许放假按钮：
+/// * 网格 → `state.grid`（三分线叠加开关，原辅看浮层的同款实现）；
+/// * 左右分割 → `state.set_tool(Tool::Compare)` + `state.split`（前后对比）；
+/// * ∧ → `state.show_film`（折叠 / 展开胶片条，与胶片卡头行同款）；
+/// * 矩形框 → `state.canvas_fill`（cover / contain）；
+/// * 减号 → `state.show_viewtools = false`（收起本条，☰「视图」可重新打开）。
 ///
-/// Canvas overlay toggles (grid / filmstrip / curves), bottom-right of the canvas.
+/// 底必须实色：半透明或模糊会透出照片，干扰对明度与色相的判断（浮层纪律）。
+/// 与设计稿 `.is-fill` 时隐藏工具条不同，这里常驻——减号是唯一的收起入口，
+/// 否则切到 canvas_fill 后用户再也点不回来。
 ///
-/// They used to occupy a 28 px rail pinned to the window's right edge, which (a) cut the
-/// dock off the edge, (b) left three unlabelled icons outside the panel with no visible
-/// owner, and (c) put a *canvas* concern into the *parameter* column. As a solid overlay
-/// they stay persistent and one-click, their owner is obvious, the dock reaches the
-/// window edge, and the canvas wins 28 px back. It must be solid -- translucency or blur
-/// would let the image through and bias the judgement of tone and hue.
-pub(super) fn overlay_toggles(state: &mut AppState, ui: &mut Ui, content: Rect) {
-    const W: f32 = 96.0;
-    const H: f32 = 26.0;
+/// The floating view toolbar at the canvas' bottom-right (the design's `.viewtools`).
+/// The design defines `right:12px;bottom:12px;display:flex;gap:2px;padding:3px` with
+/// 24x24 icon buttons -- a dark capsule (radius ~18), hairline ring and a shadow, five
+/// 14 px glyphs, and a 2 px blue bar under the active ones. It had been lost (only a
+/// three-icon overlay remained); this brings it back to the design.
+///
+/// Every one of the five drives a real state, no dummy buttons:
+/// * grid -> `state.grid` (thirds overlay, same toggle as the old overlay);
+/// * split -> `state.set_tool(Tool::Compare)` + `state.split` (before/after);
+/// * chevron -> `state.show_film` (collapse / expand the filmstrip);
+/// * frame -> `state.canvas_fill` (cover / contain);
+/// * minus -> `state.show_viewtools = false` (hide; the View menu reopens it).
+///
+/// The fill must be opaque: translucency or blur would let the photo through and bias
+/// tone / hue judgement. Unlike the design's `.is-fill` rule that hides the toolbar,
+/// this stays put -- the minus button is the only way to hide it, otherwise switching
+/// canvas_fill on would make it impossible to switch back.
+pub(super) fn view_tools(state: &mut AppState, ui: &mut Ui, content: Rect) {
+    if !state.show_viewtools {
+        return;
+    }
+    // 设计稿 `.viewtools`：5 枚 24×24、gap 2、内距 3、圆角 18。
+    //
+    // The design's `.viewtools`: five 24x24 buttons, gap 2, padding 3, radius 18.
+    const ICON: f32 = 24.0;
+    const GAP: f32 = 2.0;
+    const PAD: f32 = 3.0;
+    const RADIUS: f32 = 18.0;
+    let w = ICON * 5.0 + GAP * 4.0 + PAD * 2.0;
+    let h = ICON + PAD * 2.0;
     let at = Rect::from_min_size(
-        Pos2::new(content.right() - W - 12.0, content.bottom() - H - 12.0),
-        Vec2::new(W, H),
+        Pos2::new(content.right() - 12.0 - w, content.bottom() - 12.0 - h),
+        Vec2::new(w, h),
     );
     let p = ui.painter().clone();
-    p.rect_filled(at, radius_control(), elev());
+    // 投影：offset [0,6] / blur 18 / black_alpha(100)，先画再铺底。
+    //
+    // Shadow: offset [0,6], blur 18, black_alpha(100), painted before the fill.
+    let shadow = egui::epaint::Shadow {
+        offset: [0, 6],
+        blur: 18,
+        spread: 0,
+        color: Color32::from_black_alpha(100),
+    }
+    .as_shape(at, RADIUS);
+    p.add(egui::Shape::Rect(shadow));
+    // 实色 panel 底 + 1px group_ring 内环。
+    //
+    // Opaque `panel` fill with a 1 px `group_ring` inside stroke.
+    p.rect_filled(at, RADIUS, panel());
     p.rect_stroke(
         at,
-        radius_control(),
-        Stroke::new(1.0, divider()),
+        RADIUS,
+        Stroke::new(1.0, group_ring()),
         egui::StrokeKind::Inside,
     );
-    let items: [(Glyph, &str, bool); 3] = [
-        (Glyph::Grid, "网格 (G) · 三分线", state.grid),
-        (Glyph::Frame, crate::i18n::t!("胶片"), state.show_film),
-        (Glyph::Sliders, "亮度曲线", state.show_curves),
+
+    // 5 枚：图标 / tooltip / 选中态。tooltip 写明各自接的真实状态。
+    //
+    // Five buttons: glyph / tooltip / active state. Each tooltip names its real state.
+    let items: [(Glyph, &str, bool); 5] = [
+        (
+            Glyph::Grid,
+            crate::i18n::t!("网格叠加：开 / 关（三分线）"),
+            state.grid,
+        ),
+        (
+            Glyph::Compare,
+            crate::i18n::t!("前后对比：开 / 关（左右分割）"),
+            state.tool == Tool::Compare,
+        ),
+        (
+            Glyph::ChevronUp,
+            crate::i18n::t!("折叠 / 展开胶片条"),
+            state.show_film,
+        ),
+        (
+            Glyph::Frame,
+            crate::i18n::t!("画布铺满：开 / 关（cover / contain）"),
+            state.canvas_fill,
+        ),
+        (
+            Glyph::Minus,
+            crate::i18n::t!("收起视图工具条（视图菜单可重新打开）"),
+            false,
+        ),
     ];
-    let mut flip = [false; 3];
+    let mut flip = [false; 5];
     for (i, (glyph, tip, on)) in items.iter().enumerate() {
         let r = Rect::from_min_size(
-            Pos2::new(at.left() + 3.0 + i as f32 * 30.0, at.top() + 2.0),
-            Vec2::new(22.0, 22.0),
+            Pos2::new(at.left() + PAD + i as f32 * (ICON + GAP), at.top() + PAD),
+            Vec2::new(ICON, ICON),
         );
-        let resp = ui.interact(
-            r,
-            ui.make_persistent_id(("overlay-toggle", i)),
-            Sense::click(),
-        );
-        if *on {
-            p.rect_filled(r, radius_control(), accent_dim());
-        } else if resp.hovered() {
+        let resp = ui.interact(r, ui.make_persistent_id(("viewtool", i)), Sense::click());
+        if resp.hovered() {
             p.rect_filled(r, radius_control(), elev_hover());
         }
+        // 14px 图标：24 的槽里各边收 5。
+        //
+        // 14 px glyph: inset 5 on each side of the 24 px slot.
         icons::paint(
             &p,
-            r.shrink(4.0),
+            r.shrink(5.0),
             *glyph,
             if *on {
                 accent()
@@ -878,20 +1116,53 @@ pub(super) fn overlay_toggles(state: &mut AppState, ui: &mut Ui, content: Rect) 
                 dim()
             },
         );
+        // 选中态：底部 2px 蓝色条（设计稿 `.ibtn.on{box-shadow:inset 0 -2px 0 var(--blue)}`）。
+        //
+        // Active state: a 2 px blue bar at the bottom (the design's `.ibtn.on`).
+        if *on {
+            // 效果图是短而圆头的蓝弧：收窄到 12px、圆角 3，比一条通宽的直条
+            // 更像「选中」而不是「进度」。
+            //
+            // The reference shows a short, rounded blue arc: 12 px wide with a 3 px
+            // radius reads as "selected" instead of "progress".
+            let bw = 12.0_f32.min(r.width() - 6.0);
+            let bar = Rect::from_min_size(
+                Pos2::new(r.center().x - bw * 0.5, r.bottom() - 2.0),
+                Vec2::new(bw, 2.0),
+            );
+            p.rect_filled(bar, 3.0, accent());
+        }
         let clicked = resp.clicked();
         resp.on_hover_text(*tip);
         if clicked {
             flip[i] = true;
         }
     }
+    // 统一改状态：`items` 是状态快照，循环里同时写 state 会让同一帧的选中态
+    // 与点击结果对不上，故先收集再落地。
+    //
+    // Apply the flips after the loop: `items` is a snapshot, so writing state inside
+    // the loop would desync a button's painted state from its click in the same frame.
     if flip[0] {
         state.grid = !state.grid;
     }
     if flip[1] {
-        state.show_film = !state.show_film;
+        if state.tool == Tool::Compare {
+            state.set_tool(Tool::Hand);
+            state.split = false;
+        } else {
+            state.set_tool(Tool::Compare);
+            state.split = true;
+        }
     }
     if flip[2] {
-        state.show_curves = !state.show_curves;
+        state.show_film = !state.show_film;
+    }
+    if flip[3] {
+        state.canvas_fill = !state.canvas_fill;
+    }
+    if flip[4] {
+        state.show_viewtools = false;
     }
 }
 

@@ -49,7 +49,7 @@ use aevum_core::sequence::{Sequence, SequenceError};
 use aevum_core::warp::{self, Framing};
 use aevum_core::watermark::{Spot, Watermark, WatermarkKind};
 use aevum_core::xmp;
-use egui::{Color32, ColorImage, Context, TextureHandle, TextureOptions, Vec2};
+use egui::{Color32, ColorImage, Context, Pos2, TextureHandle, TextureOptions, Vec2};
 use rayon::prelude::*;
 use serde_json::{Value, json};
 
@@ -1824,6 +1824,59 @@ pub struct AppState {
     /// runtime and is changed by the drag handle on the panel's inner edge; session only,
     /// not persisted.
     pub dock_w: f32,
+    // ---- 浮卡的几何状态（检查器 / 直方图 / 视图工具条）----
+    // 这几项都是「浮在照片上的卡」的位置与尺寸：AppState 不 derive Serialize，
+    // 所以它们只活在会话内、不落盘（与 dock_w 同一口径）。用户明确要求检查器与
+    // 直方图「不要固定、可改大小、可移动、有最小尺寸」，这里就是那份可写状态。
+    //
+    // Geometry of the floating cards (inspector / histogram / view toolbar). AppState
+    // does not derive Serialize, so like `dock_w` these are session-only and never
+    // persisted. The user asked for the inspector and histogram to be movable,
+    // resizable and to have minimum sizes -- this is that writable state.
+    /// 检查器浮卡的位置。`None` = 默认贴窗口右缘（顶栏下 12px）；用户拖过把手后
+    /// 记住绝对坐标，每帧夹在窗口内（留 12px 边距）。
+    ///
+    /// Position of the floating inspector card. `None` = default, pinned to the window's
+    /// right edge (12 px under the top bar); once the user drags the handle it keeps the
+    /// absolute position, clamped inside the window with a 12 px gutter each frame.
+    pub dock_pos: Option<Pos2>,
+    /// 检查器浮卡的用户高度。`0.0` = 跟随内容（默认，卡高由内容决定）；拖过右下角
+    /// 手柄后记住固定高度（下限 470，约等于目标图显示到「色彩分级」的高度）。
+    /// 用 `0.0` 当哨兵而不是 `Option`，是为了让「拖过没有」与「高度值」共用一处，
+    /// 避免两处状态各自漂移。
+    ///
+    /// The user's height for the floating inspector. `0.0` = follow content (default,
+    /// the card is as tall as its content); after dragging the bottom-right handle it
+    /// keeps a fixed height (min 470, about as tall as the reference showing down to
+    /// Colour grading). `0.0` is the sentinel rather than an `Option` so "was it
+    /// dragged" and "the height value" live in one place instead of drifting apart.
+    pub dock_h: f32,
+    /// 直方图浮卡的位置。`None` = 默认贴画布左上角（12px）；拖过后记住，
+    /// 每帧夹在画布内（留 12px 边距）。
+    ///
+    /// Position of the floating histogram card. `None` = default, at the canvas'
+    /// top-left (12 px); after a drag it is remembered and clamped inside the canvas
+    /// with a 12 px gutter each frame.
+    pub hist_pos: Option<Pos2>,
+    /// 直方图浮卡的宽度（默认 290，夹在 220 .. 画布宽的 40%）。
+    ///
+    /// Width of the floating histogram card (default 290, clamped to
+    /// 220 .. 40% of the canvas width).
+    pub hist_w: f32,
+    /// 直方图浮卡的高度（默认 92，夹在 80 .. 画布高的 40%）。默认更宽扁，
+    /// 纠正「像正方形」的观感。
+    ///
+    /// Height of the floating histogram card (default 92, clamped to
+    /// 80 .. 40% of the canvas height). Wider and flatter by default, fixing
+    /// the "square" look.
+    pub hist_h: f32,
+    /// 画布右下角的浮动视图工具条（设计稿 `.viewtools`）是否显示。默认开；
+    /// 工具条上的减号把它收起，☰「视图」菜单可重新打开。
+    ///
+    /// Whether the floating view toolbar (the design's `.viewtools`) at the canvas'
+    /// bottom-right is shown. On by default; its minus button hides it and the
+    /// View menu brings it back.
+    pub show_viewtools: bool,
     /// 对话框中枢：待弹队列、在弹标记、结果通道，见 `ops_dialog`。
     ///
     /// Dialog hub: queue, in-flight flag and the reply channel; see `ops_dialog`.

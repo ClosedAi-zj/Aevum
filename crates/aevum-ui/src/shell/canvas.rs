@@ -555,11 +555,11 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         );
     }
 
-    // 辅看开关浮在画布右下角（原先是窗口右缘的 28px 竖条）。
+    // 视图工具条浮在画布右下角（设计稿 `.viewtools`：5 枚图标的深黑胶囊）。
     //
-    // The overlay toggles float at the canvas's bottom-right corner (they used to be a
-    // 28 px rail on the window's right edge).
-    super::overlay_toggles(state, ui, content);
+    // The view toolbar floats at the canvas's bottom-right corner (the design's
+    // `.viewtools`: a five-icon dark capsule).
+    super::view_tools(state, ui, content);
 
     if state.rulers {
         draw_rulers(ui, body, content, Some(img), scale, hover);

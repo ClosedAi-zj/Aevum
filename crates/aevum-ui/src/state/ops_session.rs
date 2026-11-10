@@ -621,6 +621,18 @@ impl AppState {
             async_errors: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             error_seen: None,
             dock_w: crate::theme::DOCK_W,
+            // 浮卡几何：`None` / `0.0` 表示「还没拖过，跟随默认位置与内容高度」；
+            // 直方图默认 290×92（更宽扁），视图工具条默认显示。
+            //
+            // Floating-card geometry: `None` / `0.0` mean "not dragged yet, follow the
+            // default position and content height"; the histogram starts 290x92 (wider
+            // and flatter) and the view toolbar is shown by default.
+            dock_pos: None,
+            dock_h: 0.0,
+            hist_pos: None,
+            hist_w: 290.0,
+            hist_h: 92.0,
+            show_viewtools: true,
             dialog_queue: Default::default(),
             dialog_in_flight: false,
             dialog_tx: dialog_tx.clone(),

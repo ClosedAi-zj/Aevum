@@ -153,7 +153,7 @@ fn mac_lights(ui: &mut Ui, ctx: &Context, full: Rect) {
         // 悬停才显字形：平时是纯色圆点，鼠标压上去才读得出这一枚是什么。
         if resp.hovered() && focused {
             let ink = Color32::from_black_alpha(150);
-            let g = p.layout_no_wrap(glyphs[i].to_string(), egui::FontId::proportional(10.0), ink);
+            let g = p.layout_no_wrap(glyphs[i].to_string(), font(10.0), ink);
             p.galley(
                 Pos2::new(center.x - g.size().x * 0.5, center.y - g.size().y * 0.5),
                 g,

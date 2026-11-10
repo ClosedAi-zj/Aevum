@@ -18,7 +18,7 @@
 //! badge that turns accent-filled when active -- it is the only visible cue for "which
 //! bench is this", and it matches the Alt+1..4 shortcuts one to one.
 
-use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
+use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 
 use crate::state::AppState;
 use crate::theme::*;
@@ -104,16 +104,14 @@ pub(super) fn nav(state: &mut AppState, ui: &mut egui::Ui, top_center: Pos2) {
     let mut widths = Vec::with_capacity(Bench::ALL.len());
     for b in Bench::ALL {
         let label = crate::i18n::tr(b.cn());
-        let galley =
-            ui.painter()
-                .layout_no_wrap(label.to_string(), FontId::proportional(12.0), text());
+        let galley = ui
+            .painter()
+            .layout_no_wrap(label.to_string(), font(12.0), text());
         let mut w = 6.0 + SN + 8.0 + galley.size().x + 10.0;
         if b == Bench::Tasks && running > 0 {
-            let cnt = ui.painter().layout_no_wrap(
-                format!("{running}"),
-                FontId::proportional(9.0),
-                warn(),
-            );
+            let cnt = ui
+                .painter()
+                .layout_no_wrap(format!("{running}"), font(9.0), warn());
             w += 8.0 + (cnt.size().x + 6.0).max(14.0);
         }
         widths.push(w);
@@ -179,7 +177,7 @@ pub(super) fn nav(state: &mut AppState, ui: &mut egui::Ui, top_center: Pos2) {
             sn.center(),
             Align2::CENTER_CENTER,
             format!("{}", b.no()),
-            FontId::proportional(9.0),
+            font(9.0),
             if on { Color32::WHITE } else { dim() },
         );
         // 名称。
@@ -187,7 +185,7 @@ pub(super) fn nav(state: &mut AppState, ui: &mut egui::Ui, top_center: Pos2) {
             Pos2::new(sn.right() + 8.0, r.center().y),
             Align2::LEFT_CENTER,
             crate::i18n::tr(b.cn()),
-            FontId::proportional(12.0),
+            font(12.0),
             if on || resp.hovered() { text() } else { dim() },
         );
         // 任务数角标（设计稿 `.cnt`）：只在任务工作台有进行中的任务时出现。
@@ -198,7 +196,7 @@ pub(super) fn nav(state: &mut AppState, ui: &mut egui::Ui, top_center: Pos2) {
         // against the 10 px right padding with a measured width -- min-width 14 plus 3 px
         // per side -- so multi-digit counts no longer squeeze into a fixed 14 px box.
         if *b == Bench::Tasks && running > 0 {
-            let cnt_gal = p.layout_no_wrap(format!("{running}"), FontId::proportional(9.0), warn());
+            let cnt_gal = p.layout_no_wrap(format!("{running}"), font(9.0), warn());
             let badge_w = (cnt_gal.size().x + 6.0).max(14.0);
             let badge = Rect::from_min_size(
                 Pos2::new(r.right() - 10.0 - badge_w, r.center().y - 7.0),
@@ -213,7 +211,7 @@ pub(super) fn nav(state: &mut AppState, ui: &mut egui::Ui, top_center: Pos2) {
                 badge.center(),
                 Align2::CENTER_CENTER,
                 format!("{running}"),
-                FontId::proportional(9.0),
+                font(9.0),
                 warn(),
             );
         }
@@ -268,14 +266,14 @@ pub(super) fn page_head(ui: &mut egui::Ui, title: &str, sub: &str) -> Rect {
         Pos2::new(gate.right() + 10.0, full.center().y - 8.0),
         Align2::LEFT_CENTER,
         title,
-        FontId::proportional(15.0),
+        font(15.0),
         text(),
     );
     p.text(
         Pos2::new(gate.right() + 10.0, full.center().y + 10.0),
         Align2::LEFT_CENTER,
         sub,
-        FontId::proportional(10.0),
+        font(10.0),
         dim(),
     );
     full
@@ -296,7 +294,7 @@ pub(super) fn head_action(
 ) -> (Rect, egui::Response) {
     let galley = ui
         .painter()
-        .layout_no_wrap(label.to_string(), FontId::proportional(12.0), text());
+        .layout_no_wrap(label.to_string(), font(12.0), text());
     let w = galley.size().x + 20.0;
     let r = Rect::from_min_size(Pos2::new(right - w, center_y - 14.0), Vec2::new(w, 28.0));
     let resp = ui.interact(
@@ -323,7 +321,7 @@ pub(super) fn head_action(
         r.center(),
         Align2::CENTER_CENTER,
         label,
-        FontId::proportional(12.0),
+        font(12.0),
         if primary { Color32::WHITE } else { text() },
     );
     (r, resp)
@@ -362,7 +360,7 @@ pub(super) fn tool_button(
 ) -> (f32, egui::Response) {
     let galley = ui
         .painter()
-        .layout_no_wrap(label.to_string(), FontId::proportional(11.0), dim());
+        .layout_no_wrap(label.to_string(), font(11.0), dim());
     let w = galley.size().x + 16.0;
     let r = Rect::from_min_size(Pos2::new(x, strip.center().y - 12.0), Vec2::new(w, 24.0));
     let resp = ui.interact(
@@ -380,7 +378,7 @@ pub(super) fn tool_button(
         r.center(),
         Align2::CENTER_CENTER,
         label,
-        FontId::proportional(11.0),
+        font(11.0),
         if on { text() } else { dim() },
     );
     (r.right() + 4.0, resp)

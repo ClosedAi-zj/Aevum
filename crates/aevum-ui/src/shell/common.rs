@@ -393,7 +393,7 @@ pub(super) fn group_header(
     // Group name 13 px / 600 (the design's `.grp-h .lb`): as the card's title it
     // must outweigh the 12 px parameter labels to carry the card hierarchy; this
     // uses the real bold family, not a faux-bold stroke.
-    let title_galley = p.layout_no_wrap(title.to_owned(), bold(SIZE_LABEL + 1.0), text());
+    let title_galley = p.layout_no_wrap(title.to_owned(), bold(SIZE_LABEL + 2.0), text());
     // 卡内左缘：设计稿 `.grp-h` 的箭头与标题相距约 6px，卡内距 12px 已经把
     // 标题推到 x≈18。这里取 18，标题与下面 `.srow` 的标签列不再差一截。
     //
@@ -993,15 +993,17 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         // The design's `.val` is body white (`--text`), not the secondary grey.
         text()
     });
-    // 读数走等宽（设计稿 B1）：一列推子的小数点必须落在同一条竖线上。`DragValue`
-    // 没有 `.font()`，只能在作用域里压 `override_font_id`，画完立刻还原——与
-    // 选项栏 `bar_value` 同一套写法。
+    // 读数与标签同族（2026 字族统一规范）：设计稿里数值就是正文字体，不是等宽
+    // 体。小数点对齐靠 `Layout::right_to_left` 的右对齐，不靠换一张脸；用等宽会
+    // 让「0 / 0.35 / -12」和左边的中文标签明显不是一套字。`DragValue` 没有
+    // `.font()`，只能在作用域里压 `override_font_id`，画完立刻还原。
     //
-    // Readouts use the monospace family (design spec B1): the decimal points of a
-    // column of sliders must share one vertical line. `DragValue` has no `.font()`,
-    // so the font is overridden for this scope only and restored right after --
-    // the same pattern as the options bar's `bar_value`.
-    ui.style_mut().override_font_id = Some(mono(VALUE_SIZE));
+    // Readouts share the body family (2026 type-system rule): in the design the
+    // numbers are the same face as the labels, not a monospace one. Decimal alignment
+    // comes from right-to-left layout, not a different typeface -- a mono face made
+    // "0 / 0.35 / -12" visibly belong to another system than the Chinese labels.
+    // `DragValue` has no `.font()`, so the id is overridden for this scope only.
+    ui.style_mut().override_font_id = Some(font(VALUE_SIZE));
     let mut resp = in_field(ui, Color32::TRANSPARENT, Color32::TRANSPARENT, |ui| {
         ui.scope_builder(
             UiBuilder::new()
@@ -1335,7 +1337,7 @@ pub(super) fn band_row<K: std::hash::Hash + std::fmt::Debug>(
     let old_text = ui.style().visuals.override_text_color;
     let old_font = ui.style().override_font_id.clone();
     ui.style_mut().visuals.override_text_color = Some(if changed_now { text() } else { value() });
-    ui.style_mut().override_font_id = Some(mono(SIZE_SMALL));
+    ui.style_mut().override_font_id = Some(font(SIZE_SMALL));
     let mut resp = in_field(ui, Color32::TRANSPARENT, Color32::TRANSPARENT, |ui| {
         ui.scope_builder(
             UiBuilder::new()

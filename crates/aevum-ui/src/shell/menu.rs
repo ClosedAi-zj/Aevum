@@ -1262,6 +1262,15 @@ fn view_menu(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
         &mut state.show_flow,
         RichText::new(crate::i18n::t!("显示流程步骤条")).size(SIZE_BODY),
     );
+    // 视图工具条：工具条上的减号会把它收起，这里是唯一的重开入口
+    //（与上面那组「显示…」开关同组）。
+    //
+    // View toolbar: its minus button hides it, so this is the only way back;
+    // grouped with the "Show …" switches above.
+    ui.checkbox(
+        &mut state.show_viewtools,
+        RichText::new(crate::i18n::t!("显示视图工具条")).size(SIZE_BODY),
+    );
     ui.checkbox(
         &mut state.show_curves,
         RichText::new(crate::i18n::t!("曲线")).size(SIZE_BODY),
