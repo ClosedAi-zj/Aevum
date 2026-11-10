@@ -289,7 +289,15 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let c = platform::chrome();
     let full = ui.max_rect();
     let p = ui.painter().clone();
-    p.rect_filled(full, 0, header());
+    // 顶栏底色用 `bar()`（设计稿 `--bar #16171b`，全表最暗一档）：顶栏是「壳」，
+    // 必须比 field/card 都深。之前取 header()（面板亮度），整条顶栏比设计稿亮
+    // 一整档，就是「设计图与代码不是一套东西」观感的最大来源。
+    //
+    // The bar fill uses `bar()` (the design's `--bar #16171b`, the darkest step): the top
+    // bar is the shell and must sit below field/card. It used to take header() (panel
+    // brightness), a full step lighter than the design -- the single biggest source of
+    // the "design and code are not the same set" feel.
+    p.rect_filled(full, 0, bar());
     theme::rule(&p, full.left(), full.right(), full.bottom(), border());
 
     // 无边框窗口：菜单行空白处拖动窗口，双击最大化/还原。

@@ -264,6 +264,12 @@ pub const ACCENT_PRESETS: [(f32, f32, f32, &str); 8] = [
 /// `dir` 是明暗方向（深色 +1、浅色 −1），所有「比基准亮一档」的派生都乘它。
 struct Ladder {
     surround: f32,
+    /// 顶栏底色：设计稿 `--bar #16171b`（L9.6），是全表最暗的一档——
+    /// 顶栏是「壳」，必须比 field/card 都深，画面才压得住。
+    ///
+    /// The top bar fill: the design's `--bar #16171b` (L9.6), the darkest step of the
+    /// whole table -- the bar is the "shell" and must sit below field/card.
+    bar: f32,
     canvas: f32,
     panel: f32,
     dock: f32,
@@ -298,6 +304,7 @@ struct Ladder {
 // 20/20.3/20.6/21 block, where four steps lived inside 1% -- the root cause of the
 // repeated "contrast too low" / "one grey patch next to one black patch" feedback.
 const DARK: Ladder = Ladder {
+    bar: 9.6,      // --bar #16171b
     surround: 7.5, // 设计稿画布外圈：比画布再暗一档，把视线压向图像
     canvas: 9.0,   // 画布内容区
     panel: 14.1,   // card #212327：卡片底（检查器、直方图卡）
@@ -334,6 +341,7 @@ const DARK: Ladder = Ladder {
 };
 
 const BLACK: Ladder = Ladder {
+    bar: 3.0,
     surround: 2.0,
     canvas: 3.5,
     panel: 6.0,
@@ -356,6 +364,7 @@ const BLACK: Ladder = Ladder {
 // 次要文字在浅底上必须比深底更狠地压暗 —— 白底上的 4.5:1 比黑底难得多，
 // 55% 的灰在 96% 的面板上只有 4.49，差一点点就是不达标。
 const LIGHT: Ladder = Ladder {
+    bar: 96.5,
     surround: 86.0,
     canvas: 92.0,
     panel: 96.0,
@@ -382,6 +391,7 @@ const LIGHT: Ladder = Ladder {
 /// keeps the borrow checker out of drawing code.
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
+    pub bar: Color32,
     pub bg: Color32,
     pub chrome: Color32,
     pub panel: Color32,
@@ -480,6 +490,7 @@ impl Palette {
         let text = n(l.text);
 
         Self {
+            bar: nb(l.bar),
             bg: nb(l.bg),
             chrome: nb(l.chrome),
             panel,
@@ -680,6 +691,7 @@ macro_rules! accessors {
 }
 
 accessors!(
+    bar,
     bg,
     chrome,
     panel,
@@ -1330,8 +1342,53 @@ pub fn set_fonts(ctx: &Context) {
 ///
 /// Family assembly, split out so it can be asserted without a `Context`: `set_fonts`
 /// only hands the result to egui, and the assembly itself has no side effects.
+/// 系统字体：设计稿在 Windows Chrome 里渲染，字形就是 Segoe UI + 微软雅黑；
+/// 嵌入的 Inter / Noto 只在系统字体缺失时兜底。加载失败（非 Windows、精简系统）
+/// 静默跳过——嵌入字体永远在链尾。
+///
+/// System fonts: the design renders in Windows Chrome, so its glyphs ARE Segoe UI +
+/// Microsoft YaHei; the embedded Inter / Noto only back up systems without them. Load
+/// failures (non-Windows, stripped systems) are silent -- embedded fonts stay at the
+/// end of the chain regardless.
+fn system_font_candidates() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("Segoe UI", r"C://Windows//Fonts//segoeui.ttf"),
+        ("Microsoft YaHei UI", r"C://Windows//Fonts//msyh.ttc"),
+    ]
+}
+
+fn system_bold_candidates() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("Segoe UI Bold", r"C://Windows//Fonts//segoeuib.ttf"),
+        ("Microsoft YaHei UI Bold", r"C://Windows//Fonts//msyhbd.ttc"),
+    ]
+}
+
 pub fn font_definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
+    // 系统字体优先：设计稿的「质感」一半在字形与 hinting 上，嵌入的
+    // Inter/Noto 与 Windows Chrome 渲染的不是一张脸。
+    //
+    // System fonts first: half of the design's texture lives in the glyph shapes and
+    // hinting; the embedded Inter/Noto are not the face Windows Chrome renders.
+    let mut lead: Vec<String> = Vec::new();
+    let mut lead_bold: Vec<String> = Vec::new();
+    for (name, path) in system_font_candidates() {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts
+                .font_data
+                .insert(name.to_string(), FontData::from_owned(bytes).into());
+            lead.push(name.to_string());
+        }
+    }
+    for (name, path) in system_bold_candidates() {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts
+                .font_data
+                .insert(name.to_string(), FontData::from_owned(bytes).into());
+            lead_bold.push(name.to_string());
+        }
+    }
     fonts
         .font_data
         .insert("inter".to_owned(), FontData::from_static(INTER).into());
@@ -1339,8 +1396,12 @@ pub fn font_definitions() -> FontDefinitions {
         .font_data
         .insert("noto".to_owned(), FontData::from_static(NOTO).into());
     if let Some(list) = fonts.families.get_mut(&FontFamily::Proportional) {
-        list.insert(0, "inter".to_owned());
-        list.insert(1, "noto".to_owned());
+        for (i, name) in lead.iter().enumerate() {
+            list.insert(i, name.clone());
+        }
+        let off = lead.len();
+        list.insert(off, "inter".to_owned());
+        list.insert(off + 1, "noto".to_owned());
     }
     // 等宽族与主字体**同形**：原先 egui 内置 mono 打头，状态栏/走带/读数的
     // 数字字形与主界面明显两套（用户截图圈名「下面的字体与全局字体不同」）。
@@ -1373,7 +1434,9 @@ pub fn font_definitions() -> FontDefinitions {
         "noto-bold".to_owned(),
         FontData::from_static(NOTO_BOLD).into(),
     );
-    let mut bold_chain = vec!["inter-bold".to_owned(), "noto-bold".to_owned()];
+    let mut bold_chain = lead_bold.clone();
+    bold_chain.push("inter-bold".to_owned());
+    bold_chain.push("noto-bold".to_owned());
     bold_chain.extend(
         fonts
             .families
@@ -2239,9 +2302,26 @@ mod font_tests {
         let f = font_definitions();
         let bold = &f.families[&bold_family()];
         let regular = &f.families[&FontFamily::Proportional];
-        assert_eq!(&bold[..2], ["inter-bold", "noto-bold"], "粗体项位置变了");
+        // 系统粗体（Windows 上是 Segoe UI Bold / 雅黑 Bold）排在最前，两份嵌入
+        // 700 子集紧随其后，再往后必须与常规字族完全一致——缺字的唯一出路是
+        // 画成常规体。判据按位置断言而不是按下标：没有系统字体的机器上，
+        // inter-bold 就是第 0 项，性质不变。
+        //
+        // System bolds (Segoe UI Bold / YaHei Bold on Windows) lead, the two embedded
+        // 700 subsets follow, and everything after must equal the regular family exactly
+        // -- a missing glyph's only escape is rendering regular. Assert by position, not
+        // index: on machines without the system fonts inter-bold IS item 0, same rule.
+        let at = bold
+            .iter()
+            .position(|f| f == "inter-bold")
+            .expect("粗体链里没有 inter-bold");
         assert_eq!(
-            &bold[2..],
+            &bold[at..at + 2],
+            ["inter-bold", "noto-bold"],
+            "嵌入粗体子集不连续"
+        );
+        assert_eq!(
+            &bold[at + 2..],
             regular.as_slice(),
             "粗体字族的兜底链与常规字族不一致"
         );

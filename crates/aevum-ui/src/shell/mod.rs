@@ -322,7 +322,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     //   不是内容面板，不能跟下面的选项栏同层。
     egui::Panel::top("menu-row")
         .exact_size(platform::chrome().titlebar_h)
-        .frame(egui::Frame::NONE.fill(header()))
+        .frame(egui::Frame::NONE.fill(bar()))
         .show(root, |ui| menu_row(state, ui, &ctx));
 
     // 状态栏放到标题栏之下时，它读起来是抬头：先读到在哪个文件、什么色彩空间。
@@ -409,7 +409,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     if develop && layout.status == StatusSlot::Bottom && status_bar_needed(state) {
         egui::Panel::bottom("status-bar")
             .exact_size(STATUS_H)
-            .frame(egui::Frame::NONE.fill(header()))
+            .frame(egui::Frame::NONE.fill(bar()))
             .show(root, |ui| status_bar(state, ui));
     }
 
