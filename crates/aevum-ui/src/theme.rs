@@ -1364,7 +1364,29 @@ fn system_bold_candidates() -> &'static [(&'static str, &'static str)] {
     ]
 }
 
+/// 系统字体合计 38.5 MB（`msyh.ttc` 19.7 MB + `msyhbd.ttc` 16.9 MB + 两份
+/// Segoe）。`theme::apply` 在应用启动、字号档位切换、以及每个测试新建的 egui
+/// Context 里都会装配一次字体：逐次重读磁盘并各复制一份 38.5 MB 到新的 Arc，
+/// 是纯粹的浪费，也是「反复跑测试/切字号时明显停顿」的来源。
+/// `FontDefinitions` 只读且 `FontData` 内部就是 Arc，装配结果可以安全共享。
+///
+/// System fonts total 38.5 MB (YaHei TTC 19.7 MB + bold 16.9 MB + two Segoe faces).
+/// `theme::apply` assembles fonts at startup, on every font-size change, and in every
+/// test's fresh egui Context: re-reading the disk and copying 38.5 MB into a new Arc
+/// each time is pure waste, and the source of the pause when running tests or switching
+/// font size. `FontDefinitions` is immutable and `FontData` already holds an Arc, so the
+/// assembled result is safe to share.
+static FONT_DEFS: std::sync::OnceLock<FontDefinitions> = std::sync::OnceLock::new();
+
+/// 取一份字体装配：首次装配后只做便宜的 clone（Arc 只加引用计数）。
+///
+/// Get the font assembly: after the first build this is only a cheap clone (Arc bumps
+/// a refcount, no bytes are copied).
 pub fn font_definitions() -> FontDefinitions {
+    FONT_DEFS.get_or_init(build_font_definitions).clone()
+}
+
+fn build_font_definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     // 系统字体优先：设计稿的「质感」一半在字形与 hinting 上，嵌入的
     // Inter/Noto 与 Windows Chrome 渲染的不是一张脸。
