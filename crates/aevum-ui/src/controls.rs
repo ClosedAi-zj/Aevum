@@ -1107,8 +1107,30 @@ pub fn neutralise_group(p: &mut GradeParams, key: &str) -> bool {
 
 /// 「眼睛」旁路对这一组是否有意义：恰为显影八组。
 ///
+/// 「配置文件」**不在内，且不是漏登记**：旁路走 `preview_params()`，只在调色段
+/// 把 GradeParams 写回默认；而 DCP 在**解码段**就被消费（`decoded_preview_source`
+/// 以 dcp_profile 为缓存键），底图像素已经带了 DCP 的颜色与色调，调色段撤不掉。
+/// 若强行只在预览参数里清空 dcp_profile，`base_tone`（仅当未挂 DCP 时生效）会
+/// 叠在已带 DCP 色调的底图上——双重色调，比没有眼睛更糟。真旁路需要把旁路状态
+/// 接进解码缓存键并强制重解码（预览 / 分屏原图 / 缩略图三处缓存一致），是引擎
+/// 级改动，不是登记一行的事。风格（style）虽在调色段（0=标准逐位不动），单独
+/// 旁路它而 DCP 原样，是半吊子开关，不做。
+///
 /// Whether the "eye" bypass means anything for this group: exactly the eight Develop
 /// sections.
+///
+/// "Profile" is **not** among them, and that is not an oversight: bypass works through
+/// `preview_params()`, which resets GradeParams at the *grade* stage only. The DCP is
+/// consumed at the *decode* stage (`decoded_preview_source` keys its cache on
+/// dcp_profile), so the base pixels already carry the DCP's colour and tone by the time
+/// grading runs -- the grade stage cannot undo it. Clearing dcp_profile in the preview
+/// params alone would make `base_tone` (which applies only without a DCP) stack on top
+/// of the already-DCP-toned base -- double toning, worse than having no eye. A real
+/// bypass would have to feed the bypass state into the decode cache key and force a
+/// re-decode (preview / split-view original / thumbnails, three caches kept consistent),
+/// an engine-level change, not a one-line registration. Style does live in the grade
+/// stage (0 = Standard, bit-exact no-op), but bypassing it alone while the DCP stays is
+/// a half-switch -- not built.
 pub fn is_bypassable(group: &str) -> bool {
     neutralise_group(&mut GradeParams::default(), group)
 }

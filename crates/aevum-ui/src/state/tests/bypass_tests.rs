@@ -180,6 +180,13 @@ fn only_the_develop_eight_are_bypassable() {
         "keys",
         "ai-link",
         "masks",
+        // 配置文件不在可旁路之列，且不是漏登记：DCP 在解码段消费，
+        // preview_params 撤不掉（原因全文见 controls::is_bypassable 文档）。
+        //
+        // Profile is not bypassable, and not by omission: the DCP is consumed at
+        // decode time, beyond preview_params' reach (full reasoning in the
+        // controls::is_bypassable docs).
+        "profile",
     ] {
         assert!(!controls::is_bypassable(g), "{g} 不应可旁路");
     }
