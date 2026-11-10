@@ -21,30 +21,41 @@ use egui::{
 
 // ---------------------------------------------------------------- 右侧面板
 
-/// 面板宽度可拖：在内缘挂一条 6px 的手柄，左右拖改 `state.dock_w`。
+/// 面板宽度可拖：在卡的**内缘**挂一条 6px 的手柄，左右拖改 `state.dock_w`。
 ///
-/// 手柄落在面板**内侧**那条边（右坞是左缘，左坞是右缘），拖动方向按侧别取反；
-/// 宽度夹在 280–560：低于 280，推子行的「标签 76 + 读数 44」会把轨道吃光；高于
-/// 560，画布被挤成一条。悬停/拖动时光标变横向量尺，用户才知道这里能拖。
+/// 手柄落在卡片内侧那条边（右坞是左缘，左坞是右缘），从页签条下沿一直到底，
+/// 拖动方向按侧别取反；宽度夹在 280–560：低于 280，推子行的「标签 76 + 读数 44」
+/// 会把轨道吃光；高于 560，画布被挤成一条。悬停/拖动时光标变横向量尺，
+/// 用户才知道这里能拖。
 ///
-/// The panel width is draggable: a 6 px handle sits on the panel's inner edge (left edge
-/// for a right dock, right edge for a left one) and drag direction flips with the side.
-/// Width is clamped to 280-560: below 280 the slider row's "label 76 + value 44" eats the
-/// rail; above 560 the canvas is squeezed into a strip. The cursor becomes a horizontal
-/// resize arrow so the affordance is discoverable.
-fn dock_resize_handle(state: &mut AppState, ui: &mut Ui) {
+/// 浮卡形态下手柄只能挂在卡身上：卡的高与宽都是内容算出来的，早先那种「整条
+/// 面板内缘」的矩形已经不存在。因此它排在卡内所有内容**之后**绘制，6px 宽的
+/// 交互区盖在同一条边上的控件之上，卡片高度再变也不会脱位。
+///
+/// The panel width is draggable: a 6 px handle sits on the card's **inner** edge (left
+/// edge for a right dock, right edge for a left one), running from under the tab strip to
+/// the card's bottom. Drag direction flips with the side; width is clamped to 280-560:
+/// below 280 the slider row's "label 76 + value 44" eats the rail; above 560 the canvas is
+/// squeezed into a strip. The cursor becomes a horizontal resize arrow on hover.
+///
+/// On a floating card the handle can only hang off the card itself -- height and width
+/// both come from the content, so the old "whole panel inner edge" rectangle no longer
+/// exists. It is registered after the card's content, so the 6 px interaction strip wins
+/// over any control on the same edge and survives the card changing height.
+fn dock_resize_handle(state: &mut AppState, ui: &mut Ui, card: Rect) {
     let side_left = state.layout.dock_side.is_left();
-    let full = ui.max_rect();
     const HANDLE_W: f32 = 6.0;
     const MIN_W: f32 = 280.0;
     const MAX_W: f32 = 560.0;
+    let top = card.top() + TAB_H;
+    let height = (card.bottom() - top).max(1.0);
     let rect = if side_left {
         Rect::from_min_size(
-            Pos2::new(full.right() - HANDLE_W, full.top()),
-            Vec2::new(HANDLE_W, full.height()),
+            Pos2::new(card.right() - HANDLE_W, top),
+            Vec2::new(HANDLE_W, height),
         )
     } else {
-        Rect::from_min_size(full.min, Vec2::new(HANDLE_W, full.height()))
+        Rect::from_min_size(Pos2::new(card.left(), top), Vec2::new(HANDLE_W, height))
     };
     let resp = ui.interact(rect, egui::Id::unique("dock-resize"), Sense::drag());
     if resp.hovered() || resp.dragged() {
@@ -110,11 +121,24 @@ fn dock_tools(state: &mut AppState, ui: &mut Ui) {
     resp.on_hover_text(crate::i18n::t!("只显示已偏离默认值的参数"));
 }
 
-pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
-    let full = ui.max_rect();
-    dock_resize_handle(state, ui);
+/// 检查器卡体：页签条贴顶，下面是可滚动的内容区。
+///
+/// `width` 是卡的宽度（`state.dock_w`），`max_h` 是卡的**高度上限**（窗口高减
+/// 顶栏与上下两道 12px）。卡本身按内容收缩——只有内容超过上限时卡才长到上限，
+/// 多出来的部分在卡**内部**滚，卡不出屏、更不会把内容顶到窗口外。
+///
+/// The inspector body: the tab strip hugs the top, the content below scrolls.
+///
+/// `width` is the card width (`state.dock_w`), `max_h` its height **cap** (window height
+/// minus the top bar and the two 12 px gutters). The card shrinks to its content; only
+/// when the content exceeds the cap does it grow to the cap, and the excess scrolls
+/// **inside** the card.
+pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f32) {
     if std::env::var("AEVUM_DBG_RECT").is_ok() {
-        eprintln!("DOCK full={:?}", full);
+        eprintln!(
+            "DOCK w={width} max_h={max_h} at {:?}",
+            ui.next_widget_position()
+        );
     }
     let p = ui.painter().clone();
     // 页签行底色用**面板底色**而不是 header：header 与上方那两条外部信息栏
@@ -127,7 +151,14 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
     // merged into one band and read as "the tabs went up into the outer info bar" (user
     // screenshot, 2026-11-07). Panel fill plus a hairline on the top edge makes the tab row
     // its own surface inside the dock.
-    let strip = Rect::from_min_size(full.min, Vec2::new(full.width(), TAB_H));
+    // 页签条自己占位：卡高由内容决定，不能再用 `ui.max_rect()` 当卡身——浮卡的
+    // 画布给的是「最多这么高」，不是「就是这么高」。
+    //
+    // The strip allocates its own space: the card height comes from its content, so
+    // `ui.max_rect()` can no longer stand in for the card body -- an Area only tells us
+    // "at most this tall", not "exactly this tall".
+    let (strip, _) = ui.allocate_exact_size(Vec2::new(width, TAB_H), Sense::hover());
+
     // 浮卡的上沿要跟着卡片圆角走，否则第一行页签是方角、下面卡片是圆角。
     //
     // The floating card's top edge follows the card radius; a square tab strip over a
@@ -154,7 +185,7 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
     // 面板页签用下划线而不是分段胶囊：一条 HEADER 上排六个名字，
     // 选中项靠白字 + 2px 强调线认，和 PS 的调板页签同一套读法。
     // 页签靠右缘排（用户 2026-11-09）：右缘留给 ×，页签从右往左铺。
-    let seg_w = (full.width() - 52.0) / DockTab::ALL.len() as f32;
+    let seg_w = (width - 52.0) / DockTab::ALL.len() as f32;
     for (i, tab) in DockTab::ALL.iter().enumerate() {
         let r = Rect::from_min_size(
             Pos2::new(
@@ -242,7 +273,14 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
     }
     cr.on_hover_text(crate::i18n::t!("隐藏面板"));
 
-    let content = Rect::from_min_max(Pos2::new(full.left(), full.top() + TAB_H), full.max);
+    // 卡身的高度上限：页签条已经占掉 TAB_H，剩下的才是给内容的（含内距）。
+    //
+    // The body's height cap: the strip already took TAB_H, the rest is for the content
+    // (inner margins included).
+    let content = Rect::from_min_max(
+        strip.left_top() + Vec2::new(0.0, TAB_H),
+        Pos2::new(strip.right(), strip.top() + max_h.max(TAB_H + 1.0)),
+    );
     ui.scope_builder(
         UiBuilder::new().id_salt("dock-body").max_rect(content),
         |ui| {
@@ -271,16 +309,24 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
                     // twice and eat the dock's first screen; the canvas card is the one
                     // place, so this jumps straight into the parameter area.
                     ui.add_space(2.0);
+                    // 纵向按内容收缩：卡高 = 内容高，只有撞到上限才长到上限并出滚动条。
+                    // 横向不许缩（[false, _]）——卡宽恒等于 `dock_w`，否则短内容会把
+                    // 卡收窄，右侧少一条边。
+                    //
+                    // Shrink vertically to the content so the card is exactly as tall as
+                    // what it holds; it only reaches the cap (and starts scrolling) when the
+                    // content asks for more. Never shrink horizontally ([false, _]): the card
+                    // is exactly `dock_w` wide, or short content would narrow it.
                     let mut scroll = ScrollArea::vertical()
                         .id_salt("dock-scroll")
-                        .auto_shrink([false, false]);
+                        .auto_shrink([false, true]);
                     if state.dock_scroll_end {
                         // 只推一次：每一帧都写超大偏移会把内容画到裁剪区外。
                         // egui 在本帧末把偏移钳到底部，后面的帧就停在底部。
                         scroll = scroll.vertical_scroll_offset(1.0e6);
                         state.dock_scroll_end = false;
                     }
-                    scroll.show(ui, |ui| {
+                    let out = scroll.show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         match state.dock_tab {
                             DockTab::Adjust => {
@@ -303,23 +349,46 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui) {
                     // row used to be sliced mid-glyph. Six stepped black-alpha rects
                     // (the panel is near-black, so black == panel here) read as one
                     // continuous fade at negligible cost.
-                    let fade_bottom = ui.max_rect().bottom();
+                    //
+                    // 只在**真溢出**时才垫：卡按内容收缩，短内容下这条渐变会变成卡底
+                    // 一道没来由的黑边（历史页签只有两行时最明显）。
+                    //
+                    // Only when the content really overflows: the card shrinks to its
+                    // content, and on short tabs (two rows of history) this gradient would
+                    // otherwise show up as an unexplained dark band along the card's bottom.
+                    // 渐隐贴**内容**底边（`min_rect`）而不是可用区底边：卡按内容收缩，
+                    // 用 `max_rect` 会在卡外多画一条黑带。
+                    //
+                    // The fade follows the **content's** bottom (`min_rect`), not the
+                    // available area's: the card shrinks to its content, so `max_rect` would
+                    // paint a black band below the card.
+                    let overflowing = out.content_size.y > out.inner_rect.height() + 0.5;
+                    let fade_bottom = ui.min_rect().bottom();
+                    let fade_left = ui.min_rect().left();
+                    let fade_right = ui.min_rect().right();
                     let pf = ui.painter();
-                    for s in 0..6u8 {
-                        let y0 = fade_bottom - 14.0 + 14.0 * s as f32 / 6.0;
-                        let y1 = fade_bottom - 14.0 + 14.0 * (s as f32 + 1.0) / 6.0;
-                        pf.rect_filled(
-                            Rect::from_min_max(
-                                Pos2::new(ui.max_rect().left(), y0),
-                                Pos2::new(ui.max_rect().right(), y1),
-                            ),
-                            0.0,
-                            Color32::from_black_alpha(15 * (s + 1)),
-                        );
+                    if overflowing {
+                        for s in 0..6u8 {
+                            let y0 = fade_bottom - 14.0 + 14.0 * s as f32 / 6.0;
+                            let y1 = fade_bottom - 14.0 + 14.0 * (s as f32 + 1.0) / 6.0;
+                            pf.rect_filled(
+                                Rect::from_min_max(
+                                    Pos2::new(fade_left, y0),
+                                    Pos2::new(fade_right, y1),
+                                ),
+                                0.0,
+                                Color32::from_black_alpha(15 * (s + 1)),
+                            );
+                        }
                     }
                 });
         },
     );
+    // 拖宽：手柄挂在卡的**内缘**，卡高多少它就有多高（页签条那一段留给页签）。
+    //
+    // Width drag: the handle sits on the card's **inner** edge, as tall as the card
+    // (the strip's height is left to the tabs).
+    dock_resize_handle(state, ui, ui.min_rect());
 }
 
 /// 直方图：对齐 PS / Camera Raw —— 一块近黑的内凹底，三条 RGB 山形用低透明度

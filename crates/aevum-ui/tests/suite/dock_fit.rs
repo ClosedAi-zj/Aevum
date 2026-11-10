@@ -61,12 +61,34 @@ use aevum_ui::state::{AppState, Module};
 const W: f32 = 1600.0;
 const H: f32 = 1000.0;
 
+/// 检查器浮卡的外距（`shell::DOCK_GUTTER`）：贴窗口右缘 12px、顶栏下 12px。
+///
+/// The inspector card's outer gutter (`shell::DOCK_GUTTER`): 12 px in from the window's
+/// right edge and 12 px under the top bar.
+const DOCK_GUTTER: f32 = 12.0;
+
 #[test]
 fn no_dock_text_is_cut_off_in_any_module() {
     let _lang_guard = crate::common::i18n_guard();
+    // 口径跟着检查器的形态走：它从「贴边侧栏」变成了「贴窗口右缘的浮卡」——右缘
+    // 让出 12px 外距，不再让给 28px 的辅看竖条（那条竖条早已取消）。带宽仍是
+    // `DOCK_W`，只是起点右移 12px。
+    //
+    // 判据本意没变：**面板里的每条文案都要完整落在面板的裁剪框里**。带子不跟着
+    // 搬家就会变成空扫——浮卡的裁剪框（整窗宽）一个都落不进旧的带子里，这条判据
+    // 会「绿着但什么都不看」。
+    //
+    // The band follows the inspector's new shape: it went from a docked column to a card
+    // floating 12 px in from the window's right edge (the 28 px overlay rail it used to
+    // yield to is long gone). The width is still `DOCK_W`; only its origin moved 12 px.
+    //
+    // The intent is unchanged: **every caption in the panel must fit its clip rect**.
+    // Leaving the band at the old geometry would turn this into an empty sweep -- the
+    // card's clip rects sit outside the old band, so the check would stay green while
+    // checking nothing.
     let band = egui::Rect::from_min_max(
-        egui::pos2(W - aevum_ui::theme::STRIP_W - aevum_ui::theme::DOCK_W, 0.0),
-        egui::pos2(W - aevum_ui::theme::STRIP_W, H),
+        egui::pos2(W - DOCK_GUTTER - aevum_ui::theme::DOCK_W, 0.0),
+        egui::pos2(W - DOCK_GUTTER, H),
     );
     let mut hits: Vec<String> = Vec::new();
     for lang in [aevum_ui::i18n::Lang::ZH, aevum_ui::i18n::Lang::EN] {

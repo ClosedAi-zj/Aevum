@@ -434,10 +434,6 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .resizable(false)
             .frame(egui::Frame::NONE.fill(chrome()))
             .show(root, |ui| tool_rail(state, ui, right_half, false));
-        if state.show_dock && !dock_left {
-            floating_dock(root, state, true);
-        }
-
         // 左缘：另一根贴边；左坞与工作流面板依次向内。
         let (left_id, left_half) = if panels_on_right {
             ("rail-tools", RailHalf::Tools)
@@ -449,8 +445,12 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .resizable(false)
             .frame(egui::Frame::NONE.fill(chrome()))
             .show(root, |ui| tool_rail(state, ui, left_half, true));
-        if state.show_dock && dock_left {
-            floating_dock(root, state, false);
+        // 检查器：贴窗口右缘的浮卡，与工具轨开不开无关。
+        //
+        // The inspector: a card floating at the window's right edge, independent of the
+        // rails' visibility.
+        if state.show_dock {
+            floating_dock(&ctx, state, !dock_left, full);
         }
         // 5 工作流面板：最后声明，所以贴着画布（同侧先声明的在外）。窄窗强制收起；
         // 没导入序列时不收起——面板会给出「导入照片…」，不能点了开关却什么都没有。
@@ -498,8 +498,16 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // The canvas insets have a single source: `layout::canvas_insets` (panel width plus
     // the gutter). The centre panel, the canvas' own layout and the gutter painting all
     // derive from these two numbers; nothing adds the 10 a second time.
-    let insets =
-        crate::layout::canvas_insets(state.show_dock, dock_left, state.dock_w + DOCK_GUTTER * 2.0);
+    // 画布让位：**零**。检查器已经是浮卡（`floating_dock`），不再占布局宽度，
+    // 照片铺到窗口右缘、卡片浮在照片上——这正是设计稿 `.dock` 的读法。让位量仍
+    // 走 `layout::canvas_insets`（单源不变），只是「有没有占位侧栏」= 没有。
+    //
+    // Canvas insets: **zero**. The inspector is a floating card now (`floating_dock`),
+    // it no longer takes layout width, so the photo runs to the window's right edge with
+    // the card floating over it -- exactly the design's `.dock`. The insets still come
+    // from `layout::canvas_insets` (one source), only "a real column reserves space" is
+    // now false.
+    let insets = crate::layout::canvas_insets(false, dock_left, 0.0);
     // 中间区自己也得钉住：`insets` 只交代画布**内部**怎么排，管不了
     // CentralPanel 占多宽。而 CentralPanel 拿的是「所有面板之后剩下的空间」——
     // 右坞内容一旦比面板宽，egui 会把面板 rect 整体往右推（`set_rect_size` 保
@@ -670,55 +678,124 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
 /// The inspector card's outer gutter, per the design's `.dock` (12 px from the edge).
 const DOCK_GUTTER: f32 = 12.0;
 
-/// 把检查器画成**浮在画布上的卡**：面板本身透明、只占位，卡片在 12px 内距里
-/// 圆角 12、深投影、1px 环。
+/// 浮卡圆角（设计稿 `border-radius:12px`）。
 ///
-/// 设计稿的 `.dock` 是浮卡而不是贴边侧栏；贴边侧栏把画布切成两半，照片永远是
-/// 「被面板挤窄的」，而浮卡让画面吃满整个窗口。面板宽度因此多出两侧 12px，
-/// `canvas_insets` 那边同步加，画布不会被压到卡下面。
+/// The floating card's corner radius (the design's `border-radius: 12px`).
+const DOCK_RADIUS: f32 = 12.0;
+
+/// 把检查器画成**浮在照片上的卡**：宽 300（`state.dock_w`）、高随内容，贴窗口
+/// 右缘 12px、顶栏下 12px。
 ///
-/// Draw the inspector as a **card floating over the canvas**: the panel itself is
-/// transparent and only reserves space; the card sits in a 12 px gutter with a 12 px
-/// radius, a deep shadow and a 1 px ring.
+/// 设计稿的 `.dock` 是 `position:absolute; top:12px; right:12px; width:300px;
+/// max-height:calc(100% - 24px); overflow:auto` —— 一张**浮卡**，不是贴边侧栏。
+/// 侧栏要占布局宽度，照片永远「被面板挤窄」；浮卡让照片铺满整个窗口，卡片自己
+/// 浮在照片的右边一窄条上，高度只到内容为止（内容再长就在卡内滚，卡不变高）。
 ///
-/// The design's `.dock` floats rather than docking to the edge -- a docked column cuts
-/// the canvas in half and the photo always reads as "squeezed by the panel", while a
-/// floating card lets the image fill the window. The panel is therefore two gutters
-/// wider, and `canvas_insets` is widened in step so the canvas never slides under it.
-fn floating_dock(root: &mut Ui, state: &mut AppState, right: bool) {
+/// 实现要点：
+/// * 位置：右缘 `right-12-width`、顶边 `MENU_H+12`（标题栏下 12px）；
+/// * 高度上限 `窗口高-MENU_H-24`，超过则卡内纵向滚动（见 `dock_panel`）；
+/// * 底色先占一个 `Shape::Noop` 槽位、画完内容再回填——卡高是布局之后才知道的，
+///   底色若跟着内容画就会压在文字上；
+/// * 拖动推子时整卡降到 82%（`slider-drag` 临时数据），松手立刻回到实色。
+///
+/// Draw the inspector as a **card floating over the photo**: 300 wide (`state.dock_w`),
+/// as tall as its content, 12 px from the window's right edge and 12 px under the top bar.
+///
+/// The design's `.dock` is `position:absolute; top:12px; right:12px; width:300px;
+/// max-height:calc(100% - 24px); overflow:auto` -- a **floating card**, not a docked
+/// column. A docked column takes layout width, so the photo always reads as "squeezed by
+/// the panel"; the card lets the photo fill the window and floats over its right sliver,
+/// growing only as tall as its content (beyond that it scrolls inside and stays put).
+fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: Rect) {
+    let w = state.dock_w;
+    // 高度上限：窗口高减顶栏、再减上下两道 12px（设计稿 `max-height:calc(100% - 24px)`
+    // 是相对 `.dock` 的定位父级说的；这里父级是标题栏以下的内容区）。
+    //
+    // Height cap: window height minus the top bar and the two 12 px gutters (the design's
+    // `max-height: calc(100% - 24px)` is relative to `.dock`'s containing block; here that
+    // block starts under the title bar).
+    let max_h = (full.height() - MENU_H - DOCK_GUTTER * 2.0).max(120.0);
+    let pos = Pos2::new(
+        if right {
+            full.right() - DOCK_GUTTER - w
+        } else {
+            full.left() + DOCK_GUTTER
+        },
+        full.top() + MENU_H + DOCK_GUTTER,
+    );
     let id = if right { "dock" } else { "dock-left" };
-    let pnl = if right {
-        egui::Panel::right(id)
-    } else {
-        egui::Panel::left(id)
-    };
-    pnl.exact_size(state.dock_w + DOCK_GUTTER * 2.0)
-        .resizable(false)
-        .frame(
-            egui::Frame::NONE
-                .fill(canvas())
-                .inner_margin(egui::Margin::same(DOCK_GUTTER as i8)),
-        )
-        .show(root, |ui| {
-            let card = ui.max_rect();
-            let p = ui.painter().clone();
-            p.add(
-                egui::epaint::Shadow {
-                    offset: [0, 8],
-                    blur: 24,
-                    spread: 0,
-                    color: Color32::from_black_alpha(115),
-                }
-                .as_shape(card, 12.0),
-            );
-            p.rect_filled(card, 12.0, panel());
-            p.rect_stroke(
+    egui::Area::new(egui::Id::unique(id))
+        .order(egui::Order::Middle)
+        .fixed_pos(pos)
+        .show(ctx, |ui| {
+            ui.set_width(w);
+            ui.set_max_height(max_h);
+            // 卡片底色/投影/描边先占槽位，内容画完再回填：`Painter::set` 写回的是
+            // 同一个绘制序号，所以它们仍排在内容**之下**，但能拿到最终高度。
+            //
+            // Reserve the slot for the card's fill / shadow / ring, and write it back once
+            // the content is laid out: `Painter::set` targets the same shape index, so the
+            // paint still lands *under* the content while knowing the final height.
+            //
+            // 槽位用**裁剪前**的画笔：投影要糊到卡外 24px，卡内的裁剪框会把它切平。
+            //
+            // The slot is added with the **pre-clip** painter: the shadow blurs 24 px past
+            // the card, and the card's clip rect would cut it flat.
+            let wide = ui.painter().clone();
+            let bg = wide.add(egui::Shape::Noop);
+            // 卡内内容一律裁在卡的边界里：浮卡没有外层 Panel 兜底，一段超宽文案
+            // 会直接画到照片上（贴边侧栏时代由 Panel 的裁剪框挡住）。裁剪框同时
+            // 是判据 `dock_fit` 认「这段文字属于检查器」的依据。
+            //
+            // Clip everything inside the card to the card's bounds: a floating card has no
+            // enclosing panel to fall back on, so one over-wide caption would paint straight
+            // onto the photo (the docked column was covered by the panel's clip rect). That
+            // clip rect is also what `dock_fit` uses to tell "this text belongs to the dock".
+            ui.set_clip_rect(Rect::from_min_size(ui.min_rect().min, Vec2::new(w, max_h)));
+            dock_panel(state, ui, w, max_h);
+            let card = ui.min_rect();
+            // 拖动推子时半透明：手在滑块上，眼睛要看得见画面怎么变。平时是不透明
+            // 实色（色彩判断的参照系不能被照片染色）；一旦按住任何控件，卡片降到
+            // 82% 让照片透出来，松手立刻回到实色。
+            //
+            // Translucent while dragging: the hand is on a slider, the eye needs to watch
+            // the frame change. At rest the card is opaque (the colour-judgement reference
+            // must not be tinted by the photo); while any control is held it drops to 82 %
+            // so the photo shows through, and snaps back to opaque on release.
+            let base = panel();
+            let dragging = ui
+                .ctx()
+                .data(|d| d.get_temp::<bool>(egui::Id::unique("slider-drag")))
+                .unwrap_or(false);
+            let fill = if dragging {
+                Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 210)
+            } else {
+                base
+            };
+            let shadow = egui::epaint::Shadow {
+                offset: [0, 8],
+                blur: 24,
+                spread: 0,
+                color: Color32::from_black_alpha(115),
+            }
+            .as_shape(card, DOCK_RADIUS);
+            // 1px 内描边用 `group_ring()`：与参数分组卡同一枚环，卡片才有同一层
+            // 材质感；外描边会在深底上多出一圈亮边。
+            //
+            // The 1 px ring uses `group_ring()`: the same ring as the parameter group
+            // cards, so the card shares their material; an outside stroke would add a
+            // bright halo on the dark backdrop.
+            let body = egui::epaint::RectShape::new(
                 card,
-                12.0,
-                Stroke::new(1.0, Color32::from_white_alpha(15)),
+                DOCK_RADIUS,
+                fill,
+                Stroke::new(1.0, group_ring()),
                 StrokeKind::Inside,
             );
-            dock_panel(state, ui);
+            wide.set(
+                bg,
+                egui::Shape::Vec(vec![egui::Shape::Rect(shadow), egui::Shape::Rect(body)]),
+            );
         });
 }
 
