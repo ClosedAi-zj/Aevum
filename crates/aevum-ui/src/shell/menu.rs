@@ -6,6 +6,7 @@
 // 拆分自 shell.rs 的完整 use 树（先全量继承，unused 项按 test 目标警告剪除）。
 use super::Bench;
 use super::chrome::window_buttons;
+use super::common::combo_style;
 use super::dialogs::export_xmp_dialog;
 use super::dialogs::import_xmp_dialog;
 use super::dialogs::open_dialog;
@@ -722,7 +723,6 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let running = state.running_jobs();
     let tasks_w = tasks_pill_width(&p, running);
     let chain_left = right_chain_left(zone_right_pre(full, &c), tasks_w);
-    let tc_compact_w = Tool::ALL.len() as f32 * 24.0 + (Tool::ALL.len() as f32 - 1.0) * 4.0 + 2.0;
 
     // 中央模块 chips（设计稿 `.seg`：`#26282c` 槽、24px 按钮、选中 `#3a3d43`）。
     // 七个模块横向铺开；「更多」不另设假入口——合成就是设计的「更多」。
@@ -733,48 +733,6 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // 设计稿的 chips 是五枚：序列 / 去闪 / 显影 / 成片 / 更多（`.seg` 槽内）。
     // 构图 / 声音 / 合成三枚收进「更多」弹出层——七个名字横排会把顶栏撑长，
     // 同时把「常用四页」和「文件级工具」画成同一排。
-    //
-    // The design's chips are five: sequence / deflicker / develop / render / more.
-    // Frame / audio / merge move under "more": seven names in a row stretch the bar and
-    // paint "four common pages" and "file-level tools" as one rank.
-    const HEAD_CHIPS: [Module; 4] = [
-        Module::Sequence,
-        Module::Deflicker,
-        Module::Develop,
-        Module::Render,
-    ];
-    let more_label = crate::i18n::t!("更多");
-    // 窄窗 chips 内距 24→16（「更多」30→22），与缩放紧凑同档触发：中段被挤时
-    // 先压内距保住常用四页，而不是整段消失。
-    //
-    // Narrow-window chip padding 24->16 (and "more" 30->22), gated with the zoom
-    // compaction: when the middle is starved, padding yields before the whole block
-    // disappears.
-    let chip_pad = if narrow { 16.0 } else { 24.0 };
-    let more_pad = if narrow { 22.0 } else { 30.0 };
-    let mut widths = Vec::with_capacity(HEAD_CHIPS.len() + 1);
-    for m in HEAD_CHIPS {
-        let g = p.layout_no_wrap(crate::i18n::tr(m.cn()).to_string(), font(12.0), text());
-        widths.push(g.size().x + chip_pad);
-    }
-    widths.push(
-        p.layout_no_wrap(more_label.to_string(), font(12.0), text())
-            .size()
-            .x
-            + more_pad,
-    );
-    let seg_w_all: f32 = widths.iter().sum::<f32>() + 2.0 * (widths.len() as f32 - 1.0) + 4.0;
-    // 省略「更多」后的四枚宽（设计稿五枚里最后一格是弹层入口，窄窗先丢它保住
-    // 常用四页；工具簇在连四枚都快放不下时才隐藏）。
-    //
-    // Width of the four head chips without "more" -- the popup entry is the first to
-    // drop at narrow widths so the four common pages survive; the tool cluster hides
-    // only when even the four do not fit.
-    let seg_w_no_more: f32 = widths[0..HEAD_CHIPS.len()].iter().sum::<f32>()
-        + 2.0 * (HEAD_CHIPS.len() as f32 - 1.0)
-        + 4.0;
-    let seg_h = 28.0;
-    let seg_x = x + if narrow { 10.0 } else { 16.0 };
     // 中段空间分配：先保证「chips + 工具簇」都画；放不下就丢「更多」保四枚 +
     // 工具簇；再放不下就四枚独自占用中段、工具簇隐藏；最极端四枚都挤不下就整段
     // 不画——任何一档都不允许中段压到右簇或窗控。
@@ -783,104 +741,32 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // to keep four chips + tool cluster; else four chips alone with the tool cluster
     // hidden; at the extreme hide chips entirely. No tier may crush the right cluster
     // or the window controls.
-    let alone_limit = chain_left - 8.0;
-    let both_limit = alone_limit - tc_compact_w - 24.0;
-    let (chip_count, tool_allowed) = if seg_x + seg_w_all <= both_limit {
-        (5, true)
-    } else if seg_x + seg_w_no_more <= both_limit {
-        (4, true)
-    } else if seg_x + seg_w_all <= alone_limit {
-        (5, false)
-    } else if seg_x + seg_w_no_more <= alone_limit {
-        (4, false)
-    } else {
-        (0, false)
-    };
-    let seg_drawn = chip_count > 0;
-    let show_more = chip_count == 5;
-    let seg_w = if show_more { seg_w_all } else { seg_w_no_more };
-    if seg_drawn {
-        let seg = Rect::from_min_size(Pos2::new(seg_x, mid - seg_h / 2.0), Vec2::new(seg_w, seg_h));
-        p.rect_filled(seg, 8.0, Color32::from_rgb(0x26, 0x28, 0x2c));
-        let mut cx = seg.left() + 2.0;
-        for (i, m) in HEAD_CHIPS.iter().enumerate() {
-            let r = Rect::from_min_size(
-                Pos2::new(cx, seg.top() + 2.0),
-                Vec2::new(widths[i], seg_h - 4.0),
-            );
-            cx += widths[i] + 2.0;
-            let resp = ui.interact(r, ui.make_persistent_id(("chip", i)), Sense::click());
-            let on = state.module == *m;
-            if on {
-                p.rect_filled(r, 6.0, Color32::from_rgb(0x3a, 0x3d, 0x43));
-            } else if resp.hovered() {
-                p.rect_filled(r, 6.0, elev());
+    // 模块切换统一收进单枚下拉（版式决策 2026-11-11）：菜单行不再摆 4 枚
+    // 模块 chips 与画布任务卡（flow_panel）构成两套并存切换器——任务卡是
+    // 唯一主导航，下拉保住全部 6 模块可达（功能零损失）。
+    //
+    // Module switching collapses into one dropdown: the menu row no longer hosts
+    // four module chips competing with the canvas task card (flow_panel) -- the task
+    // card is the single primary navigator, the dropdown keeps all six reachable.
+    // 左到右流：紧跟文档标题，避开右侧工具簇/动作簇的绝对定位区。
+    ui.add_space(160.0);
+    egui::ComboBox::from_id_salt("head-modules")
+        .selected_text(format!("▦ {}", crate::i18n::tr(state.module.cn())))
+        .width(108.0)
+        .show_ui(ui, |ui| {
+            combo_style(ui);
+            for m in Module::ALL.iter() {
+                let on = state.module == *m;
+                let label = if on {
+                    format!("✓ {}", crate::i18n::tr(m.cn()))
+                } else {
+                    format!("   {}", crate::i18n::tr(m.cn()))
+                };
+                if ui.selectable_label(on, crate::i18n::tr(&label)).clicked() {
+                    state.set_module(*m);
+                }
             }
-            p.text(
-                r.center(),
-                Align2::CENTER_CENTER,
-                crate::i18n::tr(m.cn()),
-                font(12.0),
-                if on || resp.hovered() { text() } else { dim() },
-            );
-            if resp.clicked() && !on {
-                state.set_bench(Bench::Develop);
-                state.set_module(*m);
-            }
-            resp.on_hover_text(format!("{} (Alt+{})", crate::i18n::tr(m.cn()), i + 1));
-        }
-        // 更多：槽内最后一格，点开列出另外三个模块（窄窗芯片数 < 5 时整体不画）。
-        // The "more" slot lists the other three modules; skipped entirely when the
-        // narrow window dropped it from the chip count.
-        if show_more {
-            let r = Rect::from_min_size(
-                Pos2::new(cx, seg.top() + 2.0),
-                Vec2::new(widths[HEAD_CHIPS.len()], seg_h - 4.0),
-            );
-            let more_on = !HEAD_CHIPS.contains(&state.module);
-            if more_on {
-                p.rect_filled(r, 6.0, Color32::from_rgb(0x3a, 0x3d, 0x43));
-            }
-            ui.scope_builder(
-                UiBuilder::new()
-                    .id_salt("more-chips")
-                    .max_rect(r)
-                    .layout(Layout::left_to_right(Align::Center)),
-                |ui| {
-                    let w = &mut ui.style_mut().visuals.widgets;
-                    w.inactive.weak_bg_fill = Color32::TRANSPARENT;
-                    w.inactive.bg_stroke = Stroke::NONE;
-                    w.inactive.fg_stroke = Stroke::new(1.0, if more_on { text() } else { dim() });
-                    w.hovered.weak_bg_fill = elev();
-                    w.hovered.bg_stroke = Stroke::NONE;
-                    w.hovered.fg_stroke = Stroke::new(1.0, text());
-                    ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
-                    ui.menu_button(
-                        RichText::new(format!("{more_label} ▼")).size(SIZE_CHROME_LABEL),
-                        |ui| {
-                            menu_style(ui);
-                            for (i, m) in Module::ALL.iter().enumerate() {
-                                if HEAD_CHIPS.contains(m) {
-                                    continue;
-                                }
-                                let on = state.module == *m;
-                                let label = if on {
-                                    format!("✓ {}", crate::i18n::tr(m.cn()))
-                                } else {
-                                    format!("   {}", crate::i18n::tr(m.cn()))
-                                };
-                                if menu_item(ui, &label, &format!("Alt+{}", i + 1)) {
-                                    state.set_bench(Bench::Develop);
-                                    state.set_module(*m);
-                                    ui.close();
-                                }
-                            }
-                        },
-                    );
-                },
-            );
-        }
-    }
+        });
 
     // 工具簇（设计稿 `.toolcluster`，html 750 行）：chips 右侧的六枚工具图标。
     // 每枚是 28×28 的 `.ibtn`（图标 16、圆角 `--rk` 6、簇内 gap 8），两侧各一条
@@ -917,11 +803,8 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // export-tasks-gear-menu widths, so a language change could overlap the gear (the
     // same root cause as B1). Both sections now share one measured width.
     let tc_right_limit = chain_left - 8.0;
-    let tc_after_chips = if seg_drawn {
-        seg_x + seg_w + 8.0
-    } else {
-        x + 10.0
-    };
+    // chips 已收进下拉：工具簇锚在文档标题右侧（x+10 是标题行右缘）。
+    let tc_after_chips = x + 10.0;
     let room = tc_right_limit - tc_after_chips;
     let (tc_btn, tc_gap, tc_icon) = if room < 6.0 * 28.0 + 5.0 * 8.0 + 18.0 {
         (24.0, 4.0, 14.0)
@@ -939,7 +822,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // -- half of the "icons are gone" report was this position. It falls back to just
     // after the chips only when there is not enough room.
     let tc_left = (tc_right_limit - tc_w - 18.0).max(tc_after_chips);
-    if seg_drawn && tool_allowed && full.width() > 900.0 {
+    if full.width() > 900.0 {
         // 左隔线：`.vdiv{width:1px;height:20px;background:var(--hair)}`。
         p.rect_filled(
             Rect::from_min_size(Pos2::new(tc_left, mid - 10.0), Vec2::new(1.0, 20.0)),

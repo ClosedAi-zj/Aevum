@@ -1133,7 +1133,6 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("曝光指纹", "Exposure fingerprint"),
     ("曲线", "Curves"),
     ("曲线 / 颜色混合器 / 细节 / 光学 / 效果 / 蒙版", "Curve / Colour mixer / Detail / Optics / Effects / Masks"),
-    ("更多", "More"),
     ("更多分组", "More groups"),
     ("更多面板", "More panels"),
     ("更新任务已经在跑了", "An update job is already running"),

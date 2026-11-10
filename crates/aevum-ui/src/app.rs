@@ -713,42 +713,22 @@ impl AevumApp {
     }
 }
 
-/// 把「外观 → 圆角」落到系统窗口边界上（Windows）。
+/// 把窗口圆角交给 Win11 的 DWM 系统合成（Windows）。
 ///
-/// egui 只画得到窗口**内部**的像素：外框的直角是系统画的，所以调外观里的圆角时
-/// 窗口四角纹丝不动（用户 2026-11-07 的截图）。这里用 `SetWindowRgn` 把窗口本体
-/// 裁成同半径的圆角矩形，半径取 `theme::radius_window()`（与浮动窗口同源）。
-/// 最大化时恢复整块矩形——系统对最大化的窗口也不做圆角。
+/// 旧实现用 `SetWindowRgn` 做 GDI 区域裁剪：无抗锯齿、边缘必有台阶（用户
+/// 2026-11-11「窗口角根治」），且半径变化每帧触发窗口重排。改用
+/// `DWMWA_WINDOW_CORNER_PREFERENCE`：DWM 合成平滑圆角，半径跟随系统，
+/// 最大化自动展平；外观旋钮继续控制 egui 内部的控件/浮窗圆角。
 ///
-/// The appearance radius only reached pixels *inside* the window; the outer corners are
-/// drawn by the OS, so dragging the radius left the window frame square (user screenshot,
-/// 2026-11-07). `SetWindowRgn` clips the native window to a rounded rect of
-/// `theme::radius_window()` -- the same radius as floating windows. A maximised window
-/// keeps the full rectangle, as the system does.
+/// Hands window rounding to the Windows 11 DWM compositor. The old
+/// `SetWindowRgn` clip had no anti-aliasing (stair-stepped edges, user
+/// "root-fix" report, 2026-11-11) and forced a window relayout on radius changes.
+/// DWM now composes smooth corners; the appearance knob keeps governing egui's
+/// internal control / floating-window radii.
 #[cfg(windows)]
 fn apply_window_corners(frame: &eframe::Frame, ppp: f32) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use std::sync::Mutex;
-
-    #[link(name = "gdi32")]
-    unsafe extern "system" {
-        fn CreateRoundRectRgn(
-            left: i32,
-            top: i32,
-            right: i32,
-            bottom: i32,
-            ellipse_w: i32,
-            ellipse_h: i32,
-        ) -> *mut core::ffi::c_void;
-    }
-    #[link(name = "user32")]
-    unsafe extern "system" {
-        fn SetWindowRgn(
-            hwnd: *mut core::ffi::c_void,
-            rgn: *mut core::ffi::c_void,
-            redraw: i32,
-        ) -> i32;
-    }
 
     #[link(name = "dwmapi")]
     unsafe extern "system" {
@@ -831,14 +811,29 @@ fn apply_window_corners(frame: &eframe::Frame, ppp: f32) {
             &none as *const u32 as *const core::ffi::c_void,
             std::mem::size_of::<u32>() as u32,
         );
-        let rgn = if r > 0 {
-            // 区域右/下边界是开区间：宽高各 +1 才盖满客户区。
-            // The region's right/bottom edges are exclusive: +1 covers the client area.
-            CreateRoundRectRgn(0, 0, w as i32 + 1, h as i32 + 1, r * 2, r * 2)
-        } else {
-            std::ptr::null_mut()
-        };
-        SetWindowRgn(hwnd.hwnd.get() as *mut core::ffi::c_void, rgn, 1);
+        // 圆角根治（用户 2026-11-11）：`SetWindowRgn` 是 GDI 区域裁剪——边缘
+        // 无抗锯齿，必有台阶。改用 Win11 的 DWM 系统圆角
+        // （DWMWA_WINDOW_CORNER_PREFERENCE = 33，DWMWCP_ROUND = 2）：由 DWM
+        // 合成平滑圆角与边缘，半径跟随系统（~8px）不跟旋钮——官方口径
+        // （learn.microsoft.com/windows/apps/desktop/modernize/ui/apply-rounded-corners）。
+        // Win10 无此属性：静默失败返回非零 HRESULT，窗口保持方角（可接受降级）。
+        // 最大化时 DWMWCP_ROUND 会被系统自动展平，无需手工处理。
+        //
+        // Root fix for the corner aliasing (user 2026-11-11): `SetWindowRgn` is a GDI
+        // region clip with no anti-aliasing -- stair-stepping is inherent. Switch to
+        // the Windows 11 DWM system corners (attribute 33, DWMWCP_ROUND = 2): the DWM
+        // composites smooth edges, the radius follows the OS (~8 px) not the knob.
+        // Windows 10 lacks the attribute: the call fails quietly and the window stays
+        // square (acceptable degradation). Maximized is auto-flattened by the system.
+        const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+        const DWMWCP_ROUND: u32 = 2;
+        let round = DWMWCP_ROUND;
+        let _ = DwmSetWindowAttribute(
+            hwnd.hwnd.get() as *mut core::ffi::c_void,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &round as *const u32 as *const core::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+        );
     }
 }
 
