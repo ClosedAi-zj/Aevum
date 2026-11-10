@@ -582,14 +582,17 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         draw_rulers(ui, body, content, Some(img), scale, hover);
     }
 
-    // 浮动直方图卡（左上）+ 无序列提示卡：设计稿把直方图从检查器里搬到了画布上，
-    // 视线第一落点就是数据。卡片实色不透明（浮层纪律：不许模糊或透出照片）。
+    // 浮动直方图卡（左上）+ 无序列提示卡：现代布局按设计稿把直方图搬到了画布上，
+    // 视线第一落点就是数据。老式布局改由右侧调色盘页签下画同一份直方图
+    // （`dock::dock_panel`），这里就不摆浮卡了——两处同时画等于一份数据出现两次。
     //
-    // The floating histogram card (top-left) plus the empty-state hint: the design moves
-    // the histogram out of the inspector onto the canvas, so the first thing the eye
-    // lands on is data. The card is opaque (overlay discipline: never blur or let the
-    // photo show through).
-    let _card = super::canvas_cards::histogram_card(state, ui, content);
+    // The floating histogram card (top-left) plus the empty-state hint: Modern follows
+    // the design and moves the histogram onto the canvas. Legacy draws that same
+    // histogram under the right-hand palette's tab row (`dock::dock_panel`), so no
+    // floating card here -- painting both would show one dataset twice.
+    if state.layout.scheme != crate::layout::Scheme::Legacy {
+        let _card = super::canvas_cards::histogram_card(state, ui, content);
+    }
     super::canvas_cards::empty_hint(state, ui, content);
 }
 

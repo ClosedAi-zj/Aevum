@@ -160,6 +160,7 @@ pub(super) fn adjust_retouch(state: &mut AppState, ui: &mut Ui) -> bool {
             None,
             true,
             "占画面长边的百分比：拖到 2% 大致是一颗灰尘，6% 以上是抹掉一根电线",
+            None,
         );
         changed |= slider_row(
             ui,
@@ -175,6 +176,7 @@ pub(super) fn adjust_retouch(state: &mut AppState, ui: &mut Ui) -> bool {
             None,
             true,
             "边缘过渡占半径的比例：0 是硬边，100 从中心淡到边",
+            None,
         );
 
         let n = state.params.retouch.len();

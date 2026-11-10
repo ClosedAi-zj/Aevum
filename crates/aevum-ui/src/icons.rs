@@ -95,7 +95,7 @@ fn pt(r: Rect, x: f32, y: f32) -> Pos2 {
 /// Colours are not defined here -- callers pass the theme's ACCENT / TEXT / MUTED /
 /// DIM, and the hierarchy follows automatically.
 pub const STROKE_MIN: f32 = 1.0;
-pub const STROKE_MAX: f32 = 1.55;
+pub const STROKE_MAX: f32 = 1.8;
 
 fn scaled(r: Rect, x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
     Rect::from_min_max(pt(r, x0, y0), pt(r, x1, y1))
@@ -127,7 +127,7 @@ pub fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32) {
         Pos2::new(snap(rect.max.x), snap(rect.max.y)),
     );
     let s = rect.width().min(rect.height());
-    let sw = (s * 0.075).clamp(STROKE_MIN, STROKE_MAX);
+    let sw = (s * 0.09).clamp(STROKE_MIN, STROKE_MAX);
     let st = Stroke::new(sw, color);
     let r = rect.shrink(s * 0.1);
     match glyph {

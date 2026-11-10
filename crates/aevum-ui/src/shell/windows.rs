@@ -957,6 +957,28 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                     ui.set_min_width(WIN_LOOK_MIN_W);
                     ui.spacing_mut().item_spacing = Vec2::new(6.0, 5.0);
 
+                    // 界面风格放在**第一屏第一行**：外观窗是 340×560 的滚动区，十几节
+                    // 内容装不下，早先把这个开关压在「布局」节末尾时用户滚不到，
+                    // 反馈「你根本没做这个功能」。布局方案是整屏级的选择，
+                    // 不该排在语言/配色后面。
+                    //
+                    // The interface-style switch sits on the **first row of the first
+                    // screen**: the 340x560 look window scrolls a dozen sections, and the
+                    // switch used to sit at the very bottom of the Layout section where
+                    // nobody reached it ("you never built this"). A whole-screen layout
+                    // choice belongs ahead of language and colour.
+                    look_section(ui, "界面布局");
+                    look_row(
+                        ui,
+                        "方案",
+                        state.layout.scheme,
+                        &[
+                            (crate::layout::Scheme::Modern, "现代"),
+                            (crate::layout::Scheme::Legacy, "老式"),
+                        ],
+                        |s| state.layout = state.layout.with_scheme(s),
+                    );
+
                     look_section(ui, "语言 / Language");
                     ui.horizontal_wrapped(|ui| {
                         // 选项来自注册表，不逐个列语言：「加一种语言只改 CATALOGS 一行」这条

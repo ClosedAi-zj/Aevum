@@ -361,7 +361,13 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // Brand tile 24 per the design's `.mk`: the one brand-coloured block in the window.
     if c.brand_icon {
         let tile = Rect::from_min_size(Pos2::new(x, mid - 12.0), Vec2::splat(24.0));
-        p.rect_filled(tile, 6.0, accent());
+        // 圆角从 token 派生：写死 6.0 时「外观 → 圆角」调不动这颗蓝色品牌块，
+        // 放大后与其它圆角件不同步（用户 2026-11-10 反馈「弧度像马赛克」）。
+        //
+        // Derive the corner radius from the theme token: a literal 6.0 left this
+        // blue brand tile deaf to the corner-radius knob and out of step with the
+        // other rounded elements when zoomed (2026-11-10 user report).
+        p.rect_filled(tile, radius_chip().max(2.0), accent());
         icons::paint(&p, tile.shrink(5.0), Glyph::Sequence, Color32::WHITE);
         x = tile.right() + 10.0;
     }
@@ -1178,16 +1184,22 @@ pub(super) fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
 pub(super) fn menu_item_enabled(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool) -> bool {
     let label = crate::i18n::tr(label);
     let shortcut_color = Color32::from_white_alpha(166);
+    // 菜单行是 chrome：W4 字号 +1 不波及——BODY/SMALL 各回退一档，保住
+    // PS 口径的 24px 行高（ps_menu_specs 判据 24±1 钉着）。
+    //
+    // Menu rows are chrome: the W4 +1 type bump does not reach here -- BODY/SMALL
+    // step back one so the PS-spec 24 px row height survives (pinned by
+    // ps_menu_specs at 24±1).
     ui.add_enabled(
         enabled,
-        egui::Button::new(RichText::new(label).size(SIZE_BODY)).shortcut_text(
+        egui::Button::new(RichText::new(label).size(SIZE_BODY - 1.0)).shortcut_text(
             RichText::new(shortcut)
                 // 快捷键列走等宽（PS 编辑菜单的整齐感来源）：Ctrl+Z /
                 // Shift+Ctrl+Z / Alt+Shift+Ctrl+K 右对齐后自成一条视觉锚线。
                 //
                 // Shortcut column uses the monospace family (where PS's Edit menu gets
                 // its tidiness): right-aligned, the column becomes a visual anchor.
-                .font(mono(SIZE_SMALL))
+                .font(mono(SIZE_SMALL - 1.0))
                 .color(shortcut_color),
         ),
     )

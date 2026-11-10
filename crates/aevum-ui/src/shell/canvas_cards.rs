@@ -115,6 +115,19 @@ pub(super) fn histogram_card(state: &mut AppState, ui: &mut Ui, canvas: Rect) ->
     // Card fill: opaque `panel`, `radius_panel` corners, `border_strong` outline. On a
     // photo it must read as "a card floating above", via value contrast and outline,
     // never blur.
+    // 浮卡投影（工单 W2）：垫在卡底之下、向外晕开——浮在照片上要有厚度。
+    // 阴影只画一次且在填充前，不参与描边/上沿光。
+    //
+    // Card shadow (work order W2): laid under the fill, blooming outward -- a card
+    // floating over a photo needs thickness. Painted once before the fill; it never
+    // touches the outline or the top edge light.
+    let sh = card_shadow();
+    p.rect_filled(
+        card.translate(Vec2::new(sh.offset[0] as f32, sh.offset[1] as f32))
+            .expand(sh.spread as f32),
+        radius_panel(),
+        sh.color,
+    );
     p.rect_filled(card, radius_panel(), panel());
     p.rect_stroke(
         card,

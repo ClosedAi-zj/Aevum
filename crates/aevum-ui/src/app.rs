@@ -779,7 +779,7 @@ fn apply_window_corners(frame: &eframe::Frame, ppp: f32) {
         use std::sync::Once;
         use winit::platform::windows::WindowExtWindows;
         static SHADOW_OFF: Once = Once::new();
-        SHADOW_OFF.call_once(|| win.set_undecorated_shadow(false));
+        SHADOW_OFF.call_once(|| win.set_undecorated_shadow(true));
     }
     let (w, h) = (win.inner_size().width, win.inner_size().height);
     if w == 0 || h == 0 {
@@ -815,12 +815,12 @@ fn apply_window_corners(frame: &eframe::Frame, ppp: f32) {
     };
     unsafe {
         // Win11 还会给无边框窗口补一圈 1px 的系统描边（浅色主题下是亮的）。投影
-        // 已经在上面的 `set_undecorated_shadow(false)` 里关掉，这里再让描边透明，
+        // 已经在上面的 `set_undecorated_shadow(true)` 里关掉，这里再让描边透明，
         // 窗口轮廓只由 `SetWindowRgn` 的圆角裁剪和界面自身的镶边负责。
         //
         // Windows 11 also paints a 1 px system border around borderless windows (light
         // in the light theme). The shadow is already gone from the
-        // `set_undecorated_shadow(false)` above; making the border transparent here
+        // `set_undecorated_shadow(true)` above; making the border transparent here
         // leaves the silhouette to the `SetWindowRgn` rounding and the app's own chrome.
         const DWMWA_BORDER_COLOR: u32 = 34;
         const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;

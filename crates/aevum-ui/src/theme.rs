@@ -237,7 +237,7 @@ impl Default for Appearance {
             accent_s: 100.0,
             accent_l: 44.5,
             gray_offset: 0,
-            radius: 6.0,
+            radius: 8.0,
             os: crate::platform::OsChoice::Auto,
             density: Density::Standard,
         }
@@ -776,38 +776,52 @@ pub fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
     )
 }
 
-/// 控件圆角：只由 `Appearance::radius` 派生，窗口 = 控件 + 4、容器 = 控件 + 2。
+/// 控件圆角：只由 `Appearance::radius` 派生，窗口 = 控件 + 8、容器 = 控件 + 4、
+/// 芯片 = 控件 − 4（M3 刻度 4/8/12/16，control=8 时即 4/8/12/16）。`Appearance::radius`
+/// 改了，这一族一起变——主窗口与浮卡的圆角不再写死成互不相关的常量。
 ///
-/// Control corner radius: derived only from `Appearance::radius`, where window = control
-/// + 4 and container = control + 2.
+/// Control corner radius: derived only from `Appearance::radius`; window = control + 8,
+/// container = control + 4, chip = control - 4 (M3 steps 4 / 8 / 12 / 16, i.e. exactly
+/// those values at control = 8). Change `Appearance::radius` and the whole family moves
+/// together -- the main window and floating cards are no longer frozen to unrelated
+/// constants.
 pub fn radius_control() -> f32 {
     // 平台偏置不落进 `Appearance::radius`：用户设的是"这一档"，mac 整体再圆一格
     // 是平台口径，改外观时不该把它一起改掉（否则来回切平台会把数值越推越大）。
     (appearance().radius + crate::platform::chrome().radius_bias).clamp(0.0, 18.0)
 }
 
-/// 小徽标/芯片圆角：比控件再收 2px。全应用的字面量 2.0/3.0/8.0 都收到这一档，
-/// 避免"小方块圆角肉眼可见地不一致"（审计 #37）。
+/// 小徽标/芯片圆角：比控件小一档 M3 刻度（control=8 → 4）。与窗口/容器同源于
+/// `Appearance::radius`，所以「外观 → 圆角」这一个旋钮能把整屏圆角一起推——主窗口的
+/// `SetWindowRgn`、浮卡、芯片都跟着变，不再写死成互不相关的常量（曾是调圆角时主窗口
+/// 与浮卡纹丝不动的根因）。固定偏移（+/−8、+/−4、−4）保证整屏四档永远按同一刻度
+/// 同进退，不会各算各的把徽标和卡片拉散。
 ///
-/// Corner radius for chips and small badges: control radius minus 2 px. The literals
-/// 2.0 / 3.0 / 8.0 all collapse to this one step so small blocks stop looking randomly
-/// rounded.
-/// M3 shape tokens：4（chip）/ 8（control）/ 12（panel）/ 16（window）。
-/// 圆角只允许这四档，别再按 `radius_control ± n` 派生——派生值会随外观旋钮
-/// 漂移，同一屏上的徽标与卡片就对不上。
-///
-/// M3 shape tokens: 4 / 8 / 12 / 16. Only these four steps are allowed; deriving from
-/// `radius_control +- n` makes chips and cards drift apart as the appearance knob moves.
+/// Chip / small-badge radius: one M3 step below the control radius (control 8 -> 4). It
+/// shares the `Appearance::radius` source with the window and container, so the single
+/// "Appearance -> corner radius" knob turns the whole screen's rounding together -- the
+/// main window's `SetWindowRgn`, the floating cards and the chips all move, instead of
+/// being frozen to unrelated constants (which used to make the radius setting deaf to both
+/// the main and floating windows). The fixed offsets (+8 / +4 / -4) keep all four steps on
+/// the same scale and in lockstep, never scattering chips and cards apart.
 pub fn radius_chip() -> f32 {
-    4.0
+    (radius_control() - 4.0).max(0.0)
 }
 
+/// 窗口圆角：比控件大一档 M3 刻度（control=8 → 16）。主窗口四角由它决定。
+///
+/// Window rounding: one M3 step above the control radius (control 8 -> 16). Drives the
+/// main window's four corners.
 pub fn radius_window() -> f32 {
-    16.0
+    radius_control() + 8.0
 }
 
+/// 容器圆角：比控件大半档 M3 刻度（control=8 → 12）。检查器、直方图、序列卡都读这里。
+///
+/// Container rounding: half a step above the control radius (control 8 -> 12). The
+/// inspector, histogram and sequence cards all read this.
 pub fn radius_panel() -> f32 {
-    12.0
+    radius_control() + 4.0
 }
 
 /// 面板行的悬停底色：深色主题往上抬一档，浅色主题往下压一档 —— 两个方向都是
@@ -1253,8 +1267,15 @@ pub const FONT_ZOOMS: [f32; 4] = [1.0, 1.06, 1.14, 1.24];
 ///
 /// macOS type scale: body 13, small 11, large heading 15 (the 17 top step is covered by
 /// Heading plus a zoom step).
-pub const SIZE_SMALL: f32 = 11.0;
-pub const SIZE_BODY: f32 = 13.0;
+/// W4 辅助字号：11→11.5。工单写「辅助 12」，但 LABEL 恒为 12——
+/// 两档同值会让层级塌掉（type_scale_stays_ordered 判据的职责）。
+/// 取 11.5：视觉贴近 12、保住 小<标签 的次序。
+///
+/// W4 caption size: 11→11.5. The plan says "12", but LABEL is pinned at 12 --
+/// equal steps would collapse the hierarchy (that is exactly what
+/// type_scale_stays_ordered guards). 11.5 reads as 12 while keeping 小<标签.
+pub const SIZE_SMALL: f32 = 11.5;
+pub const SIZE_BODY: f32 = 14.0;
 /// 页面标题：比正文大一档，全应用只有页面标题用它。
 ///
 /// Page title: one step above body text; only page titles use it.
@@ -1670,6 +1691,24 @@ pub fn apply_style(ctx: &Context, zoom: f32) {
 /// 手动画带字距的小标题（egui 的 Label 不支持 tracking）。
 ///
 /// Draw a small, letter-spaced heading by hand (egui's `Label` has no tracking).
+/// 浮卡投影（工单 W2）：canvas_cards 等自绘浮卡的 ambient shadow，
+/// 比 `window_shadow` 收一档——浮卡贴着画布，投影太重会像第二个窗口。
+/// 浅色主题 alpha/blur 各收一档。Legacy 贴边 Panel 不调用本函数（工单红线）。
+///
+/// Card drop shadow (work order W2): ambient shadow for self-painted floating cards
+/// on the canvas, one step softer than `window_shadow` -- cards sit on the canvas and
+/// a heavy shadow reads as a second window. Light theme takes a softer set. Legacy
+/// docked panels never call this (work-order red line).
+pub fn card_shadow() -> egui::epaint::Shadow {
+    let light = is_light();
+    egui::epaint::Shadow {
+        offset: [0, if light { 4 } else { 6 }],
+        blur: if light { 20 } else { 24 },
+        spread: 2,
+        color: Color32::from_black_alpha(if light { 64 } else { 120 }),
+    }
+}
+
 pub fn tracked_text(
     painter: &egui::Painter,
     pos: Pos2,

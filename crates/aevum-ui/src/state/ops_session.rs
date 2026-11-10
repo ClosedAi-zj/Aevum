@@ -999,11 +999,17 @@ impl AppState {
         let root = seq.root.clone();
         let seq_name = seq.display_name();
         self.seq = Some(seq);
-        // 导入基线：这一刻的参数就是「没调过色」。此后没动过色，
-        // 就不该亮（用户 2026-11-09 截图：导入后前两步全打勾）。
+        // 导入基线不在这里取：下面还会重置 / 恢复 / 套 RAW 默认参数，
+        // 此刻的 `params` 并不是这盘序列真正落地的值。取值点见
+        // `apply_raw_import_defaults` 之后（用户 2026-11-10 实测：导入序列
+        // 直接跳到导出页，就是因为基线过早导致「已调色」误判）。
         //
-        // Import baseline: the params at this instant mean "not graded yet".
-        self.grade_baseline = Some(self.params.clone());
+        // The import baseline is NOT taken here: the code below resets params,
+        // restores the project and applies RAW defaults, so `params` at this
+        // instant is not what this sequence actually ends up with. It is taken
+        // after `apply_raw_import_defaults` (2026-11-10 user report: importing
+        // a sequence jumped straight to the export page because an early
+        // baseline made "already graded" read true).
         self.unload_jobs();
         self.align_report = None;
         self.align_busy = false;
@@ -1133,6 +1139,24 @@ impl AppState {
         self.detect_sidecar_hint();
         // RAW 首次导入（工程文件不存在）时套默认锐化/降噪；有工程文件的用户参数不动。
         self.apply_raw_import_defaults(&root);
+        // 基线必须取**最终落地**的参数：重置 / 工程恢复 / RAW 默认都在上面跑完了，
+        // 此刻才等于「这盘序列没调过色」。早取会让 `StepCheck::Graded` 立刻为真，
+        // 派生步跳过前两步、落到最后一步导出页（用户 2026-11-10 实测）。
+        //
+        // The baseline MUST snapshot the params as they finally landed: reset,
+        // project restore and RAW defaults all ran above, so only now does it mean
+        // "this sequence is ungraded". Taking it earlier makes `StepCheck::Graded`
+        // true immediately, skipping the first steps and landing on the export
+        // page (2026-11-10 user report).
+        self.grade_baseline = Some(self.params.clone());
+        // 打开新序列是「从头开始」：清掉上一盘手选的步骤页，并把工作台归回显影，
+        // 否则导航卡高亮显影、内容区却停在旧的导出页（两套状态打架）。
+        //
+        // Opening a new sequence starts over: clear the previous hand-picked step
+        // and return the bench to Develop, or the nav card highlights Develop
+        // while the content still sits on the old export page (two states at odds).
+        self.flow_step = None;
+        self.set_bench(crate::shell::Bench::Develop);
         // 工程恢复完才是这盘棋的起点：历史从头记，撤销不会把用户带回上一个序列。
         // 默认参数挂在 history_reset 之前，进初始历史、可撤销。
         self.history_reset("打开序列");

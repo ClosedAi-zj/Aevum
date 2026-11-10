@@ -47,6 +47,7 @@ pub(crate) mod export_dialog;
 mod export_ws;
 pub(crate) mod flow;
 mod flow_panel;
+mod legacy;
 mod library;
 mod markdown;
 mod mask;
@@ -321,6 +322,13 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // 顺序即层级 —— egui 的 Panel 先声明的先占边，后声明的往中间挤。
     // ---------------------------------------------------------------
     let layout = state.layout;
+    // 老式界面布局是可选方案：默认 `Modern` 时下面两条 Panel 一律不声明，
+    // 现代路径（浮卡检查器 + 胶片卡）一行不改。
+    //
+    // The legacy arrangement is opt-in: with the default `Modern` neither Panel
+    // below is declared, and the modern path (floating inspector + filmstrip
+    // card) stays byte-for-byte the same.
+    let legacy = layout.scheme == crate::layout::Scheme::Legacy;
 
     // 1 标题栏：品牌 │ 五项菜单 │ 工作区胶囊 │ 导出 │ 窗口按钮，一行到底。
     //   底色对齐界面稿 ttl-bg（比 chrome 暗半档、贴着 header）：标题栏是"骨架"，
@@ -418,6 +426,39 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .show(root, |ui| status_bar(state, ui));
     }
 
+    // 老式布局两处贴边区（用户可选）：右侧一列调色盘 + 底部一条铺满的图片列表。
+    // 顺序即层级 —— right 先声明贯穿整个高度，bottom 后声明只占剩余宽度的底边，
+    // 于是图片列表横贯到调色盘左缘，正是旧版稿 `.film` 的样子（用户实测驳回
+    // 「左下角一小块浮卡、右边空一大片」）。两者都复用既有组件，不新增控件：
+    // 调色盘用 `dock_panel`，图片列表用 `timeline::card` 的贴边形态。
+    //
+    // Two Legacy docked regions (opt-in): a right-hand palette column plus a
+    // bottom image list spanning the full width. Declaration order sets the
+    // layering -- `right` is declared first and runs the full height, then
+    // `bottom` takes the remaining width, so the thumbnails reach the palette's
+    // left edge, matching the old mockup's `.film`. The user rejected the
+    // "small floating card in the corner with a large empty gap". Both reuse
+    // existing widgets: `dock_panel` and the docked form of `timeline::card`.
+    if develop && legacy {
+        let palette_w = state.dock_w;
+        egui::Panel::right("legacy-palette")
+            .exact_size(palette_w)
+            .resizable(false)
+            .frame(egui::Frame::NONE.fill(dock()))
+            .show(root, |ui| {
+                legacy::palette_column(state, ui, palette_w, ui.available_height())
+            });
+        if layout.film.allowed() && state.frame_count() > 0 {
+            egui::Panel::bottom("legacy-film")
+                .exact_size(timeline::card_height(state))
+                .resizable(false)
+                .frame(egui::Frame::NONE.fill(panel()))
+                .show(root, |ui| {
+                    legacy::film_strip(state, ui, &ctx);
+                });
+        }
+    }
+
     // 4 侧栏。同一侧「先声明的在外」，顺序即由外到内。
     // 工具轨拆成两根（用户 2026-11-09）：上半「工作流 / 面板入口」靠右缘、
     // 下半「工具组 / 轨底设置」靠左缘，两侧各 7 枚，视觉对称。
@@ -472,7 +513,11 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         //
         // The inspector: a card floating at the window's right edge, independent of the
         // rails' visibility.
-        if state.show_dock {
+        // 老式布局的调色盘已经是贴边 Panel，再画一遍浮卡就成了两层调色盘。
+        //
+        // In Legacy the palette is already a docked Panel; painting the floating
+        // card on top would give two palettes stacked over each other.
+        if state.show_dock && !legacy {
             floating_dock(&ctx, state, !dock_left, full);
         }
         if flow_panel::flow_panel_visible(state, full.width()) {
@@ -594,7 +639,13 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // the **canvas'** left and bottom edges: the 24 px tool rail runs to the window
     // bottom (the window edge would bury its foot button) and a status bar may sit
     // below. Full-page benches get no card -- they have no "current sequence frame".
-    if develop && layout.film.allowed() && state.frame_count() > 0 {
+    // 胶片卡（现代布局的左下浮卡）。老式改由 `legacy-film` 贴边 Panel 铺满底边，
+    // 这里再画一次就成了两条图片列表，故老式跳过。
+    //
+    // Filmstrip card for Modern (floating at the lower left). Legacy uses the
+    // `legacy-film` docked Panel across the bottom edge instead; painting both
+    // would duplicate the image list, so Legacy skips this one.
+    if develop && !legacy && layout.film.allowed() && state.frame_count() > 0 {
         let card_h = timeline::card_height(state);
         let pos = Pos2::new(centre.left() + 12.0, centre.bottom() - 12.0 - card_h);
         // 卡宽不超过窗口一半：再宽就把画布切成两半，浮卡也就失去意义。
@@ -605,7 +656,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         egui::Area::new(egui::Id::unique("film-card"))
             .order(egui::Order::Middle)
             .fixed_pos(pos)
-            .show(&ctx, |ui| timeline::card(state, ui, &ctx, max_w));
+            .show(&ctx, |ui| timeline::card(state, ui, &ctx, max_w, false));
     }
 
     // 面板与画布之间那条呼吸带：与画布同底色的中性灰，面板内缘压一根发丝线。
@@ -628,9 +679,20 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // 工作台导航卡：浮在内容之上（design `.wsbar{position:absolute;top:56px;z-index:45}`），
     // 顶栏下 12px、水平居中。放在 Content 之后画，才压得住媒体与整页视图。
     //
+    // 层级只到 Middle：中央面板在 Background，Middle 已经压得住它；而设置窗口、
+    // 错误弹窗这些 `egui::Window` 也是 Middle，且在下面更晚绘制，于是浮窗反压导航卡。
+    // 早先钉在 Foreground，会把「外观与布局」的标题栏盖掉——标题栏正是拖动区，
+    // 用户因此看到「子窗口被覆盖、拖不动」（2026-11-10 实测截图）。
+    //
     // The bench nav card floats above the content (design `.wsbar`: absolute, top 56 px,
     // z-index 45) -- 12 px under the top bar, horizontally centred. Painted after the
     // content so it sits above both the media and the full-page views.
+    //
+    // It stops at Middle: the central panel is Background, which Middle already covers,
+    // while the `egui::Window`s (settings, error dialog) are also Middle but painted
+    // later below, so they outrank the card. Pinning it to Foreground used to bury the
+    // settings window's title bar -- its drag handle -- making the sub-window look
+    // covered and impossible to move (reproduced in the 2026-11-10 screenshot).
     // 导航卡的位置按工作台分别算，避免和顶栏下面的两条带子叠压：
     // - 显影：浮在**画布**上沿内 12px、画布水平居中（设计稿 `.wsbar` 浮在媒体上）；
     // - 整页工作台：顶栏下 12px、窗口水平居中（设计稿页头中央，两侧被标题/动作占着，
@@ -647,7 +709,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         (full.center().x, full.top() + MENU_H + 12.0)
     };
     egui::Area::new(egui::Id::unique("bench-nav"))
-        .order(egui::Order::Foreground)
+        .order(egui::Order::Middle)
         .fixed_pos(Pos2::new(nav_center_x - 300.0, nav_top))
         .show(&ctx, |ui| {
             ui.set_min_size(Vec2::new(600.0, 34.0));
@@ -697,7 +759,21 @@ const DOCK_GUTTER: f32 = 12.0;
 /// 浮卡圆角（设计稿 `border-radius:12px`）。
 ///
 /// The floating card's corner radius (the design's `border-radius: 12px`).
-const DOCK_RADIUS: f32 = 12.0;
+/// 检查器浮卡四角：一律从 `radius_panel()` 派生，别写死。
+///
+/// 这里曾是 `const dock_radius(): f32 = 12.0`——「外观 → 圆角」调了半天，
+/// 主窗口（走 `radius_window()`）会变、浮卡却纹丝不动，用户实测两轮都是
+/// 「子窗口不生效」。默认 `appearance.radius = 8` 时 `radius_panel()` 正好
+/// 也是 12，接回派生链观感不变，但这一档终于跟着旋钮一起走。
+///
+/// The inspector card's corners derive from `radius_panel()`, never a literal.
+/// A hard-coded 12.0 used to leave the floating card frozen while the main window
+/// (via `radius_window()`) followed the corner-radius knob -- which is exactly the
+/// "sub-window doesn't respond" bug users reported twice. At the default
+/// `appearance.radius = 8`, `radius_panel()` is also 12, so the look is unchanged.
+fn dock_radius() -> f32 {
+    radius_panel()
+}
 /// 检查器浮卡的最小高度：约等于目标图显示到「色彩分级」分组的高度。
 ///
 /// Minimum height of the floating inspector: about as tall as the reference that
@@ -887,7 +963,7 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                 wide.rect_filled(
                     zone,
-                    DOCK_RADIUS,
+                    dock_radius(),
                     Color32::from_white_alpha(if strip_drag.dragged() { 14 } else { 8 }),
                 );
             }
@@ -1024,7 +1100,7 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
                 spread: 0,
                 color: Color32::from_black_alpha(115),
             }
-            .as_shape(card, DOCK_RADIUS);
+            .as_shape(card, dock_radius());
             // 1px 内描边用 `group_ring()`：与参数分组卡同一枚环，卡片才有同一层
             // 材质感；外描边会在深底上多出一圈亮边。
             //
@@ -1033,7 +1109,7 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
             // bright halo on the dark backdrop.
             let body = egui::epaint::RectShape::new(
                 card,
-                DOCK_RADIUS,
+                dock_radius(),
                 fill,
                 Stroke::new(1.0, group_ring()),
                 StrokeKind::Inside,
@@ -1111,11 +1187,17 @@ pub(super) fn view_tools(state: &mut AppState, ui: &mut Ui, content: Rect) {
     }
     // 设计稿 `.viewtools`：5 枚 24×24、gap 2、内距 3、圆角 18。
     //
+    // 圆角同检查器浮卡一起从 `radius_panel()` 派生（默认 `radius_panel()=12`，
+    // +6 即设计稿的 18）：写死 18 会让这条工具条在调圆角时独自不动。
+    //
     // The design's `.viewtools`: five 24x24 buttons, gap 2, padding 3, radius 18.
+    // The radius derives from `radius_panel()` just like the inspector card
+    // (default 12, +6 gives the design's 18): a literal 18 would leave this strip
+    // frozen while every other corner follows the knob.
     const ICON: f32 = 24.0;
     const GAP: f32 = 2.0;
     const PAD: f32 = 3.0;
-    const RADIUS: f32 = 18.0;
+    let radius = radius_panel() + 6.0;
     let w = ICON * 5.0 + GAP * 4.0 + PAD * 2.0;
     let h = ICON + PAD * 2.0;
     let at = Rect::from_min_size(
@@ -1132,13 +1214,13 @@ pub(super) fn view_tools(state: &mut AppState, ui: &mut Ui, content: Rect) {
         spread: 0,
         color: Color32::from_black_alpha(100),
     }
-    .as_shape(at, RADIUS);
+    .as_shape(at, radius);
     p.add(egui::Shape::Rect(shadow));
     // 实色 panel 底 + 与另两张浮卡同款的 1px 描边 / 上沿光。
     //
     // Opaque `panel` fill plus the same 1 px outline / top edge light as the
     // other two floating cards.
-    p.rect_filled(at, RADIUS, panel());
+    p.rect_filled(at, radius, panel());
     // 四张浮卡（检查器 / 直方图 / 胶片 / 视图工具条）必须共享同一套材质。
     // 这条贴在暗部照片上时 6% 白环会被吞掉，读成「一块黑斑」；换成与其它卡
     // 相同的 border_strong 描边 + 1px 上沿光，边界才在任意底图上都成立。
@@ -1149,14 +1231,14 @@ pub(super) fn view_tools(state: &mut AppState, ui: &mut Ui, content: Rect) {
     // over any image.
     p.rect_stroke(
         at,
-        RADIUS,
+        radius,
         Stroke::new(1.0, border_strong()),
         egui::StrokeKind::Inside,
     );
     p.line_segment(
         [
-            Pos2::new(at.left() + RADIUS, at.top() + 0.5),
-            Pos2::new(at.right() - RADIUS, at.top() + 0.5),
+            Pos2::new(at.left() + radius, at.top() + 0.5),
+            Pos2::new(at.right() - radius, at.top() + 0.5),
         ],
         Stroke::new(1.0, Color32::from_white_alpha(20)),
     );

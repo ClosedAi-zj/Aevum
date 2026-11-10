@@ -134,6 +134,34 @@ impl LayoutPreset {
     }
 }
 
+/// 界面风格：现代（默认）与老式（沿用旧版设置样式）。
+///
+/// 这是一层**高于预设**的总开关：预设只动状态栏 + 胶片条（见 `LayoutPreset` 与
+/// `with_preset`），而界面风格把调色盘从浮卡改成贴边列（老式设置页的读法）。
+/// 底部胶片条保持原样——用户明确要求不创新。它是可选项，默认现代；
+/// 旧 `settings.json` 读进来自动落在现代，不会强迫用户回到旧版。
+///
+/// Interface style: Modern (default) and Legacy (the old-version arrangement).
+///
+/// This is a switch **above the presets**: presets only touch the status bar and
+/// filmstrip (see `LayoutPreset` / `with_preset`), whereas the interface style
+/// docks the palette as a right-edge column (the classic settings-page reading).
+/// The bottom filmstrip is untouched -- the user explicitly asked for no new
+/// ideas there. It is opt-in, defaults to Modern, and older `settings.json`
+/// files fall back to Modern rather than forcing the legacy look.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Scheme {
+    /// 现代：当前默认版面（右工具轨 + 右调整面板 + 底部状态栏 + 胶片条）。
+    #[default]
+    Modern,
+    /// 老式：沿用旧版设置样式——调色盘贴右边缘成固定列，底部仍是原胶片条。
+    ///
+    /// Legacy: the old-version settings style -- the palette docked as a fixed
+    /// right-edge column, with the bottom still the original filmstrip.
+    Legacy,
+}
+
 /// 工作布局：按"现在在干什么"一次性把几处尺寸摆好。
 ///
 /// **和 [`LayoutPreset`] 是两件事，别合并：**
@@ -275,6 +303,12 @@ pub struct Layout {
     /// measures 32 px, while tighter ACR builds use 26-28 px. Both are right and it
     /// depends on screen and eyesight, so the user chooses instead of us deciding.
     pub dense: bool,
+    /// 界面风格：现代（默认）或老式（沿用旧版排布）。
+    ///
+    /// Interface style: Modern (default) or Legacy (the old-version arrangement).
+    /// `#[serde(default)]` keeps older `settings.json` files on Modern.
+    #[serde(default)]
+    pub scheme: Scheme,
 }
 
 impl Default for Layout {
@@ -285,6 +319,7 @@ impl Default for Layout {
             dock_side: Side::Right,
             film: FilmSlot::Shown,
             dense: false,
+            scheme: Scheme::Modern,
         }
     }
 }
@@ -338,6 +373,36 @@ impl Layout {
             status: base.status,
             film: base.film,
             ..self
+        }
+    }
+
+    /// 套用一种界面风格：返回该风格的完整版面（含 `scheme` 标记）。
+    ///
+    /// 与 `with_preset` 不同，这里一次性给出整套旧版排布，而不是只动状态栏与胶片条。
+    ///
+    /// Apply an interface style: returns that style's full arrangement, `scheme` stamped in.
+    /// Unlike `with_preset`, this lays out the whole old-version arrangement at once rather
+    /// than touching only the status bar and filmstrip.
+    pub fn with_scheme(self, s: Scheme) -> Self {
+        match s {
+            Scheme::Modern => Self::default(),
+            Scheme::Legacy => Self {
+                // 老式只把调色盘钉到右边缘；底部胶片条、状态栏、工具轨全部
+                // 沿用默认值，与「现代」一字不差。渲染层只声明右侧一个
+                // `egui::Panel` 并跳过浮卡，这里的字段必须与它一致。
+                //
+                // Legacy only docks the palette at the right edge. The bottom
+                // filmstrip, status bar and tool rails all keep their defaults,
+                // identical to Modern. The renderer declares just one right-hand
+                // `egui::Panel` and skips the floating card; these fields must
+                // agree with it.
+                rail: Side::Right,
+                dock_side: Side::Right,
+                status: StatusSlot::Bottom,
+                film: FilmSlot::Shown,
+                dense: false,
+                scheme: Scheme::Legacy,
+            },
         }
     }
 }

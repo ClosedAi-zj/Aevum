@@ -1382,6 +1382,7 @@ mod gradient_rail_tests {
                 if grad { Some(stops) } else { None },
                 false,
                 "",
+                None,
             );
         };
         let mut out = ctx.run_ui(input(vec![]), &mut draw);

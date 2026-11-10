@@ -192,6 +192,31 @@ pub(super) const TAB_SLOT_W: f32 = 26.0;
 /// so the dots were redundant decoration -- 22 px go back to the tabs.
 pub(super) const TAB_RESERVE_W: f32 = 30.0;
 
+/// 页签行左端为拖动预留的间隙：页签右对齐后，首标签左侧永远留出这段空白给
+/// 「整段可拖」区（mod.rs 的 `dock-strip-drag`）。若不算这段，页签会把卡宽占满，
+/// 首标签贴到还原钮旁边，`tabs_left` 退到 ≤ 还原钮右缘，拖动区退化成零宽矩形 →
+/// 子窗口（浮卡）按住拖不动（用户 2026-11-10 报「子窗口无法移动」的直接根因）。
+/// `tab_widths` 与 `dock_panel` 都从这里扣这段，两边排出来才对得上。
+///
+/// Drag reserve on the tab strip's left end: right-aligned tabs always leave this much
+/// blank to the left of the first tab for the "drag the whole strip" zone (mod.rs's
+/// `dock-strip-drag`). Without it the tabs fill the card, the first tab hugs the restore
+/// button, `tabs_left` collapses to the button's right edge and the drag zone becomes a
+/// zero-width rect -- the floating card can no longer be grabbed (the root cause of the
+/// user's 2026-11-10 "sub-window cannot be moved"). Both `tab_widths` and `dock_panel`
+/// subtract this so the two layers line up.
+pub(super) const TAB_DRAG_GAP: f32 = 44.0;
+
+/// 老式布局里调色盘自带的直方图槽位高度：绘图区 94 + EXIF 行 21，与画布浮卡
+/// 的 `HIST_EXIF_H` 同一口径。旧版稿 `.histo` 就在 `.dock-tabs` 下面，
+/// 所以老式方案把直方图收回调色盘，画布上不再另摆一张浮卡。
+///
+/// Height of the histogram slot inside the Legacy palette: 94 plot + 21 EXIF
+/// row, the same measure as the floating canvas card's `HIST_EXIF_H`. In the
+/// old mockup `.histo` sits under `.dock-tabs`, so Legacy puts the histogram
+/// back in the palette and no longer floats a second card over the canvas.
+const DOCK_HIST_H: f32 = 115.0;
+
 /// 每个页签的实测宽：文字宽 + 12px 内距（关键帧页签带计数徽标时再加 18px），
 /// 夹在 30 与「均分上限」之间。dock_panel 与 mod.rs 共用同一条公式——页签
 /// 右对齐后，左端空出的槽位才是还原钮与拖动区；两边各算各的就会重叠。
@@ -202,7 +227,7 @@ pub(super) const TAB_RESERVE_W: f32 = 30.0;
 /// the slot left free belongs to the restore button and the drag zone; two
 /// independent estimates would overlap.
 pub(super) fn tab_widths(p: &egui::Painter, width: f32, keys_badge: bool) -> Vec<f32> {
-    let avail_total = (width - TAB_RESERVE_W - TAB_SLOT_W).max(120.0);
+    let avail_total = (width - TAB_RESERVE_W - TAB_SLOT_W - TAB_DRAG_GAP).max(80.0);
     let mut out: Vec<f32> = DockTab::ALL
         .iter()
         .map(|tab| {
@@ -212,7 +237,15 @@ pub(super) fn tab_widths(p: &egui::Painter, width: f32, keys_badge: bool) -> Vec
                 text(),
             );
             let badge = keys_badge && *tab == DockTab::Keys;
-            (g.size().x + 12.0 + if badge { 18.0 } else { 0.0 }).max(30.0)
+            // 内距 12→8：默认 300px 坞里页签总宽原本约 229，可用区只有 200，
+            // 等比压缩后每个仅 28px，中文两字（22px）加 6px 内距就放不下，
+            // 于是整排变成「...」（用户 2026-11-10 实测）。收 4px 内距给文字。
+            //
+            // Padding 12->8: in the default 300 px dock the six tabs needed ~229
+            // px against 200 px available; proportional shrink left 28 px each,
+            // too narrow for two CJK glyphs plus a 6 px inset, so the row turned
+            // into "..." (2026-11-10 user report).
+            (g.size().x + 8.0 + if badge { 18.0 } else { 0.0 }).max(28.0)
         })
         .collect();
     // 先按内容宽排（放得下时每个页签都显全名）；总宽真的超出可用区才等比
@@ -227,7 +260,7 @@ pub(super) fn tab_widths(p: &egui::Painter, width: f32, keys_badge: bool) -> Vec
     if total > avail_total {
         let k = avail_total / total;
         for wtab in &mut out {
-            *wtab = (*wtab * k).max(28.0);
+            *wtab = (*wtab * k).max(26.0);
         }
     }
     out
@@ -374,7 +407,16 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
             font(SIZE_SMALL)
         };
         let full = crate::i18n::tr(tab.cn());
-        let avail = (r.width() - 6.0).max(1.0);
+        // 文字可用宽只扣 2px：过去扣 6px，压缩后的窄页签连「调整」两字都
+        // 放不下，只剩省略号。窄到真的放不下时，退成单字短名而不是「...」——
+        // 页签是导航入口，名字丢了比挤一点更糟。
+        //
+        // Keep only a 2 px inset for the text: the old 6 px made a compressed tab
+        // too narrow even for two CJK glyphs, leaving just an ellipsis. When it
+        // genuinely cannot fit, fall back to a one-glyph short name rather than
+        // "..." -- these are navigation entries, and losing the label is worse
+        // than a tight fit.
+        let avail = (r.width() - 2.0).max(1.0);
         let measured = p
             .layout_no_wrap(full.to_owned(), font_id.clone(), text())
             .size()
@@ -389,8 +431,21 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
         let label = if measured <= avail {
             full.to_owned()
         } else {
-            let per_char = measured / full.chars().count() as f32;
-            crate::theme::ellipsis(full, ((avail / per_char) as usize).max(1))
+            // 先试单字短名：短名放得下就完整显示，不再截成「...」。
+            //
+            // Try the one-glyph short name first: if it fits, show it in full
+            // instead of truncating to "…".
+            let short = crate::i18n::tr(tab.short_cn());
+            let short_w = p
+                .layout_no_wrap(short.to_owned(), font_id.clone(), text())
+                .size()
+                .x;
+            if short_w <= avail {
+                short.to_owned()
+            } else {
+                let per_char = measured / full.chars().count() as f32;
+                crate::theme::ellipsis(full, ((avail / per_char) as usize).max(1))
+            }
         };
         p.text(
             r.center(),
@@ -476,15 +531,42 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
                     bottom: 8,
                 })
                 .show(ui, |ui| {
-                    // 直方图已搬到画布左上浮动卡片（设计稿 .histcard）：
-                    // 检查器里再画一遍等于同一份数据出现两次，且占掉右栏首屏。
-                    // 画布卡片是唯一一处，这里直接进参数区。
+                    // 直方图归哪一侧由界面风格决定，两种布局各只有一处、绝不重复：
+                    // * 现代（默认）：画布左上的浮动卡片（设计稿 .histcard），这里直接进参数区；
+                    // * 老式：放在本调色盘页签行下面（旧版稿 .dock-tabs → .histo），
+                    //   画布不再摆浮卡，读起来就是老式设置页「面板顶上一条直方图」。
                     //
-                    // The histogram moved to the canvas's top-left floating card (the
-                    // design's .histcard). Drawing it again here would show the same data
-                    // twice and eat the dock's first screen; the canvas card is the one
-                    // place, so this jumps straight into the parameter area.
-                    ui.add_space(2.0);
+                    // Which side owns the histogram follows the interface scheme, with
+                    // exactly one copy in either layout:
+                    // * Modern (default): the top-left floating canvas card (.histcard),
+                    //   so this jumps straight into the parameter area;
+                    // * Legacy: right here under the palette's tab row (the old mockup's
+                    //   .dock-tabs -> .histo), with no floating card on the canvas --
+                    //   the classic settings-page "histogram on top of the panel" reading.
+                    if state.layout.scheme == crate::layout::Scheme::Legacy && state.hist.is_some()
+                    {
+                        // 左右各留 4px：`histogram` 内部按浮卡口径再缩 4px 画凹槽，
+                        // 槽位贴着内距起画会把左缘山形切掉（老式调色盘实测）。
+                        //
+                        // Four px on each side: `histogram` insets its well by 4 px
+                        // (the floating-card convention), so a slot flush with the
+                        // margin clips the left edge of the mountains (measured in
+                        // the Legacy palette).
+                        let (hist_rect, _) = ui.allocate_exact_size(
+                            Vec2::new(ui.available_width(), DOCK_HIST_H),
+                            Sense::hover(),
+                        );
+                        let hist_rect = hist_rect.shrink2(Vec2::new(4.0, 0.0));
+                        ui.scope_builder(
+                            UiBuilder::new()
+                                .id_salt("legacy-dock-hist")
+                                .max_rect(hist_rect),
+                            |ui| histogram(ui, state),
+                        );
+                        ui.add_space(6.0);
+                    } else {
+                        ui.add_space(2.0);
+                    }
                     // 纵向按内容收缩：卡高 = 内容高，只有撞到上限才长到上限并出滚动条。
                     // 横向不许缩（[false, _]）——卡宽恒等于 `dock_w`，否则短内容会把
                     // 卡收窄，右侧少一条边。

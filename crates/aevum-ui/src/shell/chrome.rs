@@ -18,13 +18,13 @@ const RESIZE_ZONE: f32 = 5.0;
 // 只有关闭上 danger 红底配白叉，其余色值全部走 theme 的 token。
 
 /// 单枚按钮宽度。
-const WINBTN_W: f32 = 42.0;
+const WINBTN_W: f32 = 46.0;
 
 /// 三枚按钮的总宽，菜单行右侧要给它们让出来的避让区。
 const WINBTN_ZONE_W: f32 = WINBTN_W * 3.0;
 
 /// 悬停胶囊相对按钮内缩多少：留缝，三枚不会糊成一整块。
-const WINBTN_INSET: f32 = 4.0;
+const WINBTN_INSET: f32 = 0.0;
 
 /// 字形半径（横线半宽 / 方框半宽）：10px 见方，压得住 36px 的行高。
 const WINBTN_R: f32 = 5.0;

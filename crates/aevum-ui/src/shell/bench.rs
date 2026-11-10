@@ -172,7 +172,15 @@ pub(super) fn nav(state: &mut AppState, ui: &mut egui::Ui, top_center: Pos2) {
             Pos2::new(r.left() + 6.0, r.center().y - SN / 2.0),
             Vec2::splat(SN),
         );
-        p.rect_filled(sn, 4.0, if on { accent() } else { field() });
+        // 编号块圆角跟 token 走；写死 4.0 会让选中态蓝块在调圆角时独自不动。
+        //
+        // The number badge follows the token; a literal 4.0 left the active blue
+        // badge frozen while every other corner moved with the radius knob.
+        p.rect_filled(
+            sn,
+            radius_chip().max(2.0),
+            if on { accent() } else { field() },
+        );
         p.text(
             sn.center(),
             Align2::CENTER_CENTER,

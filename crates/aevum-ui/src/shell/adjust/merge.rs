@@ -524,6 +524,7 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         None,
         false,
         "焦点测度的分析窗口半径：越大越不受噪点干扰，越小越能分辨紧挨着的前后景；0 = 逐像素原始响应",
+        None,
     ) {
         state.focus_radius = radius as u32;
     }
@@ -542,6 +543,7 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         None,
         false,
         "全图最佳测度的分位数：低于这条线的像素整块判给参考帧（序列中位帧）。表盘、天空、抛光面这类平坦区就靠它不出斑块；0 = 关闭兜底",
+        None,
     ) {
         state.focus_threshold = threshold as f32;
     }
@@ -561,6 +563,7 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             None,
             false,
             "深度图的模值滤波半径：把孤立的深度点并进周围多数派，免得单点噪点切出一小块另一帧",
+            None,
         ) {
             state.focus_smooth_z = smooth as u32;
         }
@@ -579,6 +582,7 @@ fn focus_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             None,
             false,
             "深度跳变处两张素材按高斯权重交叠的宽度；小于 0.5 px 视为硬切",
+            None,
         ) {
             state.focus_feather = feather as f32;
         }
@@ -825,6 +829,7 @@ fn timeblend_group(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         None,
         false,
         "0 = 关闭。羽化区里云、树、车流这类移动物会拖成两份；某帧某块与自己邻域的偏离超过这个值（EV）就被剔掉，换干净帧顶上",
+        None,
     ) {
         state.tb_deghost = dg as f32;
     }

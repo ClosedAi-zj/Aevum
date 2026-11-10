@@ -720,6 +720,22 @@ impl DockTab {
         }
     }
 
+    /// 窄坞里页签被压缩到放不下全名时的单字兜底。页签是导航入口，
+    /// 「调 / 信 / 帧 / 史 / 库」仍能指认，比一串省略号有用。
+    ///
+    /// One-glyph fallback when a narrow dock shrinks a tab below its full
+    /// label. Tabs are navigation entries, so a recognisable glyph beats "…".
+    pub fn short_cn(self) -> &'static str {
+        match self {
+            DockTab::Adjust => "调",
+            DockTab::Info => "信",
+            DockTab::Keys => "键",
+            DockTab::Ai => "AI",
+            DockTab::History => "史",
+            DockTab::Library => "库",
+        }
+    }
+
     pub fn index(self) -> usize {
         match self {
             DockTab::Adjust => 0,

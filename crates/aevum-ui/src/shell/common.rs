@@ -686,7 +686,7 @@ pub(super) fn slider<K: std::hash::Hash + std::fmt::Debug>(
     signed: bool,
 ) -> bool {
     slider_row(
-        ui, key, label, v, min, max, default, decimals, signed, "", None, false, "",
+        ui, key, label, v, min, max, default, decimals, signed, "", None, false, "", None,
     )
 }
 
@@ -765,6 +765,17 @@ pub(super) fn spec_slider(ui: &mut Ui, state: &mut AppState, s: &controls::Contr
     if !spec_visible(state, s) {
         return false;
     }
+    // 色温：把 -100..100 增量换算成绝对开尔文一并显示，口径与 XMP 导出
+    // 的绝对温度一致（5500 K 中性点、每档 45 K）。仅影响这一行读数。
+    //
+    // Temperature: convert the -100..100 increment to absolute kelvin for the
+    // readout, using the same scale as the XMP absolute-temperature mapping
+    // (5500 K neutral, 45 K per step). Only this row's readout is affected.
+    let kelvin = if s.key == "dev.temperature" {
+        Some(5500.0 + 45.0 * controls::param_get(&state.params, s.field))
+    } else {
+        None
+    };
     let changed = {
         let slot = controls::param_slot(&mut state.params, s.field);
         slider_row(
@@ -781,6 +792,7 @@ pub(super) fn spec_slider(ui: &mut Ui, state: &mut AppState, s: &controls::Contr
             controls::grad_stops(s),
             s.track,
             s.tip,
+            kelvin,
         )
     };
     // 在旁路中的组里拖推子＝想改它：当场恢复参与渲染。不恢复的话推子在动、
@@ -810,6 +822,13 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     stops: Option<&'static [(f32, Color32)]>,
     track: bool,
     tip: &str,
+    // 色温这类参数额外显示的绝对开尔文读数（`Some(5500 + 45·v)`）。
+    // 只是显示层：落盘、撤销、XMP 仍用原始 -100..100 增量值。
+    //
+    // An optional absolute-kelvin readout for parameters such as temperature
+    // (`Some(5500 + 45·v)`). Display only: persistence, undo and XMP keep the
+    // raw -100..100 increment.
+    kelvin: Option<f64>,
 ) -> bool {
     // ── 紧凑两行：标签 + 读数在首行，通栏轨道压在第二行 ──────────────
     // 单行式把轨道塞在标签与读数框之间，只剩约 200px，右边还空出 12px 的死区；
@@ -954,10 +973,12 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         // 截断长度按语言分档：英文同列只放得下 ~11 个半角字符，仍按 6 截会把
         // "Highlights" 截成 "Highli…"。档位存在语言表里（`Catalog::ellipsis_chars`），
         // 加语言时由那张表自己声明，这里不再出现具体语言的名字。
+        let shown = theme::ellipsis(label, crate::i18n::current().ellipsis_chars());
+        let label_pos = Pos2::new(rect.left() + ROW_PAD, l1y);
         p.text(
-            Pos2::new(rect.left() + ROW_PAD, l1y),
+            label_pos,
             Align2::LEFT_CENTER,
-            theme::ellipsis(label, crate::i18n::current().ellipsis_chars()),
+            shown.clone(),
             font(LABEL_SIZE),
             // 设计稿 `.lab{color:var(--text2)}`：标签是次级文字，读数才是主角。
             // 旧版标签用正文白，和读数抢亮度，一列看下来分不出谁是要读的数。
@@ -966,6 +987,26 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
             // White labels competed with the numbers, so the column had no focal point.
             muted(),
         );
+        // 绝对开尔文读数：RAW 调白平衡时人要看的是「多少 K」，不是 -21 这种
+        // 相对增量。换算与 XMP 导出的绝对口径同源（`K = 5500 + 45·v`），
+        // 但只画在这里，不改参数值、落盘、历史或撤销标注。
+        // 标签按实测宽定位，避免中英文宽度不同压到文字上。
+        //
+        // Absolute-kelvin readout: when grading RAW white balance you need "how
+        // many K", not a relative increment like -21. The conversion matches the
+        // XMP absolute-kelvin convention (`K = 5500 + 45·v`) but is paint-only:
+        // the parameter, persistence, history and undo labels are untouched.
+        // The label is measured so CJK and Latin widths cannot overlap.
+        if let Some(k) = kelvin {
+            let label_w = p.layout_no_wrap(shown, font(LABEL_SIZE), muted()).size().x;
+            p.text(
+                Pos2::new(label_pos.x + label_w + 8.0, l1y),
+                Align2::LEFT_CENTER,
+                format!("{} K", k.round() as i32),
+                mono(MICRO),
+                dim(),
+            );
+        }
     }
 
     let old_text = ui.style().visuals.override_text_color;

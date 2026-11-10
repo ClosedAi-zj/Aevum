@@ -175,35 +175,60 @@ fn card_width(state: &AppState, ui: &Ui, max_w: f32) -> f32 {
 
 /// 画整张卡。`rect` 由调用方按 `card_height()` 定好，`max_w` 是窗口宽的一半。
 ///
+/// `docked = true` 是老式布局用的贴边形态：宽度钉死成调用方给的整条可用
+/// 宽度（图片列表预览横贯底边，和旧版稿 `.film{height:120px}` 一致），
+/// 且不画浮卡投影/圆角——它是一条贴边实色栏，不是飘在照片上的卡片。
+/// 内容（头行、曲线、缩略图、走带）两种形态完全共用，不新增任何控件。
+///
 /// Paints the whole card; `rect` is pre-sized from `card_height()` and `max_w` is half
 /// the window width.
-pub(super) fn card(state: &mut AppState, ui: &mut Ui, ctx: &Context, max_w: f32) {
-    let w = card_width(state, ui, max_w);
+///
+/// `docked = true` is the Legacy, edge-docked form: the width is pinned to the
+/// caller's full available width so the image-thumbnail list spans the bottom
+/// edge (matching the old mockup's `.film{height:120px}`), and the floating-card
+/// shadow/radius are dropped because this is a docked bar, not a card over the
+/// photo. Header, curve, thumbnails and transport are shared verbatim between
+/// both forms -- no new widgets.
+pub(super) fn card(state: &mut AppState, ui: &mut Ui, ctx: &Context, max_w: f32, docked: bool) {
+    let w = if docked {
+        ui.available_width().max(CARD_MIN_W)
+    } else {
+        card_width(state, ui, max_w)
+    };
     let h = card_height(state);
     let rect = Rect::from_min_size(ui.min_rect().min, Vec2::new(w, h));
     ui.set_min_size(Vec2::new(w, h));
     ui.set_max_size(Vec2::new(w, h));
 
     let p = ui.painter().clone();
-    // 深投影 + 1px 内环：设计稿 `--sh: 0 8px 24px rgba(0,0,0,.45), 0 0 0 1px #fff0f`。
-    //
-    // Deep shadow plus a 1 px inner ring, per the design's `--sh`.
-    p.add(
-        egui::epaint::Shadow {
-            offset: [0, 8],
-            blur: 24,
-            spread: 0,
-            color: Color32::from_black_alpha(115),
-        }
-        .as_shape(rect, 12.0),
-    );
-    p.rect_filled(rect, 12.0, panel());
-    p.rect_stroke(
-        rect,
-        12.0,
-        Stroke::new(1.0, group_ring()),
-        StrokeKind::Inside,
-    );
+    if docked {
+        // 贴边栏：实色底 + 上沿一道发丝线（旧版 `.film{border-top:1px}`）。
+        //
+        // Docked bar: solid fill plus a hairline on its top edge (the old
+        // `.film{border-top:1px}`).
+        p.rect_filled(rect, 0.0, panel());
+        theme::rule(&p, rect.left(), rect.right(), rect.top(), border_strong());
+    } else {
+        // 深投影 + 1px 内环：设计稿 `--sh: 0 8px 24px rgba(0,0,0,.45), 0 0 0 1px #fff0f`。
+        //
+        // Deep shadow plus a 1 px inner ring, per the design's `--sh`.
+        p.add(
+            egui::epaint::Shadow {
+                offset: [0, 8],
+                blur: 24,
+                spread: 0,
+                color: Color32::from_black_alpha(115),
+            }
+            .as_shape(rect, 12.0),
+        );
+        p.rect_filled(rect, 12.0, panel());
+        p.rect_stroke(
+            rect,
+            12.0,
+            Stroke::new(1.0, group_ring()),
+            StrokeKind::Inside,
+        );
+    }
 
     let inner = rect.shrink(PAD);
     let mut y = inner.top();
