@@ -471,7 +471,7 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
             p.text(
                 img.center(),
                 Align2::CENTER_CENTER,
-                "载入预览…",
+                crate::i18n::t!("载入预览…"),
                 font(SIZE_SMALL),
                 dim(),
             );
@@ -1345,14 +1345,14 @@ fn empty_state(state: &mut AppState, ui: &mut Ui, content: Rect) {
     p.text(
         Pos2::new(area.center().x, area.top() + 98.0),
         Align2::CENTER_CENTER,
-        "打开一叠帧或一张照片",
+        crate::i18n::t!("打开一叠帧或一张照片"),
         font(SIZE_HEADING),
         text(),
     );
     p.text(
         Pos2::new(area.center().x, area.top() + 124.0),
         Align2::CENTER_CENTER,
-        "文件夹和照片都能直接拖进来",
+        crate::i18n::t!("文件夹和照片都能直接拖进来"),
         font(SIZE_SMALL),
         muted(),
     );
@@ -1372,7 +1372,7 @@ fn empty_state(state: &mut AppState, ui: &mut Ui, content: Rect) {
     p.text(
         button.center(),
         Align2::CENTER_CENTER,
-        "打开帧文件夹",
+        crate::i18n::t!("打开帧文件夹"),
         font(SIZE_BODY),
         on_accent(),
     );
@@ -1406,7 +1406,7 @@ fn empty_state(state: &mut AppState, ui: &mut Ui, content: Rect) {
     p.text(
         photo_btn.center(),
         Align2::CENTER_CENTER,
-        "选照片…",
+        crate::i18n::t!("选照片…"),
         font(SIZE_BODY),
         if presp.hovered() { text() } else { muted() },
     );

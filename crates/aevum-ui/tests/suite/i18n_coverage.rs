@@ -143,6 +143,22 @@ fn sweep(lang: Lang) -> (Vec<String>, Vec<String>) {
         }
     }
 
+    // 覆盖洞：上面每一帧都基于 AppState::demo()（有纹理、有直方图、序列在、
+    // 队列空），空态引导文案与帧表工作区的表头/页脚/摘要卡**根本不渲染**。
+    // 于是「调用点把中文字面量直接喂 p.text」能在两条判据全绿时长期潜伏。
+    // 补两类帧：空序列（画布 empty_state）与 Bench::Table 工作台。
+    //
+    // Coverage hole: every frame above used AppState::demo() (textures, histogram,
+    // a sequence and an empty queue), so the empty-state prompts and the frame-table
+    // bench header/footer/summary cards were never painted. Literal Chinese strings
+    // survived there while both assertions stayed green. Add two frames: an empty
+    // sequence and the Table bench.
+    let mut empty_app = AppState::new();
+    frame(&mut empty_app, &ctx, &mut screen);
+    state.bench = aevum_ui::shell::Bench::Table;
+    frame(&mut state, &ctx, &mut screen);
+    state.bench = aevum_ui::shell::Bench::Develop;
+
     screen.sort_unstable();
     screen.dedup();
     (i18n::take_untranslated(), screen)

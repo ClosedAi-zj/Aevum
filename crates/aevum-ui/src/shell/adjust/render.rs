@@ -1324,11 +1324,11 @@ fn queue_table(state: &mut AppState, ui: &mut Ui, busy: bool) {
                     bar.center(),
                     Align2::CENTER_CENTER,
                     if item.status == QueueStatus::Failed {
-                        "失败".to_owned()
+                        crate::i18n::t!("失败").to_owned()
                     } else if frac > 0.0 {
                         format!("{:.0}%", frac * 100.0)
                     } else {
-                        "排队".to_owned()
+                        crate::i18n::t!("排队").to_owned()
                     },
                     mono(10.0),
                     if frac > 0.0 { Color32::WHITE } else { dim() },

@@ -117,18 +117,18 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     p.text(
         Pos2::new(head.left() + 10.0, head.center().y),
         Align2::LEFT_CENTER,
-        "逐帧数据",
+        crate::i18n::t!("逐帧数据"),
         bold(12.0),
         text(),
     );
     p.text(
         Pos2::new(head.left() + 66.0, head.center().y),
         Align2::LEFT_CENTER,
-        format!("{} 行 · 关键帧 {}", thousands(n), thousands(keys)),
+        crate::i18n::tr_fmt("{} 行 · 关键帧 {}", &[&thousands(n), &thousands(keys)]),
         font(10.0),
         dim(),
     );
-    let legend = "K = 关键帧";
+    let legend = crate::i18n::t!("K = 关键帧");
     let lg = p.layout_no_wrap(legend.to_owned(), font(9.0), dim());
     p.text(
         Pos2::new(head.right() - 10.0, head.center().y),
@@ -198,7 +198,21 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         } else {
             (Pos2::new(x + PAD_X, th.center().y), Align2::LEFT_CENTER)
         };
-        p.text(at, a2, *title, font(10.0), dim());
+        // 列头按列宽裁：英文译名普遍比中文长（如 Focal length / White Balance），
+        // 不裁就会溢出到相邻列、读成 "Focal lengthWhite Balance"。翻译只负责换语言，
+        // 排版约束留在绘制点，任何语言都成立。
+        //
+        // Clip the header to its column: English labels run longer than the Chinese
+        // source (Focal length / White Balance) and otherwise bleed into the next
+        // column. Translation changes language; layout stays here.
+        let label = fit_text(
+            &p,
+            crate::i18n::tr(title),
+            font(10.0),
+            dim(),
+            (cw - PAD_X * 2.0).max(16.0),
+        );
+        p.text(at, a2, label, font(10.0), dim());
         x += cw;
     }
     p.line_segment(
@@ -226,9 +240,9 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     let mut open = None;
     if rows.is_empty() {
         let msg = if n == 0 {
-            "还没有序列 · 文件 → 打开照片…"
+            crate::i18n::t!("还没有序列 · 文件 → 打开照片…")
         } else {
-            "当前范围没有帧"
+            crate::i18n::t!("当前范围没有帧")
         };
         p.text(
             rows_rect.center(),
@@ -416,11 +430,9 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     p.text(
         Pos2::new(foot.left() + 10.0, foot.center().y),
         Align2::LEFT_CENTER,
-        format!(
+        crate::i18n::tr_fmt(
             "第 {} / {} 帧 · 关键帧 {}",
-            if n == 0 { 0 } else { sel + 1 },
-            n,
-            keys
+            &[&(if n == 0 { 0 } else { sel + 1 }), &n, &keys],
         ),
         font(9.0),
         dim(),
@@ -428,7 +440,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     p.text(
         Pos2::new(foot.right() - 10.0, foot.center().y),
         Align2::RIGHT_CENTER,
-        format!("显示 {} / {} 行", thousands(rows.len()), thousands(n)),
+        crate::i18n::tr_fmt("显示 {} / {} 行", &[&thousands(rows.len()), &thousands(n)]),
         font(9.0),
         dim(),
     );
@@ -506,6 +518,7 @@ fn scope_bar(state: &AppState, ui: &mut Ui, rect: Rect) -> Scope {
     let mut pick = None;
     let mut x = rect.left() + 10.0;
     for (s, label, count) in items {
+        let label = crate::i18n::tr(label);
         let on = s == cur;
         let fg = if on { text() } else { dim() };
         let lg = p.layout_no_wrap(label.to_owned(), font(10.0), fg);
@@ -558,7 +571,7 @@ fn selection_bar(state: &mut AppState, ui: &mut Ui, rect: Rect, sel: usize, n: u
     );
 
     let info = if n == 0 {
-        "未选行".to_owned()
+        crate::i18n::t!("未选行").to_owned()
     } else {
         let name = state
             .seq
@@ -566,7 +579,7 @@ fn selection_bar(state: &mut AppState, ui: &mut Ui, rect: Rect, sel: usize, n: u
             .and_then(|s| s.frames.get(sel))
             .map(|f| f.name.clone())
             .unwrap_or_default();
-        format!("已选 #{:04} · {name}", sel + 1)
+        crate::i18n::tr_fmt("已选 #{} · {}", &[&format!("{:04}", sel + 1), &name])
     };
     let info = fit_text(
         &p,
@@ -593,7 +606,14 @@ fn selection_bar(state: &mut AppState, ui: &mut Ui, rect: Rect, sel: usize, n: u
         Stroke::new(1.0, divider()),
     );
 
-    let (r, resp) = bar_button(ui, &p, sep_x + 6.0, rect, "在显影中打开", n > 0);
+    let (r, resp) = bar_button(
+        ui,
+        &p,
+        sep_x + 6.0,
+        rect,
+        crate::i18n::t!("在显影中打开"),
+        n > 0,
+    );
     if resp.clicked() && n > 0 {
         state.selected = sel;
         state.set_bench(crate::shell::Bench::Develop);
@@ -604,13 +624,27 @@ fn selection_bar(state: &mut AppState, ui: &mut Ui, rect: Rect, sel: usize, n: u
     // "Export selected" and "clear selection" have no target yet: this bench has a single
     // `selected: usize` and no export-selected entry point, so both stay dimmed rather
     // than pretending to work.
-    let _ = bar_button(ui, &p, r.right() + 2.0, rect, "导出所选", false);
+    let _ = bar_button(
+        ui,
+        &p,
+        r.right() + 2.0,
+        rect,
+        crate::i18n::t!("导出所选"),
+        false,
+    );
     let cw = p
-        .layout_no_wrap("取消全选".to_owned(), font(10.0), dim())
+        .layout_no_wrap(crate::i18n::t!("取消全选").to_owned(), font(10.0), dim())
         .size()
         .x
         + 14.0;
-    let _ = bar_button(ui, &p, rect.right() - 10.0 - cw, rect, "取消全选", false);
+    let _ = bar_button(
+        ui,
+        &p,
+        rect.right() - 10.0 - cw,
+        rect,
+        crate::i18n::t!("取消全选"),
+        false,
+    );
 }
 
 /// 选择条上的文字按钮（高 22，圆角 4）。返回矩形与响应。

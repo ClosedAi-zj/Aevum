@@ -49,13 +49,16 @@ pub(super) fn page(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
             .metrics
             .get(state.selected)
             .and_then(|m| m.as_ref())
-            .map(|m| format!(" · 亮度 {:.3}", m.mean))
+            .map(|m| crate::i18n::tr_fmt(" · 亮度 {}", &[&format!("{:.3}", m.mean)]))
             .unwrap_or_default();
-        format!(
-            "{} 帧 · {:.0} fps{mean} · 关键帧 {}",
-            preview::thousands(n),
-            state.output_fps,
-            state.keyframes.len()
+        crate::i18n::tr_fmt(
+            "{} 帧 · {} fps{} · 关键帧 {}",
+            &[
+                &preview::thousands(n),
+                &format!("{:.0}", state.output_fps),
+                &mean,
+                &state.keyframes.len(),
+            ],
         )
     };
     let head = bench::page_head(ui, crate::i18n::t!("序列帧表"), &sub);
@@ -64,15 +67,21 @@ pub(super) fn page(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
         ui,
         head.right() - 16.0,
         head.center().y,
-        "导出和渲染…",
+        crate::i18n::t!("导出和渲染…"),
         true,
     );
-    let _ = bench::head_action(ui, r1.left() - 8.0, head.center().y, "保存 XMP", false);
+    let _ = bench::head_action(
+        ui,
+        r1.left() - 8.0,
+        head.center().y,
+        crate::i18n::t!("保存 XMP"),
+        false,
+    );
 
     let strip = bench::tools_strip(ui, head.bottom());
     let mut x = strip.left() + 16.0;
     for label in ["关键帧向导", "至前向导", "自动过渡", "预览", "去闪"] {
-        let (nx, _) = bench::tool_button(ui, x, strip, label, false);
+        let (nx, _) = bench::tool_button(ui, x, strip, crate::i18n::tr(label), false);
         x = nx;
     }
 

@@ -174,7 +174,11 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
     //
     // Camera badge top-left, luma readout top-right.
     let bfont = font(9.0);
-    let gl = p.layout_no_wrap("相机预览".to_owned(), bfont.clone(), muted());
+    let gl = p.layout_no_wrap(
+        crate::i18n::t!("相机预览").to_owned(),
+        bfont.clone(),
+        muted(),
+    );
     let badge = Rect::from_min_size(
         Pos2::new(img.left() + 10.0, img.top() + 10.0),
         Vec2::new(gl.size().x + 28.0, 20.0),
@@ -197,7 +201,7 @@ fn preview_card(state: &mut AppState, ui: &mut Ui, at: Rect, img_h: f32) -> f32 
         .and_then(|m| m.as_ref())
         .map(|m| format!("{:.3}", m.mean));
     if let Some(v) = luma {
-        let lw = p.layout_no_wrap("亮度".to_owned(), bfont.clone(), dim());
+        let lw = p.layout_no_wrap(crate::i18n::t!("亮度").to_owned(), bfont.clone(), dim());
         let vw = p.layout_no_wrap(v, bfont.clone(), text());
         let lw_w = lw.size().x;
         let bw = lw_w + vw.size().x + 20.0;
@@ -399,7 +403,10 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
         ("间隔 / 帧率", format!("{interval} · {fps:.0} fps")),
         ("快门 / 光圈", shutter_ap),
         ("分辨率", res),
-        ("关键帧 / 过渡", format!("{keys} · {segs} 段")),
+        (
+            "关键帧 / 过渡",
+            crate::i18n::tr_fmt("{} · {} 段", &[&keys, &segs]),
+        ),
     ];
 
     let h = summary_height(state);
@@ -419,7 +426,7 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
     p.text(
         Pos2::new(card.left() + PAD, card.top() + 10.0 + 11.0),
         Align2::LEFT_CENTER,
-        "序列摘要",
+        crate::i18n::t!("序列摘要"),
         bold(12.0),
         text(),
     );
@@ -440,7 +447,7 @@ fn summary_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32) -> f32 {
         p.text(
             Pos2::new(card.left() + PAD, mid),
             Align2::LEFT_CENTER,
-            k,
+            crate::i18n::tr(k),
             font(11.0),
             dim(),
         );
@@ -557,14 +564,14 @@ fn auto_card(state: &AppState, ui: &mut Ui, at: Pos2, w: f32, h: f32) -> f32 {
     p.text(
         Pos2::new(card.left() + PAD, card.top() + 10.0 + 11.0),
         Align2::LEFT_CENTER,
-        "自动过渡",
+        crate::i18n::t!("自动过渡"),
         bold(12.0),
         text(),
     );
     p.text(
         Pos2::new(card.right() - PAD, card.top() + 10.0 + 11.0),
         Align2::RIGHT_CENTER,
-        format!("{} 个关键帧 · {} 段", keys.len(), segs.len()),
+        crate::i18n::tr_fmt("{} 个关键帧 · {} 段", &[&keys.len(), &segs.len()]),
         font(9.0),
         dim(),
     );
@@ -575,7 +582,7 @@ fn auto_card(state: &AppState, ui: &mut Ui, at: Pos2, w: f32, h: f32) -> f32 {
         clip.text(
             Pos2::new(card.left() + PAD, y + 12.0),
             Align2::LEFT_CENTER,
-            "还没有关键帧",
+            crate::i18n::t!("还没有关键帧"),
             font(10.0),
             dim(),
         );

@@ -318,7 +318,7 @@ fn sparkline(ui: &mut Ui, state: &AppState) {
         p.text(
             rect.center(),
             Align2::CENTER_CENTER,
-            "无数据",
+            crate::i18n::t!("无数据"),
             font(SIZE_SMALL),
             dim(),
         );
@@ -342,7 +342,7 @@ fn sparkline(ui: &mut Ui, state: &AppState) {
         p.text(
             rect.center(),
             Align2::CENTER_CENTER,
-            "测光中…",
+            crate::i18n::t!("测光中…"),
             font(SIZE_SMALL),
             accent(),
         );
@@ -723,7 +723,7 @@ pub(super) fn history_tab(state: &mut AppState, ui: &mut Ui) {
             p.text(
                 Pos2::new(rect.right() - 6.0, rect.center().y),
                 Align2::RIGHT_CENTER,
-                "外部",
+                crate::i18n::t!("外部"),
                 font(SIZE_SMALL),
                 if applied { muted() } else { dim() },
             );

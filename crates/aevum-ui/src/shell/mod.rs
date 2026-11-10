@@ -68,9 +68,14 @@ mod windows;
 #[cfg(test)]
 pub(crate) use adjust::reset_group;
 /// 编号工作台（显影 / 帧表 / 导出 / 任务）：外壳与状态共用同一个枚举。
+/// 对外公开：`AppState::bench` 是 pub 字段，集成测试要能切到帧表工作台才会
+/// 渲染那一页的表头/页脚/摘要卡，否则 i18n 覆盖 sweep 永远扫不到它们。
 ///
 /// The numbered bench (develop / table / export / tasks): shell and state share one enum.
-pub(crate) use bench::Bench;
+/// Public because `AppState::bench` is a public field and integration tests must be
+/// able to switch to the Table bench; otherwise the i18n coverage sweep can never
+/// render that page's header, footer and summary cards.
+pub use bench::Bench;
 pub(crate) use mask::{
     DeflCurveCache, HistMeshCache, MaskGeo, MaskGeoCache, mask_comp_object, mask_geo_fingerprint,
     mask_geos, mask_handles, mask_radial_points, mask_stroke_lines,

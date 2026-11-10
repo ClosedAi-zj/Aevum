@@ -608,14 +608,13 @@ pub(super) fn histogram(ui: &mut Ui, state: &mut AppState) {
     );
     let rect = slot.shrink2(Vec2::new(inset, 0.0));
     let p = ui.painter().clone();
+    // 唯一调用方 histogram_card 已在 `hist.is_none()` 时提前返回，这里只保留
+    // 防御性早退，不再画一句永远看不到、却会漏译的占位文案。
+    //
+    // The only caller, histogram_card, already returns on `hist.is_none()`; keep a
+    // defensive early exit but drop the unreachable placeholder text (it could be
+    // painted untranslated if another caller appears).
     let Some(h) = state.hist else {
-        p.text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            "等待预览直方图",
-            font(SIZE_SMALL),
-            dim(),
-        );
         return;
     };
 
