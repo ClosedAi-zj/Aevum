@@ -495,7 +495,15 @@ pub(super) fn histogram(ui: &mut Ui, state: &mut AppState) {
     // only subtracted 8 from the width and left-aligned the well, so the left edge
     // touched while the right kept 10 px -- the whole block sat off-centre.
     let inset = 4.0;
-    let (slot, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 94.0), Sense::hover());
+    // 高度吃满调用方给的槽位（上限 94）：浮卡里槽位是 63（.histcard img），dock 里
+    // 是 94（.hist-svg）。写死 94 会把 63 的卡撑爆——这正是卡高比设计稿多 26px 的来源。
+    //
+    // Height fills the caller's slot (cap 94): the floating card gives 63 (.histcard img),
+    // the dock gives 94 (.hist-svg). A hard 94 blew the card up by 26 px.
+    let (slot, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), ui.available_height().min(94.0)),
+        Sense::hover(),
+    );
     let rect = slot.shrink2(Vec2::new(inset, 0.0));
     let p = ui.painter().clone();
     let Some(h) = state.hist else {
@@ -573,7 +581,13 @@ pub(super) fn histogram(ui: &mut Ui, state: &mut AppState) {
     // so the mountains read as sitting in a recess (PS's histogram is a black well).
     // The light theme darkens only slightly, or a black brick lands on a white panel.
     {
-        let depth = if theme::is_light() { 0.12 } else { 0.42 };
+        // 设计稿 `.histcard img{background:var(--field)}`：凹槽底就是 field，
+        // 不是把 field 压向黑——深 42% 的近黑让直方图像一块黑板，和目标的
+        // 「沉一格的槽」差着半档。
+        //
+        // The design's `.histcard img{background:var(--field)}`: the well IS field, not
+        // field pushed 42% toward black -- the near-black read like a chalkboard.
+        let depth = if theme::is_light() { 0.12 } else { 0.0 };
         let well = widgets::mix(theme::field(), Color32::BLACK, depth);
         p.rect_filled(rect, radius_control(), well);
         p.rect_stroke(
@@ -634,7 +648,7 @@ pub(super) fn histogram(ui: &mut Ui, state: &mut AppState) {
                         if count == 0 {
                             0.0
                         } else {
-                            (count as f32 / max).powf(0.7).clamp(0.0, 1.0)
+                            (count as f32 / max).powf(0.55).clamp(0.0, 1.0)
                         }
                     })
                     .collect();

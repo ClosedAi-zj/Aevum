@@ -55,14 +55,13 @@ pub(super) fn histogram_card(state: &mut AppState, ui: &mut Ui, canvas: Rect) ->
     }
 
     let p = ui.painter().clone();
-    let head_h = 18.0;
-    let hist_h = 94.0;
+    let hist_h = 63.0; // 设计稿 `.histcard img{height:63px}`
     let exif_h = if capture_parts(state).is_empty() {
         0.0
     } else {
         16.0
     };
-    let body_h = head_h + hist_h + exif_h + 6.0;
+    let body_h = hist_h + exif_h + 6.0;
     let card = Rect::from_min_size(
         Pos2::new(canvas.left() + CARD_INSET, canvas.top() + CARD_INSET),
         Vec2::new(CARD_W, body_h + CARD_PAD * 2.0),
@@ -84,30 +83,14 @@ pub(super) fn histogram_card(state: &mut AppState, ui: &mut Ui, canvas: Rect) ->
 
     let inner = card.shrink(CARD_PAD);
 
-    // 标题行：左「直方图」右「RGB · 8 bit」（设计稿 `.hist-h` 口径）。
+    // 直方图本体：设计稿 `.histcard img{width:230;height:63}`——宽而扁的一格，
+    // 下方紧跟 EXIF。编号走 dock 里那套三通道山形（唯一允许大面积彩色的区域）。
     //
-    // Title row: "直方图" left, "RGB · 8 bit" right, per the design's `.hist-h`.
-    p.text(
-        Pos2::new(inner.left(), inner.top() + head_h * 0.5),
-        Align2::LEFT_CENTER,
-        crate::i18n::t!("直方图"),
-        font(SIZE_SMALL),
-        muted(),
-    );
-    p.text(
-        Pos2::new(inner.right(), inner.top() + head_h * 0.5),
-        Align2::RIGHT_CENTER,
-        crate::i18n::t!("RGB · 8 bit"),
-        font(SIZE_SMALL),
-        dim(),
-    );
-
-    // 直方图本体：94px 高，编号走 dock 里那套三通道山形（唯一允许大面积彩色的区域）。
-    //
-    // Histogram body: 94 px tall, reusing the dock's three-channel mountains (the one
-    // place large colour areas are allowed).
+    // Histogram body: the design's `.histcard img{width:230;height:63}` -- one wide,
+    // short cell with the EXIF row directly below. Reuses the dock's three-channel
+    // mountains (the one place large colour areas are allowed).
     let hist_rect = Rect::from_min_size(
-        Pos2::new(inner.left(), inner.top() + head_h),
+        Pos2::new(inner.left(), inner.top()),
         Vec2::new(inner.width(), hist_h),
     );
     ui.scope_builder(
@@ -124,15 +107,21 @@ pub(super) fn histogram_card(state: &mut AppState, ui: &mut Ui, canvas: Rect) ->
     // EXIF row: ISO, focal, aperture, shutter (the design's `.meta.num`), numbers in
     // the monospace face.
     if exif_h > 0.0 {
-        let parts = capture_parts(state);
-        let y = hist_rect.bottom() + 4.0;
-        let mut x = inner.left();
-        for part in parts {
-            let g = p.layout_no_wrap(part.clone(), mono(SIZE_SMALL), dim());
-            p.galley(Pos2::new(x, y), g.clone(), dim());
-            x += g.size().x + 10.0;
-            if x > inner.right() {
-                break;
+        // 设计稿 `.meta.num`：单行四项（ISO / 焦距 / 光圈 / 快门），justify 满行。
+        // 超宽的项直接丢——叠行重影比少一项难看得多。
+        //
+        // The design's `.meta.num`: one row, four items, spread across the row. Items
+        // that do not fit are dropped -- ghost overlap is far worse than a missing item.
+        let mut parts = capture_parts(state);
+        parts.truncate(4);
+        let n = parts.len();
+        if n > 0 {
+            let y = hist_rect.bottom() + 3.0;
+            let slot_w = inner.width() / n as f32;
+            for (i, part) in parts.iter().enumerate() {
+                let g = p.layout_no_wrap(part.clone(), mono(SIZE_SMALL), dim());
+                let cx = inner.left() + slot_w * (i as f32 + 0.5);
+                p.galley(Pos2::new(cx - g.size().x * 0.5, y), g, dim());
             }
         }
     }
