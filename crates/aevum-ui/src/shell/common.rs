@@ -278,6 +278,33 @@ pub(super) fn group_help(key: &str) -> Option<&'static str> {
     })
 }
 
+/// 组头琥珀点的判据：规格表里的组问 `state::group_changed`；表外的「配置文件」组按
+/// 「换了风格、或挂了 DCP」判——这两件是渲染基调，不在 `controls::SPECS` 里，也就
+/// 没有 `specs_of_group("profile")` 可问。其余表外组（蒙版 / 蒙版参数 / 序列页那些
+/// 动作组）没有「偏离默认」可言，一律不点亮。
+///
+/// 口径写在这里而不是调用点：`group_header` 在全仓有四十多处调用，加一个形参会
+/// 牵动本任务范围外的文件；判据集中一处也就不会出现「两组各写一份、迟早对不上」。
+///
+/// The header dot's criterion: groups in the spec table ask `state::group_changed`;
+/// the out-of-table Profile card tests "style switched, or a DCP applied" -- both are a
+/// rendering basis, absent from `controls::SPECS`, so there is no
+/// `specs_of_group("profile")` to ask. The other out-of-table groups (masks, mask
+/// params, the sequence page's action groups) have nothing to deviate from and never
+/// light up.
+///
+/// The rule lives here rather than at the call site because `group_header` has forty-odd
+/// callers and a sixth parameter would reach files outside this task; one place also
+/// keeps two copies from drifting apart.
+fn header_dot(state: &AppState, key: &str) -> bool {
+    // 风格 0 是标准（`GradeParams::default().style`），也是复位会保留的那个值。
+    // Style 0 is standard (`GradeParams::default().style`) -- the value reset keeps.
+    if key == "profile" {
+        return state.params.style != 0 || !state.params.dcp_profile.is_empty();
+    }
+    state.group_changed(key)
+}
+
 pub(super) fn group_header(
     ui: &mut Ui,
     state: &mut AppState,
@@ -285,6 +312,14 @@ pub(super) fn group_header(
     title: &str,
     resettable: bool,
 ) -> bool {
+    let changed = header_dot(state, key);
+    // 设计稿 `.dot{width:5px;height:5px;background:var(--amber)}`：琥珀是「这一组
+    // 动过」的标记色，和读数框里改过的数值同一个语义；旧版用强调蓝，读起来像
+    // 「选中」而不是「已改动」。
+    //
+    // The design's `.dot` is 5 px amber (--amber, #f5b83d) -- the same "this changed"
+    // colour as a moved readout. The old accent blue read as "selected", not "edited".
+    const DOT_AMBER: Color32 = Color32::from_rgb(0xF5, 0xB8, 0x3D);
     let title = crate::i18n::tr(title);
     // 卡中卡（设计稿 v10.6/v12 的 `.grp`）：每个分组是一张独立圆角卡片
     // ——`background:#2a2d32`、`border-radius:8px`、`padding:12px`、
@@ -359,6 +394,24 @@ pub(super) fn group_header(
         title_galley.clone(),
         text(),
     );
+    // 组内改动指示（设计稿 `.grp-h .dot`）：紧跟在组名右侧的一枚 5px 琥珀点，
+    // 组里没有参数偏离默认就不画。设计稿把它排在标题之后（`.lb` 与 `.help`
+    // 之间），不是贴右缘——贴右缘时它和眼睛、复位挤成一团，反而看不出是谁的标记。
+    //
+    // In-group change dot (design `.grp-h .dot`): a 5 px amber dot right after the
+    // group name, painted only when some parameter in the group deviates from its
+    // default. The design puts it after `.lb` and before `.help`, not against the right
+    // edge -- there it crowds the eye and reset and reads as their label.
+    let dot_span = if changed {
+        p.circle_filled(
+            Pos2::new(title_x + title_galley.size().x + 8.0, rect.center().y),
+            2.5,
+            DOT_AMBER,
+        );
+        9.0
+    } else {
+        0.0
+    };
     // 说明入口贴着标题放，但默认不显形（效果图里组头只有图标和标题）：悬停
     // 标题条时才亮出来，仍然占着同一块热区，帮助没有丢。
     //
@@ -367,7 +420,10 @@ pub(super) fn group_header(
     // there, so the help is not lost.
     if let Some(help) = group_help(key).map(crate::i18n::tr) {
         let ir = Rect::from_center_size(
-            Pos2::new(title_x + title_galley.size().x + 11.0, rect.center().y),
+            Pos2::new(
+                title_x + title_galley.size().x + 11.0 + dot_span,
+                rect.center().y,
+            ),
             Vec2::splat(14.0),
         );
         let iresp = ui.interact(
@@ -461,17 +517,6 @@ pub(super) fn group_header(
                 "旁路这一组：预览按没有这组调整的样子渲染，再点恢复（只影响预览，不进工程与导出）"
             )
         });
-    }
-    // 组内改动指示（界面稿 .grp-hd .dot）：组里有参数偏离默认，复位按钮左侧
-    // 亮一枚 5px accent 圆点；复位之后自然熄灭。
-    if state.group_changed(key) {
-        let dx = match (bypassable, resettable) {
-            (true, true) => 52.0,
-            (true, false) => 31.0,
-            (false, true) => 31.0,
-            (false, false) => 12.0,
-        };
-        p.circle_filled(Pos2::new(rect.right() - dx, rect.center().y), 2.5, accent());
     }
     if resettable {
         let reset_x = if bypassable {
@@ -660,10 +705,40 @@ pub(super) enum HslKind {
     Lum,
 }
 
+/// 「仅显示已改动」闸门（设计稿 `.dock.is-only-changed .srow:not(.changed){display:none}`）：
+/// 开关打开时，值等于规格表默认的那一行不画，也不占行高——过滤发生在布局之前，
+/// 留下的行才会像设计稿那样往上收，而不是在原地留一条空带。
+///
+/// 默认值取 `spec.default`（`controls` 模块头注释：表是唯一事实源，
+/// `spec_defaults_match_grade_defaults` 钉住它与 `GradeParams::default()` 同值），
+/// 所以「已改动」的判据和读数变琥珀、复位点出现是同一个。
+///
+/// The "only show changed" gate (design `.dock.is-only-changed .srow:not(.changed)`):
+/// while the switch is on, a row whose value equals the spec's default paints nothing
+/// and reserves no height -- the filter runs before layout, so the remaining rows close
+/// up instead of leaving blank bands.
+///
+/// The default comes from `spec.default` (the spec table is the single source of truth per
+/// the `controls` module docs; `spec_defaults_match_grade_defaults` pins it to
+/// `GradeParams::default()`), so "changed" here means the same thing as the amber readout
+/// and the reset dot.
+pub(super) fn spec_visible(state: &AppState, s: &controls::ControlSpec) -> bool {
+    !state.only_changed || (controls::param_get(&state.params, s.field) - s.default).abs() > 1e-9
+}
+
 #[allow(clippy::too_many_arguments)]
 /// 按规格表渲染一条推子。标签/范围/默认/精度/单位/渐变全部来自
 /// `controls::SPECS`——加参数只登记表，不再在面板里摊九个实参。
 pub(super) fn spec_slider(ui: &mut Ui, state: &mut AppState, s: &controls::ControlSpec) -> bool {
+    // 「仅显示已改动」也在这里挡一道：分区循环（分级 / 细节 / 光学）直接调
+    // `spec_slider`，不经过 `spec_field`，闸门只放一处就会漏掉它们。
+    //
+    // The gate also sits here: the section loops (grade / detail / optics) call
+    // `spec_slider` directly and never pass through `spec_field`, so a gate in one place
+    // would miss them.
+    if !spec_visible(state, s) {
+        return false;
+    }
     let changed = {
         let slot = controls::param_slot(&mut state.params, s.field);
         slider_row(
@@ -731,38 +806,40 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // 5 px per the design's `.slider-row .s-reset{width:5px;height:5px}`. The hit area
     // is widened through the `ui.interact` rect instead of by reserving layout width.
     const RESET_W: f32 = 5.0;
-    // 行内留白 6px：分组卡已经有 12px 内距，再加 6 就是离卡缘 18px——设计稿
-    // `.srow` 没有横向内距，标签几乎贴卡缘；旧版 10px 叠上卡内距变成 22px，
-    // 整列被推进画面中间，和组标题的左缘也对不上。
+    // 行内不留横向内距（设计稿 `.srow{padding:6px 0}`）：卡内距 12px 已经给出
+    // 标签列的位置，再叠 6px 就把标签推到离卡缘 18px，同时把轨道两侧各削掉 6px
+    // （实测轨道 242，设计稿 255）。去掉之后标签落在卡缘内 12px，轨道 = 卡内宽
+    // 254，与设计稿的 255 对齐。
     //
-    // Row padding 6 px: the card already brings 12 px, so 6 lands at 18 px from the
-    // card edge. The design's `.srow` has no horizontal padding and the label nearly
-    // touches the card; the old 10 px stacked onto the card's padding to 22 px, which
-    // pushed the column inward and broke alignment with the group title.
-    const ROW_PAD: f32 = 6.0;
-    // 两行排布：首行中线 9px（标签与读数框），轨道中线 26px，行高 34——标签与轨道
-    // 之间留 17px，轨道与下一行标签之间留 21px。参考图是 31px 节距，但实测这套
-    // 深色 + 通栏轨道的组合按参考节距排下来太挤（用户 2026-11-07 实机反馈），
-    // 放到 38px 节距才松得下来。
+    // No horizontal row padding (design `.srow{padding:6px 0}`): the card's 12 px
+    // padding already places the label column; another 6 px pushed the label to 18 px
+    // from the card edge and shaved 6 px off each end of the rail (measured 242 against
+    // the design's 255). Without it the label sits 12 px inside the card and the rail
+    // spans the card's inner width, 254, matching the design's 255.
+    const ROW_PAD: f32 = 0.0;
+    // 节距按设计稿 `.srow`：上下各 6px 内距 + 18px 首行 + 6px 间隔 + 3px 轨道 =
+    // 39px（标签中线 15、轨道中线 31.5）。egui 在两次 allocate 之间还会补一段
+    // item_spacing，所以行内只占 39 **减去**它——旧写法 `row_h() + 6` 再叠 4px
+    // 间距，实测节距 42，整体比设计稿松 3px。三档密度仍随 `row_h()` 递进
+    // （紧凑 / 标准 / 宽松），只把基准从 42 收到 39。
     //
-    // Two-line split: first-line centre at 9 px (label and readout), rail centre at
-    // 26 px, row height 34. That leaves 17 px between label and rail and 21 px from
-    // rail to the next label. The reference pitch is 31 px, but this dark panel with
-    // full-width rails read cramped at the reference rhythm (user feedback, 2026-11-07);
-    // a 38 px pitch breathes.
-    // 节距接回密度档（评审发现：两行式重构曾写死 34px，外观面板的
-    // 紧凑/标准/宽松对滑块静默失效——「不能动功能」红线）。三档节距 =
-    // row_h + 6：紧凑 34 / 标准 38 / 宽松 46；行内两线随节距比例定位。
-    let pitch = row_h() + 6.0;
-    // 行内纵向按设计稿 `.srow` 的比例分：上距 6 + 首行 18 / 行高 39 ≈ 0.38，
-    // 轨道中心 6+18+6+1.5 = 31.5 / 39 ≈ 0.81。旧值 0.26/0.74 把标签和轨道都
-    // 顶到行上部，底部空出一大截，整列读起来是「上密下松」的断拍。
+    // Pitch per the design's `.srow`: a 6 px pad top and bottom + an 18 px top line +
+    // a 6 px gap + a 3 px rail = 39 px (label centre 15, rail centre 31.5). egui adds
+    // `item_spacing` between allocations, so the row takes 39 *minus* that -- the old
+    // `row_h() + 6` plus 4 px spacing measured 42, three pixels looser than the design.
+    // The three density steps still follow `row_h()`; only the base moves.
+    let gap_y = ui.spacing().item_spacing.y;
+    let pitch = row_h() + 3.0;
+    let step = pitch + gap_y;
+    // 行内两条线按**真实节距**（含行间空隙）的比例定位：0.385 / 0.81 就是设计稿的
+    // 15/39 与 31.5/39，标签与轨道因此不受行间空隙变化影响。旧值 0.38/0.81 用在
+    // 35px 的行内高上，标签会往上浮 1.5px、轨道贴着行底。
     //
-    // Vertical split follows the design's `.srow`: 6 px pad + 18 px top over the
-    // 39 px row puts the first line at 0.38 and the rail centre (6+18+6+1.5) at
-    // 0.81. The old 0.26/0.74 pushed both to the top and left a fat bottom gap,
-    // giving the column a top-heavy, broken rhythm.
-    let (l1_y, track_y) = (pitch * 0.38, pitch * 0.81);
+    // The two lines are placed by proportion of the *real* pitch (including the
+    // inter-row gap): 0.385 / 0.81 are the design's 15/39 and 31.5/39, so the label and
+    // rail do not drift when the gap changes. The old 0.38/0.81 applied to the 35 px
+    // in-row height floated the label 1.5 px up and glued the rail to the row's bottom.
+    let (l1_y, track_y) = (step * 0.385, step * 0.81);
     // 标签 12 / 读数 12：v12 设计稿 `.lab` 与 `.val` 同为 12px，只有颜色与字重
     // 分主次——标签 `#c6c9d1` 常规，读数 `#f2f3f7` 中等。此前 13/11 的阶梯是 PS
     // 的口径，套在 300px 面板上让参数名偏大、读数偏小，整列灰度还不统一。

@@ -10,6 +10,12 @@
 // Shared pieces (theme, i18n, sibling helpers) come in through mod.rs's use tree.
 use super::geometry::{adjust_geometry, adjust_optics, adjust_retouch};
 use super::*;
+// 「仅显示已改动」的闸门在 common 里（`spec_slider` 也用它），mod.rs 的 use 树
+// 没有它，这里直接引。
+//
+// The "only show changed" gate lives in common (shared with `spec_slider`) and is not in
+// mod.rs's use tree, hence the direct import.
+use crate::shell::common::spec_visible;
 /// 分区内的次级小标题（ACR 的 subsection heading）：小号、半粗、弱色，上方留一口气。
 /// 与 `group_header` 不同，它不进折叠登记表——折叠始终以九分区组为单位，
 /// 小标题只是给一组推子分段。文案由调用方先过 `t!`（宏只吃字面量）。
@@ -40,12 +46,36 @@ pub(super) fn sub_head(ui: &mut Ui, label: &str) {
 /// 按字段画一条推子：清单里写了表里没有的字段，debug 构建当场炸出来，
 /// 发布构建静默跳过（宁可少一根推子，也不要整块面板打不开）。
 ///
+/// 「仅显示已改动」（设计稿 `.dock.is-only-changed .srow:not(.changed){display:none}`）
+/// 也在这里生效：开关打开时，值等于默认的字段整行不画，也不占行高——过滤发生在
+/// 布局之前，留下的行才会像设计稿那样往上收，而不是在原地留一条空带。
+/// 默认值取规格表的 `default`（`controls` 模块头注释：表是唯一事实源，
+/// `spec_defaults_match_grade_defaults` 钉住它与 `GradeParams::default()` 同值）。
+///
 /// Draw one slider by field: a field listed in the UI but missing from the spec table
 /// trips a debug assertion, while release builds skip it silently (a missing slider
 /// beats a panel that cannot open).
+///
+/// "Only show changed" (design `.dock.is-only-changed .srow:not(.changed)`) is enforced
+/// here too: while the switch is on, a field at its default paints no row and reserves
+/// no height -- the filter runs before layout, so the remaining rows close up instead of
+/// leaving a blank band. The default comes from the spec table (the single source of
+/// truth per the `controls` module docs; `spec_defaults_match_grade_defaults` pins it to
+/// `GradeParams::default()`).
 pub(super) fn spec_field(ui: &mut Ui, state: &mut AppState, field: Field) -> bool {
     match controls::spec_by_field(field) {
-        Some(s) => spec_slider(ui, state, s),
+        Some(s) => {
+            // 「仅显示已改动」：值等于默认就整行不画（不占行高）。判据与
+            // `spec_slider` 共用 `spec_visible`，默认值取规格表的 `default`。
+            //
+            // "Only show changed": a field at its default paints no row at all (and
+            // reserves no height). Both this and `spec_slider` share `spec_visible`,
+            // whose default comes from the spec table.
+            if !spec_visible(state, s) {
+                return false;
+            }
+            spec_slider(ui, state, s)
+        }
         None => {
             debug_assert!(false, "field {field:?} has no spec");
             false
@@ -141,24 +171,48 @@ fn quiet_action(ui: &mut Ui, label: &str, active: bool) -> egui::Response {
     resp
 }
 
-/// 面板顶栏的动作按钮（设计稿 `.btn`）：raised 实底、无描边、6px 圆角、26px 高。
+/// 设计稿 `--raised2 #3d4046`：`.btnrow .btn`（XMP 一进一出）的底色，比普通
+/// `.btn` 的 `--raised` 再抬一档，因为它在这一卡里是最重的动作。
+///
+/// The design's `--raised2 #3d4046`: the fill of `.btnrow .btn` (import/export XMP),
+/// one step above the plain `.btn` `--raised` because it is the heaviest action in
+/// this card.
+const RAISED2: Color32 = Color32::from_rgb(0x3D, 0x40, 0x46);
+
+/// 「配置文件」组的折叠键。设计稿给这张卡一个自己的 `▾/▸`，而 `state::GROUP_SPECS`
+/// 是本次任务不许动的文件——键名因此走常量而不是字面量：`ui_tokens::
+/// panel_groups_match_the_registry` 只对字面量实参做「必须登记」的双向核对，这里
+/// 明确登记不了。功能上没有损失：`group_header` 只查 `collapsed` 里有没有这个键
+/// （缺省即展开），右键「只看这一组」查不到登记项直接返回，落盘时这个键会被当作
+/// 未知键丢掉。
+///
+/// The Profile card's collapse key. The design gives this card its own `▾/▸`, while
+/// `state::GROUP_SPECS` is off-limits for this task -- hence a named constant rather
+/// than a literal: the registry gate (`ui_tokens::panel_groups_match_the_registry`)
+/// cross-checks only literal arguments, and this key cannot be registered. Nothing is
+/// lost: `group_header` merely asks whether `collapsed` holds the key (absent means
+/// open), "solo this group" returns early on the missing entry, and the key is dropped
+/// as unknown when the collapse state is persisted.
+const PROFILE_GROUP_KEY: &str = "profile";
+
+/// 面板里的实底动作按钮（设计稿 `.btn`）：raised 实底、无描边、6px 圆角、26px 高。
+/// 宽度由调用方给定——`.btnrow` 的两枚是 `flex:1`，等宽平分整行。
 ///
 /// `bar_chip` 是选项栏的描边胶囊；搬到 300px 的检查器里，一排描边胶囊读作网页
 /// 表单。设计稿这里是一块块抬起的实底按钮，按下沉到 `--field` 并压一道顶部
 /// 内阴影——和选项栏同一种「按进去」的手感，只是没有描边。
 ///
-/// The dock's top action button (design `.btn`): raised solid fill, no stroke, 6 px
-/// radius, 26 px tall. `bar_chip` is the options bar's outlined capsule; a row of those
-/// in a 300 px inspector reads as a web form. The design uses solid raised buttons that
-/// sink to `--field` with a top inner shadow when pressed -- the same pressed feel as the
+/// The dock's solid action button (design `.btn`): raised fill, no stroke, 6 px radius,
+/// 26 px tall. The width is supplied by the caller -- the two buttons of `.btnrow` are
+/// `flex:1` and split the row evenly.
+///
+/// `bar_chip` is the options bar's outlined capsule; a row of those in a 300 px
+/// inspector reads as a web form. The design uses solid raised buttons that sink to
+/// `--field` with a top inner shadow when pressed -- the same pressed feel as the
 /// options bar, just without the outline.
-fn dock_action(ui: &mut Ui, label: &str, fill: Color32) -> egui::Response {
+fn dock_action(ui: &mut Ui, label: &str, fill: Color32, width: f32) -> egui::Response {
     let label = crate::i18n::tr(label);
-    let measure = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), font(SIZE_LABEL), Color32::WHITE);
-    let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(measure.size().x + 20.0, 26.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 26.0), Sense::click());
     let pressed = resp.is_pointer_button_down_on();
     let (bg, fg) = if pressed {
         (field(), text())
@@ -193,104 +247,53 @@ fn dock_action(ui: &mut Ui, label: &str, fill: Color32) -> egui::Response {
 /// organisation moved.
 pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     ui.add_space(4.0);
-    let mut reset = false;
     let mut import_xmp = false;
     let mut export_xmp = false;
-    // 一次动作一条行：复位在左，XMP 进出在右。预设名在顶栏已经有一份，
-    // 这里不再重复占一行。
-    // 面板里的动作条用小胶囊（26 高 / 11 号字），不用选项栏那种 28 高的
-    // 大按钮：四个 14 号字的大块并排，会把 372px 的面板撑成一排砖头，
-    // 抢掉下面真正要看的推子。
-    ui.horizontal(|ui| {
-        // 与参数行同一条右缘：读数框和轨道都内收 6px，「导出 XMP」不再比数值列
-        // 多探出半个指头。
-        //
-        // The same right edge as the parameter rows: readout boxes and rails inset
-        // 6 px, so the Export XMP chip no longer pokes out past the number column.
-        ui.add_space(6.0);
-        // 自动不再挂在这一行：它改的是基本组那堆推子，动作应当贴着自己的结果
-        // 放在基本组里（LR 的 Auto 也在基本面板）。顶栏只留全局动作。
-        //
-        // Auto no longer lives on this row: it drives the Basic group's sliders, so the
-        // action belongs next to its outcome inside Basic (LR keeps Auto there too).
-        // The top bar keeps global actions only.
-        reset = dock_action(ui, "全部复位", Color32::from_rgb(0x33, 0x36, 0x3C)).clicked();
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add_space(6.0);
-            // 设计稿 `.btnrow .btn{background:var(--raised2)}`：XMP 一进一出是
-            // 这一行里更「重」的动作，比复位再抬一档。
-            //
-            // The design's `.btnrow .btn` uses `--raised2`: import/export are the heavier
-            // actions on this row, one step above reset.
-            export_xmp = dock_action(ui, "导出 XMP", Color32::from_rgb(0x3D, 0x40, 0x46))
-                .on_hover_text(crate::i18n::t!("把当前调色参数写成 .xmp 预设"))
-                .clicked();
-            import_xmp = dock_action(ui, "导入 XMP", Color32::from_rgb(0x3D, 0x40, 0x46))
-                .on_hover_text(crate::i18n::t!(
-                    "读入 Lightroom / Camera Raw 预设，替换当前调色参数"
-                ))
-                .clicked();
-        });
-    });
-    if reset {
-        state.reset_params();
-    }
-    if import_xmp {
-        import_xmp_dialog(state);
-    }
-    if export_xmp {
-        export_xmp_dialog(state);
-    }
-    ui.add_space(10.0);
-
-    // 动作行（复位/XMP）与参数区之间一道发丝线：动作是「现在做什么」，
-    // 参数是「画面现在是什么」，两者分开才读得出主次（界面设计方案 B2）。
+    // 面板顶部不再有动作条：设计稿里「复位」在基本组的 `.segmini` 凹槽右端，
+    // 「导入 / 导出 XMP」在「配置文件」组的 `.btnrow`，全局动作不该另占一行
+    // 把参数推下去——旧版那一行连同它下面的发丝线已按设计稿拆散归位。
     //
-    // A hairline between the action row (reset / XMP) and the parameter
-    // groups: actions are "what happens next", parameters are "what the frame is
-    // now"; separating them makes the hierarchy readable (design spec B2).
-    {
-        let w = ui.available_width();
-        let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(w, 1.0), egui::Sense::hover());
-        theme::soft_rule(ui.painter(), rect.left(), rect.right(), rect.center().y);
-    }
-
+    // No action bar at the top any more: the design puts reset at the right end of
+    // Basic's `.segmini` trough and import/export XMP in the Profile card's `.btnrow`.
+    // A separate global row only pushed the parameters down; the old row and the
+    // hairline under it are gone.
     let mut changed = false;
 
     // ── 基本 ────────────────────────────────────────────────────────────
-    // ACR 的基本面板分三档：先定白平衡，再拉色调，最后是偏好（质感与色彩）。
-    // 推子按字段清单显式排布，显示序与表内物理序解耦——规格表是「一份参数
-    // 一行」的登记册，不是版面（docs/界面布局-ACR化-2026-11-04.md §3）。
+    // 参数顺序照设计稿：色温/色调 → 曝光…黑白场 → 偏好（质感与色彩），段与段之间
+    // 不再插小标题——设计稿的 `.srow` 是一条条平铺下来的。推子按字段清单显式
+    // 排布，显示序与表内物理序解耦（规格表是参数登记册，不是版面）。
     //
-    // ACR's Basic panel runs in three bands: white balance, then tone, then presence.
-    // Sliders come from explicit field lists, so display order is decoupled from the
-    // table -- the table is the parameter registry, not the page layout.
+    // Parameter order per the design: temperature/tint, then exposure...black/white
+    // points, then presence, with no subsection headings in between -- the design's
+    // `.srow` rows simply stack. Sliders come from explicit field lists, so display
+    // order is decoupled from the table.
     group_card(ui, |ui| {
         if !group_header(ui, state, "basic", "基本", true) {
             return;
         }
-        // 快捷动作行（LR 的 Treatment / Auto 位）：三枚文字动作，与推子同一条左缘。
-        // 自动住在这里而不是面板顶栏——它改的就是下面这堆推子，动作贴着自己的
-        // 结果放，按完抬眼就能看见哪几根动了。
+        // 快捷动作行（设计稿 `.segmini.actions`）：[自动][黑白][HDR] 三枚动作坐在
+        // 一块 `--field` 凹槽里，凹槽右端跟着第四枚 [复位]——复位改的正是下面这堆
+        // 推子，所以它搬进基本组，不再在面板顶栏另占一行（设计稿就是这么排的）。
         //
-        // Quick actions (LR's treatment / auto slot): three text actions on the slider
-        // rail. Auto lives here rather than the panel's top bar because it drives
-        // exactly the sliders below -- the action sits next to its outcome.
-        ui.add_space(2.0);
+        // The quick-action row (design `.segmini.actions`): Auto / B&W / HDR sit in one
+        // `--field` trough, with Reset as a fourth chip at its right end. Reset drives
+        // exactly the sliders below, so it moves into Basic instead of owning a
+        // panel-wide top row -- which is how the design lays it out.
         let mut auto = false;
         let mut mono_toggle = false;
         let mut hdr = false;
+        let mut reset = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add_space(6.0);
-            // 设计稿 `.segmini`：三枚动作坐在一块 `--field` 凹槽里，
-            // 2px 内距 + 2px 间隔，整组读成一颗分段控件。旧版三枚
-            // 裸文字浮在卡面上，和下面的推子分不出「动作 / 参数」。
+            // 设计稿 `.segmini`：动作坐在一块 `--field` 凹槽里，2px 内距 +
+            // 2px 间隔，整组读成一颗分段控件。凹槽按内容收缩（设计稿实测宽约
+            // 180px），不做通栏——通栏会在三枚字动作右侧留下一大片空槽。
             //
-            // The design's `.segmini`: the three actions sit inside one
-            // `--field` trough with 2 px padding and 2 px gaps, reading as a
-            // single segmented control. The old bare trio floated on the card
-            // and did not separate "actions" from "parameters".
+            // The design's `.segmini`: actions sit inside one `--field` trough with
+            // 2 px padding and 2 px gaps, reading as a single segmented control. The
+            // trough shrinks to its content (about 180 px in the design) rather than
+            // spanning the card, which would leave a wide empty basin.
             egui::Frame::NONE
                 .fill(field())
                 .corner_radius(radius_control())
@@ -318,11 +321,36 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
                                 "切到合成模块的 HDR 合并：同一场景的包围曝光帧合成一张"
                             ))
                             .clicked();
+                        // 设计稿把复位放在这一槽的右端（`<span class="sp">` 之后）：
+                        // 它是「这一组的动作」，和自动/黑白/HDR 同一条底、同一档字。
+                        //
+                        // The design puts reset at the right end of this trough (after the
+                        // `.sp` spacer): it is this group's action, on the same fill and at
+                        // the same type size as Auto / B&W / HDR.
+                        reset = quiet_action(ui, "复位", false)
+                            .on_hover_text(crate::i18n::t!("复位全部参数"))
+                            .clicked();
                     });
                 });
         });
+        // 设计稿 `.segmini{margin-bottom:8px}`：凹槽与第一条推子之间留 8px。
+        // egui 还会在两次 allocate 之间补 4px item_spacing，所以这里只补 4。
+        //
+        // The design's `.segmini` carries an 8 px bottom margin; egui already inserts
+        // 4 px of item_spacing, so only 4 more is needed here.
+        ui.add_space(4.0);
         if auto {
             state.auto_exposure(ui.ctx());
+        }
+        if reset {
+            // 复位全部显影参数：`reset_params` 自己会把这一步记进撤销历史
+            // （`history::note("reset", "复位全部参数")`），这里不再重复登记，
+            // 否则一次点击在历史里留两步。
+            //
+            // Reset every develop parameter: `reset_params` records the step itself
+            // (`history::note("reset", …)`), so noting it here again would leave two
+            // entries for one click.
+            state.reset_params();
         }
         if mono_toggle {
             let to_mono = state.params.mono < 50.0;
@@ -339,110 +367,9 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
             state.dock_focus = Some("hdr".to_owned());
             state.collapsed.remove("hdr");
         }
-        // 照片风格（LR 的 Profile 位）：所有滑块之下的渲染基调。换风格不动任何
-        // 参数值，也不进「N 项调整」徽标——它是基调，不是调整。
-        //
-        // Photo style (LR's Profile slot): the rendering basis beneath every slider.
-        // Switching touches no slider value and never enters the "N adjusted" badge --
-        // it is a basis, not an adjustment.
-        ui.add_space(2.0);
-        // 风格行照设计稿的 `.kv + .combo`：一行 28px，标签 12px 次级色，
-        // 下拉紧接标签、占满余宽，26px 高、`--field` 实底、无描边。
-        // 旧版标签 13px 正文白、下拉 18px 且带 1px 边框，读起来像一枚
-        // 缩在角落的输入框，和下面的推子不是同一套材质。
-        //
-        // Style row per the design's `.kv + .combo`: a 28 px row, a 12 px
-        // secondary label, and a 26 px dropdown filling the rest, `--field`
-        // fill and no stroke. The old 13 px white label over an 18 px
-        // outlined box read as a stray input widget.
-        let (row, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::hover());
-        let lab = ui.painter().layout_no_wrap(
-            crate::i18n::t!("风格").to_owned(),
-            font(SIZE_LABEL),
-            muted(),
-        );
-        let lab_x = row.left() + 6.0;
-        ui.painter().galley(
-            Pos2::new(lab_x, row.center().y - lab.size().y * 0.5),
-            lab.clone(),
-            muted(),
-        );
-        let combo = Rect::from_min_max(
-            Pos2::new(lab_x + lab.size().x + 8.0, row.top() + 1.0),
-            Pos2::new(row.right() - 6.0, row.bottom() - 1.0),
-        );
-        let current = state.params.style;
-        ui.scope_builder(
-            egui::UiBuilder::new()
-                .max_rect(combo)
-                .layout(Layout::left_to_right(Align::Center)),
-            |ui| {
-                ui.spacing_mut().interact_size.y = 26.0;
-                ui.spacing_mut().icon_width = 10.0;
-                {
-                    let v = &mut ui.style_mut().visuals;
-                    v.override_text_color = Some(text());
-                    v.widgets.inactive.bg_fill = field();
-                    v.widgets.inactive.weak_bg_fill = field();
-                    v.widgets.inactive.bg_stroke = Stroke::NONE;
-                    v.widgets.hovered.bg_fill = field_hover();
-                    v.widgets.hovered.weak_bg_fill = field_hover();
-                    v.widgets.hovered.bg_stroke = Stroke::NONE;
-                    v.widgets.active.bg_fill = field_hover();
-                    v.widgets.active.weak_bg_fill = field_hover();
-                    v.widgets.active.bg_stroke = Stroke::NONE;
-                }
-                egui::ComboBox::from_id_salt("dev-style")
-                    .selected_text(crate::i18n::tr(
-                        aevum_core::style::NAME_KEYS
-                            [current.min(aevum_core::style::COUNT - 1) as usize],
-                    ))
-                    .width(combo.width())
-                    .show_ui(ui, |ui| {
-                        combo_style(ui);
-                        for (i, key) in aevum_core::style::NAME_KEYS.iter().enumerate() {
-                            let idx = i as u8;
-                            if ui
-                                .selectable_label(state.params.style == idx, crate::i18n::tr(key))
-                                .clicked()
-                                && state.params.style != idx
-                            {
-                                state.params.style = idx;
-                                state.preview_dirty = true;
-                                history::note(
-                                    "style",
-                                    crate::i18n::tr_fmt(
-                                        "风格 {}",
-                                        &[&crate::i18n::tr(key).to_owned()],
-                                    ),
-                                );
-                            }
-                        }
-                    });
-            },
-        );
-        // 相机配置行（LR 的 Profile 行）：DCP 决定 RAW 解码后的白平衡、颜色矩阵
-        // 与色调曲线，是所有推子底下的地基，所以从光学组搬到基本组。镜头配置
-        // 留在光学组——那是整幅画面的几何与暗角校正，和调色不是一件事。
-        //
-        // Camera-profile row (LR's Profile row): DCP takes over white balance, colour
-        // matrix and tone curve after RAW decode, i.e. it sits beneath every slider, so
-        // it moves from Optics into Basic. The lens profile stays in Optics -- it is a
-        // whole-frame geometry/vignetting correction, not grading.
-        let ctx = ui.ctx().clone();
-        camera_profile_row(state, &ctx, ui);
-        sub_head(ui, crate::i18n::t!("白平衡"));
         for f in [Field::Temperature, Field::Tint] {
             changed |= spec_field(ui, state, f);
         }
-        // 小标题用「影调」而不是「色调」：中文里 tone 与 tint 都叫「色调」，
-        // 而 i18n 表以中文为键——同一个键只能有一条英文，区标题会被译成 Tint。
-        //
-        // The heading says 影调 (tonal range) rather than 色调: in Chinese both tone
-        // and tint are called 色调, and the i18n table keys on Chinese, so one key can
-        // only carry one English string -- the section title would read "Tint".
-        sub_head(ui, crate::i18n::t!("影调"));
         for f in [
             Field::Exposure,
             Field::HlRolloff,
@@ -457,7 +384,6 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
         ] {
             changed |= spec_field(ui, state, f);
         }
-        sub_head(ui, crate::i18n::t!("偏好"));
         for f in [
             Field::Texture,
             Field::Clarity,
@@ -470,6 +396,65 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
             changed |= spec_field(ui, state, f);
         }
     });
+
+    // ── 配置文件 ──────────────────────────────────────────────────────────
+    // 设计稿在基本组之后紧跟一张「配置文件」卡：风格、相机配置、XMP 一进一出。
+    // 三件都是「这幅画面按什么基准渲染」，比基本组的推子低一层，所以单独成卡，
+    // 不再散落在基本组尾巴和面板顶栏。
+    //
+    // The design puts a Profile card right after Basic: style, camera profile and the
+    // XMP pair. All three answer "what basis does this frame render on", one layer
+    // below Basic's sliders, so they get their own card instead of trailing Basic or
+    // sitting in a panel-wide action row.
+    group_card(ui, |ui| {
+        // 键 `profile` 不在 `GROUP_SPECS` 里（state.rs 不动）：`group_header` 只看
+        // `collapsed` 里有没有这个键，缺省即展开；右键的「只看这一组」查不到登记项
+        // 会直接返回，折叠偏好落盘时也会被当作未知键丢弃——不会 panic。
+        //
+        // The key `profile` is absent from `GROUP_SPECS` (state.rs is off-limits):
+        // `group_header` only asks whether `collapsed` holds the key, so it starts
+        // expanded; "solo this group" returns early on the missing registry entry and a
+        // persisted collapse preference is dropped as unknown -- nothing panics.
+        if !group_header(ui, state, PROFILE_GROUP_KEY, "配置文件", false) {
+            return;
+        }
+        style_row(state, ui);
+        // 相机配置行（LR 的 Profile 行）：DCP 决定 RAW 解码后的白平衡、颜色矩阵
+        // 与色调曲线，是所有推子底下的地基。镜头配置仍留在光学组——那是整幅画面
+        // 的几何与暗角校正，和调色不是一件事。
+        //
+        // Camera-profile row (LR's Profile row): DCP takes over white balance, colour
+        // matrix and tone curve after RAW decode, i.e. it sits beneath every slider. The
+        // lens profile stays in Optics -- a whole-frame geometry/vignetting correction,
+        // not grading.
+        let ctx = ui.ctx().clone();
+        camera_profile_row(state, &ctx, ui);
+        // 设计稿 `.btnrow{display:flex;gap:8px;margin-top:8px}` + `.btnrow .btn{flex:1}`：
+        // 两枚等宽、26px 高、`--raised2` 实底，平分卡内宽度。
+        //
+        // Design `.btnrow`: two `flex:1` buttons, 8 px apart, 26 px tall on `--raised2`,
+        // splitting the card's inner width.
+        ui.add_space(8.0);
+        let bw = ((ui.available_width() - 8.0) * 0.5).max(40.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            import_xmp = dock_action(ui, "导入 XMP", RAISED2, bw)
+                .on_hover_text(crate::i18n::t!(
+                    "读入 Lightroom / Camera Raw 预设，替换当前调色参数"
+                ))
+                .clicked();
+            export_xmp = dock_action(ui, "导出 XMP", RAISED2, bw)
+                .on_hover_text(crate::i18n::t!("把当前调色参数写成 .xmp 预设"))
+                .clicked();
+        });
+    });
+    if import_xmp {
+        import_xmp_dialog(state);
+    }
+    if export_xmp {
+        export_xmp_dialog(state);
+    }
+
     // 子区返回「参数动了」就顺手摘掉该组的旁路：推子路径已在 spec_slider 里
     // 自清，这里接的是曲线/色阶拖点、外观卸下这类非推子路径。
     //
@@ -508,6 +493,93 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
             state.preset = "自定义".to_owned();
         }
     }
+}
+
+/// 风格下拉（设计稿「配置文件」组的第一行 `.kv` + `.combo`）：28px 行，标签 12px
+/// 次级色，下拉紧接标签、占满余宽，26px 高、`--field` 实底、无描边。
+///
+/// 换风格不动任何参数值，也不进「N 项调整」徽标——它是渲染基调，不是调整，
+/// 所以这一行在「配置文件」卡里而不是基本组的推子列中。
+///
+/// The style dropdown (the Profile card's first `.kv` + `.combo` row in the design):
+/// a 28 px row with a 12 px secondary label, and a 26 px dropdown filling the rest in
+/// `--field` with no stroke.
+///
+/// Switching the style touches no parameter and never enters the "N adjusted" badge --
+/// it is a rendering basis, not an adjustment, which is why it lives in the Profile card
+/// rather than among Basic's sliders.
+fn style_row(state: &mut AppState, ui: &mut Ui) {
+    let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::hover());
+    let lab = ui.painter().layout_no_wrap(
+        crate::i18n::t!("风格").to_owned(),
+        font(SIZE_LABEL),
+        muted(),
+    );
+    // 与 `.srow` 同一条左缘：卡内距 12px 就是标签列的位置，不再叠 6px——否则
+    // 「风格」比下面的「相机配置」缩进一格，两行读起来不在一条线上。右缘同理，
+    // 组合框铺到内容右缘（设计稿 `.combo{flex:1}`）。
+    //
+    // Same left edge as `.srow`: the card's 12 px padding *is* the label column, with no
+    // extra 6 px -- otherwise "style" sits one notch deeper than the camera-profile row
+    // below it. The right edge follows: the combo runs to the content edge (design
+    // `.combo{flex:1}`).
+    let lab_x = row.left();
+    ui.painter().galley(
+        Pos2::new(lab_x, row.center().y - lab.size().y * 0.5),
+        lab.clone(),
+        muted(),
+    );
+    let combo = Rect::from_min_max(
+        Pos2::new(lab_x + lab.size().x + 8.0, row.top() + 1.0),
+        Pos2::new(row.right(), row.bottom() - 1.0),
+    );
+    let current = state.params.style;
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(combo)
+            .layout(Layout::left_to_right(Align::Center)),
+        |ui| {
+            ui.spacing_mut().interact_size.y = 26.0;
+            ui.spacing_mut().icon_width = 10.0;
+            {
+                let v = &mut ui.style_mut().visuals;
+                v.override_text_color = Some(text());
+                v.widgets.inactive.bg_fill = field();
+                v.widgets.inactive.weak_bg_fill = field();
+                v.widgets.inactive.bg_stroke = Stroke::NONE;
+                v.widgets.hovered.bg_fill = field_hover();
+                v.widgets.hovered.weak_bg_fill = field_hover();
+                v.widgets.hovered.bg_stroke = Stroke::NONE;
+                v.widgets.active.bg_fill = field_hover();
+                v.widgets.active.weak_bg_fill = field_hover();
+                v.widgets.active.bg_stroke = Stroke::NONE;
+            }
+            egui::ComboBox::from_id_salt("dev-style")
+                .selected_text(crate::i18n::tr(
+                    aevum_core::style::NAME_KEYS
+                        [current.min(aevum_core::style::COUNT - 1) as usize],
+                ))
+                .width(combo.width())
+                .show_ui(ui, |ui| {
+                    combo_style(ui);
+                    for (i, key) in aevum_core::style::NAME_KEYS.iter().enumerate() {
+                        let idx = i as u8;
+                        if ui
+                            .selectable_label(state.params.style == idx, crate::i18n::tr(key))
+                            .clicked()
+                            && state.params.style != idx
+                        {
+                            state.params.style = idx;
+                            state.preview_dirty = true;
+                            history::note(
+                                "style",
+                                crate::i18n::tr_fmt("风格 {}", &[&crate::i18n::tr(key).to_owned()]),
+                            );
+                        }
+                    }
+                });
+        },
+    );
 }
 
 /// 外观：外挂一张 .cube 三维查表，套在主链之前；导出把当前调色烘成 .cube。
@@ -1267,5 +1339,65 @@ mod gradient_rail_tests {
         }
         assert!(!state.collapsed.contains("optics"), "滚到顶了还折着");
         assert!(state.dock_focus.is_none(), "焦点没被消费，会每帧推一次");
+    }
+}
+
+#[cfg(test)]
+mod only_changed_tests {
+    use super::*;
+
+    /// 数「平色轨道」的画布片数：每根未改动的推子画一条 `slider_rail()`。
+    /// 渐变轨（色温 / 色调）走 48 片插值，不在这条计数里，所以这里数的是
+    /// 「有多少行真的上了屏」，正是过滤要证明的事。
+    ///
+    /// Counts flat rail slices: every untouched slider paints one `slider_rail()` rect.
+    /// Gradient rails (temperature / tint) paint 48 interpolated slices instead, so this
+    /// counts "how many rows actually made it onto the canvas" -- exactly what the filter
+    /// has to prove.
+    fn rail_count(ctx: &Context, state: &mut AppState) -> usize {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(360.0, 3000.0))),
+                max_texture_side: Some(8192),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    adjust_develop(state, ui);
+                });
+            },
+        );
+        let n = out
+            .shapes
+            .iter()
+            .filter(|cs| matches!(&cs.shape, egui::Shape::Rect(r) if r.fill == theme::slider_rail()))
+            .count();
+        out.textures_delta.clear();
+        n
+    }
+
+    /// 「仅显示已改动」：开关打开后，等于默认值的字段整行消失（不占行高），
+    /// 只有偏离默认的那一根留下；关掉后又全部回来。三条断言分别钉住
+    /// 「默认态确实在画」（否则后两条等于什么都没测）、「全默认时清空」、
+    /// 「改一根只留一根」。
+    ///
+    /// "Only show changed": with the switch on, fields at their defaults vanish entirely
+    /// (no reserved height) and only the deviating row survives; switching it off brings
+    /// them all back. The three assertions pin down "the default state really paints"
+    /// (otherwise the other two prove nothing), "all defaults clears the list", and
+    /// "one changed field leaves one row".
+    #[test]
+    fn only_changed_hides_default_rows_and_keeps_the_changed_one() {
+        let ctx = Context::default();
+        theme::apply(&ctx, 1.0);
+        let mut state = AppState::new();
+        let all = rail_count(&ctx, &mut state);
+        state.only_changed = true;
+        let none = rail_count(&ctx, &mut state);
+        state.params.exposure = 0.35;
+        let one = rail_count(&ctx, &mut state);
+        assert!(all > 10, "默认态没有画推子（{all} 根），后两条断言失去意义");
+        assert_eq!(none, 0, "仅显示已改动打开了，还剩 {none} 根默认推子");
+        assert_eq!(one, 1, "只有曝光偏离默认，却画了 {one} 根");
     }
 }
