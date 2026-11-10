@@ -131,7 +131,19 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         (16.0, 9.0)
     };
     let avail = content.shrink(CANVAS_PAD);
-    let fit = (avail.width() / iw).min(avail.height() / ih).max(0.01);
+    // 铺满（cover）还是整幅可见（contain）：设计稿 `.hero{object-fit:cover}` 让照片
+    // 盖满窗口；contain 会在两侧/上下留黑边，正是用户说的「周围的黑边」。
+    // 裁切类操作要看全画面时，视图菜单可切回 contain。
+    //
+    // Cover or contain: the design's `.hero{object-fit:cover}` fills the window, while
+    // contain letterboxes -- exactly the black border the user pointed at. The View menu
+    // switches back to contain when a crop needs the whole frame.
+    let fit = if state.canvas_fill {
+        (avail.width() / iw).max(avail.height() / ih)
+    } else {
+        (avail.width() / iw).min(avail.height() / ih)
+    }
+    .max(0.01);
     state.fit_scale = fit;
     let scale = fit * state.zoom;
     let shown = Vec2::new(iw, ih) * scale;

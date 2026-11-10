@@ -1359,6 +1359,27 @@ pub struct AppState {
     /// groups on screen, what needs re-checking is usually just the handful that moved.
     /// Off by default: the first look at a panel should show the full parameter map.
     pub only_changed: bool,
+    /// 画布铺满：设计稿 `.stage .hero{object-fit:cover}`——照片盖满窗口，不再留黑边。
+    ///
+    /// 关掉就回到「整幅可见」的 contain（裁切类操作需要看全画面时用）。
+    ///
+    /// Fill the canvas: the design's `.stage .hero{object-fit:cover}` -- the photo covers
+    /// the window instead of letterboxing. Turning it off returns to whole-frame contain.
+    pub canvas_fill: bool,
+    /// 显示工具选项栏（设计稿没有这条带子，默认收起；非手型工具会自动临时展开）。
+    ///
+    /// Show the tool-options bar (the design has no such strip; off by default, and any
+    /// non-hand tool brings it back while it is active).
+    pub show_options: bool,
+    /// 显示左/右工具轨（设计稿没有；默认收起，视图菜单可开）。
+    ///
+    /// Show the tool rails (the design has none; off by default, toggled in the View menu).
+    pub show_rails: bool,
+    /// 正在拖动某根推子：检查器趁这段时间降透明度，让画面透出来。
+    ///
+    /// A slider is being dragged: the inspector drops its opacity for that moment so the
+    /// image shows through.
+    pub slider_drag: bool,
     /// 折叠中的面板分组。初值来自 [`default_collapsed`]（低频组首屏折起来），
     /// 之后以用户点出来的为准，并随 `settings.json` 落盘——面板记得住你的摆法是
     /// 「减少信息负担」的一半，另一半是首屏别全摊开。

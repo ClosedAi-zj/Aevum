@@ -355,7 +355,17 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // reads slightly brighter than the content, as in ACR.
     let bench = state.bench;
     let develop = bench == Bench::Develop;
-    if develop {
+    // 工具选项栏默认收起（设计稿没有这条带子）；换成任何非手型/缩放工具时自动出现，
+    // 否则裁剪的「应用/取消」会无处可点。
+    //
+    // The options bar is folded away by default (the design has no such strip) and comes
+    // back for any tool other than hand/zoom -- otherwise crop's apply/cancel would have
+    // nowhere to live.
+    let tool_needs_bar = !matches!(
+        state.tool,
+        crate::state::Tool::Hand | crate::state::Tool::Zoom
+    );
+    if develop && (state.show_options || tool_needs_bar) {
         egui::Panel::top("options-bar")
             .exact_size(OPTIONS_H)
             .frame(egui::Frame::NONE.fill(dock()).inner_margin(egui::Margin {
@@ -378,7 +388,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     //
     // Always on: the LapseOne-style tabs ARE the primary navigation, never hidden
     // behind the panel switch (user measured "nothing is there" while show_flow was off).
-    if develop && state.frame_count() > 1 {
+    if develop && state.show_flow && state.frame_count() > 1 {
         egui::Panel::top("flow-top")
             .exact_size(30.0)
             .frame(egui::Frame::NONE.fill(header()).inner_margin(egui::Margin {
@@ -423,28 +433,36 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // tasks are full-page views (the design's `.wsview`); any side panel there would
     // squeeze the 300 px-wide table off screen.
     if develop {
-        // 右缘：贴边的那一根先声明，坞再向内叠。
-        let (right_id, right_half) = if panels_on_right {
-            ("rail-panels", RailHalf::Panels)
-        } else {
-            ("rail-tools", RailHalf::Tools)
-        };
-        egui::Panel::right(right_id)
-            .exact_size(TOOL_W)
-            .resizable(false)
-            .frame(egui::Frame::NONE.fill(chrome()))
-            .show(root, |ui| tool_rail(state, ui, right_half, false));
-        // 左缘：另一根贴边；左坞与工作流面板依次向内。
-        let (left_id, left_half) = if panels_on_right {
-            ("rail-tools", RailHalf::Tools)
-        } else {
-            ("rail-panels", RailHalf::Panels)
-        };
-        egui::Panel::left(left_id)
-            .exact_size(TOOL_W)
-            .resizable(false)
-            .frame(egui::Frame::NONE.fill(chrome()))
-            .show(root, |ui| tool_rail(state, ui, left_half, true));
+        // 工具轨：设计稿没有这两根 56px 竖轨，默认收起（视图菜单可开）。
+        // 轨上是工具组与面板入口；收起后工具仍可快捷键切换（H 抓手 / Z 缩放 …），
+        // 面板入口在 ☰ 与检查器页签里各有一份。
+        //
+        // Rails: the design has no 56 px tool columns, so they start folded (the View menu
+        // brings them back). They carry the tool groups and panel entries; with them folded
+        // the tools still switch by keyboard (H hand / Z zoom ...), and the panel entries
+        // live in ☰ and in the inspector tabs.
+        if state.show_rails {
+            let (right_id, right_half) = if panels_on_right {
+                ("rail-panels", RailHalf::Panels)
+            } else {
+                ("rail-tools", RailHalf::Tools)
+            };
+            egui::Panel::right(right_id)
+                .exact_size(TOOL_W)
+                .resizable(false)
+                .frame(egui::Frame::NONE.fill(chrome()))
+                .show(root, |ui| tool_rail(state, ui, right_half, false));
+            let (left_id, left_half) = if panels_on_right {
+                ("rail-tools", RailHalf::Tools)
+            } else {
+                ("rail-panels", RailHalf::Panels)
+            };
+            egui::Panel::left(left_id)
+                .exact_size(TOOL_W)
+                .resizable(false)
+                .frame(egui::Frame::NONE.fill(chrome()))
+                .show(root, |ui| tool_rail(state, ui, left_half, true));
+        }
         // 检查器：贴窗口右缘的浮卡，与工具轨开不开无关。
         //
         // The inspector: a card floating at the window's right edge, independent of the
@@ -452,13 +470,6 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         if state.show_dock {
             floating_dock(&ctx, state, !dock_left, full);
         }
-        // 5 工作流面板：最后声明，所以贴着画布（同侧先声明的在外）。窄窗强制收起；
-        // 没导入序列时不收起——面板会给出「导入照片…」，不能点了开关却什么都没有。
-        //
-        // 5 Workflow panel: declared last so it sits next to the canvas (on the same side the
-        // first declaration is outermost). Forced closed on narrow windows, but **not** when
-        // no sequence is loaded -- the panel then offers "Import photos...", because a toggle
-        // that visibly does nothing is a silent failure.
         if flow_panel::flow_panel_visible(state, full.width()) {
             egui::Panel::left("flow-panel")
                 .exact_size(FLOW_W)

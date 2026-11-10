@@ -1053,6 +1053,18 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
         ui.make_persistent_id(("slider", &key)),
         Sense::click_and_drag(),
     );
+    // 「手在推子上」的全局标记：检查器靠它在这段时间降透明度，让画面透出来。
+    // 只认真实的拖动（不是按住不动）：按住但没动时卡片保持实色，色彩判断的参照
+    // 系不该因为一次误按就变。
+    //
+    // A global "hand is on a slider" flag: the inspector fades while it is set so the
+    // frame shows through. Only a real drag counts -- a press without movement keeps the
+    // card opaque, since the colour reference should not change on a stray click.
+    if t.dragged() {
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(egui::Id::unique("slider-drag"), true);
+        });
+    }
     if (t.clicked() || t.dragged())
         && span > 1.0
         && let Some(pos) = t.interact_pointer_pos()

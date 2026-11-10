@@ -196,9 +196,9 @@ pub(super) fn info_tab(state: &mut AppState, ui: &mut Ui) {
             ui.add(
                 egui::Label::new(
                     RichText::new(if st.jitter_after > 0.02 {
-                        "仍有可见抖动：试试加大窗口或开多遍"
+                        crate::i18n::t!("仍有可见抖动：试试加大窗口或开多遍")
                     } else {
-                        "序列亮度已平整"
+                        crate::i18n::t!("序列亮度已平整")
                     })
                     .size(SIZE_SMALL)
                     .color(if st.jitter_after > 0.02 {

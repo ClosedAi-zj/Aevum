@@ -1747,4 +1747,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     // The develop panel's "tonal detail" group had no English entry and fell back to
     // Chinese in the English UI.
     ("影调细节", "Tonal detail"),
+    ("更多", "More"),
+    ("仍有可见抖动：试试加大窗口或开多遍", "Still visible jitter: try a larger window or more passes"),
+    ("序列亮度已平整", "Sequence luminance is flat"),
 ];

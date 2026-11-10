@@ -348,13 +348,35 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         crate::theme::bold(13.0),
         text(),
     );
-    let badge_label = crate::i18n::tr_fmt(
-        "{} 帧 · {} fps",
-        &[&state.frame_count(), &format!("{:.0}", state.output_fps)],
-    );
+    // 副标题：`1,387 帧 · 24 fps · DC-S5M2`（设计稿 `.doc span`）。机型取当前帧 EXIF，
+    // 读不到就只写帧数与帧率——不编一个机型出来。
+    //
+    // Subtitle: `1,387 帧 · 24 fps · DC-S5M2` per the design's `.doc span`. The camera
+    // comes from the current frame's EXIF; with no model only frames and fps are shown.
+    let model = state
+        .exif
+        .get(state.selected)
+        .and_then(|e| e.model().map(|m| m.trim().to_owned()))
+        .filter(|m| !m.is_empty());
+    let badge_label = match &model {
+        Some(m) => format!(
+            "{} · {:.0} fps · {m}",
+            crate::i18n::tr_fmt("{} 帧", &[&state.frame_count()]),
+            state.output_fps
+        ),
+        None => crate::i18n::tr_fmt(
+            "{} 帧 · {} fps",
+            &[&state.frame_count(), &format!("{:.0}", state.output_fps)],
+        ),
+    };
+    let badge_w = p
+        .layout_no_wrap(badge_label.clone(), font(9.0), muted())
+        .size()
+        .x
+        + 8.0;
     let badge = Rect::from_min_size(
         Pos2::new(doc.left(), doc.center().y + 8.0),
-        Vec2::new(88.0, 14.0),
+        Vec2::new(badge_w, 14.0),
     );
     p.rect_filled(badge, 3.0, elev());
     p.text(
@@ -372,6 +394,26 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // Zoom: 64 px track + 46 px readout. Dragging the track sets `state.zoom`; clicking
     // the readout resets to 100%.
     let zoom_pct = (state.zoom * state.fit_scale.max(1e-4) * 100.0).clamp(1.0, 400.0);
+    // 设计稿 `.zoomc`：[−][64px 轨道][+] [百分比]。−/+ 各 18px，点一次 ×0.8 / ×1.25。
+    //
+    // Design `.zoomc`: minus, 64 px track, plus, then the readout. Each tap steps the
+    // zoom by 0.8 / 1.25.
+    let minus = Rect::from_center_size(Pos2::new(x + 9.0, mid), Vec2::splat(18.0));
+    let mr = ui.interact(minus, ui.make_persistent_id("tb-zoom-out"), Sense::click());
+    if mr.hovered() {
+        p.rect_filled(minus, radius_control(), elev());
+    }
+    p.text(
+        minus.center(),
+        Align2::CENTER_CENTER,
+        "−",
+        font(SIZE_CHROME_LABEL),
+        if mr.hovered() { text() } else { muted() },
+    );
+    if mr.clicked() {
+        state.zoom = (state.zoom * 0.8).clamp(0.2, 24.0);
+    }
+    let mut x = minus.right() + 4.0;
     let track = Rect::from_min_size(Pos2::new(x, mid - 1.5), Vec2::new(64.0, 3.0));
     let zr = ui.interact(
         Rect::from_min_size(Pos2::new(x - 4.0, mid - 8.0), Vec2::new(72.0, 16.0)),
@@ -408,7 +450,22 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         state.zoom = (1.0 / state.fit_scale.max(1e-4)).clamp(0.2, 24.0);
     }
     pr.on_hover_text(crate::i18n::t!("点击回到 100%"));
-    x = pct.right() + 10.0;
+    let plus = Rect::from_center_size(Pos2::new(pct.right() + 12.0, mid), Vec2::splat(18.0));
+    let xr = ui.interact(plus, ui.make_persistent_id("tb-zoom-in"), Sense::click());
+    if xr.hovered() {
+        p.rect_filled(plus, radius_control(), elev());
+    }
+    p.text(
+        plus.center(),
+        Align2::CENTER_CENTER,
+        "+",
+        font(SIZE_CHROME_LABEL),
+        if xr.hovered() { text() } else { muted() },
+    );
+    if xr.clicked() {
+        state.zoom = (state.zoom * 1.25).clamp(0.2, 24.0);
+    }
+    x = plus.right() + 10.0;
 
     // 中央模块 chips（设计稿 `.seg`：`#26282c` 槽、24px 按钮、选中 `#3a3d43`）。
     // 七个模块横向铺开；「更多」不另设假入口——合成就是设计的「更多」。
@@ -416,20 +473,39 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // Centre module chips per `.seg`: a `#26282c` trough with 24 px buttons and a
     // `#3a3d43` active fill. All seven modules are laid out; there is no fake "more"
     // entry -- merge is what the design's "more" leads to.
-    let chip_labels: Vec<&'static str> = Module::ALL.iter().map(|m| m.cn()).collect();
-    let mut widths = Vec::with_capacity(chip_labels.len());
-    for lab in &chip_labels {
-        let g = p.layout_no_wrap(crate::i18n::tr(lab).to_string(), font(12.0), text());
+    // 设计稿的 chips 是五枚：序列 / 去闪 / 显影 / 成片 / 更多（`.seg` 槽内）。
+    // 构图 / 声音 / 合成三枚收进「更多」弹出层——七个名字横排会把顶栏撑长，
+    // 同时把「常用四页」和「文件级工具」画成同一排。
+    //
+    // The design's chips are five: sequence / deflicker / develop / render / more.
+    // Frame / audio / merge move under "more": seven names in a row stretch the bar and
+    // paint "four common pages" and "file-level tools" as one rank.
+    const HEAD_CHIPS: [Module; 4] = [
+        Module::Sequence,
+        Module::Deflicker,
+        Module::Develop,
+        Module::Render,
+    ];
+    let more_label = crate::i18n::t!("更多");
+    let mut widths = Vec::with_capacity(HEAD_CHIPS.len() + 1);
+    for m in HEAD_CHIPS {
+        let g = p.layout_no_wrap(crate::i18n::tr(m.cn()).to_string(), font(12.0), text());
         widths.push(g.size().x + 24.0);
     }
-    let seg_w: f32 = widths.iter().sum::<f32>() + 2.0 * (chip_labels.len() as f32 - 1.0) + 4.0;
+    widths.push(
+        p.layout_no_wrap(more_label.to_string(), font(12.0), text())
+            .size()
+            .x
+            + 30.0,
+    );
+    let seg_w: f32 = widths.iter().sum::<f32>() + 2.0 * (widths.len() as f32 - 1.0) + 4.0;
     let seg_h = 28.0;
     let seg_x = x + 16.0;
     if seg_x + seg_w < zone_right_pre(full, &c) {
         let seg = Rect::from_min_size(Pos2::new(seg_x, mid - seg_h / 2.0), Vec2::new(seg_w, seg_h));
         p.rect_filled(seg, 8.0, Color32::from_rgb(0x26, 0x28, 0x2c));
         let mut cx = seg.left() + 2.0;
-        for (i, m) in Module::ALL.iter().enumerate() {
+        for (i, m) in HEAD_CHIPS.iter().enumerate() {
             let r = Rect::from_min_size(
                 Pos2::new(cx, seg.top() + 2.0),
                 Vec2::new(widths[i], seg_h - 4.0),
@@ -455,6 +531,53 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             }
             resp.on_hover_text(format!("{} (Alt+{})", crate::i18n::tr(m.cn()), i + 1));
         }
+        // 更多：槽内最后一格，点开列出另外三个模块。
+        let r = Rect::from_min_size(
+            Pos2::new(cx, seg.top() + 2.0),
+            Vec2::new(widths[HEAD_CHIPS.len()], seg_h - 4.0),
+        );
+        let more_on = !HEAD_CHIPS.contains(&state.module);
+        if more_on {
+            p.rect_filled(r, 6.0, Color32::from_rgb(0x3a, 0x3d, 0x43));
+        }
+        ui.scope_builder(
+            UiBuilder::new()
+                .id_salt("more-chips")
+                .max_rect(r)
+                .layout(Layout::left_to_right(Align::Center)),
+            |ui| {
+                let w = &mut ui.style_mut().visuals.widgets;
+                w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                w.inactive.bg_stroke = Stroke::NONE;
+                w.inactive.fg_stroke = Stroke::new(1.0, if more_on { text() } else { dim() });
+                w.hovered.weak_bg_fill = elev();
+                w.hovered.bg_stroke = Stroke::NONE;
+                w.hovered.fg_stroke = Stroke::new(1.0, text());
+                ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
+                ui.menu_button(
+                    RichText::new(format!("{more_label} ▾")).size(SIZE_CHROME_LABEL),
+                    |ui| {
+                        menu_style(ui);
+                        for (i, m) in Module::ALL.iter().enumerate() {
+                            if HEAD_CHIPS.contains(m) {
+                                continue;
+                            }
+                            let on = state.module == *m;
+                            let label = if on {
+                                format!("✓ {}", crate::i18n::tr(m.cn()))
+                            } else {
+                                format!("   {}", crate::i18n::tr(m.cn()))
+                            };
+                            if menu_item(ui, &label, &format!("Alt+{}", i + 1)) {
+                                state.set_bench(Bench::Develop);
+                                state.set_module(*m);
+                                ui.close();
+                            }
+                        }
+                    },
+                );
+            },
+        );
     }
 
     // 右侧动作簇：☰ 菜单 → 齿轮 → 「导出…」→ 窗口按钮（设计稿右端图标 + 主按钮）。
@@ -491,6 +614,57 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     if do_export {
         state.request_export_confirm(ctx, false);
     }
+
+    // 任务胶囊（设计稿右端「任务 14」）：进行中的后台任务数，点它切到任务工作台。
+    // 角标为 0 时只留一个「任务」入口，不画一个空的 0。
+    //
+    // The tasks pill (the design's "任务 14"): count of running background jobs, click to
+    // switch to the tasks bench. With none running it stays a plain entry, no empty 0.
+    let running = state.running_jobs();
+    let tid = format!("{}", running);
+    let tlabel = crate::i18n::t!("任务");
+    let tw = p
+        .layout_no_wrap(tlabel.to_string(), font(SIZE_CHROME_LABEL), text())
+        .size()
+        .x
+        + if running > 0 { 30.0 } else { 16.0 };
+    let pill = Rect::from_min_size(
+        Pos2::new(export.left() - 8.0 - tw, mid - 13.0),
+        Vec2::new(tw, 26.0),
+    );
+    let tr = ui.interact(pill, ui.make_persistent_id("tb-tasks"), Sense::click());
+    if tr.hovered() {
+        p.rect_filled(pill, 6.0, elev());
+    }
+    p.text(
+        Pos2::new(pill.left() + 8.0, pill.center().y),
+        Align2::LEFT_CENTER,
+        tlabel,
+        font(SIZE_CHROME_LABEL),
+        if tr.hovered() { text() } else { muted() },
+    );
+    if running > 0 {
+        let badge = Rect::from_min_size(
+            Pos2::new(pill.right() - 20.0, pill.center().y - 7.0),
+            Vec2::new(14.0, 14.0),
+        );
+        p.rect_filled(
+            badge,
+            4.0,
+            Color32::from_rgba_unmultiplied(245, 184, 61, 41),
+        );
+        p.text(
+            badge.center(),
+            Align2::CENTER_CENTER,
+            &tid,
+            font(9.0),
+            warn(),
+        );
+    }
+    if tr.clicked() {
+        state.set_bench(Bench::Tasks);
+    }
+    tr.on_hover_text(crate::i18n::t!("后台任务"));
 
     // 齿轮：外观/布局/语言的唯一常驻入口。
     //
@@ -931,6 +1105,15 @@ mod chrome_labels_tests {
         let ctx = Context::default();
         theme::apply(&ctx, 1.0);
         let mut state = AppState::demo();
+        // 选项栏现在默认收起（设计稿没有这条带子），手型工具下不出现。本判据问的是
+        // 「选项栏画出来时有没有当前工具名」，所以显式把它打开再取证——不能因为
+        // 默认收起就断言一段根本不画的东西。
+        //
+        // The options bar is folded away by default now (the design has no such strip) and
+        // does not appear under the hand tool. This assertion asks whether the bar *names
+        // the current tool when it is drawn*, so the bar is switched on explicitly -- an
+        // assertion must not demand text from something that is not painted.
+        state.show_options = true;
         state.install_demo_textures(&ctx);
         let text = painted_text(&ctx, &mut state);
         assert!(
