@@ -56,12 +56,12 @@ pub(super) fn histogram_card(state: &mut AppState, ui: &mut Ui, canvas: Rect) ->
 
     let p = ui.painter().clone();
     let hist_h = 63.0; // 设计稿 `.histcard img{height:63px}`
-    let exif_h = if capture_parts(state).is_empty() {
-        0.0
-    } else {
-        16.0
-    };
-    let body_h = hist_h + exif_h + 6.0;
+    // EXIF 行由 dock::histogram 自己画（凹槽下 7px + 14px 行），卡体 =
+    // 63 + 21，加上下 padding 20 正好 104 —— 与设计稿 .histcard 同高。
+    //
+    // The EXIF row is drawn by dock::histogram itself (7 px + 14 px under the well);
+    // body = 63 + 21, plus 20 px padding = 104 -- exactly the design's card height.
+    let body_h = hist_h + 21.0;
     let card = Rect::from_min_size(
         Pos2::new(canvas.left() + CARD_INSET, canvas.top() + CARD_INSET),
         Vec2::new(CARD_W, body_h + CARD_PAD * 2.0),
@@ -102,46 +102,7 @@ pub(super) fn histogram_card(state: &mut AppState, ui: &mut Ui, canvas: Rect) ->
         },
     );
 
-    // EXIF 行：ISO · 焦距 · 光圈 · 快门（设计稿 `.meta.num`），数字走 mono。
-    //
-    // EXIF row: ISO, focal, aperture, shutter (the design's `.meta.num`), numbers in
-    // the monospace face.
-    if exif_h > 0.0 {
-        // 设计稿 `.meta.num`：单行四项（ISO / 焦距 / 光圈 / 快门），justify 满行。
-        // 超宽的项直接丢——叠行重影比少一项难看得多。
-        //
-        // The design's `.meta.num`: one row, four items, spread across the row. Items
-        // that do not fit are dropped -- ghost overlap is far worse than a missing item.
-        let mut parts = capture_parts(state);
-        parts.truncate(4);
-        let n = parts.len();
-        if n > 0 {
-            let y = hist_rect.bottom() + 3.0;
-            let slot_w = inner.width() / n as f32;
-            for (i, part) in parts.iter().enumerate() {
-                let g = p.layout_no_wrap(part.clone(), mono(SIZE_SMALL), dim());
-                let cx = inner.left() + slot_w * (i as f32 + 0.5);
-                p.galley(Pos2::new(cx - g.size().x * 0.5, y), g, dim());
-            }
-        }
-    }
-
     card
-}
-
-/// 当前帧的拍摄参数（Design: ISO → 焦距 → 光圈 → 快门）。
-///
-/// The current frame's capture parameters in the design's order.
-fn capture_parts(state: &AppState) -> Vec<String> {
-    let Some(exif) = state.exif.get(state.selected) else {
-        return Vec::new();
-    };
-    dock::capture_line_pub(
-        exif.iso(),
-        exif.focal_mm(),
-        exif.fnum(),
-        exif.exposure_sec(),
-    )
 }
 
 /// 画布左上角之外的小提示卡：仅在无序列时显示「拖入照片开始」。
