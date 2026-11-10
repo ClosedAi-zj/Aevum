@@ -361,7 +361,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
                                     kr.center(),
                                     Align2::CENTER_CENTER,
                                     "K",
-                                    font(7.0),
+                                    font(9.0),
                                     bench_bg(),
                                 );
                             }

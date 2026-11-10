@@ -1050,15 +1050,31 @@ pub(super) fn view_tools(state: &mut AppState, ui: &mut Ui, content: Rect) {
     }
     .as_shape(at, RADIUS);
     p.add(egui::Shape::Rect(shadow));
-    // 实色 panel 底 + 1px group_ring 内环。
+    // 实色 panel 底 + 与另两张浮卡同款的 1px 描边 / 上沿光。
     //
-    // Opaque `panel` fill with a 1 px `group_ring` inside stroke.
+    // Opaque `panel` fill plus the same 1 px outline / top edge light as the
+    // other two floating cards.
     p.rect_filled(at, RADIUS, panel());
+    // 四张浮卡（检查器 / 直方图 / 胶片 / 视图工具条）必须共享同一套材质。
+    // 这条贴在暗部照片上时 6% 白环会被吞掉，读成「一块黑斑」；换成与其它卡
+    // 相同的 border_strong 描边 + 1px 上沿光，边界才在任意底图上都成立。
+    //
+    // All four floating cards must share one material. Against a dark part of the
+    // photo a 6% white ring disappears and reads as a black smudge; the same
+    // border_strong outline plus the 1 px top edge light keeps the rim legible
+    // over any image.
     p.rect_stroke(
         at,
         RADIUS,
-        Stroke::new(1.0, group_ring()),
+        Stroke::new(1.0, border_strong()),
         egui::StrokeKind::Inside,
+    );
+    p.line_segment(
+        [
+            Pos2::new(at.left() + RADIUS, at.top() + 0.5),
+            Pos2::new(at.right() - RADIUS, at.top() + 0.5),
+        ],
+        Stroke::new(1.0, Color32::from_white_alpha(20)),
     );
 
     // 5 枚：图标 / tooltip / 选中态。tooltip 写明各自接的真实状态。

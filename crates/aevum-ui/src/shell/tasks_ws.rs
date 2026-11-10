@@ -421,7 +421,7 @@ fn run_card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     //
     // The 3 px progress bar.
     let bar = Rect::from_min_size(Pos2::new(x0, stage_y + 12.0), Vec2::new(x1 - x0, 3.0));
-    p.rect_filled(bar, 1.5, slider_rail());
+    p.rect_filled(bar, 2.0, slider_rail());
     let frac = if total_n == 0 {
         0.0
     } else {
@@ -816,7 +816,7 @@ fn aside(state: &AppState, ui: &mut Ui, rect: Rect) -> f32 {
             Pos2::new(row.left(), row.center().y - 7.5),
             Vec2::new(26.0, 15.0),
         );
-        p.rect_filled(track, 7.5, if on { accent() } else { slider_rail() });
+        p.rect_filled(track, 8.0, if on { accent() } else { slider_rail() });
         p.circle_filled(
             Pos2::new(
                 if on {

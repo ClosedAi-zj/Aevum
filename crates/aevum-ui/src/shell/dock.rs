@@ -606,20 +606,15 @@ pub(super) fn histogram(ui: &mut Ui, state: &mut AppState) {
         means[2].round()
     );
     {
-        let cap_g = ui.painter().layout_no_wrap(
-            cap_text,
-            egui::FontId::monospace(10.0),
-            Color32::from_rgb(210, 210, 210),
-        );
+        let cap_g = ui
+            .painter()
+            .layout_no_wrap(cap_text, egui::FontId::monospace(10.0), text());
         let cs = cap_g.size() + Vec2::new(16.0, 4.0);
         let cap_r = Rect::from_center_size(Pos2::new(rect.center().x, rect.top() + 8.0), cs);
         ui.painter()
             .rect_filled(cap_r, cs.y * 0.5, Color32::from_black_alpha(120));
-        ui.painter().galley(
-            cap_r.left_top() + Vec2::new(8.0, 2.0),
-            cap_g,
-            Color32::from_rgb(210, 210, 210),
-        );
+        ui.painter()
+            .galley(cap_r.left_top() + Vec2::new(8.0, 2.0), cap_g, text());
     }
 
     // 内凹底：比面板沉两档的近黑，加一道细描边，山形才有「装在一个凹槽里」的

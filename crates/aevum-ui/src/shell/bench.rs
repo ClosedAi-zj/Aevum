@@ -266,7 +266,7 @@ pub(super) fn page_head(ui: &mut egui::Ui, title: &str, sub: &str) -> Rect {
         Pos2::new(gate.right() + 10.0, full.center().y - 8.0),
         Align2::LEFT_CENTER,
         title,
-        font(15.0),
+        font(SIZE_CHROME),
         text(),
     );
     p.text(

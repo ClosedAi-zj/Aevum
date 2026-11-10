@@ -393,7 +393,7 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
                 Pos2::new(name_x, row.bottom() - 4.0),
                 Vec2::new((row.right() - SIDE_PAD - name_x).max(8.0), 3.0),
             );
-            p.rect_filled(bar, 1.5, slider_rail());
+            p.rect_filled(bar, 2.0, slider_rail());
             let frac = row_fraction(state, i);
             if frac > 0.0 {
                 p.rect_filled(
