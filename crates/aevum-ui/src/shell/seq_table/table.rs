@@ -137,12 +137,12 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         dim(),
     );
     let legend = crate::i18n::t!("K = 关键帧");
-    let lg = p.layout_no_wrap(legend.to_owned(), font(9.0), dim());
+    let lg = p.layout_no_wrap(legend.to_owned(), font(10.0), dim());
     p.text(
         Pos2::new(head.right() - 10.0, head.center().y),
         Align2::RIGHT_CENTER,
         legend,
-        font(9.0),
+        font(10.0),
         dim(),
     );
     p.rect_filled(
@@ -383,7 +383,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
                                     kr.center(),
                                     Align2::CENTER_CENTER,
                                     "K",
-                                    font(9.0),
+                                    font(10.0),
                                     bench_bg(),
                                 );
                             }
@@ -442,14 +442,14 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
             "第 {} / {} 帧 · 关键帧 {}",
             &[&(if n == 0 { 0 } else { sel + 1 }), &n, &keys],
         ),
-        font(9.0),
+        font(10.0),
         dim(),
     );
     p.text(
         Pos2::new(foot.right() - 10.0, foot.center().y),
         Align2::RIGHT_CENTER,
         crate::i18n::tr_fmt("显示 {} / {} 行", &[&thousands(rows.len()), &thousands(n)]),
-        font(9.0),
+        font(10.0),
         dim(),
     );
 

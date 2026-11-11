@@ -331,7 +331,7 @@ const DARK: Ladder = Ladder {
     // already sits at the edge (~4.6), so raising MUTED is the only move that
     // satisfies both WCAG and the hierarchy gap.
     muted: 79.8, // text2 #c6c9d1
-    dim: 62.0,   // 设计稿 text3 #8f939c(L58.6) 在 s=2% 冷灰下对 bar 只有 4.49，
+    dim: 66.0,   // 设计稿 text3 #8f939c(L58.6) 在 s=2% 冷灰下对 bar 只有 4.49，
     // 抬到 62 才稳过 WCAG AA 的 4.5:1（设计稿原值差 0.01）。
     //
     // The design's text3 #8f939c (L58.6) reaches only 4.49 against

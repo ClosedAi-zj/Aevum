@@ -55,7 +55,13 @@ const HIST_EXIF_H: f32 = 21.0;
 /// 卡片距画布边 12：设计稿 `top:12px;left:12px`。
 ///
 /// 12 px from the canvas edge, per the design's `top:12px;left:12px`.
-const CARD_INSET: f32 = 12.0;
+// 直方图贴画布左上，不留外边距：留 12px 加圆角投影就成了「钉在照片上的贴纸」，
+// 与贴边骨架不在一个语法里（用户 2026-11-11 以 PS 作对照）。
+//
+// The histogram sits flush at the canvas' top-left: a 12 px gutter plus rounded corners
+// and a shadow made it a sticker pinned to the photo, a different grammar from the
+// docked frame.
+const CARD_INSET: f32 = 0.0;
 /// 卡片内边距 10：设计稿 `.histcard{padding:10px}`。
 ///
 /// 10 px inner padding, per the design's `.histcard{padding:10px}`.
@@ -121,17 +127,14 @@ pub(super) fn histogram_card(state: &mut AppState, ui: &mut Ui, canvas: Rect) ->
     // Card shadow (work order W2): laid under the fill, blooming outward -- a card
     // floating over a photo needs thickness. Painted once before the fill; it never
     // touches the outline or the top edge light.
-    let sh = card_shadow();
-    p.rect_filled(
-        card.translate(Vec2::new(sh.offset[0] as f32, sh.offset[1] as f32))
-            .expand(sh.spread as f32),
-        radius_panel(),
-        sh.color,
-    );
-    p.rect_filled(card, radius_panel(), panel());
+    // 贴边面板语法：直角、无投影，只有一道内描边与右侧/下侧的结构线。
+    //
+    // Docked-panel grammar: square, no shadow, one inner hairline plus a right/bottom
+    // structure line that separates it from the photo.
+    p.rect_filled(card, 0.0, panel());
     p.rect_stroke(
         card,
-        radius_panel(),
+        0.0,
         Stroke::new(1.0, border_strong()),
         StrokeKind::Inside,
     );

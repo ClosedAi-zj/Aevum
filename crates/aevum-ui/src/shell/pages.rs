@@ -21,7 +21,7 @@ use crate::theme::*;
 ///
 /// Per-action width budget: the measured label plus its padding and item spacing, used
 /// to decide whether the row still has room on a narrow window.
-const BTN_SLOT_W: f32 = 34.0;
+const BTN_SLOT_W: f32 = 52.0;
 
 /// 序列管理页：缩略图墙 + 本段的直行动作。
 ///
@@ -78,6 +78,7 @@ pub(super) fn sequence_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         let room = ui.available_width();
         let show_jumps = room >= w_rest + w_rescan + w_jumps;
         let show_rescan = room >= w_rest + w_rescan;
+        let show_kf = room >= w_rest;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if show_jumps {
                 if secondary_button(ui, "转到对齐").clicked() {
@@ -105,45 +106,48 @@ pub(super) fn sequence_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             // LRT's transport uses single arrows to jump to the previous/next keyframe.
             // We have no "sync to next" action, so only the jump pair exists; ‹ › keeps
             // the same shape, and both are disabled when there are no keyframes.
-            let prev_kf = state
-                .keyframes
-                .range(..state.selected)
-                .next_back()
-                .map(|(k, _)| *k);
-            let next_kf = state
-                .keyframes
-                .range((
-                    std::ops::Bound::Excluded(state.selected),
-                    std::ops::Bound::Unbounded,
-                ))
-                .next()
-                .map(|(k, _)| *k);
-            if ui
-                .add_enabled(
-                    prev_kf.is_some(),
-                    egui::Button::new(RichText::new("‹ KF").size(SIZE_SMALL))
-                        .corner_radius(radius_control())
-                        .min_size(Vec2::new(0.0, CH)),
-                )
-                .on_hover_text(crate::i18n::tr("上一个关键帧"))
-                .clicked()
-                && let Some(k) = prev_kf
-            {
-                state.selected = k;
+            if show_kf {
+                let prev_kf = state
+                    .keyframes
+                    .range(..state.selected)
+                    .next_back()
+                    .map(|(k, _)| *k);
+                let next_kf = state
+                    .keyframes
+                    .range((
+                        std::ops::Bound::Excluded(state.selected),
+                        std::ops::Bound::Unbounded,
+                    ))
+                    .next()
+                    .map(|(k, _)| *k);
+                if ui
+                    .add_enabled(
+                        prev_kf.is_some(),
+                        egui::Button::new(RichText::new("‹ KF").size(SIZE_SMALL))
+                            .corner_radius(radius_control())
+                            .min_size(Vec2::new(0.0, CH)),
+                    )
+                    .on_hover_text(crate::i18n::tr("上一个关键帧"))
+                    .clicked()
+                    && let Some(k) = prev_kf
+                {
+                    state.selected = k;
+                }
+                if ui
+                    .add_enabled(
+                        next_kf.is_some(),
+                        egui::Button::new(RichText::new("KF ›").size(SIZE_SMALL))
+                            .corner_radius(radius_control())
+                            .min_size(Vec2::new(0.0, CH)),
+                    )
+                    .on_hover_text(crate::i18n::tr("下一个关键帧"))
+                    .clicked()
+                    && let Some(k) = next_kf
+                {
+                    state.selected = k;
+                }
             }
-            if ui
-                .add_enabled(
-                    next_kf.is_some(),
-                    egui::Button::new(RichText::new("KF ›").size(SIZE_SMALL))
-                        .corner_radius(radius_control())
-                        .min_size(Vec2::new(0.0, CH)),
-                )
-                .on_hover_text(crate::i18n::tr("下一个关键帧"))
-                .clicked()
-                && let Some(k) = next_kf
-            {
-                state.selected = k;
-            }
+
             if state.keyframes.contains_key(&state.selected) {
                 if secondary_button(ui, "取消关键帧").clicked() {
                     state.remove_keyframe(state.selected);
@@ -410,8 +414,16 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     const GAP: f32 = 10.0;
     const ACTION_H: f32 = 46.0;
     let avail = ui.available_size();
-    let left_w = ((avail.x - GAP) * 0.62).max(340.0);
-    let right_w = (avail.x - GAP - left_w).max(280.0);
+    // 硬下限 340/280 在 900px 窗口会把右列顶出内容区、压到检查器面板上
+    // （多尺寸扫描实测英文预设名与交付预设互压 27px）。改成按可用宽比例分，
+    // 两列之和永远等于可用宽。
+    //
+    // The old 340/280 minimums pushed the right column out of its content rect on a
+    // 900 px window and onto the inspector (the sweep measured a 27 px collision).
+    // Proportional widths always sum to exactly the available width.
+    let total = (avail.x - GAP).max(0.0);
+    let left_w = total * 0.62;
+    let right_w = (total - left_w).max(0.0);
     let body_h = (avail.y - ACTION_H - 8.0).max(240.0);
 
     ui.horizontal_top(|ui| {
@@ -483,7 +495,7 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     .color(muted()),
             );
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 for (name, fps, crf, codec) in [
                     ("标准 1080p", 24.0f32, 20u8, "h265"),
                     ("4K UHD", 24.0, 18, "h265"),

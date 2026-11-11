@@ -541,99 +541,115 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     }
     x += 6.0;
 
-    // 文档块：文件名 + 类型徽标 + 帧数/帧率（设计稿 `.doc{flex-direction:column}`）。
-    // 名称取序列根目录名；没有序列时写「未打开序列」，不摆假文件名。
+    // 骨架分行（用户 2026-11-11 拿 PS 作对照）：选项栏常显时，文档页签由
+    // `toolbar::options_bar` 的 `doc_tab` 承担，菜单行只留菜单与窗口动作。
+    // 两处都画同一份文件名就是「一个软件里有两个文档名」，读起来松散。
     //
-    // Doc block: file name + type badge + frame count / fps. The name comes from the
-    // sequence root; with no sequence it says "no sequence", never a fake file name.
-    let doc_name = state
-        .seq
-        .as_ref()
-        .and_then(|s| s.root.file_name().map(|n| n.to_string_lossy().to_string()))
-        .unwrap_or_else(|| crate::i18n::t!("未打开序列").to_string());
-    let doc_w = 200.0;
-    let doc = Rect::from_min_size(
-        Pos2::new(x, full.top() + 6.0),
-        Vec2::new(doc_w, full.height() - 12.0),
-    );
-    let name_galley = p.layout_no_wrap(doc_name.clone(), crate::theme::bold(13.0), text());
-    let title_w = name_galley.size().x;
-    p.galley(
-        Pos2::new(doc.left(), doc.center().y - 7.0),
-        name_galley,
-        text(),
-    );
-    // 副标题：`1,387 帧 · 24 fps · DC-S5M2`（设计稿 `.doc span`）。机型取当前帧 EXIF，
-    // 读不到就只写帧数与帧率——不编一个机型出来。
-    //
-    // Subtitle: `1,387 帧 · 24 fps · DC-S5M2` per the design's `.doc span`. The camera
-    // comes from the current frame's EXIF; with no model only frames and fps are shown.
-    let model = state
-        .exif
-        .get(state.selected)
-        .and_then(|e| e.model().map(|m| m.trim().to_owned()))
-        .filter(|m| !m.is_empty());
-    let badge_label = match &model {
-        Some(m) => format!(
-            "{} · {:.0} fps · {m}",
-            crate::i18n::tr_fmt("{} 帧", &[&state.frame_count()]),
-            state.output_fps
-        ),
-        None => crate::i18n::tr_fmt(
-            "{} 帧 · {} fps",
-            &[&state.frame_count(), &format!("{:.0}", state.output_fps)],
-        ),
-    };
-    let badge_w = p
-        .layout_no_wrap(badge_label.clone(), font(9.0), muted())
-        .size()
-        .x
-        + 8.0;
-    let badge = Rect::from_min_size(
-        Pos2::new(doc.left(), doc.center().y + 8.0),
-        Vec2::new(badge_w, 14.0),
-    );
-    // 元数据是纯文本，不是禁用按钮：去掉那块 pill 底。
-    //
-    // Metadata is plain text, not a disabled button: drop the pill fill.
-    p.text(
-        Pos2::new(badge.left(), badge.center().y),
-        Align2::LEFT_CENTER,
-        badge_label,
-        font(9.0),
-        muted(),
-    );
-    // 关闭序列 ×：走 `state.close()`（存工程后清空，不动磁盘素材）。没有序列时
-    // 不画空按钮——一个点了没东西可关的 × 就是假控件。
-    //
-    // Close-sequence X: calls `state.close()` (saves the project, clears in-memory
-    // state, never touches footage on disk). With no sequence it is not drawn at all.
-    if state.seq.is_some() {
-        let close_r = Rect::from_center_size(
-            Pos2::new(doc.left() + title_w.max(badge_w) + 12.0, mid),
-            Vec2::splat(20.0),
+    // Split the chrome: with the options bar visible the document tab lives in
+    // `toolbar::options_bar`; the menu row keeps menus and window actions only.
+    // Painting the file name twice reads as an unfinished frame.
+    let options_visible = state.show_options
+        || !matches!(
+            state.tool,
+            crate::state::Tool::Hand | crate::state::Tool::Zoom
         );
-        let cr = ui.interact(
-            close_r,
-            ui.make_persistent_id("tb-close-doc"),
-            Sense::click(),
-        );
-        if cr.hovered() {
-            p.rect_filled(close_r, radius_control(), elev());
-        }
-        icons::paint(
-            &p,
-            close_r.shrink(6.0),
-            Glyph::Close,
-            if cr.hovered() { text() } else { muted() },
-        );
-        if cr.clicked() {
-            state.close();
-        }
-        cr.on_hover_text(crate::i18n::t!("关闭当前序列"));
-        x = close_r.right() + 14.0;
+    if options_visible {
+        x += 8.0;
     } else {
-        x = doc.right() + 12.0;
+        // 文档块：文件名 + 类型徽标 + 帧数/帧率（设计稿 `.doc{flex-direction:column}`）。
+        // 名称取序列根目录名；没有序列时写「未打开序列」，不摆假文件名。
+        //
+        // Doc block: file name + type badge + frame count / fps. The name comes from the
+        // sequence root; with no sequence it says "no sequence", never a fake file name.
+        let doc_name = state
+            .seq
+            .as_ref()
+            .and_then(|s| s.root.file_name().map(|n| n.to_string_lossy().to_string()))
+            .unwrap_or_else(|| crate::i18n::t!("未打开序列").to_string());
+        let doc_w = 200.0;
+        let doc = Rect::from_min_size(
+            Pos2::new(x, full.top() + 6.0),
+            Vec2::new(doc_w, full.height() - 12.0),
+        );
+        let name_galley = p.layout_no_wrap(doc_name.clone(), crate::theme::bold(13.0), text());
+        let title_w = name_galley.size().x;
+        p.galley(
+            Pos2::new(doc.left(), doc.center().y - 7.0),
+            name_galley,
+            text(),
+        );
+        // 副标题：`1,387 帧 · 24 fps · DC-S5M2`（设计稿 `.doc span`）。机型取当前帧 EXIF，
+        // 读不到就只写帧数与帧率——不编一个机型出来。
+        //
+        // Subtitle: `1,387 帧 · 24 fps · DC-S5M2` per the design's `.doc span`. The camera
+        // comes from the current frame's EXIF; with no model only frames and fps are shown.
+        let model = state
+            .exif
+            .get(state.selected)
+            .and_then(|e| e.model().map(|m| m.trim().to_owned()))
+            .filter(|m| !m.is_empty());
+        let badge_label = match &model {
+            Some(m) => format!(
+                "{} · {:.0} fps · {m}",
+                crate::i18n::tr_fmt("{} 帧", &[&state.frame_count()]),
+                state.output_fps
+            ),
+            None => crate::i18n::tr_fmt(
+                "{} 帧 · {} fps",
+                &[&state.frame_count(), &format!("{:.0}", state.output_fps)],
+            ),
+        };
+        let badge_w = p
+            .layout_no_wrap(badge_label.clone(), font(10.0), muted())
+            .size()
+            .x
+            + 8.0;
+        let badge = Rect::from_min_size(
+            Pos2::new(doc.left(), doc.center().y + 8.0),
+            Vec2::new(badge_w, 14.0),
+        );
+        // 元数据是纯文本，不是禁用按钮：去掉那块 pill 底。
+        //
+        // Metadata is plain text, not a disabled button: drop the pill fill.
+        p.text(
+            Pos2::new(badge.left(), badge.center().y),
+            Align2::LEFT_CENTER,
+            badge_label,
+            font(10.0),
+            muted(),
+        );
+        // 关闭序列 ×：走 `state.close()`（存工程后清空，不动磁盘素材）。没有序列时
+        // 不画空按钮——一个点了没东西可关的 × 就是假控件。
+        //
+        // Close-sequence X: calls `state.close()` (saves the project, clears in-memory
+        // state, never touches footage on disk). With no sequence it is not drawn at all.
+        if state.seq.is_some() {
+            let close_r = Rect::from_center_size(
+                Pos2::new(doc.left() + title_w.max(badge_w) + 12.0, mid),
+                Vec2::splat(20.0),
+            );
+            let cr = ui.interact(
+                close_r,
+                ui.make_persistent_id("tb-close-doc"),
+                Sense::click(),
+            );
+            if cr.hovered() {
+                p.rect_filled(close_r, radius_control(), elev());
+            }
+            icons::paint(
+                &p,
+                close_r.shrink(6.0),
+                Glyph::Close,
+                if cr.hovered() { text() } else { muted() },
+            );
+            if cr.clicked() {
+                state.close();
+            }
+            cr.on_hover_text(crate::i18n::t!("关闭当前序列"));
+            x = close_r.right() + 14.0;
+        } else {
+            x = doc.right() + 12.0;
+        }
     }
 
     // 右簇链左缘：先把导出→任务→齿轮的实测宽算出来，中段（模块下拉、工具簇）都从
@@ -1187,7 +1203,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             badge.center(),
             Align2::CENTER_CENTER,
             &tid,
-            font(9.0),
+            font(10.0),
             warn(),
         );
     }

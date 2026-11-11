@@ -403,8 +403,8 @@ impl AppState {
         // Tool rails / options bar: `None` (older file) lands on the fresh-launch default
         // (both folded), the same rule as the other switches here, so an upgrade never
         // makes a rail appear out of nowhere.
-        self.show_rails = s.show_rails.unwrap_or(false);
-        self.show_options = s.show_options.unwrap_or(false);
+        self.show_rails = s.show_rails.unwrap_or(true);
+        self.show_options = s.show_options.unwrap_or(true);
         self.flow_task = s
             .flow_task
             .as_deref()
@@ -533,8 +533,15 @@ impl AppState {
             only_changed: false,
             show_more_groups: false,
             canvas_fill: false,
-            show_options: false,
-            show_rails: false,
+            // 固定骨架默认开：选项栏（PS 的工具选项行）+ 左右工具轨。此前两者默认
+            // 收起，默认画面只剩「一条菜单行 + 黑底 + 几张浮卡」，读起来像个玩具工具
+            // 而不是一套软件（用户 2026-11-11 拿 Photoshop 作对照）。
+            //
+            // The fixed frame is on by default: the options bar (PS's tool-options row)
+            // and the two tool rails. With both folded the default view was one menu row,
+            // a black void and a few floating cards -- a gadget, not an application.
+            show_options: true,
+            show_rails: true,
             slider_drag: false,
             collapsed: default_collapsed(),
             panel_solo: false,
@@ -624,7 +631,7 @@ impl AppState {
             show_flow: false,
             flow_step: None,
             flow_task: crate::shell::flow::FlowTask::default(),
-            layout_switches: (true, false, false, false, false, "timelapse"),
+            layout_switches: (true, false, false, true, true, "timelapse"),
             error_modal: None,
             palette_open: false,
             palette_query: String::new(),

@@ -188,7 +188,13 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
     let hh = history_height(&hrows);
     let col_h = lh.max(rh);
     let total_h = col_h + GAP + hh;
-    let surface = Rect::from_min_size(Pos2::new(left_x, body_top), Vec2::new(inner_w, total_h));
+    // 工作区贯穿到底边：内容不足时留白落在**面板内部**（像邮件客户端的列表区），
+    // 而不是把面板缩在上半屏、下半屏露一大块背景。
+    //
+    // The work area runs to the bottom edge: spare space stays **inside** the panel
+    // (like a mail client's list), instead of a short panel over a bare lower half.
+    let panel_h = total_h.max(available.min(760.0));
+    let surface = Rect::from_min_size(Pos2::new(left_x, body_top), Vec2::new(inner_w, panel_h));
     card_face(&p, surface);
     // 两栏之间的竖分隔线。
     //
@@ -197,7 +203,7 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
     p.line_segment(
         [
             Pos2::new(vx, body_top + PAD),
-            Pos2::new(vx, body_top + col_h - PAD),
+            Pos2::new(vx, body_top + panel_h - PAD),
         ],
         Stroke::new(1.0, group_ring()),
     );

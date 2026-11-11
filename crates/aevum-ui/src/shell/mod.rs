@@ -368,6 +368,11 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // reads slightly brighter than the content, as in ACR.
     let bench = state.bench;
     let develop = bench == Bench::Develop;
+    // 画布页判定提前：贴边胶片条属于窗口骨架，必须在声明 Panel 时就知道该不该占这一行。
+    //
+    // Decide early whether this is the canvas page: the docked filmstrip is part of the
+    // window frame, so its Panel must be declared (or not) before the centre area.
+    let canvas_page = develop && flow_panel::current_page(state) == flow_panel::FlowPage::Develop;
     // 工具选项栏默认收起（设计稿没有这条带子）；换成任何非手型/缩放工具时自动出现，
     // 否则裁剪的「应用/取消」会无处可点。
     //
@@ -465,6 +470,22 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
                     legacy::film_strip(state, ui, &ctx);
                 });
         }
+    }
+
+    // 现代布局的胶片条同样贴边通栏：此前是画布左下角一枚圆角浮卡，右侧空一大片，
+    // 是「贴纸感」的最大来源。改成 Panel::bottom 后它和选项栏、工具轨、检查器一起
+    // 构成一副连续的窗口骨架——Photoshop / Capture One 的读法。
+    //
+    // The Modern filmstrip is a full-width bottom Panel too: a rounded card pinned to the
+    // lower-left corner with a big empty gap on its right was the main source of the
+    // "sticker" feel. As a Panel it joins the options bar, rails and inspector into one
+    // continuous window frame, the way Photoshop / Capture One read.
+    if develop && !legacy && canvas_page && layout.film.allowed() && state.frame_count() > 0 {
+        egui::Panel::bottom("film-strip")
+            .exact_size(timeline::card_height(state))
+            .resizable(false)
+            .frame(egui::Frame::NONE.fill(panel()))
+            .show(root, |ui| legacy::film_strip(state, ui, &ctx));
     }
 
     // 4 侧栏。同一侧「先声明的在外」，顺序即由外到内。
@@ -679,49 +700,6 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             }
         });
 
-    // 胶片卡：浮在画布左下角（设计稿 `.filmcard{left:12;bottom:12}`）。声明在
-    // 中央面板之后，所以它压在照片上；`Order::Middle` 让它高于画布、低于更晚绘制的
-    // 各类浮窗。锚点贴**画布**左缘与下缘：左侧那根 24px 工具轨一直伸到
-    // 窗口底（用窗口左缘会把轨底的设置钮压住），底部可能还有一条状态栏。
-    // 整页视图（项目库 / 设置）不摆——它们与「当前序列的帧」无关。
-    //
-    // The film card floats over the canvas' bottom-left corner (design `.filmcard`).
-    // Declared after the centre panel so it sits on the photo; `Order::Middle` keeps it
-    // above the canvas and below the later-painted floating windows. It hugs
-    // the **canvas'** left and bottom edges: the 24 px tool rail runs to the window
-    // bottom (the window edge would bury its foot button) and a status bar may sit
-    // below. Full-page benches get no card -- they have no "current sequence frame".
-    // 胶片卡（现代布局的左下浮卡）。老式改由 `legacy-film` 贴边 Panel 铺满底边，
-    // 这里再画一次就成了两条图片列表，故老式跳过。
-    //
-    // Filmstrip card for Modern (floating at the lower left). Legacy uses the
-    // `legacy-film` docked Panel across the bottom edge instead; painting both
-    // would duplicate the image list, so Legacy skips this one.
-    // 胶片卡只属于画布：序列管理 / 导出视频是整页流程页，左下角再压一张图片列表会
-    // 盖住它们自己的卡片内容（导出页的「渲染队列」底边就被它压掉一截）。
-    //
-    // The film card belongs to the canvas: the sequence / export flow pages are full
-    // pages, and a strip pinned to their lower-left corner covers their own content (it
-    // clipped the bottom of the export page's queue card).
-    if develop
-        && !legacy
-        && flow_page_now == flow_panel::FlowPage::Develop
-        && layout.film.allowed()
-        && state.frame_count() > 0
-    {
-        let card_h = timeline::card_height(state);
-        let pos = Pos2::new(centre.left() + 12.0, centre.bottom() - 12.0 - card_h);
-        // 卡宽不超过窗口一半：再宽就把画布切成两半，浮卡也就失去意义。
-        //
-        // Never wider than half the window: any wider splits the canvas and the
-        // floating card loses its point.
-        let max_w = (full.width() * 0.5).max(320.0);
-        egui::Area::new(egui::Id::unique("film-card"))
-            .order(egui::Order::Middle)
-            .fixed_pos(pos)
-            .show(&ctx, |ui| timeline::card(state, ui, &ctx, max_w, false));
-    }
-
     // 面板与画布之间那条呼吸带：与画布同底色的中性灰，面板内缘压一根发丝线。
     // 只画在文档区高度内，不越过菜单行 / 选项栏。
     //
@@ -787,7 +765,12 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
 /// 检查器浮卡的外距：设计稿 `.dock{top:12px;right:12px;width:300px}`。
 ///
 /// The inspector card's outer gutter, per the design's `.dock` (12 px from the edge).
-const DOCK_GUTTER: f32 = 12.0;
+// 贴边坞的外留白：0。此前 12px 把面板从窗口边缘推开，加上圆角与 24px 投影，
+// 整个检查器读成一枚「贴纸」而不是窗口结构（用户 2026-11-11 以 Photoshop 作对照）。
+//
+// Zero outer gutter: a 12 px gap plus rounded corners and a drop shadow made the
+// inspector read as a sticker rather than window structure.
+const DOCK_GUTTER: f32 = 0.0;
 
 /// 浮卡圆角（设计稿 `border-radius:12px`）。
 ///
@@ -804,8 +787,12 @@ const DOCK_GUTTER: f32 = 12.0;
 /// (via `radius_window()`) followed the corner-radius knob -- which is exactly the
 /// "sub-window doesn't respond" bug users reported twice. At the default
 /// `appearance.radius = 8`, `radius_panel()` is also 12, so the look is unchanged.
+/// 贴边面板不倒角：窗口结构是直角，圆角是浮卡的语法。
+///
+/// A docked panel has square corners: the window frame is rectangular, radii are
+/// the grammar of floating cards.
 fn dock_radius() -> f32 {
-    radius_panel()
+    0.0
 }
 /// 检查器浮卡的最小高度：约等于目标图显示到「色彩分级」分组的高度。
 ///
@@ -847,6 +834,46 @@ const DOCK_MIN_W: f32 = 300.0;
 /// column. A docked column takes layout width, so the photo always reads as "squeezed by
 /// the panel"; the card lets the photo fill the window and floats over its right sliver,
 /// growing only as tall as its content (beyond that it scrolls inside and stays put).
+/// 顶部固定骨架总高：菜单行 + 选项栏 + 流程条。浮卡的位置/高度都要从它起算，
+/// 否则选项栏一常显，检查器就压在选项栏上。
+///
+/// Total height of the fixed top chrome: menu row + options bar + flow strip. The
+/// inspector's position and height must start below it, or a permanently visible
+/// options bar gets covered.
+fn top_chrome_h(state: &AppState) -> f32 {
+    let mut h = MENU_H;
+    if state.bench == Bench::Develop {
+        let tool_needs_bar = !matches!(
+            state.tool,
+            crate::state::Tool::Hand | crate::state::Tool::Zoom
+        );
+        if state.show_options || tool_needs_bar {
+            h += OPTIONS_H;
+        }
+        if state.show_flow && state.frame_count() > 1 {
+            h += 34.0;
+        }
+    }
+    h
+}
+
+/// 底部固定骨架总高：胶片条 + 状态栏。检查器不能盖住它们。
+///
+/// Total height of the fixed bottom chrome: filmstrip + status bar. The inspector
+/// must not cover either.
+fn bottom_chrome_h(state: &AppState) -> f32 {
+    let mut h = 0.0;
+    if state.bench == Bench::Develop {
+        if state.layout.film.allowed() && state.frame_count() > 0 {
+            h += timeline::card_height(state);
+        }
+        if state.layout.status == StatusSlot::Bottom && status_bar_needed(state) {
+            h += STATUS_H;
+        }
+    }
+    h
+}
+
 fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: Rect) {
     let w = state.dock_w;
     // 高度上限：窗口高减顶栏、再减上下两道 12px（设计稿 `max-height:calc(100% - 24px)`
@@ -855,7 +882,9 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
     // Height cap: window height minus the top bar and the two 12 px gutters (the design's
     // `max-height: calc(100% - 24px)` is relative to `.dock`'s containing block; here that
     // block starts under the title bar).
-    let win_max_h = (full.height() - MENU_H - DOCK_GUTTER * 2.0).max(120.0);
+    let top_h = top_chrome_h(state);
+    let bottom_h = bottom_chrome_h(state);
+    let win_max_h = (full.height() - top_h - bottom_h).max(120.0);
     // `dock_h` 的 `0.0` 哨兵 = 跟随内容；拖过右下角手柄后是用户钉住的高度。
     // 传给 dock_panel 的 cap 决定 ScrollArea 上限：用户设过就用它，内容能一次
     // 显示到那么高，否则沿用窗口上限。
@@ -891,7 +920,7 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
         } else {
             full.left() + DOCK_GUTTER + rail_pad
         },
-        full.top() + MENU_H + DOCK_GUTTER,
+        full.top() + top_h,
     );
     // 位置每帧夹在窗口内（留 12px）：下沿按「钉住的高度或最小高度」估计，
     // 用户拖到角落也不会把整卡推出屏幕。
@@ -900,10 +929,10 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
     // edge is estimated from "pinned height or min height", so dragging into a corner
     // can never push the whole card off screen.
     let h_est = user_h.unwrap_or(DOCK_MIN_H);
-    let min_pos = Pos2::new(full.left() + DOCK_GUTTER, full.top() + MENU_H + DOCK_GUTTER);
+    let min_pos = Pos2::new(full.left() + DOCK_GUTTER, full.top() + top_h);
     let max_pos = Pos2::new(
         (full.right() - DOCK_GUTTER - w).max(min_pos.x),
-        (full.bottom() - DOCK_GUTTER - h_est).max(min_pos.y),
+        (full.bottom() - bottom_h - h_est).max(min_pos.y),
     );
     let pos = state
         .dock_pos
@@ -1109,7 +1138,7 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
             // the frame-start clamp used an estimate (content height is only known
             // after layout), so this makes the 12 px gutter exact.
             if let Some(p) = state.dock_pos {
-                let max_y = (full.bottom() - DOCK_GUTTER - card.height()).max(min_pos.y);
+                let max_y = (full.bottom() - bottom_h - card.height()).max(min_pos.y);
                 state.dock_pos = Some(Pos2::new(
                     p.x.clamp(min_pos.x, max_pos.x),
                     p.y.clamp(min_pos.y, max_y),
@@ -1134,13 +1163,7 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
             } else {
                 base
             };
-            let shadow = egui::epaint::Shadow {
-                offset: [0, 8],
-                blur: 24,
-                spread: 0,
-                color: Color32::from_black_alpha(115),
-            }
-            .as_shape(card, dock_radius());
+
             // 1px 内描边用 `group_ring()`：与参数分组卡同一枚环，卡片才有同一层
             // 材质感；外描边会在深底上多出一圈亮边。
             //
@@ -1154,10 +1177,11 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
                 Stroke::new(1.0, group_ring()),
                 StrokeKind::Inside,
             );
-            wide.set(
-                bg,
-                egui::Shape::Vec(vec![egui::Shape::Rect(shadow), egui::Shape::Rect(body)]),
-            );
+            // 贴边坞只有一道内描边；投影是浮卡语法，会让面板"浮"在画布上。
+            //
+            // A docked panel carries only an inner hairline; a shadow is floating-card
+            // grammar and lifts it off the window frame again.
+            wide.set(bg, egui::Shape::Rect(body));
             // 短窗内容被截断时，细滚动条在深底上几乎看不见：再叠一条 12px
             // 由透明到卡底色的渐隐带，明确告诉用户「下面还有分组」。内容能
             // 完整显示时不画，避免凭空多一条灰带。

@@ -322,8 +322,8 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
     p.rect_filled(
         strip,
         egui::CornerRadius {
-            nw: 12,
-            ne: 12,
+            nw: 0,
+            ne: 0,
             sw: 0,
             se: 0,
         },
@@ -487,7 +487,7 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
                 badge.center(),
                 Align2::CENTER_CENTER,
                 format!("{}", state.keyframes.len()),
-                font(9.0),
+                font(10.0),
                 if active { text() } else { muted() },
             );
         }

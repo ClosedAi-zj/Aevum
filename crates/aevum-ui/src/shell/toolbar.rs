@@ -191,7 +191,7 @@ pub(super) fn doc_tab(state: &mut AppState, p: &egui::Painter, ui: &mut Ui, rect
         .seq
         .as_ref()
         .map(|s| s.display_name())
-        .unwrap_or_else(|| "未打开序列".to_owned());
+        .unwrap_or_else(|| crate::i18n::t!("未打开序列").to_owned());
     let ink = if has_seq { text() } else { muted() };
     // 名字按可用像素宽度截：右边留着修改点与关闭叉的位置，中文名不再压到叉上。
     let title = theme::fit_text(p, &name, font(SIZE_LABEL), ink, rect.width() - 46.0);
@@ -263,6 +263,16 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let tab_painter = ui.painter().clone();
     doc_tab(state, &tab_painter, ui, tab_rect);
 
+    // 选项栏是**单行**：宽窗摆得下工具参数，窄窗只留骨架（文档页签 + 工具身份 +
+    // 缩放）。放不下不收，两端文字会直接压在一起（多尺寸扫描在 900/1080 实测
+    // 56 处）。模块参数在右侧检查器里本就有第二份入口，窄窗收掉不丢功能。
+    //
+    // The options bar is a **single row**: wide windows fit the tool parameters, narrow
+    // ones keep only the frame (document tab + tool identity + zoom). Without this tier
+    // the two ends overlap (the multi-size sweep measured 56 collisions at 900/1080).
+    // Those parameters already have a second home in the right-hand inspector.
+    let roomy = full.width() >= 1200.0;
+    let mut left_end = full.left();
     ui.horizontal_centered(|ui| {
         ui.add_space(208.0 + 10.0);
         group_gap(ui);
@@ -318,265 +328,272 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         );
         opt_sep(ui);
 
-        match state.module {
-            Module::Sequence => {
-                // 打开文件夹 / 重新扫描已是「文件」菜单里的常规项（Ctrl+O / F5），
-                // 摆在工具栏上等于给全局动作开第二个入口 —— 界面稿的工具栏
-                // 只回答"当前工具 + 它的参数 + 上下文"，文件操作归文件菜单。
-                let n = state.frame_count();
-                let valid = state.metrics.iter().filter(|m| m.is_some()).count();
-                let count_label = if n == 1 {
-                    crate::i18n::t!("单张照片").to_owned()
-                } else {
-                    crate::i18n::tr_fmt("{} 帧 · 可读 {}", &[&n, &valid])
-                };
-                ctx_seg(
-                    ui,
-                    "序列",
-                    &count_label,
-                    if state.issues.is_empty() {
-                        None
+        if roomy {
+            match state.module {
+                Module::Sequence => {
+                    // 打开文件夹 / 重新扫描已是「文件」菜单里的常规项（Ctrl+O / F5），
+                    // 摆在工具栏上等于给全局动作开第二个入口 —— 界面稿的工具栏
+                    // 只回答"当前工具 + 它的参数 + 上下文"，文件操作归文件菜单。
+                    let n = state.frame_count();
+                    let valid = state.metrics.iter().filter(|m| m.is_some()).count();
+                    let count_label = if n == 1 {
+                        crate::i18n::t!("单张照片").to_owned()
                     } else {
-                        Some(crate::i18n::tr_fmt("缺帧 {}", &[&state.issues.len()]))
-                    },
-                );
-            }
-            Module::Deflicker => {
-                ui.label(
-                    RichText::new(crate::i18n::t!("平滑窗口"))
-                        .size(SIZE_LABEL)
-                        .color(muted()),
-                );
-                let mut changed = bar_value(ui, |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut state.def_window)
-                            .range(3.0..=199.0)
-                            .speed(1.5)
-                            .fixed_decimals(0),
-                    )
-                    .changed()
-                });
-                ui.label(
-                    RichText::new(crate::i18n::t!("强度"))
-                        .size(SIZE_LABEL)
-                        .color(muted()),
-                );
-                changed |= bar_value(ui, |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut state.def_strength)
-                            .range(0.0..=150.0)
-                            .speed(1.0)
-                            .fixed_decimals(0)
-                            .suffix(" %"),
-                    )
-                    .changed()
-                });
-                if ui
-                    .checkbox(
-                        &mut state.def_multi,
-                        RichText::new(crate::i18n::t!("多遍")).size(SIZE_LABEL),
-                    )
-                    .changed()
-                {
-                    state.recompute_deflicker();
+                        crate::i18n::tr_fmt("{} 帧 · 可读 {}", &[&n, &valid])
+                    };
+                    ctx_seg(
+                        ui,
+                        "序列",
+                        &count_label,
+                        if state.issues.is_empty() {
+                            None
+                        } else {
+                            Some(crate::i18n::tr_fmt("缺帧 {}", &[&state.issues.len()]))
+                        },
+                    );
                 }
-                if ui
-                    .checkbox(
-                        &mut state.def_channels,
-                        RichText::new(crate::i18n::t!("分通道")).size(SIZE_LABEL),
-                    )
-                    .on_hover_text(crate::i18n::t!(
-                        "按 R/G/B 分别校正，治彩色闪烁；不勾只补亮度"
-                    ))
-                    .changed()
-                {
-                    state.recompute_deflicker();
-                }
-                if state.is_single() {
+                Module::Deflicker => {
                     ui.label(
-                        RichText::new(crate::i18n::t!("单张照片没有闪烁可去"))
+                        RichText::new(crate::i18n::t!("平滑窗口"))
                             .size(SIZE_LABEL)
-                            .color(dim()),
+                            .color(muted()),
                     );
-                } else if bar_button(ui, "重新分析").clicked() {
-                    state.recompute_deflicker();
-                }
-                if changed {
-                    let snapped = ((state.def_window.round() as i64).clamp(3, 199)) | 1;
-                    state.def_window = snapped as f64;
-                    state.recompute_deflicker();
-                }
-            }
-            Module::Develop => {
-                let current = state.preset.clone();
-                let mut chosen: Option<&'static str> = None;
-                egui::ComboBox::from_id_salt("preset-opt")
-                    // 预设名可能是「自定义」或者「副本 xxx」——后者是存下来的标识，
-                    // 交给 `tr_preset` 认前缀再翻。
-                    .selected_text(
-                        RichText::new(crate::i18n::tr_preset(&current))
-                            .size(SIZE_LABEL)
-                            .color(text()),
-                    )
-                    .width(118.0)
-                    .show_ui(ui, |ui| {
-                        combo_style(ui);
-                        for name in grade::PRESET_NAMES {
-                            if ui
-                                .add(egui::Button::selectable(
-                                    *name == state.preset,
-                                    crate::i18n::tr(name),
-                                ))
-                                .clicked()
-                            {
-                                chosen = Some(name);
-                            }
-                        }
-                    });
-                if let Some(name) = chosen {
-                    state.apply_preset(name);
-                }
-                if bar_button(ui, "自动").clicked() {
-                    state.auto_exposure(ui.ctx());
-                }
-                if bar_button(ui, "复位").clicked() {
-                    state.reset_params();
-                }
-                if let Some(note) = &state.auto_note {
-                    ui.label(
-                        RichText::new(theme::ellipsis(note, 30))
-                            .size(SIZE_LABEL)
-                            .color(accent()),
-                    );
-                }
-                opt_sep(ui);
-                // 上下文段（界面稿 .ctx）：粗体模块名 + 「N 项调整」小徽标。
-                // 徽标数的是偏离默认值的参数组数 —— 蒙版数已经画在画布顶栏，
-                // 这里只回答"调色动了多大片"。
-                let changed = state.changed_groups();
-                ctx_seg(
-                    ui,
-                    "显影",
-                    &crate::i18n::tr_fmt("{} 项调整", &[&changed]),
-                    None,
-                );
-            }
-            Module::Frame => {
-                for a in Aspect::ALL {
-                    if bar_chip(ui, a.label(), state.aspect == a).clicked() {
-                        state.set_aspect(a);
-                    }
-                }
-                group_gap(ui);
-                ui.checkbox(
-                    &mut state.grid,
-                    RichText::new(crate::i18n::t!("网格")).size(SIZE_LABEL),
-                );
-                ui.checkbox(
-                    &mut state.cross,
-                    RichText::new(crate::i18n::t!("十字")).size(SIZE_LABEL),
-                );
-                ui.checkbox(
-                    &mut state.split,
-                    RichText::new(crate::i18n::t!("对比")).size(SIZE_LABEL),
-                );
-            }
-            Module::Render => {
-                for (label, w, h) in [
-                    ("原生", 0u32, 0u32),
-                    ("4K", 3840, 2160),
-                    ("1080p", 1920, 1080),
-                ] {
-                    if bar_chip(ui, label, (state.output_w, state.output_h) == (w, h)).clicked() {
-                        state.output_w = w;
-                        state.output_h = h;
-                    }
-                }
-                group_gap(ui);
-                ui.label(
-                    RichText::new(crate::i18n::t!("帧率"))
-                        .size(SIZE_LABEL)
-                        .color(muted()),
-                );
-                bar_value(ui, |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut state.output_fps)
-                            .range(1.0..=120.0)
-                            .speed(1.0)
-                            .fixed_decimals(0)
-                            .suffix(" fps"),
-                    );
-                });
-                group_gap(ui);
-                egui::ComboBox::from_id_salt("codec-opt")
-                    .selected_text(
-                        RichText::new(state.codec.clone())
-                            .size(SIZE_LABEL)
-                            .color(text()),
-                    )
-                    .width(84.0)
-                    .show_ui(ui, |ui| {
-                        combo_style(ui);
-                        for codec in ["HEVC", "H.264", "ProRes"] {
-                            if ui
-                                .add(egui::Button::selectable(state.codec == codec, codec))
-                                .clicked()
-                            {
-                                state.codec = codec.to_owned();
-                            }
-                        }
-                    });
-                if bar_primary(ui, "导出当前帧").clicked() {
-                    state.request_export_confirm(ctx, true);
-                }
-            }
-            Module::Audio => {
-                if bar_button(ui, "选择音频…").clicked() {
-                    choose_audio(state);
-                }
-                match &state.render_audio {
-                    Some(path) => {
-                        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("音频");
-                        ui.label(
-                            RichText::new(theme::ellipsis(name, 24))
-                                .size(SIZE_LABEL)
-                                .color(text()),
+                    let mut changed = bar_value(ui, |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut state.def_window)
+                                .range(3.0..=199.0)
+                                .speed(1.5)
+                                .fixed_decimals(0),
                         )
-                        .on_hover_text(path.display().to_string());
-                        if bar_button(ui, "移除").clicked() {
-                            state.set_render_audio(None);
-                        }
-                        if bar_primary(ui, "带配乐导出").clicked() {
-                            state.render_mode = OutputMode::Video;
-                            state.export_copy = None;
-                            state.run_export(ctx);
-                        }
+                        .changed()
+                    });
+                    ui.label(
+                        RichText::new(crate::i18n::t!("强度"))
+                            .size(SIZE_LABEL)
+                            .color(muted()),
+                    );
+                    changed |= bar_value(ui, |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut state.def_strength)
+                                .range(0.0..=150.0)
+                                .speed(1.0)
+                                .fixed_decimals(0)
+                                .suffix(" %"),
+                        )
+                        .changed()
+                    });
+                    if ui
+                        .checkbox(
+                            &mut state.def_multi,
+                            RichText::new(crate::i18n::t!("多遍")).size(SIZE_LABEL),
+                        )
+                        .changed()
+                    {
+                        state.recompute_deflicker();
                     }
-                    None => {
+                    if ui
+                        .checkbox(
+                            &mut state.def_channels,
+                            RichText::new(crate::i18n::t!("分通道")).size(SIZE_LABEL),
+                        )
+                        .on_hover_text(crate::i18n::t!(
+                            "按 R/G/B 分别校正，治彩色闪烁；不勾只补亮度"
+                        ))
+                        .changed()
+                    {
+                        state.recompute_deflicker();
+                    }
+                    if state.is_single() {
                         ui.label(
-                            RichText::new(crate::i18n::t!("未选择配乐"))
+                            RichText::new(crate::i18n::t!("单张照片没有闪烁可去"))
                                 .size(SIZE_LABEL)
                                 .color(dim()),
                         );
+                    } else if bar_button(ui, "重新分析").clicked() {
+                        state.recompute_deflicker();
+                    }
+                    if changed {
+                        let snapped = ((state.def_window.round() as i64).clamp(3, 199)) | 1;
+                        state.def_window = snapped as f64;
+                        state.recompute_deflicker();
                     }
                 }
-            }
-            Module::Merge => {
-                // 合成模块的上下文条只讲「哪张成片」：五组的进度都走状态栏长任务格，
-                // 这里再放一份就成了第二处真相。
-                //
-                // The Merge context strip only names the current output: the five tools
-                // report progress through the status bar's long-task slot, and a second
-                // copy here would be a second source of truth.
-                let n = state.frame_count();
-                ui.label(
-                    RichText::new(crate::i18n::tr_fmt("{} 帧待合成", &[&n]))
-                        .size(SIZE_LABEL)
-                        .color(dim()),
-                );
+                Module::Develop => {
+                    let current = state.preset.clone();
+                    let mut chosen: Option<&'static str> = None;
+                    egui::ComboBox::from_id_salt("preset-opt")
+                        // 预设名可能是「自定义」或者「副本 xxx」——后者是存下来的标识，
+                        // 交给 `tr_preset` 认前缀再翻。
+                        .selected_text(
+                            RichText::new(crate::i18n::tr_preset(&current))
+                                .size(SIZE_LABEL)
+                                .color(text()),
+                        )
+                        .width(118.0)
+                        .show_ui(ui, |ui| {
+                            combo_style(ui);
+                            for name in grade::PRESET_NAMES {
+                                if ui
+                                    .add(egui::Button::selectable(
+                                        *name == state.preset,
+                                        crate::i18n::tr(name),
+                                    ))
+                                    .clicked()
+                                {
+                                    chosen = Some(name);
+                                }
+                            }
+                        });
+                    if let Some(name) = chosen {
+                        state.apply_preset(name);
+                    }
+                    if bar_button(ui, "自动").clicked() {
+                        state.auto_exposure(ui.ctx());
+                    }
+                    if bar_button(ui, "复位").clicked() {
+                        state.reset_params();
+                    }
+                    if let Some(note) = &state.auto_note {
+                        ui.label(
+                            RichText::new(theme::ellipsis(note, 30))
+                                .size(SIZE_LABEL)
+                                .color(accent()),
+                        );
+                    }
+                    opt_sep(ui);
+                    // 上下文段（界面稿 .ctx）：粗体模块名 + 「N 项调整」小徽标。
+                    // 徽标数的是偏离默认值的参数组数 —— 蒙版数已经画在画布顶栏，
+                    // 这里只回答"调色动了多大片"。
+                    let changed = state.changed_groups();
+                    ctx_seg(
+                        ui,
+                        "显影",
+                        &crate::i18n::tr_fmt("{} 项调整", &[&changed]),
+                        None,
+                    );
+                }
+                Module::Frame => {
+                    for a in Aspect::ALL {
+                        if bar_chip(ui, a.label(), state.aspect == a).clicked() {
+                            state.set_aspect(a);
+                        }
+                    }
+                    group_gap(ui);
+                    ui.checkbox(
+                        &mut state.grid,
+                        RichText::new(crate::i18n::t!("网格")).size(SIZE_LABEL),
+                    );
+                    ui.checkbox(
+                        &mut state.cross,
+                        RichText::new(crate::i18n::t!("十字")).size(SIZE_LABEL),
+                    );
+                    ui.checkbox(
+                        &mut state.split,
+                        RichText::new(crate::i18n::t!("对比")).size(SIZE_LABEL),
+                    );
+                }
+                Module::Render => {
+                    for (label, w, h) in [
+                        ("原生", 0u32, 0u32),
+                        ("4K", 3840, 2160),
+                        ("1080p", 1920, 1080),
+                    ] {
+                        if bar_chip(ui, label, (state.output_w, state.output_h) == (w, h)).clicked()
+                        {
+                            state.output_w = w;
+                            state.output_h = h;
+                        }
+                    }
+                    group_gap(ui);
+                    ui.label(
+                        RichText::new(crate::i18n::t!("帧率"))
+                            .size(SIZE_LABEL)
+                            .color(muted()),
+                    );
+                    bar_value(ui, |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut state.output_fps)
+                                .range(1.0..=120.0)
+                                .speed(1.0)
+                                .fixed_decimals(0)
+                                .suffix(" fps"),
+                        );
+                    });
+                    group_gap(ui);
+                    egui::ComboBox::from_id_salt("codec-opt")
+                        .selected_text(
+                            RichText::new(state.codec.clone())
+                                .size(SIZE_LABEL)
+                                .color(text()),
+                        )
+                        .width(84.0)
+                        .show_ui(ui, |ui| {
+                            combo_style(ui);
+                            for codec in ["HEVC", "H.264", "ProRes"] {
+                                if ui
+                                    .add(egui::Button::selectable(state.codec == codec, codec))
+                                    .clicked()
+                                {
+                                    state.codec = codec.to_owned();
+                                }
+                            }
+                        });
+                    if bar_primary(ui, "导出当前帧").clicked() {
+                        state.request_export_confirm(ctx, true);
+                    }
+                }
+                Module::Audio => {
+                    if bar_button(ui, "选择音频…").clicked() {
+                        choose_audio(state);
+                    }
+                    match &state.render_audio {
+                        Some(path) => {
+                            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("音频");
+                            ui.label(
+                                RichText::new(theme::ellipsis(name, 24))
+                                    .size(SIZE_LABEL)
+                                    .color(text()),
+                            )
+                            .on_hover_text(path.display().to_string());
+                            if bar_button(ui, "移除").clicked() {
+                                state.set_render_audio(None);
+                            }
+                            if bar_primary(ui, "带配乐导出").clicked() {
+                                state.render_mode = OutputMode::Video;
+                                state.export_copy = None;
+                                state.run_export(ctx);
+                            }
+                        }
+                        None => {
+                            ui.label(
+                                RichText::new(crate::i18n::t!("未选择配乐"))
+                                    .size(SIZE_LABEL)
+                                    .color(dim()),
+                            );
+                        }
+                    }
+                }
+                Module::Merge => {
+                    // 合成模块的上下文条只讲「哪张成片」：五组的进度都走状态栏长任务格，
+                    // 这里再放一份就成了第二处真相。
+                    //
+                    // The Merge context strip only names the current output: the five tools
+                    // report progress through the status bar's long-task slot, and a second
+                    // copy here would be a second source of truth.
+                    let n = state.frame_count();
+                    ui.label(
+                        RichText::new(crate::i18n::tr_fmt("{} 帧待合成", &[&n]))
+                            .size(SIZE_LABEL)
+                            .color(dim()),
+                    );
+                }
             }
         }
 
+        // 左侧工具参数实际用到的右缘：右段读数不能越过它。
+        //
+        // Measured right edge of the left controls; the readouts must not cross it.
+        left_end = ui.next_widget_position().x;
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             // 右端只留一枚 ghost 胶囊（界面稿 .opt-chip 的静置态）：透明底、dim 字，
             // 悬停才抬起。缩放、适应、网格、对比这些都是"怎么看这张图"，
@@ -671,11 +688,16 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         crate::i18n::tr_fmt("蒙版 {} 个", &[&state.params.masks.len()]),
         super::canvas::frame_size_text(state.resolution, bits),
     ];
-    for text_line in readings {
-        let g = p.layout_no_wrap(text_line, font(SIZE_SMALL), dim());
-        x -= g.size().x;
-        p.galley(Pos2::new(x, full.center().y - g.size().y * 0.5), g, dim());
-        x -= 14.0;
+    if roomy {
+        for text_line in readings {
+            let g = p.layout_no_wrap(text_line, font(SIZE_SMALL), dim());
+            x -= g.size().x;
+            if x < left_end + 8.0 {
+                continue;
+            }
+            p.galley(Pos2::new(x, full.center().y - g.size().y * 0.5), g, dim());
+            x -= 14.0;
+        }
     }
 }
 

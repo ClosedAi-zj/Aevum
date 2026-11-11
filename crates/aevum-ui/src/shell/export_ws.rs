@@ -35,17 +35,10 @@ const SIDE_W: f32 = 272.0;
 const BODY_X: f32 = 16.0;
 const BODY_TOP: f32 = 12.0;
 const BODY_BOTTOM: f32 = 16.0;
-
 /// 两列间距 12：`.ws-body{gap:12px}`。
 ///
 /// Column gap.
 const GAP: f32 = 12.0;
-
-/// 卡片圆角 12：`--rc`。
-///
-/// Card radius.
-const CARD_R_U8: u8 = 12;
-const CARD_R: f32 = CARD_R_U8 as f32;
 
 /// 队列卡头高 30（设计稿表头 28，加一点呼吸给「队列」+ 计数）。
 ///
@@ -206,9 +199,24 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, ctx: &egui::Context)
         );
     }
 
+    // 内容驱动高度：两栏按「行数」长，不再拉满整窗。以前队列里只有一段任务，
+    // 却挂在一张近 800px 高的空框里——整页最像「半成品」的地方。
+    //
+    // Content-driven height: the two columns grow with the row count instead of
+    // stretching to the window. A single queue entry inside an ~800 px empty frame
+    // was the most half-finished-looking part of the whole app.
+    let body_top = strip.bottom() + BODY_TOP;
+    let avail_h = (full.bottom() - BODY_BOTTOM - body_top).max(0.0);
+    // 一整块工作区贯穿到窗口底边：内容驱动高度试过，画面变成「上半屏一块板、
+    // 下半屏一片黑」，比铺满更头重脚轻。留 16px 底边距，上限 760 防止超高屏拉空。
+    //
+    // The single work area runs to the window's bottom edge: a content-driven height
+    // left the lower half of the screen empty and read as worse-balanced. Cap at 760
+    // so very tall windows do not stretch it into a void.
+    let wanted_h = avail_h.min(760.0);
     let body = Rect::from_min_max(
-        Pos2::new(full.left() + BODY_X, strip.bottom() + BODY_TOP),
-        Pos2::new(full.right() - BODY_X, full.bottom() - BODY_BOTTOM),
+        Pos2::new(full.left() + BODY_X, body_top),
+        Pos2::new(full.right() - BODY_X, body_top + wanted_h),
     );
     if body.width() <= SIDE_W + GAP || body.height() <= 0.0 {
         return;
@@ -216,6 +224,27 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, ctx: &egui::Context)
     let side_left = body.right() - SIDE_W;
     let left = Rect::from_min_max(body.left_top(), Pos2::new(side_left - GAP, body.bottom()));
     let right = Rect::from_min_max(Pos2::new(side_left, body.top()), body.right_bottom());
+    // 两栏合成**一块工作区**：以前各画各的圆角卡面，中间留 12px 缝，读起来是
+    // 两块并排的积木。现在一张直角底板 + 一道竖分隔线，是 Photoshop / Capture One
+    // 的面板分栏语法。
+    //
+    // One work area instead of two rounded cards with a 12 px gutter: a square backing
+    // panel plus a vertical hairline is how pro apps divide docked columns.
+    p.rect_filled(body, 0.0, panel());
+    p.rect_stroke(
+        body,
+        0.0,
+        Stroke::new(1.0, group_ring()),
+        StrokeKind::Inside,
+    );
+    let divider_x = (side_left - GAP * 0.5).round() + 0.5;
+    p.line_segment(
+        [
+            Pos2::new(divider_x, body.top() + 8.0),
+            Pos2::new(divider_x, body.bottom() - 8.0),
+        ],
+        Stroke::new(1.0, group_ring()),
+    );
     queue_card(state, ui, left);
     settings_card(state, ui, ctx, right);
 }
@@ -240,13 +269,6 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
         rect.left_top(),
         Vec2::new(rect.width(), content_h.min(rect.height())),
     );
-    p.rect_filled(card, CARD_R, panel());
-    p.rect_stroke(
-        card,
-        CARD_R,
-        Stroke::new(1.0, group_ring()),
-        StrokeKind::Inside,
-    );
 
     // 卡头：比卡面亮一档的窄带，只圆上面两只角。
     //
@@ -255,8 +277,8 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
     p.rect_filled(
         band,
         CornerRadius {
-            nw: CARD_R_U8,
-            ne: CARD_R_U8,
+            nw: 0,
+            ne: 0,
             sw: 0,
             se: 0,
         },
@@ -478,13 +500,6 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
 /// pinned to the card's bottom.
 fn settings_card(state: &mut AppState, ui: &mut Ui, ctx: &egui::Context, rect: Rect) {
     let p = ui.painter().clone();
-    p.rect_filled(rect, CARD_R, panel());
-    p.rect_stroke(
-        rect,
-        CARD_R,
-        Stroke::new(1.0, group_ring()),
-        StrokeKind::Inside,
-    );
 
     let x0 = rect.left() + SIDE_PAD;
     let x1 = rect.right() - SIDE_PAD;
