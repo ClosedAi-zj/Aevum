@@ -131,8 +131,14 @@ pub(super) fn page_head(
     // two line segments so it never depends on a chevron glyph the default font may lack.
     let back_label = crate::i18n::t!("返回画布");
     let galley = p.layout_no_wrap(back_label.to_string(), font(SIZE_SMALL), text());
+    // 左端内容从**内容列**左缘起排（不是窗口左缘）：否则标题贴窗口最左、按钮贴列右缘，
+    // 中间空一大片，比改之前还别扭。
+    //
+    // The left cluster starts at the **content column's** left edge, not the window's:
+    // otherwise the title hugs the window edge while the actions sit at the column's
+    // right edge, leaving a worse hole than before.
     let chip = Rect::from_min_size(
-        Pos2::new(full.left() + 12.0, full.center().y - 13.0),
+        Pos2::new(col_left, full.center().y - 13.0),
         Vec2::new(galley.size().x + 34.0, 26.0),
     );
     let resp = ui.interact(
