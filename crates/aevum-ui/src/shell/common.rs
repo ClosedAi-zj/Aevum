@@ -164,7 +164,7 @@ pub(super) fn side_note(ui: &mut Ui, text: &str) {
 ///
 /// Whitespace only between groups, no boxes (macOS unified-toolbar convention).
 pub(super) fn group_gap(ui: &mut Ui) {
-    ui.add_space(18.0);
+    ui.add_space(10.0);
 }
 
 /// 一张分组卡（设计稿 `.grp`）：12px 内距、8px 圆角、6% 白环、卡与卡之间 8px。
@@ -176,12 +176,19 @@ pub(super) fn group_gap(ui: &mut Ui) {
 /// card-in-card read as one block; leaving the header outside turns the card into a
 /// strip of body that is visually unrelated to its title.
 pub(super) fn group_card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    ui.add_space(8.0);
+    // ACR 连续面板口径（视觉验收 2026-11-11：卡中卡四件套=割裂感首因）：
+    // 去 1px 白环、圆角收到 4、内外底色差减半（group_fill 已按验收调），
+    // 组间缝 18→10——组仍可辨（靠底色差），但整列读作一张连续面板。
+    //
+    // ACR continuous-panel convention (visual audit 2026-11-11: the card-in-card
+    // quartet was the top fragmentation source): drop the 1 px ring, radius 8→4,
+    // halve the fill contrast, group gap 18→10. Groups stay legible through the fill
+    // shift alone; the column reads as one continuous panel.
+    ui.add_space(10.0);
     egui::Frame::NONE
         .fill(theme::group_fill())
-        .stroke(egui::Stroke::new(1.0, theme::group_ring()))
         .corner_radius((theme::radius_panel() - 4.0).max(2.0))
-        .inner_margin(egui::Margin::same(12))
+        .inner_margin(egui::Margin::same(10))
         .show(ui, add)
         .inner
 }

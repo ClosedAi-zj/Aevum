@@ -962,7 +962,7 @@ pub fn group_fill() -> Color32 {
     // (42,45,50). That 5-9 step blue gap is the measured "grey, not like the mockup"
     // difference -- mixing toward white can never add hue.
     if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Graphite {
-        return Color32::from_rgb(0x2A, 0x2D, 0x32);
+        return Color32::from_rgb(0x28, 0x2B, 0x30);
     }
     // PS 灰的分组面：比面板亮半档（#3E3E3E），PS 靠这条微差 + 无边框分隔分组。
     //
