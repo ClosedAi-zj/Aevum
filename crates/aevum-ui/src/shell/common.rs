@@ -1381,9 +1381,9 @@ pub(super) fn band_row<K: std::hash::Hash + std::fmt::Debug>(
             Stroke::new(
                 1.0,
                 if ui.rect_contains_pointer(field) {
-                    border_strong()
+                    accent().gamma_multiply(0.7)
                 } else {
-                    divider()
+                    border()
                 },
             ),
             egui::StrokeKind::Inside,
