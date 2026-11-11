@@ -166,10 +166,91 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
     let rows = list_rows(state);
     let qrows = queue_rows(state);
     let hrows = history_rows(state);
-    let left_h = task_cards(state, ui, left, &rows, &qrows);
-    let right_h = aside(state, ui, right);
-    let hist_top = body_top + left_h.max(right_h) + GAP;
+
+    // 整页只留**一块面**：以前左列三段、右列两段、底部历史各画自己的圆角卡，中间还留
+    // 12px 缝，读起来像一堆漂浮的方块（用户 2026-11-11「这种一块一块的好看吗」）。
+    // 现在一张底板罩住全部内容，段与段之间只用发丝线分区。
+    //
+    // One surface for the whole page: the three left sections, the two right ones and the
+    // history used to paint their own rounded cards with 12 px gaps between them, which
+    // read as a pile of floating blocks (user, 2026-11-11). A single panel now backs
+    // everything and sections are separated by hairlines only.
+    let lh = left_height(&rows, &qrows);
+    let rh = aside_height(&p, right.width());
+    let hh = history_height(&hrows);
+    let col_h = lh.max(rh);
+    let total_h = col_h + GAP + hh;
+    let surface = Rect::from_min_size(Pos2::new(left_x, body_top), Vec2::new(inner_w, total_h));
+    card_face(&p, surface);
+    // 两栏之间的竖分隔线。
+    //
+    // The vertical rule between the two columns.
+    let vx = left.right() + GAP * 0.5;
+    p.line_segment(
+        [
+            Pos2::new(vx, body_top + PAD),
+            Pos2::new(vx, body_top + col_h - PAD),
+        ],
+        Stroke::new(1.0, group_ring()),
+    );
+    // 历史卡之上那道横分隔线。
+    //
+    // The horizontal rule above the history block.
+    rule(
+        &p,
+        left_x + PAD,
+        left_x + inner_w - PAD,
+        body_top + col_h + GAP * 0.5,
+        group_ring(),
+    );
+
+    let hist_top = body_top + col_h + GAP;
+    task_cards(state, ui, left, &rows, &qrows);
+    aside(state, ui, right);
     history(ui, left_x, inner_w, hist_top, &hrows);
+}
+
+/// 左列三段的总高（当前任务 + 队列行 + 队列顺序）。
+///
+/// Total height of the left stack: running card, queue rows, queue order.
+fn left_height(rows: &[TaskRow], qrows: &[QueueRow]) -> f32 {
+    RUN_H + rows.len() as f32 * TROW_H + PAD * 2.0 + 24.0 + 8.0 + qrows.len() as f32 * QLINE_H
+}
+
+/// 右列两段的总高（任务摘要 + 通知与重试 + 底部说明）。
+///
+/// 底部说明是**自动换行**的小字，行数随语言和列宽变（英文那句在 948px 下排三行），
+/// 所以必须用同一个画笔、同一个宽度实测——写死常量会让下面的历史段正好压在这段
+/// 说明上（多尺寸扫描实测重叠 40.6px）。
+///
+/// Total height of the right column: summary, notifications, and the trailing note.
+///
+/// That note wraps, and how many lines it takes depends on the language and the column
+/// width (the English sentence runs to three lines at 948 px), so it must be measured
+/// with the same painter and width; a constant let the history block land right on top
+/// of it (the multi-size sweep measured 40.6 px of overlap).
+fn aside_height(p: &Painter, width: f32) -> f32 {
+    const SUM_H: f32 = PAD * 2.0 + 24.0 + 8.0 + 48.0 * 2.0 + 8.0 + 10.0 + 18.0;
+    const NOTIFY_H: f32 = PAD * 2.0 + 24.0 + 8.0 + 3.0 * 32.0;
+    let info =
+        crate::i18n::t!("任务卡与导出队列共用同一状态源；渲染在后台继续，切换工作台不会中断。");
+    let info_h = p
+        .layout(
+            info.to_owned(),
+            font(SIZE_MICRO),
+            dim(),
+            (width - 2.0 * PAD).max(80.0),
+        )
+        .size()
+        .y;
+    SUM_H + GAP + NOTIFY_H + GAP + info_h + PAD
+}
+
+/// 历史段高。
+///
+/// Height of the history block.
+fn history_height(rows: &[HistoryRow]) -> f32 {
+    PAD * 2.0 + 24.0 + 8.0 + rows.len() as f32 * HROW_H
 }
 
 /// 左列任务卡栈，返回这一列实际用到的高度。
@@ -193,11 +274,6 @@ fn task_cards(
     // are three slices of one queue, but each used to paint its own face and read as
     // three unrelated modules (user, 2026-11-11). One face spans them all; sections are
     // separated by a hairline only.
-    let total = RUN_H + list_h + q_h;
-    card_face(
-        &ui.painter().clone(),
-        Rect::from_min_size(rect.left_top(), Vec2::new(rect.width(), total)),
-    );
     run_card(
         state,
         ui,
@@ -709,7 +785,6 @@ fn aside(state: &AppState, ui: &mut Ui, rect: Rect) -> f32 {
     let p = ui.painter().clone();
     let sum_h = PAD * 2.0 + 24.0 + 8.0 + 48.0 * 2.0 + 8.0 + 10.0 + 18.0;
     let summary = Rect::from_min_size(rect.left_top(), Vec2::new(rect.width(), sum_h));
-    card_face(&p, summary);
     let x0 = summary.left() + PAD;
     let x1 = summary.right() - PAD;
     p.text(
@@ -808,7 +883,6 @@ fn aside(state: &AppState, ui: &mut Ui, rect: Rect) -> f32 {
         Pos2::new(rect.left(), top),
         Vec2::new(rect.width(), notify_h),
     );
-    card_face(&p, notify);
     p.text(
         Pos2::new(x0, notify.top() + PAD + 12.0),
         Align2::LEFT_CENTER,
@@ -911,7 +985,6 @@ fn history(ui: &mut Ui, left: f32, width: f32, top: f32, rows: &[HistoryRow]) {
     let p = ui.painter().clone();
     let h = PAD * 2.0 + 24.0 + 8.0 + rows.len() as f32 * HROW_H;
     let rect = Rect::from_min_size(Pos2::new(left, top), Vec2::new(width, h));
-    card_face(&p, rect);
     let x0 = rect.left() + PAD;
     let x1 = rect.right() - PAD;
     p.text(

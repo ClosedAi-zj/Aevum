@@ -101,14 +101,6 @@ pub(super) fn page_head(
         Vec2::new(ui.max_rect().width(), HEAD_H),
     );
     let p = ui.painter().clone();
-    p.rect_filled(full, 0.0, header());
-    p.line_segment(
-        [
-            Pos2::new(full.left(), full.bottom() - 0.5),
-            Pos2::new(full.right(), full.bottom() - 0.5),
-        ],
-        Stroke::new(1.0, Color32::from_white_alpha(20)),
-    );
 
     // 内容列：正文列宽上限再扣两侧内距，且不允许宽出窗口可用区。
     //
@@ -119,6 +111,24 @@ pub(super) fn page_head(
         .max(120.0);
     let col_left = full.center().x - col_w * 0.5;
     let col_right = col_left + col_w;
+    let band = Rect::from_min_size(
+        Pos2::new(col_left, full.top()),
+        Vec2::new(col_w, full.height()),
+    );
+
+    // 页头底色只铺**内容列**（不是整窗）：铺满整窗时，内容明明收在中段，两侧却各留
+    // 一大条同色横带，读起来就是「还是很宽」（用户 2026-11-11 二次反馈）。
+    //
+    // The head fill spans the **content column** only, not the window: a full-width band
+    // with its content stuck in the middle reads as "still too wide" (user follow-up).
+    p.rect_filled(band, 0.0, header());
+    p.line_segment(
+        [
+            Pos2::new(band.left(), band.bottom() - 0.5),
+            Pos2::new(band.right(), band.bottom() - 0.5),
+        ],
+        Stroke::new(1.0, Color32::from_white_alpha(20)),
+    );
 
     // 返回画布：帧表 / 导出 / 任务三个整页工作台既没有侧栏也没有画布，此前只能翻
     // 菜单行「视图」才能切回显影，用户 2026-11-11 直接报「进入这个界面无法退出」。
