@@ -19,8 +19,8 @@ use crate::platform;
 use crate::state::{AppState, UpdatePhase};
 use crate::theme::{self, *};
 use egui::{
-    Align, Align2, Color32, Context, IdSalt, Layout, Pos2, Rect, RichText, ScrollArea, Sense,
-    Stroke, Ui, Vec2,
+    Align, Align2, Color32, Context, Layout, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, Ui,
+    Vec2,
 };
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
@@ -103,6 +103,20 @@ fn remember_pos(state: &mut AppState, ctx: &Context, key: &str, rect: Rect) {
 /// 此前这里写死 `corner_radius(0.0)`：方角标题条压在圆角窗体上，窗的上两角
 /// 被削成直角、下两角还是圆的——四个角弧度不一致就是这么来的。上两角取
 /// `radius_window()`（与窗体同源），下两角归零交给窗体本体，整窗一套弧度。
+fn title_frame() -> egui::Frame {
+    let r = radius_window() as u8;
+    // 标题带走 header()（与画布顶栏同源）：窗口主体是最亮的 bg()，
+    // 标题带比它暗一档才读得出「这是标题不是内容」（R1 重建时已定）。
+    egui::Frame::new()
+        .fill(header())
+        .corner_radius(egui::CornerRadius {
+            nw: r,
+            ne: r,
+            sw: 0,
+            se: 0,
+        })
+        .inner_margin(egui::Margin::symmetric(12, 8))
+}
 
 /// 子窗口关闭钮的 Windows 惯例化（第 1 轮）：egui 的 ✕ 只有 ~20px 且 hover
 /// 仅变笔画色——视觉验收点名「叉的大小与颜色不合理」。此处在 Tooltip 层
@@ -154,28 +168,6 @@ pub(crate) fn window_ids() -> [egui::Id; 5] {
         egui::Id::new("win-about"),
         egui::Id::new("win-update"),
     ]
-}
-
-fn title_frame() -> egui::Frame {
-    let r = radius_window() as u8;
-    egui::Frame::new()
-        // 标题带走 header()（与画布顶栏同源）：窗口本体是最亮的 bg()，
-        // 标题带比它暗一档才读得出「这是标题不是内容」——全应用统一的
-        // 头部带语言。panel() 与 bg() 只差两度，标题与内容糊成一片。
-        //
-        // The title band takes header() (same source as the canvas top bars): the
-        // window body is the lightest material, so the band must sit one step darker
-        // to read as *title, not content* -- the app-wide header-band language.
-        // panel() and bg() differ by only two steps and blurred together.
-        .fill(header())
-        .stroke(Stroke::NONE)
-        .corner_radius(egui::CornerRadius {
-            nw: r,
-            ne: r,
-            sw: 0,
-            se: 0,
-        })
-        .inner_margin(egui::Margin::symmetric(12, 8))
 }
 
 /// 窗内分节的软分割线：`theme::soft_rule` 的 UI 包装，占 9px 高、线居中。
@@ -364,7 +356,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
     let default_size = theme::win_default(Vec2::new(WIN_MARKET_W, WIN_MARKET_H), vp.size());
     let min_size = theme::win_min(Vec2::new(WIN_MARKET_MIN_W, WIN_MARKET_MIN_H), vp.size());
     let win = egui::Window::new(crate::i18n::t!("插件"))
-        .id(egui::Id::new("win-plugins"))
+        .id(window_ids()[0])
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -974,7 +966,7 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
         Vec2::new(WIN_LOOK_W, WIN_LOOK_H),
     );
     let win = egui::Window::new(crate::i18n::t!("外观与布局"))
-        .id(egui::Id::new("win-look"))
+        .id(window_ids()[1])
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -1407,7 +1399,7 @@ pub(super) fn presets_window(state: &mut AppState, ctx: &Context) {
         Vec2::new(WIN_PRESETS_W, WIN_PRESETS_H),
     );
     let win = egui::Window::new(crate::i18n::t!("预设与快照"))
-        .id(egui::Id::new("win-presets"))
+        .id(window_ids()[2])
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -1588,7 +1580,7 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
         Vec2::new(WIN_ABOUT_W, WIN_ABOUT_H),
     );
     let win = egui::Window::new(crate::i18n::t!("快捷键与关于"))
-        .id(egui::Id::new("win-about"))
+        .id(window_ids()[3])
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -1715,7 +1707,7 @@ pub(super) fn update_window(state: &mut AppState, ctx: &Context) {
     let default_size = theme::win_default(Vec2::new(WIN_UPDATE_W, WIN_UPDATE_H), vp.size());
     let min_size = theme::win_min(Vec2::new(WIN_UPDATE_MIN_W, WIN_UPDATE_MIN_H), vp.size());
     let win = egui::Window::new(crate::i18n::t!("检查更新"))
-        .id(egui::Id::new("win-update"))
+        .id(window_ids()[4])
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
