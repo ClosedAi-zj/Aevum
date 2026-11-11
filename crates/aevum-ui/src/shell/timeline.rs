@@ -1028,16 +1028,29 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                         }
 
                         if i == state.selected {
-                            // 选中 = 2px 强调色外环（设计 `.th.on`）。
-                            //
-                            // Selected = the design's 2 px accent ring.
+                            // 选中（R4，ACR 胶片条读法）：白 2px 环 + 底部 2px
+                            // 强调条——白环在暗底上比强调色环更「实」，强调条
+                            // 与页签下划线同一语言。
                             p.rect_stroke(
                                 cell.expand(1.0),
                                 7.0,
-                                Stroke::new(2.0, accent()),
+                                Stroke::new(2.0, Color32::WHITE),
                                 StrokeKind::Inside,
                             );
+                            p.rect_filled(
+                                Rect::from_min_max(
+                                    Pos2::new(cell.left() + 6.0, cell.bottom() - 2.0),
+                                    Pos2::new(cell.right() - 6.0, cell.bottom()),
+                                ),
+                                1.0,
+                                accent(),
+                            );
                         } else if cell_resp.hovered() {
+                            p.rect_stroke(
+                                cell,
+                                6.0,
+                                Stroke::new(1.0, Color32::from_white_alpha(102)),
+                                StrokeKind::Inside,
                             p.rect_stroke(
                                 cell,
                                 6.0,
