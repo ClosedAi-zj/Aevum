@@ -1248,8 +1248,11 @@ fn transport(state: &mut AppState, ui: &mut Ui, rect: Rect) {
             },
         );
         idx += 1;
-        if enabled && resp.hovered() {
-            p.rect_filled(r, radius_control(), elev());
+        // R10：hover +1 档、按下 -1 档（press）——与全站按钮三态同语言。
+        if enabled && resp.is_pointer_button_down_on() {
+            p.rect_filled(r, radius_control(), press());
+        } else if enabled && resp.hovered() {
+            p.rect_filled(r, radius_control(), elev_hover());
         }
         icons::paint(
             &p,
