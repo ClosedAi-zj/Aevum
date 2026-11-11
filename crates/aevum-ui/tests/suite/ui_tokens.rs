@@ -751,6 +751,144 @@ fn text_never_overlaps_in_any_module() {
     );
 }
 
+/// 多尺寸 / 多页面扫描：同一条水平线上不许有文字互相压着。
+///
+/// 起因（用户 2026-11-11「还有需要自己自行检查，不允许再出现这种情况」）：
+/// 上面那条判据只画 1600x1000 一档，于是「模块下拉从来没上屏」「900px 下缩放
+/// 百分比与任务胶囊连写成『任务%』」两个真缺陷在六关门禁里全绿——判据只在一种
+/// 尺寸成立就是假绿。这里补上 900/1080/1200/1440/1920 五档，并把三张整页工作台
+/// 与三步流程页、老式布局一起扫。
+///
+/// Multi-size / multi-page sweep: no two texts may share a row and overlap.
+///
+/// Motivation (user, 2026-11-11: "check it yourself, this must not happen again"):
+/// the judgement above only ever drew 1600x1000, so "the module dropdown never reached
+/// the screen" and "at 900 px the zoom readout glues onto the tasks pill" both passed
+/// all six gates. A judgement that holds at one size only is a false green. This one
+/// adds 900/1080/1200/1440/1920 and also sweeps the three full-page benches, the three
+/// flow steps and Legacy.
+#[test]
+fn text_never_overlaps_across_window_sizes() {
+    use aevum_ui::layout::Scheme;
+    use aevum_ui::shell::Bench;
+    use aevum_ui::state::{AppState, Module};
+
+    let _lang_guard = crate::common::i18n_guard();
+    let sizes = [
+        (900.0f32, 600.0f32),
+        (1080.0, 720.0),
+        (1200.0, 800.0),
+        (1440.0, 900.0),
+        (1920.0, 1080.0),
+    ];
+    let mut hits: Vec<String> = Vec::new();
+    for lang in [aevum_ui::i18n::Lang::ZH, aevum_ui::i18n::Lang::EN] {
+        aevum_ui::i18n::set(lang);
+        for (w, h) in sizes {
+            let ctx = egui::Context::default();
+            aevum_ui::theme::apply(&ctx, 1.0);
+            let mut state = AppState::demo();
+            state.install_demo_textures(&ctx);
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(w, h),
+                )),
+                max_texture_side: Some(8192),
+                ..Default::default()
+            };
+            let tag = format!("{:?}/{w:.0}x{h:.0}", lang);
+            for module in Module::ALL {
+                state.bench = Bench::Develop;
+                state.flow_step = None;
+                state.module = module;
+                sweep_frame(
+                    &ctx,
+                    &input,
+                    &mut state,
+                    &format!("{tag}/develop/{module:?}"),
+                    &mut hits,
+                );
+            }
+            for b in [Bench::Table, Bench::Export, Bench::Tasks] {
+                state.bench = b;
+                sweep_frame(&ctx, &input, &mut state, &format!("{tag}/{b:?}"), &mut hits);
+            }
+            state.bench = Bench::Develop;
+            for step in 0..3usize {
+                state.flow_step = Some(step);
+                sweep_frame(
+                    &ctx,
+                    &input,
+                    &mut state,
+                    &format!("{tag}/flow-step-{step}"),
+                    &mut hits,
+                );
+            }
+            state.flow_step = None;
+            state.layout = state.layout.with_scheme(Scheme::Legacy);
+            sweep_frame(
+                &ctx,
+                &input,
+                &mut state,
+                &format!("{tag}/legacy"),
+                &mut hits,
+            );
+            state.layout = state.layout.with_scheme(Scheme::Modern);
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "多尺寸扫描发现 {} 处文字互压：\n{}\n\n900px 一档最容易出问题：中段放不下时\
+         要按阶梯收（下拉 → 缩放 → 工具簇），不是让它们挤在一起。",
+        hits.len(),
+        hits.join("\n"),
+    );
+}
+
+/// 单帧重叠检测（`text_never_overlaps_across_window_sizes` 的取样单元）。
+///
+/// One-frame overlap probe, the sampling unit of the sweep above.
+fn sweep_frame(
+    ctx: &egui::Context,
+    input: &egui::RawInput,
+    state: &mut aevum_ui::state::AppState,
+    tag: &str,
+    hits: &mut Vec<String>,
+) {
+    // 三帧热身：egui 首帧拿不到 galley 尺寸，按实测宽度排的段落会在那一帧挤住；
+    // 面板宽度也要几帧才收敛。用户看不见这些过渡。
+    //
+    // Three warm-up frames: egui has no galley sizes on the first frame and panel widths
+    // need a few frames to converge. None of those transients are ever on screen.
+    for _ in 0..3 {
+        let mut warm = ctx.run_ui(input.clone(), |ui| aevum_ui::shell::ui(state, ui));
+        warm.textures_delta.clear();
+    }
+    let mut out = ctx.run_ui(input.clone(), |ui| aevum_ui::shell::ui(state, ui));
+    let mut rows = Vec::new();
+    collect_text_rects(&out.shapes, &mut rows);
+    out.textures_delta.clear();
+    rows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    for i in 0..rows.len() {
+        for j in (i + 1)..rows.len() {
+            if (rows[i].0 - rows[j].0).abs() > 3.0 {
+                break;
+            }
+            let overlap = rows[i].2.min(rows[j].2) - rows[i].1.max(rows[j].1);
+            let shadow = rows[i].3 == rows[j].3
+                && (rows[i].1 - rows[j].1).abs() <= 1.5
+                && (rows[i].0 - rows[j].0).abs() <= 1.5;
+            if overlap > 1.0 && !shadow {
+                hits.push(format!(
+                    "{tag} y={:.1}  「{}」×「{}」  重叠 {:.1}px",
+                    rows[i].0, rows[i].3, rows[j].3, overlap
+                ));
+            }
+        }
+    }
+}
+
 fn collect_text_rects(
     shapes: &[egui::epaint::ClippedShape],
     out: &mut Vec<(f32, f32, f32, String)>,

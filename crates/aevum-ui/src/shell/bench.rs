@@ -74,12 +74,28 @@ pub(super) const HEAD_H: f32 = 64.0;
 pub(super) const TOOLS_H: f32 = 36.0;
 
 /// 画整页视图的页头（返回块 + 2px 强调闸门 + 15px 标题 + 10px 副标题），
-/// 返回「页头矩形 + 返回块是否被点」；右侧动作由调用方用 [`head_action`] 从右往左摆。
+/// 返回「内容列矩形 + 返回块是否被点」；右侧动作由调用方用 [`head_action`] 从
+/// `head.right()` 往左摆。
+///
+/// 内容列与正文同一列：`max_w` 是正文列宽上限（`f32::MAX` = 铺满），`pad_x` 是两侧
+/// 内距。页头底色仍铺满整窗，但内容收进正文列——否则「标题贴窗口最左、动作贴窗口
+/// 最右、中间一大片空白」，用户 2026-11-11 直接说「太宽了，我们需要好看」。
 ///
 /// Draw a full-page head (back chip + 2 px accent gate + 15 px title + 10 px subtitle)
-/// and return the head rect plus whether the back chip was clicked; the caller lays out
-/// right-hand actions from the right edge with [`head_action`].
-pub(super) fn page_head(ui: &mut egui::Ui, title: &str, sub: &str) -> (Rect, bool) {
+/// and return the content column rect plus whether the back chip was clicked; the caller
+/// lays out right-hand actions leftwards from `head.right()`.
+///
+/// The content column matches the page body: `max_w` caps the body width (`f32::MAX` =
+/// full bleed) and `pad_x` is its side inset. The head's fill still spans the window, but
+/// its content stays inside the body column -- otherwise the title hugs the far left, the
+/// actions the far right, and the empty middle reads as "too wide" (user, 2026-11-11).
+pub(super) fn page_head(
+    ui: &mut egui::Ui,
+    title: &str,
+    sub: &str,
+    max_w: f32,
+    pad_x: f32,
+) -> (Rect, bool) {
     let full = Rect::from_min_size(
         ui.max_rect().left_top(),
         Vec2::new(ui.max_rect().width(), HEAD_H),
@@ -93,6 +109,16 @@ pub(super) fn page_head(ui: &mut egui::Ui, title: &str, sub: &str) -> (Rect, boo
         ],
         Stroke::new(1.0, Color32::from_white_alpha(20)),
     );
+
+    // 内容列：正文列宽上限再扣两侧内距，且不允许宽出窗口可用区。
+    //
+    // Content column: the body width cap minus the side insets, never wider than the
+    // window allows.
+    let col_w = (max_w.min(full.width()) - 2.0 * pad_x)
+        .min((full.width() - 2.0 * pad_x).max(120.0))
+        .max(120.0);
+    let col_left = full.center().x - col_w * 0.5;
+    let col_right = col_left + col_w;
 
     // 返回画布：帧表 / 导出 / 任务三个整页工作台既没有侧栏也没有画布，此前只能翻
     // 菜单行「视图」才能切回显影，用户 2026-11-11 直接报「进入这个界面无法退出」。
@@ -166,7 +192,13 @@ pub(super) fn page_head(ui: &mut egui::Ui, title: &str, sub: &str) -> (Rect, boo
         font(10.0),
         dim(),
     );
-    (full, back)
+    (
+        Rect::from_min_max(
+            Pos2::new(col_left, full.top()),
+            Pos2::new(col_right, full.bottom()),
+        ),
+        back,
+    )
 }
 
 /// 页头右侧的动作按钮（28px 高，主按钮走强调色）。`right` 是当前可用的最右 x，

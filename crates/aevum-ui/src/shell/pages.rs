@@ -17,6 +17,12 @@ use super::dialogs;
 use crate::state::{AppState, Module};
 use crate::theme::*;
 
+/// 页头动作按钮的宽度预算：文案实测宽 + 内距与两侧间距，用于窄窗判「放不放得下」。
+///
+/// Per-action width budget: the measured label plus its padding and item spacing, used
+/// to decide whether the row still has room on a narrow window.
+const BTN_SLOT_W: f32 = 34.0;
+
 /// 序列管理页：缩略图墙 + 本段的直行动作。
 ///
 /// Sequence manager: a thumbnail wall plus this phase's direct actions.
@@ -46,14 +52,42 @@ pub(super) fn sequence_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             None => crate::i18n::tr_fmt("{} 帧 · {} 关键帧", &[&state.frame_count(), &kf_n]),
         };
         ui.label(RichText::new(stat).size(SIZE_LABEL).color(muted()));
+        // 窄窗收动作：`right_to_left` 的锚点是行右缘，剩余宽不够时它不会换行，
+        // 只会把按钮一路画到标题上（900px 英文实测：标题被压 78px）。这里按实测
+        // 文案宽先算预算，从「最不常用」的两枚跳转捷径开始丢；导入与关键帧是这一步
+        // 的核心动作，永远保留。
+        //
+        // Narrow windows drop actions: `right_to_left` anchors at the row's right edge
+        // and never wraps, so a shortfall paints the buttons straight over the title
+        // (measured at 900 px in English: 78 px). Budget from measured label widths,
+        // dropping the two navigation shortcuts first; import and the keyframe actions
+        // are this step's core and always stay.
+        let label_w = |t: &str| {
+            ui.painter()
+                .layout_no_wrap(t.to_owned(), font(SIZE_SMALL), text())
+                .size()
+                .x
+                + BTN_SLOT_W
+        };
+        let w_jumps = label_w(crate::i18n::tr("转到对齐")) + label_w(crate::i18n::tr("转到去闪"));
+        let w_rescan = label_w(crate::i18n::tr("重新扫描"));
+        let w_rest = label_w(crate::i18n::tr("导入照片…"))
+            + label_w("‹ KF")
+            + label_w("KF ›")
+            + label_w(crate::i18n::tr("标记关键帧"));
+        let room = ui.available_width();
+        let show_jumps = room >= w_rest + w_rescan + w_jumps;
+        let show_rescan = room >= w_rest + w_rescan;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if secondary_button(ui, "转到对齐").clicked() {
-                state.set_module(Module::Frame);
+            if show_jumps {
+                if secondary_button(ui, "转到对齐").clicked() {
+                    state.set_module(Module::Frame);
+                }
+                if secondary_button(ui, "转到去闪").clicked() {
+                    state.set_module(Module::Deflicker);
+                }
             }
-            if secondary_button(ui, "转到去闪").clicked() {
-                state.set_module(Module::Deflicker);
-            }
-            if secondary_button(ui, "重新扫描").clicked() {
+            if show_rescan && secondary_button(ui, "重新扫描").clicked() {
                 dialogs::rescan(state, ctx);
             }
             if primary_button(ui, "导入照片…").clicked() {

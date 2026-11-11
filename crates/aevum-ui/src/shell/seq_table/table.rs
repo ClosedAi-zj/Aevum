@@ -110,19 +110,27 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     };
     let name_w = (rect.width() - fixed_width(cols)).max(96.0);
 
-    // ── 卡头 32：标题 + 行数 + 图例 ───────────────────────────────────
+    // 卡头 32：标题 + 行数 + 图例 ───────────────────────────────────
     //
     // Card head: title, row count and the K legend.
     let head = Rect::from_min_size(rect.left_top(), Vec2::new(rect.width(), HEAD));
-    p.text(
-        Pos2::new(head.left() + 10.0, head.center().y),
-        Align2::LEFT_CENTER,
-        crate::i18n::t!("逐帧数据"),
-        bold(12.0),
+    // 行数的 x 必须按**实测标题宽**推：旧实现写死 `left + 66`，中文「逐帧数据」
+    // 四个字正好 56px 以内，英文 "Per-frame data" 更宽，两段文字直接压在一起
+    // （多尺寸扫描实测重叠 28.2px，五档窗口固定复现）。
+    //
+    // The row count's x follows the **measured** title width: the old code hard-coded
+    // `left + 66`, which happens to clear the four CJK glyphs but not "Per-frame data",
+    // so the two strings overlapped by 28.2 px at every window size the sweep tried.
+    let title = crate::i18n::t!("逐帧数据");
+    let title_galley = p.layout_no_wrap(title.to_owned(), bold(12.0), text());
+    let title_x = head.left() + 10.0;
+    p.galley(
+        Pos2::new(title_x, head.center().y - title_galley.size().y * 0.5),
+        title_galley.clone(),
         text(),
     );
     p.text(
-        Pos2::new(head.left() + 66.0, head.center().y),
+        Pos2::new(title_x + title_galley.size().x + 10.0, head.center().y),
         Align2::LEFT_CENTER,
         crate::i18n::tr_fmt("{} 行 · 关键帧 {}", &[&thousands(n), &thousands(keys)]),
         font(10.0),
