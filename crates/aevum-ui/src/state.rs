@@ -1822,12 +1822,14 @@ pub struct AppState {
     /// The selected workflow (timelapse / single-photo / multi-frame merge). Chosen by the
     /// user; it does not follow the active module.
     pub flow_task: FlowTask,
-    /// 上一帧的布局开关快照。帧首比对一次就自动置 `settings_dirty`，免得每个
-    /// 新增的开关赋值点都要记得手工标脏（漏一处就"重启后又不记得了"）。
+    /// 上一帧的布局开关快照（右坞 / 工作流面板 / 预设浮窗 / 工具轨 / 选项栏 / 工作流
+    /// 选择）。帧首比对一次就自动置 `settings_dirty`，免得每个新增的开关赋值点都要
+    /// 记得手工标脏（漏一处就"重启后又不记得了"）。
     ///
-    /// Last frame's layout switches. Diffing once at frame start marks `settings_dirty`
+    /// Last frame's layout switches (dock / workflow panel / presets window / tool rails /
+    /// options bar / workflow choice). Diffing once at frame start marks `settings_dirty`
     /// automatically, so a new toggle site cannot forget to persist itself.
-    layout_switches: (bool, bool, bool, &'static str),
+    layout_switches: (bool, bool, bool, bool, bool, &'static str),
     /// 右侧调整面板宽度（可拖动）。默认 `theme::DOCK_W`，夹在 300–560 之间。
     ///
     /// 面板宽度原本是编译期常量，用户一旦在窄窗里被挤窄就再也调不回来

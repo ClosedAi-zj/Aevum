@@ -878,11 +878,18 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
     let default_cap = (win_max_h - VIEWTOOLS_RESERVE).max(DOCK_MIN_H);
     let cap = user_h.unwrap_or(default_cap);
 
+    // 工具轨打开时浮卡要避开那一侧的竖轨：轨是 Panel（画在 Area 之下），卡不挪开
+    // 就把它整根盖住——用户勾上「视图 → 工具轨」后右侧那根看着像没出来。
+    //
+    // With the rails on, the card must clear the rail on its side: a rail is a Panel and
+    // paints under an Area, so the card would bury it whole (ticking "View -> tool rails"
+    // looked like the right-hand rail never appeared).
+    let rail_pad = if state.show_rails { TOOL_W } else { 0.0 };
     let default_pos = Pos2::new(
         if right {
-            full.right() - DOCK_GUTTER - w
+            full.right() - DOCK_GUTTER - w - rail_pad
         } else {
-            full.left() + DOCK_GUTTER
+            full.left() + DOCK_GUTTER + rail_pad
         },
         full.top() + MENU_H + DOCK_GUTTER,
     );

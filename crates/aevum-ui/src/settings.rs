@@ -161,6 +161,16 @@ pub struct Settings {
     pub show_dock: Option<bool>,
     pub show_flow: Option<bool>,
     pub show_left: Option<bool>,
+    /// 工具轨与选项栏的显示开关。此前只存在内存里，用户勾上「视图 → 工具轨」重启就
+    /// 回到收起（默认态本就是收起），读起来像「左侧工具轨调不出来」。`None` = 老设置
+    /// 文件没有这两项 → 落回首启默认（都收起）。
+    ///
+    /// Tool rails and the options bar. These used to live in memory only, so ticking
+    /// "View -> tool rails" came back folded after a restart (folded is the default) and
+    /// read as "the left rail cannot be brought up at all". `None` means an older settings
+    /// file without these fields: fall back to the fresh-launch default (both folded).
+    pub show_rails: Option<bool>,
+    pub show_options: Option<bool>,
     /// 用户手选的工作流 key（`timelapse` / `develop` / `merge`）。坏 key 在
     /// `adopt_settings` 里回落默认，不让手改过的文件把界面带进不存在的模式。
     ///

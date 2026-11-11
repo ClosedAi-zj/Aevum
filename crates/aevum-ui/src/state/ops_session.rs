@@ -330,6 +330,8 @@ impl AppState {
             show_dock: Some(self.show_dock),
             show_flow: Some(self.show_flow),
             show_left: Some(self.show_left),
+            show_rails: Some(self.show_rails),
+            show_options: Some(self.show_options),
             flow_task: Some(self.flow_task.key().to_owned()),
             // 合并参数是全局偏好：结果态（*_last / *_error / 预览纹理）不进来。
             merge: crate::settings::MergeParams {
@@ -395,6 +397,14 @@ impl AppState {
         self.show_dock = s.show_dock.unwrap_or(true);
         self.show_flow = s.show_flow.unwrap_or(false);
         self.show_left = s.show_left.unwrap_or(false);
+        // 工具轨 / 选项栏：`None`（老文件）落回首启默认（都收起），与该文件其它开关
+        // 同一口径——老用户升级后界面不会突然多出一根轨。
+        //
+        // Tool rails / options bar: `None` (older file) lands on the fresh-launch default
+        // (both folded), the same rule as the other switches here, so an upgrade never
+        // makes a rail appear out of nowhere.
+        self.show_rails = s.show_rails.unwrap_or(false);
+        self.show_options = s.show_options.unwrap_or(false);
         self.flow_task = s
             .flow_task
             .as_deref()
@@ -404,6 +414,8 @@ impl AppState {
             self.show_dock,
             self.show_flow,
             self.show_left,
+            self.show_rails,
+            self.show_options,
             self.flow_task.key(),
         );
         self.preset_order = normalise_preset_order(&s.preset_order.unwrap_or_default());
@@ -612,7 +624,7 @@ impl AppState {
             show_flow: false,
             flow_step: None,
             flow_task: crate::shell::flow::FlowTask::default(),
-            layout_switches: (true, false, false, "timelapse"),
+            layout_switches: (true, false, false, false, false, "timelapse"),
             error_modal: None,
             palette_open: false,
             palette_query: String::new(),
@@ -1736,11 +1748,12 @@ impl AppState {
         // takes off now, and replies from the worker thread land on state this frame.
         self.spawn_pending_dialog(ctx);
         self.drain_dialog_replies(ctx);
-        // 布局开关的自动收账：`show_dock` / `show_flow` / `show_left` / `flow_task`
-        // 散在菜单、工具轨、浮窗等十来处赋值，逐个记得置 `settings_dirty` 早晚会漏。
-        // 帧首比对一次就够——改动发生在上一帧的 ui()，下一帧 tick() 写盘，用户无感。
+        // 布局开关的自动收账：`show_dock` / `show_flow` / `show_left` / `show_rails` /
+        // `show_options` / `flow_task` 散在菜单、工具轨、浮窗等十来处赋值，逐个记得置
+        // `settings_dirty` 早晚会漏。帧首比对一次就够——改动发生在上一帧的 ui()，下一帧
+        // tick() 写盘，用户无感。
         //
-        // Automatic persistence of layout switches: those four fields are assigned from a
+        // Automatic persistence of layout switches: those six fields are assigned from a
         // dozen places (menus, rail, floating windows), and remembering to flag
         // `settings_dirty` at each one will eventually be missed. One diff at frame start
         // is enough -- the change happened in last frame's ui(), and tick() writes it on
@@ -1749,6 +1762,8 @@ impl AppState {
             self.show_dock,
             self.show_flow,
             self.show_left,
+            self.show_rails,
+            self.show_options,
             self.flow_task.key(),
         );
         if switches != self.layout_switches {
