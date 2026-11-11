@@ -743,23 +743,38 @@ fn apply_window_corners(frame: &eframe::Frame, ppp: f32) {
     let Some(win) = frame.winit_window() else {
         return;
     };
-    // 顶部白线的根因在这里：egui-winit 给无边框窗口默认打开 DWM 投影
-    // （`with_undecorated_shadow(true)`），而 winit 自己的文档就写着「打开投影会在
-    // 窗口顶部留下一条 1px 的线」。`DWMWA_BORDER_COLOR` 关不掉它——那是投影的
-    // 上边缘，不是边框颜色。关掉投影即可，只在第一帧发一次（之后每帧重设窗口标志
-    // 会触发 `SetWindowPos`，白闪一下）。
+    // 顶部白线的根因：这个 API 的语义是「是否显示投影」，传 `true` 是**打开**投影，
+    // 而 winit 自己的文档就写着「打开投影会在窗口顶部留下一条 1px 的线」。此前注释
+    // 写的是「关掉投影即可」，实参却传了 `true`，于是白线一直在。`DWMWA_BORDER_COLOR`
+    // 关不掉它——那是投影的上边缘，不是边框颜色。传 `false` 才是关。
+    // 拖到另一块不同缩放的屏幕上时，系统会重挂窗口的非客户区，这条线会回来，所以
+    // 按 `pixels_per_point` 记一次键：缩放变了就再关一次；同一缩放不重复调用
+    // （每次调用都会触发一次 `SetWindowPos`，会白闪一下）。
     //
-    // Root cause of the white top line: egui-winit turns the DWM drop shadow on for
-    // borderless windows (`with_undecorated_shadow(true)`), and winit's own docs say
-    // enabling the shadow "causes a thin 1px line to appear on the top of the window".
-    // `DWMWA_BORDER_COLOR` cannot hide it -- that is the shadow's top edge, not a border
-    // colour. Turning the shadow off fixes it; fire once, as every later call re-applies
-    // the window flags and triggers a `SetWindowPos` flicker.
+    // Root cause of the white top line: this API means "show the drop shadow", so passing
+    // `true` turns it ON -- and winit's own docs say enabling the shadow "causes a thin
+    // 1px line to appear on the top of the window". The comment said "turn it off" while
+    // the argument enabled it, so the line never went away. `DWMWA_BORDER_COLOR` cannot
+    // hide it: that is the shadow's top edge, not a border colour. `false` is the fix.
+    // Moving to a display with a different scale makes Windows re-attach the non-client
+    // frame and the line comes back, so key on `pixels_per_point`: re-apply when the
+    // scale changes, skip otherwise (each call triggers a `SetWindowPos` and a flash).
     {
-        use std::sync::Once;
         use winit::platform::windows::WindowExtWindows;
-        static SHADOW_OFF: Once = Once::new();
-        SHADOW_OFF.call_once(|| win.set_undecorated_shadow(true));
+        static SHADOW_PPP: Mutex<Option<u32>> = Mutex::new(None);
+        let ppp_key = (ppp * 100.0).round().max(0.0) as u32;
+        let reapply = {
+            let mut last = SHADOW_PPP.lock().unwrap_or_else(|p| p.into_inner());
+            if *last == Some(ppp_key) {
+                false
+            } else {
+                *last = Some(ppp_key);
+                true
+            }
+        };
+        if reapply {
+            win.set_undecorated_shadow(false);
+        }
     }
     let (w, h) = (win.inner_size().width, win.inner_size().height);
     if w == 0 || h == 0 {

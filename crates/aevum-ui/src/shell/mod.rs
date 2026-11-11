@@ -602,6 +602,42 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         // bar (the design's `.wsview{inset:44px 0 0 0}`).
         available
     };
+    // 当前流程页（含 `--shot` 的强制钩子）。两处要用它：流程页要给浮动检查器让位，
+    // 胶片卡只属于画布。
+    //
+    // The current flow page (including the `--shot` force hook). Two users: flow pages
+    // must yield to the floating inspector, and the film card belongs to the canvas only.
+    let flow_page_now = {
+        // 截图钩子（仅 `--shot` 用）：`AEVUM_DEMO_PAGE=export|sequence` 强制打开对应
+        // 页面。导入流程会把手选步重置回第一段，所以在渲染决策处判定才可靠。
+        //
+        // Screenshot hook (`--shot` only): `AEVUM_DEMO_PAGE=export|sequence` forces the
+        // page. Import resets the hand-picked step, so deciding here is the only reliable
+        // way for a headless shot to reach another page.
+        let forced = match std::env::var("AEVUM_DEMO_PAGE").as_deref() {
+            Ok("export") => Some(flow_panel::FlowPage::Export),
+            Ok("sequence") => Some(flow_panel::FlowPage::Sequence),
+            _ => None,
+        };
+        forced.unwrap_or_else(|| flow_panel::current_page(state))
+    };
+    // 流程页让位量：现代布局里检查器是**浮动**的卡，`canvas_insets` 因此恒为 0
+    // （浮卡不占布局位，画布是有意画到它下面的）。序列管理 / 导出视频这两页按整幅
+    // 宽度排版，于是浮卡正好盖住它们最右一列的值（用户截图里「H.265 / H.26」、
+    // 「C:\Users\zj\App」被切断）。这里按浮卡实际占位（卡宽 + 外留白，与
+    // `floating_dock` 的 `DOCK_GUTTER` 同一口径）显式让一条边。
+    //
+    // Yield width for flow pages: under Modern the inspector is a **floating** card, so
+    // `canvas_insets` is always zero (the card reserves no layout space and the canvas is
+    // meant to run underneath it). The sequence / export pages lay out across the full
+    // width, so the card lands exactly on their right-hand column's values -- the user's
+    // screenshot showed "H.265 / H.26" and "C:\Users\zj\App" cut off. Reserve the card's
+    // real footprint (width + outer gutter, the same measure `floating_dock` uses) here.
+    let dock_occupied = if state.show_dock && !legacy {
+        state.dock_w + DOCK_GUTTER
+    } else {
+        0.0
+    };
     let mut centre_ui = root.new_child(egui::UiBuilder::new().max_rect(centre).id_salt("centre"));
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(if develop { surround() } else { bench_bg() }))
@@ -612,26 +648,34 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             // Three steps, three pages (user, 2026-11-09): sequence manager shows the
             // whole sequence, develop shows the canvas, export shows queue and settings.
             // Single photos and an empty project always get the canvas.
-            // 截图钩子（仅 `--shot` 用）：`AEVUM_DEMO_PAGE=export|sequence` 强制
-            // 打开对应页面。导入流程会把手选步重置回第一段，所以在渲染决策处判定
-            // 才可靠——否则 headless 永远只能截到派生页。
-            //
-            // Screenshot hook (`--shot` only): `AEVUM_DEMO_PAGE=export|sequence` forces
-            // the page. Import resets the hand-picked step, so deciding here is the only
-            // reliable way for a headless shot to reach another page.
-            let forced = match std::env::var("AEVUM_DEMO_PAGE").as_deref() {
-                Ok("export") => Some(flow_panel::FlowPage::Export),
-                Ok("sequence") => Some(flow_panel::FlowPage::Sequence),
-                _ => None,
-            };
             if !develop {
                 pages::bench_page(state, ui, &ctx);
                 return;
             }
-            match forced.unwrap_or_else(|| flow_panel::current_page(state)) {
-                flow_panel::FlowPage::Sequence => pages::sequence_page(state, ui, &ctx),
-                flow_panel::FlowPage::Export => pages::export_page(state, ui, &ctx),
+            match flow_page_now {
                 flow_panel::FlowPage::Develop => canvas_panel(state, ui, insets.right),
+                other => {
+                    // 流程页在收过右边的子 Ui 里排版，右列的值不会再躲到浮卡底下。
+                    //
+                    // Flow pages lay out inside a right-trimmed child Ui, so their right
+                    // column can no longer hide under the floating card.
+                    let mut inner = ui.max_rect();
+                    if dock_occupied > 0.0 {
+                        if dock_left {
+                            inner.min.x += dock_occupied;
+                        } else {
+                            inner.max.x = (inner.max.x - dock_occupied).max(inner.min.x + 260.0);
+                        }
+                    }
+                    let mut page_ui =
+                        ui.new_child(egui::UiBuilder::new().max_rect(inner).id_salt("flow-page"));
+                    match other {
+                        flow_panel::FlowPage::Sequence => {
+                            pages::sequence_page(state, &mut page_ui, &ctx);
+                        }
+                        _ => pages::export_page(state, &mut page_ui, &ctx),
+                    }
+                }
             }
         });
 
@@ -653,7 +697,18 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // Filmstrip card for Modern (floating at the lower left). Legacy uses the
     // `legacy-film` docked Panel across the bottom edge instead; painting both
     // would duplicate the image list, so Legacy skips this one.
-    if develop && !legacy && layout.film.allowed() && state.frame_count() > 0 {
+    // 胶片卡只属于画布：序列管理 / 导出视频是整页流程页，左下角再压一张图片列表会
+    // 盖住它们自己的卡片内容（导出页的「渲染队列」底边就被它压掉一截）。
+    //
+    // The film card belongs to the canvas: the sequence / export flow pages are full
+    // pages, and a strip pinned to their lower-left corner covers their own content (it
+    // clipped the bottom of the export page's queue card).
+    if develop
+        && !legacy
+        && flow_page_now == flow_panel::FlowPage::Develop
+        && layout.film.allowed()
+        && state.frame_count() > 0
+    {
         let card_h = timeline::card_height(state);
         let pos = Pos2::new(centre.left() + 12.0, centre.bottom() - 12.0 - card_h);
         // 卡宽不超过窗口一半：再宽就把画布切成两半，浮卡也就失去意义。

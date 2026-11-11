@@ -186,11 +186,13 @@ pub(super) const TAB_SLOT_W: f32 = 26.0;
 
 /// 页签行右端预留：只放 ×（18px + 两侧空气）。旧值 52 还要容一组暗点把手；
 /// 拖动已由左端槽位 + 空白拖动区承担，暗点成了冗余装饰，省回 22px 给页签。
+/// 30→26：再省 4px 给页签内距（用户 2026-11-11「不要这么紧凑」），× 仍有 8px 余量。
 ///
 /// Right reserve of the tab strip: just the × (18 px plus air). The old 52 also
 /// carried the dotted grip; dragging now lives in the left slot and the blank zone,
-/// so the dots were redundant decoration -- 22 px go back to the tabs.
-pub(super) const TAB_RESERVE_W: f32 = 30.0;
+/// so the dots were redundant decoration -- 22 px go back to the tabs. 30->26 hands
+/// another 4 px to the tab padding (2026-11-11 "too cramped"); the × keeps 8 px.
+pub(super) const TAB_RESERVE_W: f32 = 26.0;
 
 /// 页签行左端为拖动预留的间隙：页签右对齐后，首标签左侧永远留出这段空白给
 /// 「整段可拖」区（mod.rs 的 `dock-strip-drag`）。若不算这段，页签会把卡宽占满，
@@ -205,7 +207,14 @@ pub(super) const TAB_RESERVE_W: f32 = 30.0;
 /// zero-width rect -- the floating card can no longer be grabbed (the root cause of the
 /// user's 2026-11-10 "sub-window cannot be moved"). Both `tab_widths` and `dock_panel`
 /// subtract this so the two layers line up.
-pub(super) const TAB_DRAG_GAP: f32 = 44.0;
+///
+/// 44→32（用户 2026-11-11「不要这么紧凑」）：这 12px 转给页签内距。拖动区仍由
+/// `tabs_left - 4` 与左槽位右缘夹出约 37px，浮卡照样能按住拖。
+///
+/// 44 -> 32 (user, 2026-11-11: "too cramped"): those 12 px go to the tab padding. The
+/// drag zone is still bracketed by `tabs_left - 4` and the slot's right edge (~37 px),
+/// so the floating card remains grabbable.
+pub(super) const TAB_DRAG_GAP: f32 = 32.0;
 
 /// 老式布局里调色盘自带的直方图槽位高度：绘图区 94 + EXIF 行 21，与画布浮卡
 /// 的 `HIST_EXIF_H` 同一口径。旧版稿 `.histo` 就在 `.dock-tabs` 下面，
@@ -237,15 +246,17 @@ pub(super) fn tab_widths(p: &egui::Painter, width: f32, keys_badge: bool) -> Vec
                 text(),
             );
             let badge = keys_badge && *tab == DockTab::Keys;
-            // 内距 12→8：默认 300px 坞里页签总宽原本约 229，可用区只有 200，
-            // 等比压缩后每个仅 28px，中文两字（22px）加 6px 内距就放不下，
-            // 于是整排变成「...」（用户 2026-11-10 实测）。收 4px 内距给文字。
+            // 内距 8→11（用户 2026-11-11「不要这么紧凑」）：8px 时六个页签的中文
+            // 名几乎首尾相接，读成一串字。11px 让相邻两枚之间留出 22px 空气，同时
+            // 把右端 × 的预留 30→26、拖动间隙 44→32，总预算仍是 216px，300px 默认
+            // 坞里不会触发等比压缩（也就不会回到「…」）。
             //
-            // Padding 12->8: in the default 300 px dock the six tabs needed ~229
-            // px against 200 px available; proportional shrink left 28 px each,
-            // too narrow for two CJK glyphs plus a 6 px inset, so the row turned
-            // into "..." (2026-11-10 user report).
-            (g.size().x + 8.0 + if badge { 18.0 } else { 0.0 }).max(28.0)
+            // Padding 8->11 (user, 2026-11-11: "too cramped"): at 8 px the six CJK
+            // labels nearly touch and read as one run of glyphs. 11 px leaves 22 px of
+            // air between neighbours; the right reserve goes 30->26 and the drag gap
+            // 44->32 so the budget stays 216 px and a default 300 px dock still never
+            // triggers the proportional squeeze (no return of the "..." row).
+            (g.size().x + 11.0 + if badge { 18.0 } else { 0.0 }).max(28.0)
         })
         .collect();
     // 先按内容宽排（放得下时每个页签都显全名）；总宽真的超出可用区才等比

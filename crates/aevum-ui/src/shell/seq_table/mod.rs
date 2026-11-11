@@ -61,7 +61,15 @@ pub(super) fn page(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
             ],
         )
     };
-    let head = bench::page_head(ui, crate::i18n::t!("序列帧表"), &sub);
+    let (head, back) = bench::page_head(ui, crate::i18n::t!("序列帧表"), &sub);
+    // 页头左端的返回块：帧表页没有侧栏也没有画布，这里是唯一的可见出口。
+    //
+    // The back chip at the head's left edge: the table bench has neither rails nor
+    // canvas, so this is the only visible way out.
+    if back {
+        state.set_bench(super::Bench::Develop);
+        return;
+    }
     // 页头右侧动作：保存 XMP（实底）→ 导出和渲染…（主按钮），从右往左排。
     let (r1, _) = bench::head_action(
         ui,

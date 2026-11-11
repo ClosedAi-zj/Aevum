@@ -115,7 +115,15 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
         "导入 / 测光 / 去闪 / 对齐 / 渲染共用一套任务卡 · {} 个在跑 · 队列 {} 项",
         &[&running, &state.queue.len()],
     );
-    let head = bench::page_head(ui, crate::i18n::t!("后台任务"), &sub);
+    let (head, back) = bench::page_head(ui, crate::i18n::t!("后台任务"), &sub);
+    // 页头左端的返回块：任务页没有侧栏也没有画布，这里是唯一的可见出口。
+    //
+    // The back chip at the head's left edge: the tasks bench has neither rails nor
+    // canvas, so this is the only visible way out.
+    if back {
+        state.set_bench(super::Bench::Develop);
+        return;
+    }
     let (r1, _) = bench::head_action(
         ui,
         head.right() - BODY_X,

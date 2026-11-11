@@ -671,12 +671,20 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // windows (fits "序列管理 / Sequence" plus the caret), handing the remainder to the
     // zoom readout -- at 1080 px both the dropdown and the percentage must stay visible.
     let combo_w = if avail >= 320.0 { 124.0 } else { 96.0 };
-    let combo_left = x + 8.0;
+    // 中段呼吸按可用宽分两档：宽窗 12px（设计稿的簇间距），窄窗 6px——1080 下中段
+    // 只有 203px，两侧各多 6px 就会把缩放读数挤没（用户 2026-11-11「不要这么紧凑」
+    // 说的是宽窗，窄窗仍以「都看得见」优先）。
+    //
+    // Middle breathing split by available width: 12 px on wide windows (the design's
+    // cluster gap), 6 px when narrow -- at 1080 the middle is only 203 px wide and two
+    // extra 6 px gaps would squeeze the zoom readout out.
+    let gap = if avail >= 320.0 { 12.0 } else { 6.0 };
+    let combo_left = x + gap;
     // 只在左链与右簇链之间确实放得下时才画，更窄的窗宁可收起也不压别人。
     //
     // Painted only when it truly fits between the left chain and the right cluster;
     // a narrower window drops it rather than crushing its neighbours.
-    let combo_drawn = combo_left + combo_w + 8.0 <= chain_left - 8.0;
+    let combo_drawn = combo_left + combo_w + gap <= chain_left - 8.0;
 
     // 缩放：64px 轨道 + 46px 百分比（设计稿 `.zoomc .mini{width:64px} .pct{width:46px}`）。
     // 拖动轨道改 `state.zoom`；点百分比回 100%。轨道上的滑块位置按 0..=400% 映射。
@@ -700,7 +708,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // The zoom cluster's origin: after the dropdown's right edge (+6 gap) when it is
     // painted, otherwise straight after the doc title. All tiers use absolute coordinates,
     // so the order of the code below is about readability only, not final x placement.
-    let mid_left = if combo_drawn { combo_left + combo_w } else { x } + 6.0;
+    let mid_left = if combo_drawn { combo_left + combo_w } else { x } + gap;
     // 完整档：`[−][轨道][+] [百分比]`；紧凑档：`[轨道][百分比]`（去掉两端 −/+ 按钮，
     // 拖动轨道仍改缩放、点读数仍回 100%）。两档宽度各算一份，先试完整再退紧凑。
     //
@@ -908,11 +916,23 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 // step brighter on hover); the active entry is expressed by
                 // `selectable_label`'s own selected state -- no U+25A6 / U+2713 prefixes,
                 // which the default font family lacks and would render as tofu boxes.
+                // 高度收到 24、内距 8：与撤销/重做、缩放同一档，别再是一枚比同排控件
+                // 高一头、又带实底 + 描边的「主按钮脸」（用户 2026-11-11「排版总是
+                // 感觉有问题」）。底色取 `field()`（输入面）而不是 `elev()`（抬升面），
+                // 才读成「当前模块」而不是「点我执行」。
+                //
+                // Height 24 and padding 8 put it on the same shelf as undo / redo and the
+                // zoom cluster instead of a filled, outlined "primary button" a head taller
+                // than everything beside it (user: "the layout always feels off"). `field()`
+                // (input surface) instead of `elev()` (raised surface) makes it read as
+                // "current module" rather than "click me to run something".
+                ui.spacing_mut().interact_size.y = 24.0;
+                ui.spacing_mut().button_padding = Vec2::new(8.0, 2.0);
                 let w = &mut ui.style_mut().visuals.widgets;
-                w.inactive.weak_bg_fill = elev();
+                w.inactive.weak_bg_fill = field();
                 w.inactive.bg_stroke = Stroke::new(1.0, border());
-                w.hovered.weak_bg_fill = elev_hover();
-                w.hovered.bg_stroke = Stroke::new(1.0, border());
+                w.hovered.weak_bg_fill = elev();
+                w.hovered.bg_stroke = Stroke::new(1.0, border_strong());
                 egui::ComboBox::from_id_salt("head-modules")
                     .selected_text(crate::i18n::tr(state.module.cn()))
                     .width(combo_w - 20.0)

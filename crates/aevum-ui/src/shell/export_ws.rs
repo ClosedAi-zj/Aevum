@@ -107,7 +107,15 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
         "{} 项 · 完成 {} · 渲染 {} · 失败 {}",
         &[&n, &done, &busy, &failed],
     );
-    let head = bench::page_head(ui, crate::i18n::t!("导出工作台"), &sub);
+    let (head, back) = bench::page_head(ui, crate::i18n::t!("导出工作台"), &sub);
+    // 页头左端的返回块：整页工作台没有侧栏也没有画布，这里是唯一的可见出口。
+    //
+    // The back chip at the head's left edge: a full-page bench has neither rails nor
+    // canvas, so this is the only visible way out.
+    if back {
+        state.set_bench(super::Bench::Develop);
+        return;
+    }
     let (r1, _) = bench::head_action(
         ui,
         head.right() - BODY_X,

@@ -73,12 +73,13 @@ pub(super) const HEAD_H: f32 = 64.0;
 /// Secondary tool strip height 36, per `.ws-tools`.
 pub(super) const TOOLS_H: f32 = 36.0;
 
-/// 画整页视图的页头（左侧 2px 强调闸门 + 15px 标题 + 10px 副标题），
-/// 返回页头矩形；右侧动作由调用方用 [`head_action`] 从右往左摆。
+/// 画整页视图的页头（返回块 + 2px 强调闸门 + 15px 标题 + 10px 副标题），
+/// 返回「页头矩形 + 返回块是否被点」；右侧动作由调用方用 [`head_action`] 从右往左摆。
 ///
-/// Draw a full-page head (2 px accent gate + 15 px title + 10 px subtitle) and return its
-/// rect; the caller lays out right-hand actions from the right edge with [`head_action`].
-pub(super) fn page_head(ui: &mut egui::Ui, title: &str, sub: &str) -> Rect {
+/// Draw a full-page head (back chip + 2 px accent gate + 15 px title + 10 px subtitle)
+/// and return the head rect plus whether the back chip was clicked; the caller lays out
+/// right-hand actions from the right edge with [`head_action`].
+pub(super) fn page_head(ui: &mut egui::Ui, title: &str, sub: &str) -> (Rect, bool) {
     let full = Rect::from_min_size(
         ui.max_rect().left_top(),
         Vec2::new(ui.max_rect().width(), HEAD_H),
@@ -92,12 +93,63 @@ pub(super) fn page_head(ui: &mut egui::Ui, title: &str, sub: &str) -> Rect {
         ],
         Stroke::new(1.0, Color32::from_white_alpha(20)),
     );
+
+    // 返回画布：帧表 / 导出 / 任务三个整页工作台既没有侧栏也没有画布，此前只能翻
+    // 菜单行「视图」才能切回显影，用户 2026-11-11 直接报「进入这个界面无法退出」。
+    // 页头左端常驻一枚返回块；箭头用两根线段画，不依赖字体里的 ‹ / ←（默认字族
+    // 未必覆盖，画成豆腐块更糟）。
+    //
+    // Back to canvas: the table / export / tasks benches have neither rails nor canvas, so
+    // the only way back used to be the View menu -- the user reported "cannot leave this
+    // page" (2026-11-11). A standing back chip sits at the head's left edge; the arrow is
+    // two line segments so it never depends on a chevron glyph the default font may lack.
+    let back_label = crate::i18n::t!("返回画布");
+    let galley = p.layout_no_wrap(back_label.to_string(), font(SIZE_SMALL), text());
+    let chip = Rect::from_min_size(
+        Pos2::new(full.left() + 12.0, full.center().y - 13.0),
+        Vec2::new(galley.size().x + 34.0, 26.0),
+    );
+    let resp = ui.interact(
+        chip,
+        ui.make_persistent_id("page-head-back"),
+        Sense::click(),
+    );
+    let hot = resp.hovered();
+    if hot {
+        p.rect_filled(chip, radius_control(), elev());
+    }
+    let ink = if hot { text() } else { muted() };
+    let tip = Pos2::new(chip.left() + 12.0, chip.center().y);
+    let arrow = Stroke::new(1.4, ink);
+    p.line_segment(
+        [
+            Pos2::new(tip.x + 3.0, tip.y - 4.0),
+            Pos2::new(tip.x - 1.0, tip.y),
+        ],
+        arrow,
+    );
+    p.line_segment(
+        [
+            Pos2::new(tip.x - 1.0, tip.y),
+            Pos2::new(tip.x + 3.0, tip.y + 4.0),
+        ],
+        arrow,
+    );
+    p.text(
+        Pos2::new(chip.left() + 20.0, chip.center().y),
+        Align2::LEFT_CENTER,
+        back_label,
+        font(SIZE_SMALL),
+        ink,
+    );
+    let back = resp.on_hover_text(back_label).clicked();
+
     // 闸门条：`top:3px;bottom:3px;width:2px;background:var(--blue)`，贴在标题左侧。
     //
     // The gate bar sits 3 px in from top and bottom, 2 px wide, accent-coloured.
     let gate = Rect::from_min_max(
-        Pos2::new(full.left() + 16.0, full.top() + 15.0),
-        Pos2::new(full.left() + 18.0, full.bottom() - 15.0),
+        Pos2::new(chip.right() + 14.0, full.top() + 15.0),
+        Pos2::new(chip.right() + 16.0, full.bottom() - 15.0),
     );
     p.rect_filled(gate, 1.0, accent());
     p.text(
@@ -114,7 +166,7 @@ pub(super) fn page_head(ui: &mut egui::Ui, title: &str, sub: &str) -> Rect {
         font(10.0),
         dim(),
     );
-    full
+    (full, back)
 }
 
 /// 页头右侧的动作按钮（28px 高，主按钮走强调色）。`right` 是当前可用的最右 x，

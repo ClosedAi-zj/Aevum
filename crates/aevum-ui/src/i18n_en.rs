@@ -1623,6 +1623,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("运镜{}铺满", "Motion {} filled"),
     ("运镜反向", "Motion reversed"),
     ("返回工程快照与磁盘路径。", "Return the project snapshot and its path on disk."),
+    ("返回画布", "Back to canvas"),
     ("还原检查器大小与位置", "Restore inspector size and position"),
     ("还原窗口大小", "Restore window size"),
     ("还没有", "None yet"),
