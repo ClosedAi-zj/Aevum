@@ -68,7 +68,7 @@ const SIZE_METRIC: f32 = SIZE_TITLE + 3.0;
 /// 进行中卡的固定高度：上排 24 + 描述 + 阶段链 + 3px 条 + 读数行 + 上下内距。
 ///
 /// Fixed height of the running card.
-const RUN_H: f32 = 143.0;
+const RUN_H: f32 = 117.0;
 /// 内联任务行高 44：`.trow{min-height:44px}`。
 ///
 /// Inline task row height.
@@ -111,10 +111,12 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
     p.rect_filled(full, 0.0, bench_bg());
 
     let running = state.running_jobs();
-    let sub = crate::i18n::tr_fmt(
-        "导入 / 测光 / 去闪 / 对齐 / 渲染共用一套任务卡 · {} 个在跑 · 队列 {} 项",
-        &[&running, &state.queue.len()],
-    );
+    // 副行只留读数：那句「导入 / 测光 / 去闪 / 对齐 / 渲染共用一套任务卡」是功能说明，
+    // 用户 2026-11-11 说「说明太多」——标题一行 + 一句读数就够。
+    //
+    // The subtitle keeps the numbers only: the old sentence explained what the task card
+    // is for, and the user asked for less prose ("too much explaining").
+    let sub = crate::i18n::tr_fmt("{} 个在跑 · 队列 {} 项", &[&running, &state.queue.len()]);
     let (head, back) = bench::page_head(ui, crate::i18n::t!("后台任务"), &sub, BODY_MAX_W, BODY_X);
     // 页头左端的返回块：任务页没有侧栏也没有画布，这里是唯一的可见出口。
     //
@@ -450,27 +452,11 @@ fn run_card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         if chip_on { warn() } else { dim() },
     );
 
-    // 说明一行：11px dim，`margin:6px 0 12px`。
-    //
-    // One description line.
-    let desc = if busy {
-        crate::i18n::t!("正在逐帧渲染；可以先去忙别的，任务在后台继续。")
-    } else {
-        crate::i18n::t!("导入 / 测光 / 去闪 / 对齐 / 渲染共用一条任务链；完成后结果保留。")
-    };
-    p.text(
-        Pos2::new(x0, cy + 26.0),
-        Align2::LEFT_CENTER,
-        fit_text(&p, desc, font(SIZE_SMALL), dim(), rect.width() - 2.0 * PAD),
-        font(SIZE_SMALL),
-        dim(),
-    );
-
     // 阶段链：导入 → 渲染 → 编码 → 完成（空闲时全是待办）。
     //
     // Stage chain: import -> render -> encode -> done (all pending while idle).
     let stages = stage_chain(state, busy, encoding);
-    let stage_y = cy + 26.0 + 26.0;
+    let stage_y = cy + 26.0;
     let mut fixed = 0.0;
     for (label, _) in &stages {
         fixed += 16.0
@@ -1120,7 +1106,12 @@ fn list_rows(state: &AppState) -> Vec<TaskRow> {
         label: crate::i18n::t!("空闲"),
         tone: Tone::Wait,
         name: crate::i18n::t!("暂无更多后台任务").to_owned(),
-        meta: crate::i18n::t!("导入、去闪、对齐、渲染共用这一套任务卡；完成后结果保留").to_owned(),
+        // 空闲行只留一句「暂无更多后台任务」：那句「导入、去闪、对齐、渲染共用这一套
+        // 任务卡；完成后结果保留」原是页头副标题的重复（用户 2026-11-11「说明太多」）。
+        //
+        // The idle row keeps one line; the old explanation merely repeated the page
+        // subtitle the user asked to trim.
+        meta: String::new(),
         when: String::new(),
         retry: false,
         empty: true,

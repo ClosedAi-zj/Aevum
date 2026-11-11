@@ -64,10 +64,16 @@ impl Bench {
     }
 }
 
-/// 页头高 64：设计稿 `.ws-head{height:64px;padding:0 16px;box-shadow:0 1px 0 var(--hair)}`。
+/// 页头高 48：设计稿原稿是 64（`.ws-head{height:64px}`），但那一档是为「标题 + 两行
+/// 副标题 + 动作按钮」留的，实际只有标题一行 15px 加一句 10px 的读数。64 在实机里
+/// 读成一条厚重横杠（用户 2026-11-11「太粗」），收到 48：两行字加上下各 ~7px 呼吸，
+/// 动作按钮 28 高也还有余量。
 ///
-/// Page head height 64, per `.ws-head`.
-pub(super) const HEAD_H: f32 = 64.0;
+/// Page head height 48. The reference uses 64 (`.ws-head{height:64px}`), but that was
+/// sized for a title plus a two-line subtitle; in practice there is one 15 px title and
+/// one 10 px readout. At 64 it reads as a heavy bar (user: "too thick"), so 48 keeps both
+/// lines with ~7 px of air above and below and still clears the 28 px action buttons.
+pub(super) const HEAD_H: f32 = 48.0;
 /// 二级工具条高 36：`.ws-tools{height:36px}`。
 ///
 /// Secondary tool strip height 36, per `.ws-tools`.
