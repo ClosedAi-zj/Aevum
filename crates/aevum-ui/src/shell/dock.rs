@@ -487,7 +487,7 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
                 badge.center(),
                 Align2::CENTER_CENTER,
                 format!("{}", state.keyframes.len()),
-                font(10.0),
+                font(11.0),
                 if active { text() } else { muted() },
             );
         }
@@ -1108,7 +1108,7 @@ pub(super) fn histogram(ui: &mut Ui, state: &mut AppState) {
                 .map(|s| {
                     ui.painter().layout_no_wrap(
                         theme::ellipsis(s, 12).to_owned(),
-                        font(10.0),
+                        font(11.0),
                         dim(),
                     )
                 })

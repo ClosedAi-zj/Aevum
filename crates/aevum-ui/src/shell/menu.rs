@@ -600,7 +600,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             ),
         };
         let badge_w = p
-            .layout_no_wrap(badge_label.clone(), font(10.0), muted())
+            .layout_no_wrap(badge_label.clone(), font(11.0), muted())
             .size()
             .x
             + 8.0;
@@ -615,7 +615,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             Pos2::new(badge.left(), badge.center().y),
             Align2::LEFT_CENTER,
             badge_label,
-            font(10.0),
+            font(11.0),
             muted(),
         );
         // 关闭序列 ×：走 `state.close()`（存工程后清空，不动磁盘素材）。没有序列时
@@ -1203,7 +1203,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             badge.center(),
             Align2::CENTER_CENTER,
             &tid,
-            font(10.0),
+            font(11.0),
             warn(),
         );
     }

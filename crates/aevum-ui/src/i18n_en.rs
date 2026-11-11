@@ -148,6 +148,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("path：.xmp 文件路径", "path: .xmp file path"),
     ("path：以 .cube 结尾；size?：格点数 2~256，默认 65；confirm?：覆盖时必填", "path: must end in .cube; size?: grid points 2~256, default 65; confirm?: required when overwriting"),
     ("path：以 .xmp 结尾；confirm?：覆盖时必填", "path: must end in .xmp; confirm?: required when overwriting"),
+    ("PS 灰", "Photoshop grey"),
     ("path：素材目录", "path: source folder"),
     ("path：输出 .png；覆盖已有文件需 confirm", "path: output .png; overwriting an existing file needs confirm"),
     ("range.{} 必须是有限数值", "range.{} must be a finite number"),

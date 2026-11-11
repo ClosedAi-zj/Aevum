@@ -1489,9 +1489,18 @@ mod only_changed_tests {
         let n = out
             .shapes
             .iter()
-            .filter(
-                |cs| matches!(&cs.shape, egui::Shape::Rect(r) if r.fill == theme::slider_rail()),
-            )
+            .filter(|cs| {
+                matches!(&cs.shape, egui::Shape::Rect(r)
+                        // 双条件：颜色 + 长度。皮肤一换（PS 灰的面板是亮面），
+                        // 分组控件、表头的填充色可能与滑轨撞色——单看颜色会把
+                        // 它们误计入推子数。滑轨是贯穿整行的长条，用宽度区分。
+                        //
+                        // Two conditions: colour + length. When a skin swaps (the PS-grey
+                        // panel is a light one), group widgets and headers can share the
+                        // rail's fill, and counting by colour alone would count them as
+                        // sliders. A rail is a full-width strip, so width separates them.
+                        if r.fill == theme::slider_rail() && r.rect.width() >= 120.0)
+            })
             .count();
         out.textures_delta.clear();
         n

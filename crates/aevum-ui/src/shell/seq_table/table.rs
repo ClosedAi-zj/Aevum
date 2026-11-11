@@ -133,16 +133,16 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         Pos2::new(title_x + title_galley.size().x + 10.0, head.center().y),
         Align2::LEFT_CENTER,
         crate::i18n::tr_fmt("{} 行 · 关键帧 {}", &[&thousands(n), &thousands(keys)]),
-        font(10.0),
+        font(11.0),
         dim(),
     );
     let legend = crate::i18n::t!("K = 关键帧");
-    let lg = p.layout_no_wrap(legend.to_owned(), font(10.0), dim());
+    let lg = p.layout_no_wrap(legend.to_owned(), font(11.0), dim());
     p.text(
         Pos2::new(head.right() - 10.0, head.center().y),
         Align2::RIGHT_CENTER,
         legend,
-        font(10.0),
+        font(11.0),
         dim(),
     );
     p.rect_filled(
@@ -216,11 +216,11 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         let label = fit_text(
             &p,
             crate::i18n::tr(title),
-            font(10.0),
+            font(11.0),
             dim(),
             (cw - PAD_X * 2.0).max(16.0),
         );
-        p.text(at, a2, label, font(10.0), dim());
+        p.text(at, a2, label, font(11.0), dim());
         x += cw;
     }
     p.line_segment(
@@ -383,7 +383,7 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
                                     kr.center(),
                                     Align2::CENTER_CENTER,
                                     "K",
-                                    font(10.0),
+                                    font(11.0),
                                     bench_bg(),
                                 );
                             }
@@ -442,14 +442,14 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
             "第 {} / {} 帧 · 关键帧 {}",
             &[&(if n == 0 { 0 } else { sel + 1 }), &n, &keys],
         ),
-        font(10.0),
+        font(11.0),
         dim(),
     );
     p.text(
         Pos2::new(foot.right() - 10.0, foot.center().y),
         Align2::RIGHT_CENTER,
         crate::i18n::tr_fmt("显示 {} / {} 行", &[&thousands(rows.len()), &thousands(n)]),
-        font(10.0),
+        font(11.0),
         dim(),
     );
 
@@ -494,7 +494,7 @@ fn draw_thumb(tex: &Option<(egui::TextureId, [u32; 2])>, p: &egui::Painter, row:
             );
         }
         None => {
-            p.text(r.center(), Align2::CENTER_CENTER, "…", font(10.0), dim());
+            p.text(r.center(), Align2::CENTER_CENTER, "…", font(11.0), dim());
         }
     }
 }
@@ -529,8 +529,8 @@ fn scope_bar(state: &AppState, ui: &mut Ui, rect: Rect) -> Scope {
         let label = crate::i18n::tr(label);
         let on = s == cur;
         let fg = if on { text() } else { dim() };
-        let lg = p.layout_no_wrap(label.to_owned(), font(10.0), fg);
-        let cg = p.layout_no_wrap(thousands(count), font(10.0), dim());
+        let lg = p.layout_no_wrap(label.to_owned(), font(11.0), fg);
+        let cg = p.layout_no_wrap(thousands(count), font(11.0), dim());
         let bw = lg.size().x + cg.size().x + 20.0;
         let r = Rect::from_min_size(Pos2::new(x, rect.center().y - 10.0), Vec2::new(bw, 20.0));
         let resp = ui.interact(r, ui.make_persistent_id(("scope", label)), Sense::click());
@@ -592,16 +592,16 @@ fn selection_bar(state: &mut AppState, ui: &mut Ui, rect: Rect, sel: usize, n: u
     let info = fit_text(
         &p,
         &info,
-        font(10.0),
+        font(11.0),
         muted(),
         (rect.width() * 0.5 - 60.0).max(80.0),
     );
-    let iw = p.layout_no_wrap(info.clone(), font(10.0), muted()).size().x;
+    let iw = p.layout_no_wrap(info.clone(), font(11.0), muted()).size().x;
     p.text(
         Pos2::new(rect.left() + 10.0, rect.center().y),
         Align2::LEFT_CENTER,
         info,
-        font(10.0),
+        font(11.0),
         muted(),
     );
 
@@ -641,7 +641,7 @@ fn selection_bar(state: &mut AppState, ui: &mut Ui, rect: Rect, sel: usize, n: u
         false,
     );
     let cw = p
-        .layout_no_wrap(crate::i18n::t!("取消全选").to_owned(), font(10.0), dim())
+        .layout_no_wrap(crate::i18n::t!("取消全选").to_owned(), font(11.0), dim())
         .size()
         .x
         + 14.0;
@@ -667,7 +667,7 @@ fn bar_button(
     enabled: bool,
 ) -> (Rect, egui::Response) {
     let fg = if enabled { muted() } else { dim() };
-    let g = p.layout_no_wrap(label.to_owned(), font(10.0), fg);
+    let g = p.layout_no_wrap(label.to_owned(), font(11.0), fg);
     let w = g.size().x + 14.0;
     let r = Rect::from_min_size(Pos2::new(x, bar.center().y - 11.0), Vec2::new(w, 22.0));
     let resp = ui.interact(

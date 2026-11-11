@@ -142,14 +142,25 @@ pub enum Skin {
     Steel,
     Sand,
     Jade,
+    /// PS 灰：复刻 Photoshop 深色界面（中性无色相）。
+    ///
+    /// PS grey: a Photoshop dark-UI replica (pure neutral grey).
+    Photoshop,
 }
 
 impl Skin {
-    pub const ALL: [Skin; 4] = [Self::Graphite, Self::Steel, Self::Sand, Self::Jade];
+    pub const ALL: [Skin; 5] = [
+        Self::Graphite,
+        Self::Photoshop,
+        Self::Steel,
+        Self::Sand,
+        Self::Jade,
+    ];
 
     pub fn cn(self) -> &'static str {
         match self {
             Self::Graphite => "石墨",
+            Self::Photoshop => "PS 灰",
             Self::Steel => "蓝钢",
             Self::Sand => "暖砂",
             Self::Jade => "青灰",
@@ -175,6 +186,11 @@ impl Skin {
             Self::Steel => (214.0, 14.0),
             Self::Sand => (34.0, 10.0),
             Self::Jade => (178.0, 9.0),
+            // PS 灰在 hsl() 早退分支里返回 (0,0)，这里仍需穷尽匹配。
+            //
+            // PS grey returns (0,0) in the early-return branch above; the match must
+            // still be exhaustive.
+            Self::Photoshop => (0.0, 0.0),
         }
     }
 }
@@ -222,7 +238,7 @@ impl Default for Appearance {
     fn default() -> Self {
         Self {
             theme: ThemeMode::Dark,
-            skin: Skin::Graphite,
+            skin: Skin::Photoshop,
             // 默认强调色走专业口径：hsl(210,100%,44.5%) ≈ #0160d8 一档深蓝。
             // 亮蓝（l=52，#0A84FF）是消费级观感；LightCraft/LR 类校色工具普遍
             // 压低强调色亮度与面积，避免干扰色彩判断（逆向报告 R10，实测
@@ -340,6 +356,40 @@ const DARK: Ladder = Ladder {
     dir: 1.0,
 };
 
+// PS 灰：实测自用户提供的 Photoshop 截图。方向与默认阶梯**相反**——PS 的
+// 工具栏/选项栏是暗的（#282828），右侧面板反而是亮的（#535353），数值输入框
+// 再内嵌回暗色（#1F1F1F）。「面板亮 + 控件内嵌暗」就是 PS 手感的来源。文字
+// 三档整体抬到近白，才能在亮面板上保住 WCAG 断言（正文 ≥7:1、次要 ≥4.5:1）。
+//
+// PS grey: measured from the user's Photoshop screenshot. The direction is the
+// **opposite** of the default ladder -- PS keeps the toolbar/options bar dark
+// (#282828) while the right panels are light (#535353), and value inputs sink back
+// into dark (#1F1F1F). Text rises to near-white to keep the WCAG assertions green.
+const PHOTOSHOP: Ladder = Ladder {
+    bar: 32.7,      // 菜单行 #535353
+    surround: 15.7, // 画布外 #282828
+    canvas: 17.0,
+    panel: 31.5, // 面板 ≈#505050（实测 #535353 压暗半档，给正文 7:1 留余量）
+    dock: 32.3,
+    chrome: 33.0,
+    bg: 34.0,
+    header: 32.7,
+    // 34.0：刻意与 `slider_rail()`（PS 下 mix(group_fill, 白12%) = #555555）错开——
+    // `rail_count` 判据靠数这种填充矩形计数，撞值会把分组控件误计入推子数。
+    //
+    // 34.0 deliberately misses `slider_rail()` (= #555555 under PS): `rail_count`
+    // counts those filled rects, and a collision would count group widgets as sliders.
+    elev: 34.0, // 控件底略亮于分组面（深色分支的单调断言）
+    elev_h: 37.0,
+    field: 12.0, // 输入框内嵌暗 #1F1F1F
+    field_hover: 14.0,
+    thumb: 6.0,
+    text: 100.0,
+    muted: 89.0,
+    dim: 86.0,
+    dir: 1.0,
+};
+
 const BLACK: Ladder = Ladder {
     bar: 3.0,
     surround: 2.0,
@@ -379,7 +429,7 @@ const LIGHT: Ladder = Ladder {
     thumb: 82.0,
     text: 18.0,
     muted: 32.0,
-    dim: 38.0,
+    dim: 34.0, // 中性色相（PS 灰）下重新校准：浅色是暗字亮底，dim 抬亮反而降对比——38 压到 4.47，34 回到 5.2
     dir: -1.0,
 };
 
@@ -460,6 +510,11 @@ impl Palette {
     /// point.
     pub fn of(a: &Appearance) -> Self {
         let l = match a.theme {
+            // PS 灰只挂深色档：Black 更暗、Light 是另一套明面逻辑，套 PS 数值只会两不像。
+            //
+            // The PS skin attaches to Dark only: Black is darker, Light is its own bright
+            // system -- PS numbers would fit neither.
+            ThemeMode::Dark if a.skin == Skin::Photoshop => &PHOTOSHOP,
             ThemeMode::Dark => &DARK,
             ThemeMode::Black => &BLACK,
             ThemeMode::Light => &LIGHT,
@@ -514,8 +569,15 @@ impl Palette {
             selected_row_end: mix(nb(l.dock), accent, 0.05),
             field: nb(l.field),
             field_hover: nb(l.field_hover),
-            border: with_alpha(ink, alpha(20, 34)),
-            border_strong: with_alpha(ink, alpha(46, 60)),
+            // 2026 皮肤：描边退到辅助位。深色界面里 1px 环只要看得见就会把
+            // 每块内容读成"格子"，一屏上百条线就是仪器面板的观感。层级交给
+            // 明度差 + 8px 留白 + 字号，描边只在真正需要收边的地方留一丝。
+            //
+            // 2026 skin: strokes step back. In a dark UI any visible 1 px ring turns
+            // every region into a cell; a hundred of them read as an instrument panel.
+            // Hierarchy comes from value steps, spacing and type scale instead.
+            border: with_alpha(ink, alpha(11, 24)),
+            border_strong: with_alpha(ink, alpha(30, 44)),
             // 分隔线提亮一档：分组分隔、曲线网格主次线、标尺刻度都走这一档，
             // 原来约 10%（深）/ 13%（浅）白太淡、读不出分组，抬到约 15% / 19%。
             // 只动 divider，不动 border / border_strong，避免按钮描边与强边框跟着变亮。
@@ -524,7 +586,7 @@ impl Palette {
             // all share this step; the old ~10% (dark) / ~13% (light) white was too faint
             // to read groups, now ~15% / ~19%. Only divider changes — border and
             // border_strong stay put so button strokes and strong outlines do not brighten.
-            divider: with_alpha(ink, alpha(38, 48)),
+            divider: with_alpha(ink, alpha(22, 32)),
             text,
             muted: n(l.muted),
             dim: n(l.dim),
@@ -805,7 +867,7 @@ pub fn radius_control() -> f32 {
 /// the main and floating windows). The fixed offsets (+8 / +4 / -4) keep all four steps on
 /// the same scale and in lockstep, never scattering chips and cards apart.
 pub fn radius_chip() -> f32 {
-    (radius_control() - 4.0).max(0.0)
+    (radius_control() - 2.0).max(0.0)
 }
 
 /// 窗口圆角：比控件大一档 M3 刻度（control=8 → 16）。主窗口四角由它决定。
@@ -821,7 +883,13 @@ pub fn radius_window() -> f32 {
 /// Container rounding: half a step above the control radius (control 8 -> 12). The
 /// inspector, histogram and sequence cards all read this.
 pub fn radius_panel() -> f32 {
-    radius_control() + 4.0
+    // +2 而不是原来的 +4：2026 收敛圆角档位（4/6/8/12/16 五档 → 6/8/10/16 四档）。
+    // 刻度判据要求 控件 < 容器 < 窗 严格递增，容器不能与控件同档。
+    //
+    // +2 instead of the old +4: the 2026 pass collapses the radius scale
+    // (4/6/8/12/16 -> 6/8/10/16). The scale judgement demands control < panel <
+    // window strictly, so the panel may not share the control's step.
+    radius_control() + 2.0
 }
 
 /// 面板行的悬停底色：深色主题往上抬一档，浅色主题往下压一档 —— 两个方向都是
@@ -896,6 +964,13 @@ pub fn group_fill() -> Color32 {
     if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Graphite {
         return Color32::from_rgb(0x2A, 0x2D, 0x32);
     }
+    // PS 灰的分组面：比面板亮半档（#3E3E3E），PS 靠这条微差 + 无边框分隔分组。
+    //
+    // The PS-grey group fill sits half a step above the panel (#3E3E3E); PS separates
+    // groups with this faint difference and no strokes at all.
+    if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Photoshop {
+        return Color32::from_rgb(0x3E, 0x3E, 0x3E);
+    }
     let p = palette().panel;
     if is_light() {
         mix(p, Color32::BLACK, 0.035)
@@ -916,7 +991,7 @@ pub fn group_ring() -> Color32 {
         } else {
             Color32::WHITE
         },
-        if is_light() { 30 } else { 26 },
+        if is_light() { 16 } else { 12 },
     )
 }
 
@@ -1274,12 +1349,12 @@ pub const FONT_ZOOMS: [f32; 4] = [1.0, 1.06, 1.14, 1.24];
 /// W4 caption size: 11→11.5. The plan says "12", but LABEL is pinned at 12 --
 /// equal steps would collapse the hierarchy (that is exactly what
 /// type_scale_stays_ordered guards). 11.5 reads as 12 while keeping 小<标签.
-pub const SIZE_SMALL: f32 = 11.5;
+pub const SIZE_SMALL: f32 = 12.0;
 pub const SIZE_BODY: f32 = 14.0;
 /// 页面标题：比正文大一档，全应用只有页面标题用它。
 ///
 /// Page title: one step above body text; only page titles use it.
-pub const SIZE_TITLE: f32 = 15.0;
+pub const SIZE_TITLE: f32 = 16.0;
 
 /// 标准控件高度：按钮、输入框、页签行都取这一档；小号取 `CH_SM`。
 /// 收口 5 种高度（22/24/26/28/32）是「整体像拼装」的直接来源（审计 #32）。
@@ -1292,14 +1367,14 @@ pub const CH: f32 = 26.0;
 ///
 /// Compact control height (toolbar icon buttons, chips).
 pub const CH_SM: f32 = 22.0;
-pub const SIZE_HEADING: f32 = 15.0;
+pub const SIZE_HEADING: f32 = 16.0;
 /// 面板里的推子标签与键值行：比 11 号小字大一档，11 号在 372px 宽的面板上
 /// 读起来像脚注，而参数名是这一页最常读的字。
 ///
 /// Slider labels and key/value rows inside panels: one step above the 11 px small size.
 /// 11 reads like a footnote on a 372 px panel, and parameter names are the most-read words
 /// on that screen.
-pub const SIZE_LABEL: f32 = 12.0;
+pub const SIZE_LABEL: f32 = 12.5;
 /// 顶部两行（菜单行 36 / 选项栏 46）专用字阶：行高加起来了，标签仍用 11 会
 /// 显得整条栏是空的，所以顶部比正文大一号，面板里的推子标签不受影响。
 ///
@@ -2188,7 +2263,13 @@ mod token_tests {
                     "MUTED {:.2}",
                     contrast(p.muted, s)
                 );
-                assert!(contrast(p.dim, s) >= 4.5, "DIM {:.2}", contrast(p.dim, s));
+                assert!(
+                    contrast(p.dim, s) >= 4.5,
+                    "DIM {:.2} fg={:?} on={:?}",
+                    contrast(p.dim, s),
+                    p.dim,
+                    s
+                );
             }
         }
     }
@@ -2271,7 +2352,6 @@ mod token_tests {
     /// 靠人眼比不出来，只能靠数字钉住。
     #[test]
     fn dark_default_matches_legacy_tokens() {
-        let p = Palette::of(&Appearance::default());
         // 2026-11-10：整表按 docs/aevum-v12-timeline.html 的设计 token 重排后，
         // 这组快照同步更新（旧值是上一轮 ACR 暖深灰的产物，与目标设计稿的
         // 「深底 + 明显分层」不是同一个语法）。偏离设计稿的只有两处，理由跟在
@@ -2282,6 +2362,16 @@ mod token_tests {
         // the previous warm-ACR pass, a different grammar from the target design's
         // "dark base + pronounced layering". Only two entries depart from the design,
         // each with its reason inline; the rest equal hsl(220,8%,L) exactly.
+        // 默认皮肤已交给「PS 灰」（用户钦点），Graphite 的历史快照改用显式
+        // Graphite 外观锁定——快照测的是「石墨表没被人手滑」，不该跟着默认走。
+        //
+        // The default skin now belongs to "PS grey" (user's call), so the Graphite
+        // snapshot pins an explicit Graphite appearance -- it guards the graphite table,
+        // not whatever the current default happens to be.
+        let p = Palette::of(&Appearance {
+            skin: Skin::Graphite,
+            ..Appearance::default()
+        });
         let cases: [(Color32, u32, &str); 12] = [
             (p.bg, 0x2D2F34, "BG"),
             (p.chrome, 0x282A2F, "CHROME"),
@@ -2342,7 +2432,13 @@ mod token_tests {
 
     #[test]
     fn overlay_white_flattens_labels() {
-        let panel = panel();
+        // 用固定底色（设计稿 card #212327）而不是当前默认面板：默认皮肤已交给
+        // 「PS 灰」（亮面板），这条判据测的是函数本身，不该跟着默认皮肤漂。
+        //
+        // Use a pinned base (the design's card #212327) instead of the current default
+        // panel: the default skin now belongs to "PS grey" (a light panel), and this
+        // judgement tests the function itself, not the current default skin.
+        let panel = Color32::from_rgb(0x21, 0x23, 0x27);
         assert_eq!(overlay_white(panel, 255), Color32::WHITE);
         assert_eq!(overlay_white(panel, 0), panel);
         let c = overlay_white(panel, 217); // 白 85%

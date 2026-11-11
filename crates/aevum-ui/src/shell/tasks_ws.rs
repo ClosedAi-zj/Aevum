@@ -945,13 +945,29 @@ fn aside(state: &AppState, ui: &mut Ui, rect: Rect) -> f32 {
             muted(),
         );
         if let Some(note) = note {
-            p.text(
-                Pos2::new(row.right(), row.center().y),
-                Align2::RIGHT_CENTER,
-                *note,
-                font(SIZE_MICRO),
-                dim(),
-            );
+            // 备注按「开关 + 标签」之后真正剩下的宽度裁：字阶抬一档后英文
+            // 「Notify on completion and failure」正好压上「Silent by default」
+            // （多尺寸扫描实测 8.9px），放不下就整条不画。
+            //
+            // The note is clipped to the width left after the switch and label:
+            // lifting the type scale made the English label collide with it
+            // (measured 8.9 px); drop the note entirely when there is no room.
+            let label_w = p
+                .layout_no_wrap((*label).to_owned(), font(SIZE_SMALL), muted())
+                .size()
+                .x;
+            let used = (track.right() + 8.0 - row.left()) + label_w;
+            let free = row.width() - used - 10.0;
+            if free > 24.0 {
+                let short = fit_text(&p, note, font(SIZE_MICRO), dim(), free);
+                p.text(
+                    Pos2::new(row.right(), row.center().y),
+                    Align2::RIGHT_CENTER,
+                    short,
+                    font(SIZE_MICRO),
+                    dim(),
+                );
+            }
         }
         if i + 1 < rules.len() {
             rule(&p, row.left(), row.right(), row.bottom(), group_ring());

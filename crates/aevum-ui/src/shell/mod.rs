@@ -497,9 +497,15 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // into two (user, 2026-11-09): the upper workflow / panel entries at the right edge,
     // the lower tools / foot at the left edge -- seven entries each, symmetric. The
     // appearance window's "tool rail right/left" mirrors both.
-    let rail_left = layout.rail.is_left();
     let dock_left = layout.dock_side.is_left();
-    let panels_on_right = !rail_left;
+    // 面板入口轨恒定在**窗口最右**（用户 2026-11-11 裁决「这个工具栏移动到最右侧」）。
+    // 此前它随 `layout.rail` 镜像，设成左就把这列图标推到检查器左边，夹在画布与
+    // 检查器之间，读起来像放错了地方。工具轨保持另一侧。
+    //
+    // The panel-entry rail always sits at the **far right** (user, 2026-11-11: "move
+    // this toolbar to the far right"). It used to mirror `layout.rail`, which could pin
+    // it between the canvas and the inspector. The tools rail keeps the other side.
+    let panels_on_right = true;
 
     // 工具轨、右坞、工作流面板都只属于显影工作台。帧表 / 导出 / 任务是整页视图
     // （design `.wsview`），任何侧栏在那里都会把 300px 宽的表格挤出屏幕。

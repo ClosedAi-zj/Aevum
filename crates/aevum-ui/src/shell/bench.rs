@@ -211,7 +211,7 @@ pub(super) fn page_head(
         Pos2::new(gate.right() + 10.0, full.center().y + 10.0),
         Align2::LEFT_CENTER,
         sub,
-        font(10.0),
+        font(11.0),
         dim(),
     );
     (
