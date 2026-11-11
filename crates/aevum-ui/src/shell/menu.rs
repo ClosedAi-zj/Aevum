@@ -435,6 +435,24 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 |ui| {
                     menu_style(ui);
                     view_menu(state, ui, ctx);
+                    // 工作台切换并入「视图」菜单（用户 2026-11-11「悬浮设计不好看」）：
+                    // 画布上不再画第二条导航带，四项带编号，与 Ctrl+Alt+1..4 对应。
+                    // 名字先取译文再拼编号，英文模式下组合串里不会残留中文。
+                    //
+                    // Bench switching lives in the View menu (2026-11-11 feedback): no
+                    // second nav strip over the canvas. Numbered rows match Ctrl+Alt+1..4.
+                    // Translate the name before joining the number, so English mode never
+                    // leaves Chinese inside the composed label.
+                    ui.separator();
+                    for b in Bench::ALL {
+                        let name = crate::i18n::tr(b.cn());
+                        let label = format!("{} {}", b.no(), name);
+                        let shortcut = format!("Ctrl+Alt+{}", b.no());
+                        if menu_item(ui, &label, &shortcut) {
+                            state.set_bench(b);
+                            ui.close();
+                        }
+                    }
                 },
             );
             ui.menu_button(
@@ -618,157 +636,309 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         x = doc.right() + 12.0;
     }
 
+    // 右簇链左缘：先把导出→任务→齿轮的实测宽算出来，中段（模块下拉、工具簇）都从
+    // 这里推导，各段共用一份宽度，语言/角标一变一起挪，绝不会互相叠压（窄窗回归
+    // 根因：左链只按递增的绝对 `x` 一路右推、没有上界，越过右簇就压到「任务」胶囊上）。
+    //
+    // Right cluster's chained left edge computed up front so every middle section
+    // (module dropdown, tool cluster) derives from it; they share one measured width and
+    // can never overlap. The narrow-window regression was the left chain pushing right by
+    // an unbounded absolute `x` until it crushed the tasks pill.
+    let running = state.running_jobs();
+    let tasks_w = tasks_pill_width(&p, running);
+    let chain_left = right_chain_left(zone_right_pre(full, &c), tasks_w);
+
+    // 中段排布（实测定，见下）：**模块下拉 > 缩放簇 > 工具簇**，且缩放簇有「完整 / 紧凑
+    // / 不画」三档。1080px 实测：左链画到文档标题右缘在 x≈559，右簇链左缘在 778，中段
+    // 可用约 203px。改造前这里只能三选一，1080 下缩放读数与工具簇整段消失——用户一眼
+    // 能看出的功能退步。所以下拉收一档（124→96）、缩放收一档（去掉两端 −/+，只留
+    // 「轨道 + 百分比」），1080 下「下拉 96 + 间隙 6 + 紧凑缩放 96 = 198 ≤ 203」两者并存。
+    // 1440 设计稿宽度下仍是「下拉 + 完整缩放 + 六枚工具」全在。
+    //
+    // Middle layout, set by measurement: **module dropdown > zoom cluster > tool cluster**,
+    // with the zoom cluster in three tiers (full / compact / absent). Measured at 1080 px the
+    // left chain reaches x ~ 559 at the doc title's right edge while the right cluster starts
+    // at 778, leaving ~203 px of middle. The previous cut let only one of the three survive,
+    // which dropped the zoom readout and the whole tool cluster at 1080 -- a visible
+    // regression. So the dropdown loses a tier (124 -> 96) and the zoom loses a tier (no
+    // minus/plus, track plus readout only): "dropdown 96 + 6 gap + compact zoom 96 = 198 <=
+    // 203" keeps both at 1080. At the design's 1440 px all three remain.
+    let avail = chain_left - 8.0 - (x + 8.0);
+    // 下拉两档：中段宽裕用设计稿的 124，窄窗收到 96（「序列管理 / Sequence」+ 箭头都
+    // 放得下），把剩下的宽度让给缩放读数——1080 下必须同时看到下拉与百分比。
+    //
+    // Dropdown in two widths: the design's 124 when the middle is roomy, 96 on narrow
+    // windows (fits "序列管理 / Sequence" plus the caret), handing the remainder to the
+    // zoom readout -- at 1080 px both the dropdown and the percentage must stay visible.
+    let combo_w = if avail >= 320.0 { 124.0 } else { 96.0 };
+    let combo_left = x + 8.0;
+    // 只在左链与右簇链之间确实放得下时才画，更窄的窗宁可收起也不压别人。
+    //
+    // Painted only when it truly fits between the left chain and the right cluster;
+    // a narrower window drops it rather than crushing its neighbours.
+    let combo_drawn = combo_left + combo_w + 8.0 <= chain_left - 8.0;
+
     // 缩放：64px 轨道 + 46px 百分比（设计稿 `.zoomc .mini{width:64px} .pct{width:46px}`）。
     // 拖动轨道改 `state.zoom`；点百分比回 100%。轨道上的滑块位置按 0..=400% 映射。
     //
     // Zoom: 64 px track + 46 px readout. Dragging the track sets `state.zoom`; clicking
     // the readout resets to 100%.
     let zoom_pct = (state.zoom * state.fit_scale.max(1e-4) * 100.0).clamp(1.0, 400.0);
-    // 窄窗紧凑：≤1340px 时缩放轨道 64→48、百分比 46→40，给中段 chips 多让出
-    // 二十余像素——否则左段把中段挤没，chips 与工具簇在窄窗双双消失。宽窗仍是
-    // 设计稿原尺寸。
+    // 窄窗紧凑：≤1340px 时缩放轨道 64→48、百分比 46→40，给中段（模块下拉与工具簇）
+    // 多让出二十余像素——否则左段把中段挤没，两段在窄窗双双让位。宽窗仍是设计稿原尺寸。
     //
     // Narrow-window compacting: at <=1340 px the zoom track shrinks 64->48 and the
-    // readout 46->40, freeing ~24 px for the middle chips; otherwise the left section
-    // starves the middle and both chips and the tool cluster vanish. Wide windows keep
+    // readout 46->40, freeing ~24 px for the middle (module dropdown and tool cluster);
+    // otherwise the left section starves the middle and both give way. Wide windows keep
     // the design's original sizes.
     let narrow = full.width() < 1340.0;
     let zoom_track_w = if narrow { 48.0 } else { 64.0 };
     let zoom_pct_w = if narrow { 40.0 } else { 46.0 };
-    // 设计稿 `.zoomc`：[−][64px 轨道][+] [百分比]。−/+ 各 18px，点一次 ×0.8 / ×1.25。
+    // 缩放簇的起点：模块下拉画出来时接在它右缘（+6 间隙），否则直接接文档标题右缘。
+    // 三种档位都用绝对坐标绘制，代码里的先后顺序只影响可读性，不影响最终 x 顺序。
     //
-    // Design `.zoomc`: minus, 64 px track, plus, then the readout. Each tap steps the
-    // zoom by 0.8 / 1.25.
-    let minus = Rect::from_center_size(Pos2::new(x + 9.0, mid), Vec2::splat(18.0));
-    let mr = ui.interact(minus, ui.make_persistent_id("tb-zoom-out"), Sense::click());
-    if mr.hovered() {
-        p.rect_filled(minus, radius_control(), elev());
+    // The zoom cluster's origin: after the dropdown's right edge (+6 gap) when it is
+    // painted, otherwise straight after the doc title. All tiers use absolute coordinates,
+    // so the order of the code below is about readability only, not final x placement.
+    let mid_left = if combo_drawn { combo_left + combo_w } else { x } + 6.0;
+    // 完整档：`[−][轨道][+] [百分比]`；紧凑档：`[轨道][百分比]`（去掉两端 −/+ 按钮，
+    // 拖动轨道仍改缩放、点读数仍回 100%）。两档宽度各算一份，先试完整再退紧凑。
+    //
+    // Full tier is minus + track + plus + readout; the compact tier is track + readout
+    // (no minus/plus; the track still drags and the readout still resets to 100%). Both
+    // widths are measured up front: try full, then fall back to compact.
+    let zoom_full_w = 51.0 + zoom_track_w + zoom_pct_w;
+    let zoom_min_w = zoom_track_w + 8.0 + zoom_pct_w;
+    let mid_right = chain_left - 8.0;
+    let zoom_full = mid_left + zoom_full_w <= mid_right;
+    let zoom_compact = !zoom_full && mid_left + zoom_min_w <= mid_right;
+    // 三档守卫：完整 → 紧凑 → 不画。窄窗 900px 的真实现象是缩放百分比与「任务」胶囊
+    // 连写成「任务%」——左链只按递增的绝对 `x` 右推、没有上界的直接后果；现在有了上界，
+    // 900 下中段只剩约 21px，三档都放不下就整段不画，绝不压右簇。
+    //
+    // Three-tier guard: full -> compact -> absent. The 900 px symptom was the zoom readout
+    // running straight into the tasks pill -- the direct result of an unbounded absolute
+    // `x`. With the bound in place the middle is only ~21 px at 900, so no tier fits and
+    // the whole cluster is dropped instead of crushing the right cluster.
+    if zoom_full {
+        // 设计稿 `.zoomc`：[−][64px 轨道][+] [百分比]。−/+ 各 18px，点一次 ×0.8 / ×1.25。
+        //
+        // Design `.zoomc`: minus, 64 px track, plus, then the readout. Each tap steps the
+        // zoom by 0.8 / 1.25.
+        let minus = Rect::from_center_size(Pos2::new(mid_left + 9.0, mid), Vec2::splat(18.0));
+        let mr = ui.interact(minus, ui.make_persistent_id("tb-zoom-out"), Sense::click());
+        if mr.hovered() {
+            p.rect_filled(minus, radius_control(), elev());
+        }
+        p.text(
+            minus.center(),
+            Align2::CENTER_CENTER,
+            "−",
+            font(SIZE_CHROME_LABEL),
+            if mr.hovered() { text() } else { muted() },
+        );
+        if mr.clicked() {
+            state.zoom = (state.zoom * 0.8).clamp(0.2, 24.0);
+        }
+        // 簇内游标用独立名 `zx`：绝不 shadow 外层 `x`，否则被守卫跳过时外层 `x`
+        // 会带着缩放宽度继续右推，右簇照样被压。
+        //
+        // The in-cluster cursor is a separate `zx` so it never shadows the outer `x`;
+        // otherwise a skipped cluster would still push `x` rightwards by the zoom width.
+        let zx = minus.right() + 4.0;
+        let track = Rect::from_min_size(Pos2::new(zx, mid - 1.5), Vec2::new(zoom_track_w, 3.0));
+        let zr = ui.interact(
+            Rect::from_min_size(
+                Pos2::new(zx - 4.0, mid - 8.0),
+                Vec2::new(zoom_track_w + 8.0, 16.0),
+            ),
+            ui.make_persistent_id("tb-zoom"),
+            Sense::click_and_drag(),
+        );
+        p.rect_filled(track, 2.0, slider_rail());
+        let frac = (zoom_pct / 400.0).clamp(0.0, 1.0);
+        let knob_x = track.left() + track.width() * frac;
+        p.circle_filled(Pos2::new(knob_x, track.center().y), 4.5, knob());
+        if (zr.dragged() || zr.clicked())
+            && let Some(pos) = zr.interact_pointer_pos()
+        {
+            let f = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0);
+            let want = (f * 4.0).max(0.01);
+            state.zoom = (want / state.fit_scale.max(1e-4)).clamp(0.2, 24.0);
+        }
+        let pct = Rect::from_min_size(
+            Pos2::new(track.right() + 8.0, mid - 13.0),
+            Vec2::new(zoom_pct_w, 26.0),
+        );
+        let pr = ui.interact(pct, ui.make_persistent_id("tb-pct"), Sense::click());
+        if pr.hovered() {
+            p.rect_filled(pct, radius_control(), elev());
+        }
+        p.text(
+            pct.center(),
+            Align2::CENTER_CENTER,
+            format!("{:.0}%", zoom_pct),
+            font(SIZE_CHROME_LABEL),
+            if pr.hovered() { text() } else { muted() },
+        );
+        if pr.clicked() {
+            state.zoom = (1.0 / state.fit_scale.max(1e-4)).clamp(0.2, 24.0);
+        }
+        pr.on_hover_text(crate::i18n::t!("点击回到 100%"));
+        let plus = Rect::from_center_size(Pos2::new(pct.right() + 12.0, mid), Vec2::splat(18.0));
+        let xr = ui.interact(plus, ui.make_persistent_id("tb-zoom-in"), Sense::click());
+        if xr.hovered() {
+            p.rect_filled(plus, radius_control(), elev());
+        }
+        p.text(
+            plus.center(),
+            Align2::CENTER_CENTER,
+            "+",
+            font(SIZE_CHROME_LABEL),
+            if xr.hovered() { text() } else { muted() },
+        );
+        if xr.clicked() {
+            state.zoom = (state.zoom * 1.25).clamp(0.2, 24.0);
+        }
+        // 只有真的画了完整档，外层游标才推进到簇右缘。
+        //
+        // Advance the outer cursor to the cluster's right edge only when the full tier
+        // was actually painted.
+        x = (mid_left + zoom_full_w).max(x);
+    } else if zoom_compact {
+        // 紧凑档：只画「轨道 + 百分比」。−/+ 按钮在这一档不画（它们各占 20 余像素，正是
+        // 1080 下读不到百分比的原因）；拖动轨道照旧改缩放，点读数照旧回 100%。
+        //
+        // Compact tier: track plus readout only. The minus/plus buttons are omitted here
+        // (their ~20 px each is exactly what squeezed the readout out at 1080); dragging
+        // the track still sets the zoom and clicking the readout still resets to 100%.
+        let track =
+            Rect::from_min_size(Pos2::new(mid_left, mid - 1.5), Vec2::new(zoom_track_w, 3.0));
+        let zr = ui.interact(
+            Rect::from_min_size(
+                Pos2::new(mid_left - 4.0, mid - 8.0),
+                Vec2::new(zoom_track_w + 8.0, 16.0),
+            ),
+            ui.make_persistent_id("tb-zoom"),
+            Sense::click_and_drag(),
+        );
+        p.rect_filled(track, 2.0, slider_rail());
+        let frac = (zoom_pct / 400.0).clamp(0.0, 1.0);
+        let knob_x = track.left() + track.width() * frac;
+        p.circle_filled(Pos2::new(knob_x, track.center().y), 4.5, knob());
+        if (zr.dragged() || zr.clicked())
+            && let Some(pos) = zr.interact_pointer_pos()
+        {
+            let f = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0);
+            let want = (f * 4.0).max(0.01);
+            state.zoom = (want / state.fit_scale.max(1e-4)).clamp(0.2, 24.0);
+        }
+        let pct = Rect::from_min_size(
+            Pos2::new(track.right() + 8.0, mid - 13.0),
+            Vec2::new(zoom_pct_w, 26.0),
+        );
+        let pr = ui.interact(pct, ui.make_persistent_id("tb-pct"), Sense::click());
+        if pr.hovered() {
+            p.rect_filled(pct, radius_control(), elev());
+        }
+        p.text(
+            pct.center(),
+            Align2::CENTER_CENTER,
+            format!("{:.0}%", zoom_pct),
+            font(SIZE_CHROME_LABEL),
+            if pr.hovered() { text() } else { muted() },
+        );
+        if pr.clicked() {
+            state.zoom = (1.0 / state.fit_scale.max(1e-4)).clamp(0.2, 24.0);
+        }
+        pr.on_hover_text(crate::i18n::t!("点击回到 100%"));
+        x = (pct.right() + 10.0).max(x);
     }
-    p.text(
-        minus.center(),
-        Align2::CENTER_CENTER,
-        "−",
-        font(SIZE_CHROME_LABEL),
-        if mr.hovered() { text() } else { muted() },
-    );
-    if mr.clicked() {
-        state.zoom = (state.zoom * 0.8).clamp(0.2, 24.0);
-    }
-    let mut x = minus.right() + 4.0;
-    let track = Rect::from_min_size(Pos2::new(x, mid - 1.5), Vec2::new(zoom_track_w, 3.0));
-    let zr = ui.interact(
-        Rect::from_min_size(
-            Pos2::new(x - 4.0, mid - 8.0),
-            Vec2::new(zoom_track_w + 8.0, 16.0),
-        ),
-        ui.make_persistent_id("tb-zoom"),
-        Sense::click_and_drag(),
-    );
-    p.rect_filled(track, 2.0, slider_rail());
-    let frac = (zoom_pct / 400.0).clamp(0.0, 1.0);
-    let knob_x = track.left() + track.width() * frac;
-    p.circle_filled(Pos2::new(knob_x, track.center().y), 4.5, knob());
-    if (zr.dragged() || zr.clicked())
-        && let Some(pos) = zr.interact_pointer_pos()
-    {
-        let f = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0);
-        let want = (f * 4.0).max(0.01);
-        state.zoom = (want / state.fit_scale.max(1e-4)).clamp(0.2, 24.0);
-    }
-    let pct = Rect::from_min_size(
-        Pos2::new(track.right() + 8.0, mid - 13.0),
-        Vec2::new(zoom_pct_w, 26.0),
-    );
-    let pr = ui.interact(pct, ui.make_persistent_id("tb-pct"), Sense::click());
-    if pr.hovered() {
-        p.rect_filled(pct, radius_control(), elev());
-    }
-    p.text(
-        pct.center(),
-        Align2::CENTER_CENTER,
-        format!("{:.0}%", zoom_pct),
-        font(SIZE_CHROME_LABEL),
-        if pr.hovered() { text() } else { muted() },
-    );
-    if pr.clicked() {
-        state.zoom = (1.0 / state.fit_scale.max(1e-4)).clamp(0.2, 24.0);
-    }
-    pr.on_hover_text(crate::i18n::t!("点击回到 100%"));
-    let plus = Rect::from_center_size(Pos2::new(pct.right() + 12.0, mid), Vec2::splat(18.0));
-    let xr = ui.interact(plus, ui.make_persistent_id("tb-zoom-in"), Sense::click());
-    if xr.hovered() {
-        p.rect_filled(plus, radius_control(), elev());
-    }
-    p.text(
-        plus.center(),
-        Align2::CENTER_CENTER,
-        "+",
-        font(SIZE_CHROME_LABEL),
-        if xr.hovered() { text() } else { muted() },
-    );
-    if xr.clicked() {
-        state.zoom = (state.zoom * 1.25).clamp(0.2, 24.0);
-    }
-    x = plus.right() + 10.0;
 
-    // 右簇链左缘：先把导出→任务→齿轮的实测宽算出来，chips 与工具簇都从这里
-    // 推导，三者共用一份宽度，语言/角标一变一起挪，绝不会互相叠压（窄窗回归
-    // 根因：chips 只按 `zone_right_pre` 判可绘，越过右簇一直画到窗控前，把工具
-    // 簇的 `max(tc_after_chips)` 兜底顶到导出右侧压住窗控）。
+    // 右簇链左缘已在本段之前算好（见上面 `chain_left`），模块下拉与工具簇都从这里
+    // 推导，两段共用一份实测宽度。
     //
-    // Right cluster's chained left edge computed up front so chips and the tool cluster
-    // both derive from it; they share one measured width and can never overlap. The
-    // narrow-window regression was chips gated only on `zone_right_pre`, overflowing
-    // into the right cluster and shoving the tool cluster past the export button.
-    let running = state.running_jobs();
-    let tasks_w = tasks_pill_width(&p, running);
-    let chain_left = right_chain_left(zone_right_pre(full, &c), tasks_w);
+    // The right cluster's chained left edge was computed before this section (see
+    // `chain_left` above); both the module dropdown and the tool cluster derive from it.
 
-    // 中央模块 chips（设计稿 `.seg`：`#26282c` 槽、24px 按钮、选中 `#3a3d43`）。
-    // 七个模块横向铺开；「更多」不另设假入口——合成就是设计的「更多」。
+    // 模块切换统一收进单枚下拉（版式决策 2026-11-11）：菜单行不再摆 4 枚模块 chips
+    // 与画布任务卡（flow_panel）构成两套并存切换器——任务卡是唯一主导航，下拉保住
+    // 全部 7 个模块可达（功能零损失，Alt+1..7 的序号契约不变）。
     //
-    // Centre module chips per `.seg`: a `#26282c` trough with 24 px buttons and a
-    // `#3a3d43` active fill. All seven modules are laid out; there is no fake "more"
-    // entry -- merge is what the design's "more" leads to.
-    // 设计稿的 chips 是五枚：序列 / 去闪 / 显影 / 成片 / 更多（`.seg` 槽内）。
-    // 构图 / 声音 / 合成三枚收进「更多」弹出层——七个名字横排会把顶栏撑长，
-    // 同时把「常用四页」和「文件级工具」画成同一排。
-    // 中段空间分配：先保证「chips + 工具簇」都画；放不下就丢「更多」保四枚 +
-    // 工具簇；再放不下就四枚独自占用中段、工具簇隐藏；最极端四枚都挤不下就整段
-    // 不画——任何一档都不允许中段压到右簇或窗控。
-    //
-    // Middle-space split: first keep chips + tool cluster both drawn; else drop "more"
-    // to keep four chips + tool cluster; else four chips alone with the tool cluster
-    // hidden; at the extreme hide chips entirely. No tier may crush the right cluster
-    // or the window controls.
-    // 模块切换统一收进单枚下拉（版式决策 2026-11-11）：菜单行不再摆 4 枚
-    // 模块 chips 与画布任务卡（flow_panel）构成两套并存切换器——任务卡是
-    // 唯一主导航，下拉保住全部 6 模块可达（功能零损失）。
-    //
-    // Module switching collapses into one dropdown: the menu row no longer hosts
-    // four module chips competing with the canvas task card (flow_panel) -- the task
-    // card is the single primary navigator, the dropdown keeps all six reachable.
-    // 左到右流：紧跟文档标题，避开右侧工具簇/动作簇的绝对定位区。
-    ui.add_space(160.0);
-    egui::ComboBox::from_id_salt("head-modules")
-        .selected_text(format!("▦ {}", crate::i18n::tr(state.module.cn())))
-        .width(108.0)
-        .show_ui(ui, |ui| {
-            combo_style(ui);
-            for m in Module::ALL.iter() {
-                let on = state.module == *m;
-                let label = if on {
-                    format!("✓ {}", crate::i18n::tr(m.cn()))
-                } else {
-                    format!("   {}", crate::i18n::tr(m.cn()))
-                };
-                if ui.selectable_label(on, crate::i18n::tr(&label)).clicked() {
-                    state.set_module(*m);
-                }
-            }
-        });
+    // Module switching collapses into one dropdown (2026-11-11 layout decision): the menu
+    // row no longer hosts four module chips competing with the canvas task card
+    // (flow_panel) -- the card is the single primary navigator and the dropdown keeps all
+    // seven modules reachable (no lost function; the Alt+1..7 index contract is unchanged).
 
-    // 工具簇（设计稿 `.toolcluster`，html 750 行）：chips 右侧的六枚工具图标。
+    // 模块下拉用**绝对定位子 scope**（照抄上面 `menubar` 的写法）：`menu_row` 收到的
+    // `ui` 属于 `Panel::top("menu-row").exact_size(44)`，egui 0.37 用
+    // `Layout::top_down(Align::Min)` 建 Ui 并把 clip 收成 44px 高；`ui.add_space(160.0)`
+    // 在 top_down 下推进的是**垂直**游标，控件落到 y≈top+160 被面板裁掉，于是这枚
+    // ComboBox 从来没上过屏（截图确证）。绝对 rect 只借用 ui 做交互与绘制，坐标由
+    // 自己算，垂直方向的 top_down 游标再也影响不到它。
+    //
+    // The module dropdown uses an **absolutely positioned sub-scope** (same shape as the
+    // `menubar` scope above): `menu_row` receives the `ui` of
+    // `Panel::top("menu-row").exact_size(44)`, and egui 0.37 builds that Ui with
+    // `Layout::top_down(Align::Min)` clipping it to 44 px high. `ui.add_space(160.0)`
+    // advances the **vertical** cursor under top_down, so the widget landed at
+    // y ~ top+160, clipped away -- the ComboBox never reached the screen (screenshot
+    // confirmed). An absolute rect borrows the ui only for interaction and painting,
+    // so the vertical cursor can no longer affect it.
+    // 几何量（`combo_w` / `combo_left` / `combo_drawn`）已在缩放簇之前算好，见上面的
+    // 中段排布：这里只负责画。
+    //
+    // The geometry (`combo_w` / `combo_left` / `combo_drawn`) was computed before the zoom
+    // cluster -- see the middle layout above; this block only paints.
+    if combo_drawn {
+        ui.scope_builder(
+            UiBuilder::new()
+                .id_salt("head-modules-scope")
+                .max_rect(Rect::from_min_size(
+                    Pos2::new(combo_left, full.top()),
+                    Vec2::new(combo_w, full.height()),
+                ))
+                .layout(Layout::left_to_right(Align::Center)),
+            |ui| {
+                // 下拉按钮本体按设计稿的面式样式画（实底 + 发丝边，hover 提一档），
+                // 选中项只靠 `selectable_label` 的选中态表达——不要 U+25A6 / U+2713
+                // 前缀，那两个字不在 egui 默认字族里，会渲染成豆腐块。
+                //
+                // The button body gets the design's filled surface with a hairline (one
+                // step brighter on hover); the active entry is expressed by
+                // `selectable_label`'s own selected state -- no U+25A6 / U+2713 prefixes,
+                // which the default font family lacks and would render as tofu boxes.
+                let w = &mut ui.style_mut().visuals.widgets;
+                w.inactive.weak_bg_fill = elev();
+                w.inactive.bg_stroke = Stroke::new(1.0, border());
+                w.hovered.weak_bg_fill = elev_hover();
+                w.hovered.bg_stroke = Stroke::new(1.0, border());
+                egui::ComboBox::from_id_salt("head-modules")
+                    .selected_text(crate::i18n::tr(state.module.cn()))
+                    .width(combo_w - 20.0)
+                    .show_ui(ui, |ui| {
+                        combo_style(ui);
+                        for m in Module::ALL.iter() {
+                            let on = state.module == *m;
+                            if ui.selectable_label(on, crate::i18n::tr(m.cn())).clicked() {
+                                state.set_module(*m);
+                            }
+                        }
+                    });
+            },
+        );
+        // 游标必须推进：下面工具簇的 `tc_after_chips` 靠它给这段预留宽度，否则工具
+        // 簇会画到下拉上面去。取 `max` 是因为缩放簇可能画在下拉右侧（更靠右的一件才
+        // 决定中段的真实右缘）。
+        //
+        // The cursor must advance: the tool cluster's `tc_after_chips` below relies on it
+        // to reserve this span, otherwise the icons would paint over the dropdown. `max`
+        // because the zoom cluster may sit right of the dropdown -- the rightmost piece
+        // decides where the middle really ends.
+        x = (combo_left + combo_w).max(x);
+    }
+
+    // 工具簇（设计稿 `.toolcluster`，html 750 行）：模块下拉右侧的六枚工具图标。
     // 每枚是 28×28 的 `.ibtn`（图标 16、圆角 `--rk` 6、簇内 gap 8），两侧各一条
     // `.vdiv`（1×20，`--hair`）细隔线；选中 = `--blue-soft`（accent 18% 罩在顶栏
     // `--bar` 上）+ 底缘 2px 强调条（`.ibtn.on` 的 `inset 0 -2px 0 var(--blue)`）。
@@ -776,23 +946,33 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // 永远有一个可见的落点，与设计稿顶栏构图逐枚对齐。
     //
     // The tool cluster (the design's `.toolcluster`, html line 750): six tool icons to
-    // the right of the chips. Each is a 28x28 `.ibtn` (16 px icon, `--rk` 6 radius, 8 px
-    // gap), flanked by two 1x20 `.vdiv` hairlines (`--hair`); the active one takes
-    // `--blue-soft` (18% accent over the bar fill) plus a 2 px accent strip on the bottom
-    // edge (`.ibtn.on`'s `inset 0 -2px 0 var(--blue)`). With the tool rails folded away
-    // by default this cluster used to vanish and tools became keyboard-only -- bringing
-    // it back gives every tool a visible home in the top bar, per the design.
+    // the right of the module dropdown. Each is a 28x28 `.ibtn` (16 px icon, `--rk` 6
+    // radius, 8 px gap), flanked by two 1x20 `.vdiv` hairlines (`--hair`); the active one
+    // takes `--blue-soft` (18% accent over the bar fill) plus a 2 px accent strip on the
+    // bottom edge (`.ibtn.on`'s `inset 0 -2px 0 var(--blue)`). With the tool rails folded
+    // away by default this cluster used to vanish and tools became keyboard-only --
+    // bringing it back gives every tool a visible home in the top bar, per the design.
     // 设计稿在 ≤1400px 用媒体查询整簇隐藏。用户明确要求「图标常驻」，所以这里不
     // 隐藏，改成压缩：空间不够时 28/8 收成 24/4，宁可小一点也不让工具消失。
     // 旧实现用严格 `<` 做空间判据，右锚后边界恰好相等就把整簇静默吞掉。
+    // 只有压缩后仍然放不下（中段被模块下拉与文档标题吃满）时才整簇让位，见下面的
+    // `tc_fits`——那一档是「宁可收起也不压右簇」的最后手段，不是这套默认行为。
     //
     // The design hides the whole cluster under 1400 px via a media query. The user
     // explicitly wants the icons to stay, so instead of hiding we compact: 28/8 becomes
     // 24/4 when space is tight. The old strict `<` space test silently swallowed the
-    // whole cluster once right-anchoring made the boundary exactly equal.
-    // 右簇留白锚点：视觉比对（顶栏右半 2×）实测工具簇落在目标左侧约 95px，
-    // 根因是右簇估宽太保守、锚点被 chips 右缘的 max() 吃掉。收到 90 会压到「任务」
-    // 上，回到 150 又偏左；125 是实测不重叠且离目标最近的一档（差约 40px）。
+    // whole cluster once right-anchoring made the boundary exactly equal. It folds away
+    // only when the compact size still does not fit (the middle is taken by the module
+    // dropdown and the doc title) -- see `tc_fits` below, which is the "drop rather than
+    // crush the right cluster" last resort, not the default behaviour.
+    // 右簇留白锚点：视觉比对（顶栏右半 2×）实测工具簇落在目标左侧约 95px，根因是
+    // 右簇估宽太保守、锚点被中段右缘的 max() 吃掉。这段历史值已由下面的链式推导取代
+    // （`tc_right_limit`），不再有任何目测常量。
+    //
+    // Right-of-centre anchor: a 2x visual comparison measured the cluster landing ~95 px
+    // left of the reference because the right cluster's width was over-estimated and the
+    // anchor got eaten by the middle's `max()`. That hand-tuned value is gone -- the
+    // chained `tc_right_limit` below replaced it, with no eyeballed constant left.
     //
     // 工具簇右锚由右簇链左缘推导，留 8px 呼吸。此前是目测调出的 `-125` 常量：
     // 它与「导出-任务-齿轮-菜单」的实际宽度无关，语言一变就可能与齿轮/任务胶囊
@@ -822,7 +1002,19 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // -- half of the "icons are gone" report was this position. It falls back to just
     // after the chips only when there is not enough room.
     let tc_left = (tc_right_limit - tc_w - 18.0).max(tc_after_chips);
-    if full.width() > 900.0 {
+    // 空间判据：右锚（`tc_right_limit - tc_w - 18`）被 `tc_after_chips` 抬起来时，说明
+    // 中段已被下拉/标题吃满，簇再画就会压进右簇（任务胶囊/齿轮/导出）。此时整簇收起
+    // ——这是「宁可收起也不压别人」的最后一档；`full.width() > 900` 只保证极窄窗不画，
+    // 挡不住 900~1200 这段被中段挤满的情况。
+    //
+    // Space test: when the right anchor (`tc_right_limit - tc_w - 18`) is raised by
+    // `tc_after_chips`, the middle is already full (dropdown / title), so drawing the
+    // cluster would push it into the right cluster (tasks pill, gear, export). The whole
+    // cluster folds away -- the last tier of "drop rather than crush". The
+    // `full.width() > 900` gate alone only covers extremely narrow windows and cannot
+    // stop the 900-1200 band where the middle is saturated.
+    let tc_fits = tc_left + tc_w + 1.0 <= tc_right_limit;
+    if full.width() > 900.0 && tc_fits {
         // 左隔线：`.vdiv{width:1px;height:20px;background:var(--hair)}`。
         p.rect_filled(
             Rect::from_min_size(Pos2::new(tc_left, mid - 10.0), Vec2::new(1.0, 20.0)),

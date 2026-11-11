@@ -1,26 +1,18 @@
 //! 编号工作台：显影 / 帧表 / 导出 / 任务，四页共用一套外壳。
 //!
-//! 设计稿 `docs/aevum-v10.6-complete.html` 的 `.wsbar` 是一张**浮在内容上的实色卡片**
-//! （`top:56px`、居中、`padding:3px`、圆角 12、带投影），不是贴在标题栏里的一排页签。
-//! 切到帧表/导出/任务时，媒体让位给整页视图（`.wsview`），只留顶栏与这张导航卡。
-//!
-//! 为什么编号必留在按钮里：设计稿 `.sn` 是 9px 方形编号，选中态换成强调色底。
-//! 编号是「第几个工作台」的唯一可见线索，键盘 Alt+1..4 与它一一对应。
+//! 本模块提供工作台枚举、编号，以及整页视图共用的页头与二级工具条。工作台切换
+//! 入口在菜单行「视图」菜单（用户 2026-11-11「悬浮设计不好看」），画布上不再
+//! 绘制导航条或浮卡。编号 1..4 与 Ctrl+Alt+1..4 一一对应，菜单条目也带同一组编号。
 //!
 //! Numbered benches: develop / frame table / export / tasks, sharing one shell.
 //!
-//! The design's `.wsbar` is an **opaque card floating over the content** (top 56 px,
-//! centred, 3 px padding, 12 px radius, drop shadow), not a row of tabs inside the title
-//! bar. Switching to table / export / tasks gives the media up to a full-page view
-//! (`.wsview`), leaving only the top bar and this card.
-//!
-//! The number badge stays in the button because the design's `.sn` is a 9 px square
-//! badge that turns accent-filled when active -- it is the only visible cue for "which
-//! bench is this", and it matches the Alt+1..4 shortcuts one to one.
+//! This module owns the bench enum, its numbering, and the full-page head / secondary
+//! tool strip. Switching lives in the menu-row View menu (2026-11-11 feedback: no
+//! floating nav strip over the canvas). Numbers 1..4 match Ctrl+Alt+1..4 and label the
+//! menu rows too.
 
-use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
+use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 
-use crate::state::AppState;
 use crate::theme::*;
 
 /// 四个工作台。顺序即编号（1 显影 / 2 帧表 / 3 导出 / 4 任务）。
@@ -69,168 +61,6 @@ impl Bench {
             Self::Export => 3,
             Self::Tasks => 4,
         }
-    }
-}
-
-/// 导航卡内边距：设计稿 `.wsbar{padding:3px}`。
-///
-/// Nav card padding, per `.wsbar{padding:3px}`.
-const PAD: f32 = 3.0;
-/// 按钮高 28、圆角 8、内距（左 6 右 10）：`.wsbar button`。
-///
-/// Button: 28 high, 8 radius, 6/10 inset -- `.wsbar button`.
-const BTN_H: f32 = 28.0;
-const BTN_R: f32 = 8.0;
-/// 编号块 16×16、圆角 4：`.wsbar .sn`。
-///
-/// Number badge 16x16, 4 radius -- `.wsbar .sn`.
-const SN: f32 = 16.0;
-
-/// 画工作台导航卡并处理点击。返回本帧是否有切换。
-///
-/// Draw the bench nav card and handle clicks; returns whether the bench changed.
-pub(super) fn nav(state: &mut AppState, ui: &mut egui::Ui, top_center: Pos2) {
-    let p = ui.painter().clone();
-    // 先量宽：卡片要按内容居中，而不是先摆一个固定宽再塞文字。
-    // `.cnt` 徽标占位也要算进按钮宽（设计稿里徽标在 flow 里：gap 8 + 徽标自身宽），
-    // 否则角标会压在名称或右内距上——任务数是一位数时徽标 min-width 14，
-    // 两位数起按字宽 + 左右各 3px 放宽。
-    //
-    // Measure first: the card centres on its content instead of a fixed width. The `.cnt`
-    // badge takes part in the button width (in the design it sits in flow: 8 px gap plus
-    // the badge itself); otherwise the badge lands on the label or the right padding. The
-    // badge is min-width 14 with 3 px side padding, widening with digits from two up.
-    let running = state.running_jobs();
-    let mut widths = Vec::with_capacity(Bench::ALL.len());
-    for b in Bench::ALL {
-        let label = crate::i18n::tr(b.cn());
-        let galley = ui
-            .painter()
-            .layout_no_wrap(label.to_string(), font(12.0), text());
-        let mut w = 6.0 + SN + 8.0 + galley.size().x + 10.0;
-        if b == Bench::Tasks && running > 0 {
-            let cnt = ui
-                .painter()
-                .layout_no_wrap(format!("{running}"), font(9.0), warn());
-            w += 8.0 + (cnt.size().x + 6.0).max(14.0);
-        }
-        widths.push(w);
-    }
-    let total: f32 = widths.iter().sum::<f32>() + 2.0 * (Bench::ALL.len() as f32 - 1.0);
-    let card_w = total + PAD * 2.0;
-    let card_h = BTN_H + PAD * 2.0;
-    let card = Rect::from_min_size(
-        Pos2::new(top_center.x - card_w / 2.0, top_center.y),
-        Vec2::new(card_w, card_h),
-    );
-    // 投影：设计稿 `--sh: 0 8px 24px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.06)`。
-    // egui 的 Shadow 会把 blur 摊到四边；卡片落在媒体上，实色底 + 深投影才不糊照片。
-    //
-    // Shadow per `--sh`; egui's Shadow spreads the blur all round. The card floats over
-    // media, so an opaque fill plus a deep shadow keeps the photo from bleeding through.
-    p.add(
-        egui::epaint::Shadow {
-            offset: [0, 8],
-            blur: 24,
-            spread: 0,
-            color: Color32::from_black_alpha(115),
-        }
-        .as_shape(card, 12.0),
-    );
-    p.rect_filled(card, 12.0, panel());
-    p.rect_stroke(
-        card,
-        12.0,
-        Stroke::new(1.0, Color32::from_white_alpha(15)),
-        StrokeKind::Inside,
-    );
-
-    let mut x = card.left() + PAD;
-    let mut pick = None;
-    for (i, b) in Bench::ALL.iter().enumerate() {
-        let r = Rect::from_min_size(Pos2::new(x, card.top() + PAD), Vec2::new(widths[i], BTN_H));
-        x += widths[i] + 2.0;
-        let resp = ui.interact(r, ui.make_persistent_id(("bench", b.no())), Sense::click());
-        let on = state.bench == *b;
-        if on {
-            // `.wsbar button.on{background:var(--raised)}`：选中与 hover 同一档抬升，
-            // 选中语义由 `.sn` 的强调底承担。
-            //
-            // `.wsbar button.on` takes `--raised`: selection reads through the accent
-            // number badge, so the fill stays on the same raised step as hover.
-            p.rect_filled(r, BTN_R, elev());
-        } else if resp.hovered() {
-            // `.wsbar button:hover{background:var(--raised)}`（旧版用了更亮一档的
-            // raised2，和选中态脱节）。
-            //
-            // `.wsbar button:hover` is also `--raised`; the old code took the brighter
-            // raised2 step and drifted apart from the selected state.
-            p.rect_filled(r, BTN_R, elev());
-        }
-        // 编号块。
-        let sn = Rect::from_min_size(
-            Pos2::new(r.left() + 6.0, r.center().y - SN / 2.0),
-            Vec2::splat(SN),
-        );
-        // 编号块圆角跟 token 走；写死 4.0 会让选中态蓝块在调圆角时独自不动。
-        //
-        // The number badge follows the token; a literal 4.0 left the active blue
-        // badge frozen while every other corner moved with the radius knob.
-        p.rect_filled(
-            sn,
-            radius_chip().max(2.0),
-            if on { accent() } else { field() },
-        );
-        p.text(
-            sn.center(),
-            Align2::CENTER_CENTER,
-            format!("{}", b.no()),
-            font(9.0),
-            if on { Color32::WHITE } else { dim() },
-        );
-        // 名称。
-        p.text(
-            Pos2::new(sn.right() + 8.0, r.center().y),
-            Align2::LEFT_CENTER,
-            crate::i18n::tr(b.cn()),
-            font(12.0),
-            if on || resp.hovered() { text() } else { dim() },
-        );
-        // 任务数角标（设计稿 `.cnt`）：只在任务工作台有进行中的任务时出现。
-        // 徽标贴着右内距（10px）收边，宽度量字定：min-width 14、左右各 3px，
-        // 两位数不再挤在 14px 的方框里。
-        //
-        // Badge per `.cnt`: only when the tasks bench has something running. It closes
-        // against the 10 px right padding with a measured width -- min-width 14 plus 3 px
-        // per side -- so multi-digit counts no longer squeeze into a fixed 14 px box.
-        if *b == Bench::Tasks && running > 0 {
-            let cnt_gal = p.layout_no_wrap(format!("{running}"), font(9.0), warn());
-            let badge_w = (cnt_gal.size().x + 6.0).max(14.0);
-            let badge = Rect::from_min_size(
-                Pos2::new(r.right() - 10.0 - badge_w, r.center().y - 7.0),
-                Vec2::new(badge_w, 14.0),
-            );
-            p.rect_filled(
-                badge,
-                4.0,
-                Color32::from_rgba_unmultiplied(245, 184, 61, 41),
-            );
-            p.text(
-                badge.center(),
-                Align2::CENTER_CENTER,
-                format!("{running}"),
-                font(9.0),
-                warn(),
-            );
-        }
-        if resp.clicked() {
-            pick = Some(*b);
-        }
-        let tip = format!("{} (Ctrl+Alt+{})", crate::i18n::tr(b.cn()), b.no());
-        resp.on_hover_text(tip);
-    }
-    if let Some(b) = pick {
-        state.set_bench(b);
     }
 }
 

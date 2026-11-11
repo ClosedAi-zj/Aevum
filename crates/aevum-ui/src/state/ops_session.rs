@@ -1150,10 +1150,10 @@ impl AppState {
         // page (2026-11-10 user report).
         self.grade_baseline = Some(self.params.clone());
         // 打开新序列是「从头开始」：清掉上一盘手选的步骤页，并把工作台归回显影，
-        // 否则导航卡高亮显影、内容区却停在旧的导出页（两套状态打架）。
+        // 否则工作台选中显示显影、内容区却停在旧的导出页（两套状态打架）。
         //
         // Opening a new sequence starts over: clear the previous hand-picked step
-        // and return the bench to Develop, or the nav card highlights Develop
+        // and return the bench to Develop, or the bench selection says Develop
         // while the content still sits on the old export page (two states at odds).
         self.flow_step = None;
         self.set_bench(crate::shell::Bench::Develop);

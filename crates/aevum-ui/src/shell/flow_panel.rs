@@ -377,14 +377,14 @@ pub(super) fn current_page(state: &AppState) -> FlowPage {
     // 防御性守卫：`shell::mod` 的 `!develop` 分支已经把非显影工作台拦下，
     // 正常调用时 bench 必为 Develop。这里再挡一次，是为了将来有人从别处调用
     // `current_page` 时，不会仅凭流程派生步把内容区切成导出页——那种组合下
-    // 导航卡高亮「1 显影」而内容区是「导出视频」（用户 2026-11-10 实测）。
+    // 工作台选中停在「1 显影」而内容区是「导出视频」（用户 2026-11-10 实测）。
     // 主修复在 `ops_session::open_paths`（基线时机 + 清手选步），此处是兜底。
     //
     // Defensive guard: `!develop` in `shell::mod` already routes non-develop
     // benches to their full-page view, so bench is Develop on the normal path.
     // This keeps a future caller of `current_page` from turning the content into
     // the export page purely on a derived flow step -- the combination where the
-    // nav card highlights "1 Develop" while the content shows "Export video"
+    // bench selection stays on "1 Develop" while the content shows "Export video"
     // (2026-11-10 user report). The primary fix is in `ops_session::open_paths`
     // (baseline timing + clearing the hand-picked step); this is the backstop.
     if state.bench != crate::shell::Bench::Develop || state.frame_count() <= 1 {

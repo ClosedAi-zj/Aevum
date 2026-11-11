@@ -225,13 +225,13 @@ fn debug_show_curves(state: &mut AppState) {
 
 /// 首帧切工作台：`AEVUM_BENCH=develop|table|export|tasks`。
 ///
-/// `--shot` 点不了导航卡，四个工作台因此拍不到证据图；这与 `AEVUM_WORKSPACE`
-/// 是同一类只读钩子（只读环境变量，不落盘、不进工程）。
+/// `--shot` 打不开「视图」菜单里的四个工作台入口，因此拍不到证据图；这与
+/// `AEVUM_WORKSPACE` 是同一类只读钩子（只读环境变量，不落盘、不进工程）。
 ///
 /// Switch benches on the first frame: `AEVUM_BENCH=develop|table|export|tasks`.
 ///
-/// `--shot` cannot click the nav card, so the four benches would have no screenshots;
-/// this is the same class of read-only hook as `AEVUM_WORKSPACE`.
+/// `--shot` cannot open the View menu's bench entries, so the four benches would have no
+/// screenshots; this is the same class of read-only hook as `AEVUM_WORKSPACE`.
 fn debug_apply_bench(state: &mut AppState) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static DONE: AtomicBool = AtomicBool::new(false);
@@ -636,14 +636,14 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         });
 
     // 胶片卡：浮在画布左下角（设计稿 `.filmcard{left:12;bottom:12}`）。声明在
-    // 中央面板之后，所以它压在照片上；`Order::Middle` 让它高于画布、低于工作台
-    // 导航卡与各类浮窗。锚点贴**画布**左缘与下缘：左侧那根 24px 工具轨一直伸到
+    // 中央面板之后，所以它压在照片上；`Order::Middle` 让它高于画布、低于更晚绘制的
+    // 各类浮窗。锚点贴**画布**左缘与下缘：左侧那根 24px 工具轨一直伸到
     // 窗口底（用窗口左缘会把轨底的设置钮压住），底部可能还有一条状态栏。
     // 整页视图（项目库 / 设置）不摆——它们与「当前序列的帧」无关。
     //
     // The film card floats over the canvas' bottom-left corner (design `.filmcard`).
     // Declared after the centre panel so it sits on the photo; `Order::Middle` keeps it
-    // above the canvas and below the bench nav card and the floating windows. It hugs
+    // above the canvas and below the later-painted floating windows. It hugs
     // the **canvas'** left and bottom edges: the 24 px tool rail runs to the window
     // bottom (the window edge would bury its foot button) and a status bar may sit
     // below. Full-page benches get no card -- they have no "current sequence frame".
@@ -684,46 +684,16 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         );
     }
 
-    // 工作台导航卡：浮在内容之上（design `.wsbar{position:absolute;top:56px;z-index:45}`），
-    // 顶栏下 12px、水平居中。放在 Content 之后画，才压得住媒体与整页视图。
+    // 工作台切换已并入菜单行「视图」菜单（用户 2026-11-11「悬浮设计不好看」）：
+    // 这里不再画 `Area("bench-nav")`，画布顶部没有第二条导航带，导出流程页的
+    // 页头标题与「开始批量渲染」按钮因此完整可见。原先那条浮在内容之上的导航卡
+    // 会与 `export_page` 页头文字抢同一行（text_never_overlaps 抓到 28 处）。
     //
-    // 层级只到 Middle：中央面板在 Background，Middle 已经压得住它；而设置窗口、
-    // 错误弹窗这些 `egui::Window` 也是 Middle，且在下面更晚绘制，于是浮窗反压导航卡。
-    // 早先钉在 Foreground，会把「外观与布局」的标题栏盖掉——标题栏正是拖动区，
-    // 用户因此看到「子窗口被覆盖、拖不动」（2026-11-10 实测截图）。
-    //
-    // The bench nav card floats above the content (design `.wsbar`: absolute, top 56 px,
-    // z-index 45) -- 12 px under the top bar, horizontally centred. Painted after the
-    // content so it sits above both the media and the full-page views.
-    //
-    // It stops at Middle: the central panel is Background, which Middle already covers,
-    // while the `egui::Window`s (settings, error dialog) are also Middle but painted
-    // later below, so they outrank the card. Pinning it to Foreground used to bury the
-    // settings window's title bar -- its drag handle -- making the sub-window look
-    // covered and impossible to move (reproduced in the 2026-11-10 screenshot).
-    // 导航卡的位置按工作台分别算，避免和顶栏下面的两条带子叠压：
-    // - 显影：浮在**画布**上沿内 12px、画布水平居中（设计稿 `.wsbar` 浮在媒体上）；
-    // - 整页工作台：顶栏下 12px、窗口水平居中（设计稿页头中央，两侧被标题/动作占着，
-    //   中间这段本来就是空的）。
-    //
-    // The nav card is positioned per bench so it never collides with the two strips under
-    // the top bar: in develop it floats 12 px inside the canvas top, centred on the canvas
-    // (the design floats `.wsbar` over the media); on the full-page benches it sits 12 px
-    // under the top bar, centred in the window (the design's page-head centre, which the
-    // title and actions leave free).
-    let (nav_center_x, nav_top) = if develop {
-        (centre.center().x, centre.top() + 12.0)
-    } else {
-        (full.center().x, full.top() + MENU_H + 12.0)
-    };
-    egui::Area::new(egui::Id::unique("bench-nav"))
-        .order(egui::Order::Middle)
-        .fixed_pos(Pos2::new(nav_center_x - 300.0, nav_top))
-        .show(&ctx, |ui| {
-            ui.set_min_size(Vec2::new(600.0, 34.0));
-            ui.set_max_width(600.0);
-            bench::nav(state, ui, Pos2::new(nav_center_x, nav_top));
-        });
+    // Bench switching now lives in the menu-row View menu (2026-11-11 feedback): no
+    // `Area("bench-nav")` is painted here, so the canvas has no second nav strip and
+    // the export page head (title plus the batch-render button) stays fully visible.
+    // The old card floating over the content used to share a text row with the
+    // `export_page` head -- 28 overlaps caught by text_never_overlaps.
 
     state.history_commit();
     // 新错误抬成弹窗：四十余处 `state.error = Some(...)` 靠这一处统一兜住。
