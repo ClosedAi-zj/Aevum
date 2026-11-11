@@ -395,7 +395,19 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
         } else if resp.is_pointer_button_down_on() {
             p.rect_filled(r, radius_control(), press());
         } else if resp.hovered() {
-            p.rect_filled(r, radius_control(), elev_hover());
+            // R8：hover 不铺底（与激活态的实心块抢语义），改 2px 强调底线
+            // 的 40% 预览——「点了会变成这样」的暗示。
+            p.rect_filled(
+                Rect::from_min_max(
+                    Pos2::new(
+                        r.center().x - (r.width() * 0.5 - 8.0) * 0.4,
+                        r.bottom() - 1.5,
+                    ),
+                    Pos2::new(r.center().x + (r.width() * 0.5 - 8.0) * 0.4, r.bottom()),
+                ),
+                1.0,
+                accent().gamma_multiply(0.4),
+            );
         }
         // 页签文字按**实测宽度**截断：窄坞（280px）下英文 "Keyframes" 会压到
         // 相邻页签上；而三个汉字实际放得下，按字符数估算会误截成「关…」。
