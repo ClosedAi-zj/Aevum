@@ -1051,11 +1051,6 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                                 6.0,
                                 Stroke::new(1.0, Color32::from_white_alpha(102)),
                                 StrokeKind::Inside,
-                            p.rect_stroke(
-                                cell,
-                                6.0,
-                                Stroke::new(1.0, border_strong()),
-                                StrokeKind::Inside,
                             );
                         }
 
