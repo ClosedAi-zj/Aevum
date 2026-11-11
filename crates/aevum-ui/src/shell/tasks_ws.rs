@@ -126,20 +126,26 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
         state.set_bench(super::Bench::Develop);
         return;
     }
-    let (r1, _) = bench::head_action(
+    let (r1, clear) = bench::head_action(
         ui,
         head.right(),
         head.center().y,
         crate::i18n::t!("清除已完成"),
         false,
     );
-    let _ = bench::head_action(
+    if clear.clicked() {
+        state.clear_queue_rows();
+    }
+    let (_r2, pause) = bench::head_action(
         ui,
         r1.left() - 8.0,
         head.center().y,
         crate::i18n::t!("全部暂停"),
         false,
     );
+    if pause.clicked() {
+        state.stop_queue();
+    }
 
     // 页面正文：定宽 980 居中（窗口更窄时让出内距），两列 + 末尾通栏历史卡。
     //

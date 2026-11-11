@@ -33,7 +33,7 @@ const SIDE_W: f32 = 300.0;
 /// 画整页帧表。
 ///
 /// Draw the whole frame-table page.
-pub(super) fn page(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
+pub(super) fn page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let full = ui.max_rect();
     let p = ui.painter().clone();
     p.rect_filled(full, 0.0, bench_bg());
@@ -70,37 +70,32 @@ pub(super) fn page(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
         state.set_bench(super::Bench::Develop);
         return;
     }
-    // 页头右侧动作：保存 XMP（实底）→ 导出和渲染…（主按钮），从右往左排。
-    let (r1, _) = bench::head_action(
+    // 页头右侧动作：只留「导出和渲染…」并接上真实入口。原来还有一颗「保存 XMP」，
+    // 但工程里没有「批量写边车」的实现——画出来点了没反应，是假控件，删掉比留着诚实。
+    //
+    // One head action, wired to the real entry point. The old "Save XMP" button had no
+    // backing implementation anywhere in the project -- a painted control that did
+    // nothing when clicked, so it is removed rather than left as a decoy.
+    let (_r1, go) = bench::head_action(
         ui,
         head.right(),
         head.center().y,
         crate::i18n::t!("导出和渲染…"),
         true,
     );
-    let _ = bench::head_action(
-        ui,
-        r1.left() - 8.0,
-        head.center().y,
-        crate::i18n::t!("保存 XMP"),
-        false,
-    );
-
-    let strip = bench::tools_strip(ui, head.bottom());
-    let mut x = strip.left() + 16.0;
-    for label in ["关键帧向导", "至前向导", "自动过渡", "预览", "去闪"] {
-        let (nx, _) = bench::tool_button(ui, x, strip, crate::i18n::tr(label), false);
-        x = nx;
+    if go.clicked() {
+        state.request_export_confirm(ctx, false);
     }
 
-    // 主体：左列预览/摘要，右侧表格。实现在 `table.rs` / `preview.rs`。
+    // 二级工具条整条删除：这五枚按钮（关键帧向导 / 至前向导 / 自动过渡 / 预览 / 去闪）
+    // 在工程里都没有对应实现——画得出来、点了没反应，是假控件。删掉比留着诚实，
+    // 版式上页头与表格之间也不再夹一条空带。
     //
-    // Body: preview/summary column on the left, table on the right.
-    // 设计稿 `.ws-body{padding:12px 16px 16px}`：上 12、左右 16、下 16。
-    //
-    // Design padding: 12 top, 16 sides, 16 bottom.
+    // The secondary strip is gone: none of those five buttons has an implementation in
+    // this project (they painted and did nothing). Removing them beats a row of decoys,
+    // and it drops a dead band between the head and the table.
     let body = egui::Rect::from_min_max(
-        egui::Pos2::new(full.left(), strip.bottom() + 12.0),
+        egui::Pos2::new(full.left(), head.bottom() + 12.0),
         egui::Pos2::new(full.right() - 16.0, full.bottom() - 16.0),
     );
     let left = egui::Rect::from_min_size(

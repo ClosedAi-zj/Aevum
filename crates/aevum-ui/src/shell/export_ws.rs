@@ -86,7 +86,7 @@ const SIZE_MICRO: f32 = SIZE_SMALL - 1.0;
 /// 画整页导出工作台。
 ///
 /// Draw the whole export bench.
-pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context) {
+pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, ctx: &egui::Context) {
     let full = ui.max_rect();
     let p = ui.painter().clone();
     p.rect_filled(full, 0.0, bench_bg());
@@ -116,35 +116,49 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
         state.set_bench(super::Bench::Develop);
         return;
     }
-    let (r1, _) = bench::head_action(
+    // 页头只放次级动作：「开始批量渲染」是这一步唯一的主动作，钉在右列底部（设置读完
+    // 就按），页头再放一颗同色主按钮会变成两个「终点」，用户不知道按哪个。
+    //
+    // The head carries secondary actions only: "start rendering" is this step's single
+    // primary and lives at the bottom of the settings column (read the settings, then
+    // commit). A second accent button up here gives the page two finish lines.
+    let (r1, join) = bench::head_action(
         ui,
         head.right(),
-        head.center().y,
-        crate::i18n::t!("开始批量渲染"),
-        true,
-    );
-    let (r2, _) = bench::head_action(
-        ui,
-        r1.left() - 8.0,
         head.center().y,
         crate::i18n::t!("加入当前序列"),
         false,
     );
-    let _ = bench::head_action(
+    if join.clicked()
+        && let Err(e) = state.add_current_to_queue()
+    {
+        state.error = Some(e);
+    }
+    let (_r2, clear) = bench::head_action(
         ui,
-        r2.left() - 8.0,
+        r1.left() - 8.0,
         head.center().y,
         crate::i18n::t!("清空已完成"),
         false,
     );
+    if clear.clicked() {
+        state.clear_queue_rows();
+    }
 
     let strip = bench::tools_strip(ui, head.bottom());
     let mut x = strip.left() + BODY_X;
+    // 只保留**有实现**的按钮。「打开输出目录」「重试失败帧」此前画得出来、点了没反应
+    // （`let (nx, _) =` 把 Response 丢了），属于假控件，删掉比留着诚实。
+    //
+    // Only buttons with a real handler stay. "Open output folder" and "Retry failed
+    // frames" were painted but had no handler (the Response was dropped), so they are
+    // removed rather than left as decoys.
     let (nx, _) = bench::tool_button(ui, x, strip, crate::i18n::t!("导出队列"), true);
     x = nx;
-    let (nx, _) = bench::tool_button(ui, x, strip, crate::i18n::t!("导出当前帧"), false);
-    x = nx;
-    let (nx, _) = bench::tool_button(ui, x, strip, crate::i18n::t!("打开输出目录"), false);
+    let (nx, cur) = bench::tool_button(ui, x, strip, crate::i18n::t!("导出当前帧"), false);
+    if cur.clicked() {
+        state.request_export_confirm(ctx, true);
+    }
     // 竖分隔：`--hair` 1px、高 14、左右各留 8。
     //
     // Vertical separator: 1 px hairline, 14 high, 8 on each side.
@@ -156,8 +170,11 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
         ],
         Stroke::new(1.0, group_ring()),
     );
-    let (nx, _) = bench::tool_button(ui, sep + 8.0, strip, crate::i18n::t!("暂停当前"), false);
-    let (last, _) = bench::tool_button(ui, nx, strip, crate::i18n::t!("重试失败帧"), false);
+    let (last, pause) =
+        bench::tool_button(ui, sep + 8.0, strip, crate::i18n::t!("暂停当前"), false);
+    if pause.clicked() {
+        state.stop_queue();
+    }
 
     // 工具条右端的流水说明：`每帧 渲染 → 去闪 → 参数过渡 → 编码 · 24 fps · H.265 CRF 18`。
     // 按钮排到它跟前就整条省略，不叠字。
@@ -200,7 +217,7 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
     let left = Rect::from_min_max(body.left_top(), Pos2::new(side_left - GAP, body.bottom()));
     let right = Rect::from_min_max(Pos2::new(side_left, body.top()), body.right_bottom());
     queue_card(state, ui, left);
-    settings_card(state, ui, right);
+    settings_card(state, ui, ctx, right);
 }
 
 /// 队列卡：卡头「队列」+ 计数，逐行任务（缩略图 + 名称 + 状态点 + 状态文字）。
@@ -459,7 +476,7 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
 ///
 /// The settings card: 24 px label/value rows plus a full-width 26 px primary button
 /// pinned to the card's bottom.
-fn settings_card(state: &AppState, ui: &mut Ui, rect: Rect) {
+fn settings_card(state: &mut AppState, ui: &mut Ui, ctx: &egui::Context, rect: Rect) {
     let p = ui.painter().clone();
     p.rect_filled(rect, CARD_R, panel());
     p.rect_stroke(
@@ -607,7 +624,16 @@ fn settings_card(state: &AppState, ui: &mut Ui, rect: Rect) {
         ui.make_persistent_id("export-ws-primary"),
         Sense::click(),
     );
-    let fill = if resp.is_pointer_button_down_on() {
+    // 空队列时这颗按钮没有可渲染的段：画成禁用态并吞掉点击，比「点了没反应」诚实。
+    // 有队列时它是本页**唯一**的主动作（页头那颗同义按钮已删，见 `page`）。
+    //
+    // With an empty queue there is nothing to render: draw it disabled and swallow the
+    // click, which beats a button that silently does nothing. When there is work it is this
+    // page's **only** primary action (the duplicate in the head was removed, see `page`).
+    let ready = !state.queue.is_empty();
+    let fill = if !ready {
+        field()
+    } else if resp.is_pointer_button_down_on() {
         accent_hover()
     } else {
         accent()
@@ -618,10 +644,17 @@ fn settings_card(state: &AppState, ui: &mut Ui, rect: Rect) {
         Align2::CENTER_CENTER,
         crate::i18n::t!("立即导出"),
         font(SIZE_LABEL),
-        on_accent(),
+        if ready { on_accent() } else { dim() },
     );
-    if resp.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    if ready {
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if resp.clicked()
+            && let Err(e) = state.start_queue(ctx)
+        {
+            state.error = Some(e);
+        }
     }
 }
 
