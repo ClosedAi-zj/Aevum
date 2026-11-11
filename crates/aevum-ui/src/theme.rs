@@ -1609,7 +1609,12 @@ pub fn apply_style(ctx: &Context, zoom: f32) {
     style.spacing.interact_size = Vec2::new(22.0, 22.0);
     style.spacing.slider_width = 110.0;
     style.spacing.slider_rail_height = 4.0;
-    style.spacing.scroll.bar_width = 8.0;
+    style.spacing.scroll.bar_width = 9.0;
+    // 滚动条精致化（R5，Win11 惯例）：平时半透明细杆，hover 变不透明——
+    // 恒显实杆会与右栏内容抢视觉，全隐又找不到。浮动+0.55/1.0 两档正是
+    // Win11 设置面板的口径。
+    style.spacing.scroll.dormant_handle_opacity = 0.55;
+    style.spacing.scroll.interactive_handle_opacity = 1.0;
     // 浮动滚动条（悬浮于内容之上、不占布局宽度）：固定 false 时，展开一个长组
     // → 竖滚动条出现 → 面板内容整体横移 8px——用户实测「点击展开某个调色选项
     // 界面会动」。浮动后滚动条 hover 才显形，布局宽度恒定，展开零位移。
