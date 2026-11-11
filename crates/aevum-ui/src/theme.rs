@@ -1584,7 +1584,7 @@ pub fn apply_style(ctx: &Context, zoom: f32) {
         offset: [0, if light { 5 } else { 8 }],
         blur: if light { 22 } else { 30 },
         spread: 2,
-        color: Color32::from_black_alpha(if light { 64 } else { 165 }),
+        color: Color32::from_black_alpha(if light { 80 } else { 190 }),
     };
     v.window_corner_radius = radius_window().into();
     v.menu_corner_radius = radius_window().into();
@@ -1606,12 +1606,15 @@ pub fn apply_style(ctx: &Context, zoom: f32) {
     v.selection.stroke = Stroke::new(1.0, accent());
     v.striped = false;
     v.slider_trailing_fill = true;
+    // 投影双层感（PS/Win11 菜单的立体感来源）：popup 取「接触」端——blur 收紧、
+    // alpha 拉高、spread 1；「环境」端由 window_shadow（blur 30 alpha 190）承担，
+    // 两档叠出厚度。单层软影读作「贴纸」，接触+环境双端才有实体感。
     v.popup_shadow = egui::epaint::Shadow {
-        offset: [0, if light { 4 } else { 6 }],
-        blur: if light { 18 } else { 24 },
-        spread: 0,
+        offset: [0, if light { 3 } else { 4 }],
+        blur: if light { 10 } else { 14 },
+        spread: 1,
         // 浅色底的投影要收着，140 的黑在亮底上会糊成一圈脏边。
-        color: Color32::from_black_alpha(if light { 56 } else { 140 }),
+        color: Color32::from_black_alpha(if light { 90 } else { 200 }),
     };
 
     v.widgets.noninteractive.bg_fill = panel();
@@ -1706,6 +1709,37 @@ pub fn card_shadow() -> egui::epaint::Shadow {
         blur: if light { 20 } else { 24 },
         spread: 2,
         color: Color32::from_black_alpha(if light { 64 } else { 120 }),
+    }
+}
+
+/// 交互面的垂直 bevel 渐变（Win11 chrome 语言）：上下各偏 ±3.5%，
+/// 8 片竖条插值——按钮/菜单条由此获得「实体在光下」的立体感。
+/// egui 没有渐变矩形，这与滑块渐变轨同一技法。
+///
+/// Vertical bevel gradient for interactive surfaces (the Win11 chrome language):
+/// ±3.5% shift top-to-bottom, painted as 8 vertical slices -- the same technique
+/// as the gradient rails.
+pub fn surface_bevel(painter: &egui::Painter, rect: egui::Rect, base: Color32) {
+    const SLICES: usize = 8;
+    let (r, g, b) = (base.r(), base.g(), base.b());
+    let light = is_light();
+    for k in 0..SLICES {
+        let t = k as f32 / SLICES as f32;
+        let shift = (0.035 * (1.0 - 2.0 * t)) * if light { -1.0 } else { 1.0 };
+        let y0 = rect.top() + rect.height() * (k as f32 / SLICES as f32);
+        let y1 = rect.top() + rect.height() * ((k + 1) as f32 / SLICES as f32);
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::Pos2::new(rect.left(), y0),
+                egui::Pos2::new(rect.right(), y1 + 0.5),
+            ),
+            0,
+            Color32::from_rgb(
+                ((r as f32 * (1.0 + shift)).clamp(0.0, 255.0)) as u8,
+                ((g as f32 * (1.0 + shift)).clamp(0.0, 255.0)) as u8,
+                ((b as f32 * (1.0 + shift)).clamp(0.0, 255.0)) as u8,
+            ),
+        );
     }
 }
 

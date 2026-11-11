@@ -464,8 +464,13 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
                 resp.is_pointer_button_down_on(),
                 true,
             );
-            // 统一底、统一边框、统一圆角。
-            p.rect_filled(rect, radius_control(), v.fill);
+            // 统一底、统一边框、统一圆角。激活/hover 段走 bevel 渐变——
+            // Win11 chrome 语言的立体感（用户 2026-11-11「厚实感」）。
+            if v.fill == selected() || resp.hovered() && v.fill == elev_hover() {
+                crate::theme::surface_bevel(&p, rect, v.fill);
+            } else {
+                p.rect_filled(rect, radius_control(), v.fill);
+            }
             p.rect_stroke(
                 rect,
                 radius_control(),

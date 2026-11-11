@@ -21,8 +21,8 @@ use crate::theme::{self, *};
 use aevum_core::export::OutputMode;
 use aevum_core::grade::{self, GradeParams};
 use egui::{
-    Align, Align2, Color32, Context, Layout, Pos2, Rect, Response, RichText, Sense, Stroke, Ui,
-    Vec2,
+    Align, Align2, Color32, Context, Layout, Pos2, Rect, Response, RichText, Sense, Stroke,
+    StrokeKind, Ui, Vec2,
 };
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
@@ -30,12 +30,39 @@ use egui::{
 /// 所以这里不写死 fill，才有悬停反馈。
 pub(super) fn bar_button(ui: &mut Ui, label: &str) -> Response {
     // 翻译下沉到辅助函数：调用点照常写中文，切到英文时这里统一翻。
+    // 立体感（用户 2026-11-11「选项要有厚度」）：自绘 bevel 渐变底 +
+    // hover/按下两态，与 bar_primary 同一结构——egui Button 的平涂底
+    // 没有实体感。
     let label = crate::i18n::tr(label);
-    ui.add(
-        egui::Button::new(RichText::new(label).size(SIZE_BODY))
-            .min_size(Vec2::new(0.0, BAR_H))
-            .corner_radius(radius_control()),
-    )
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font(SIZE_BODY), text());
+    let size = Vec2::new(galley.size().x + 20.0, BAR_H);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let p = ui.painter();
+    let base = if resp.is_pointer_button_down_on() {
+        press()
+    } else if resp.hovered() {
+        elev_hover()
+    } else {
+        elev()
+    };
+    theme::surface_bevel(p, rect, base);
+    p.rect_stroke(
+        rect,
+        radius_control(),
+        Stroke::new(
+            1.0,
+            if resp.hovered() {
+                border_strong()
+            } else {
+                border()
+            },
+        ),
+        StrokeKind::Inside,
+    );
+    p.galley(rect.center() - galley.size() * 0.5, galley, text());
+    resp
 }
 
 /// 主按钮：强调色实心 + 深字，悬停提亮、按下压暗，圆角走 token。
