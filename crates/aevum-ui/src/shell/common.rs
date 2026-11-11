@@ -392,7 +392,9 @@ pub(super) fn group_header(
         } else {
             Glyph::ChevronRight
         },
-        if resp.hovered() { text() } else { muted() },
+        // R2：箭头 hover 变强调色——开合是这一行的首要交互，hover 时给色
+        // 而不是只提亮度，ACR 的分区箭头同此。
+        if resp.hovered() { accent_hover() } else { muted() },
     );
     // 组名 13px / 600（设计稿 `.grp-h .lb`）：它是卡片的标题，比下面的
     // 参数名重一档才立得住卡片层级；用真粗体字族而非描边加粗。
