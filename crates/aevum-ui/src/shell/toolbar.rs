@@ -429,7 +429,6 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                                 .size(SIZE_LABEL)
                                 .color(text()),
                         )
-                        .width(118.0)
                         .show_ui(ui, |ui| {
                             combo_style(ui);
                             for name in grade::PRESET_NAMES {
