@@ -763,6 +763,8 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // window, but must not cover "the last step failed".
     palette::command_palette(state, &ctx);
     error_dialog(state, &ctx);
+    // 子窗口关闭钮 hover 皮肤（第 1 轮）：红底白叉，Windows 惯例。
+    windows::style_close_buttons(&ctx);
     window_resize(root, &ctx, full);
 
     state.ensure_preview(&ctx);

@@ -103,6 +103,58 @@ fn remember_pos(state: &mut AppState, ctx: &Context, key: &str, rect: Rect) {
 /// 此前这里写死 `corner_radius(0.0)`：方角标题条压在圆角窗体上，窗的上两角
 /// 被削成直角、下两角还是圆的——四个角弧度不一致就是这么来的。上两角取
 /// `radius_window()`（与窗体同源），下两角归零交给窗体本体，整窗一套弧度。
+
+/// 子窗口关闭钮的 Windows 惯例化（第 1 轮）：egui 的 ✕ 只有 ~20px 且 hover
+/// 仅变笔画色——视觉验收点名「叉的大小与颜色不合理」。此处在 Tooltip 层
+/// 叠画 Windows 惯例的 hover 态：红底 #C42B1C + 白叉（点击行为仍由 egui
+/// 的关闭钮处理，本函数只负责外观）。
+///
+/// Windows-convention close button for sub-windows (round 1): egui's ✕ is ~20 px
+/// and hover only recolors the strokes. This paints the Windows hover state -- red
+/// #C42B1C fill + white cross -- on the Tooltip layer; click handling stays with
+/// egui's own button, this only restyles it.
+/// 统一入口（shell::ui 尾部调用一次）：五扇浮窗逐个叠画关闭钮 hover 皮肤。
+pub(super) fn style_close_buttons(ctx: &egui::Context) {
+    for id in window_ids() {
+        close_hover(ctx, id);
+    }
+}
+
+fn close_hover(ctx: &egui::Context, win_id: egui::Id) {
+    let close_id = win_id.with("__window_close_button");
+    let Some(resp) = ctx.read_response(close_id) else {
+        return;
+    };
+    if !resp.hovered() {
+        return;
+    }
+    let layer = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Tooltip,
+        win_id.with("close-hover-skin"),
+    ));
+    let r = resp.rect.expand(6.0);
+    layer.rect_filled(r, 4.0, Color32::from_rgb(0xC4, 0x2B, 0x1C));
+    let c = r.center();
+    let s = 4.5;
+    let (a, b) = (c - egui::vec2(s, s), c + egui::vec2(s, s));
+    layer.line_segment([a, b], Stroke::new(1.6, Color32::WHITE));
+    layer.line_segment(
+        [egui::pos2(a.x, b.y), egui::pos2(b.x, a.y)],
+        Stroke::new(1.6, Color32::WHITE),
+    );
+}
+
+/// 六扇浮窗的统一 id 表（close_hover 与未来的浮窗级打磨都从这里取）。
+pub(crate) fn window_ids() -> [egui::Id; 5] {
+    [
+        egui::Id::new("win-plugins"),
+        egui::Id::new("win-look"),
+        egui::Id::new("win-presets"),
+        egui::Id::new("win-about"),
+        egui::Id::new("win-update"),
+    ]
+}
+
 fn title_frame() -> egui::Frame {
     let r = radius_window() as u8;
     egui::Frame::new()
@@ -311,6 +363,7 @@ pub(super) fn market_window(state: &mut AppState, ctx: &Context) {
     let default_size = theme::win_default(Vec2::new(WIN_MARKET_W, WIN_MARKET_H), vp.size());
     let min_size = theme::win_min(Vec2::new(WIN_MARKET_MIN_W, WIN_MARKET_MIN_H), vp.size());
     let win = egui::Window::new(crate::i18n::t!("插件"))
+        .id(egui::Id::new("win-plugins"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -919,6 +972,7 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
         Vec2::new(WIN_LOOK_W, WIN_LOOK_H),
     );
     let win = egui::Window::new(crate::i18n::t!("外观与布局"))
+        .id(egui::Id::new("win-look"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -1350,6 +1404,7 @@ pub(super) fn presets_window(state: &mut AppState, ctx: &Context) {
         Vec2::new(WIN_PRESETS_W, WIN_PRESETS_H),
     );
     let win = egui::Window::new(crate::i18n::t!("预设与快照"))
+        .id(egui::Id::new("win-presets"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -1529,6 +1584,7 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
         Vec2::new(WIN_ABOUT_W, WIN_ABOUT_H),
     );
     let win = egui::Window::new(crate::i18n::t!("快捷键与关于"))
+        .id(egui::Id::new("win-about"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -1654,6 +1710,7 @@ pub(super) fn update_window(state: &mut AppState, ctx: &Context) {
     let default_size = theme::win_default(Vec2::new(WIN_UPDATE_W, WIN_UPDATE_H), vp.size());
     let min_size = theme::win_min(Vec2::new(WIN_UPDATE_MIN_W, WIN_UPDATE_MIN_H), vp.size());
     let win = egui::Window::new(crate::i18n::t!("检查更新"))
+        .id(egui::Id::new("win-update"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
