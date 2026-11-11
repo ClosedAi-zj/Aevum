@@ -394,7 +394,11 @@ pub(super) fn group_header(
         },
         // R2：箭头 hover 变强调色——开合是这一行的首要交互，hover 时给色
         // 而不是只提亮度，ACR 的分区箭头同此。
-        if resp.hovered() { accent_hover() } else { muted() },
+        if resp.hovered() {
+            accent_hover()
+        } else {
+            muted()
+        },
     );
     // 组名 13px / 600（设计稿 `.grp-h .lb`）：它是卡片的标题，比下面的
     // 参数名重一档才立得住卡片层级；用真粗体字族而非描边加粗。
@@ -938,11 +942,20 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     {
         let p = ui.painter();
         if hot_row {
-            // 通栏轻微提亮：一行 30px，只提 7/255，够指认、不打断纵向扫读。
+            // 通栏轻微提亮 + 左缘 2px 强调竖条（ACR 激活行读法：视线从左缘
+            // 就知道「这一行是我的」——比单纯提亮多一根锚线）。
             p.rect_filled(
                 rect.shrink2(Vec2::new(0.0, 1.0)),
                 radius_control(),
                 row_hover(),
+            );
+            p.rect_filled(
+                Rect::from_min_max(
+                    Pos2::new(rect.left() + 2.0, rect.top() + 2.0),
+                    Pos2::new(rect.left() + 4.0, rect.bottom() - 2.0),
+                ),
+                1.0,
+                accent().gamma_multiply(0.75),
             );
         }
         // 数值框：PS / Camera Raw 口径——实底 + 1px 描边独立成格，不是一个裸数字
@@ -973,7 +986,7 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
             p.rect_stroke(
                 field,
                 radius_control(),
-                Stroke::new(1.0, divider()),
+                Stroke::new(1.0, accent().gamma_multiply(0.7)),
                 egui::StrokeKind::Inside,
             );
         }
