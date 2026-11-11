@@ -183,22 +183,53 @@ fn task_cards(
     qrows: &[QueueRow],
 ) -> f32 {
     let mut y = rect.top();
+    let list_h = rows.len() as f32 * TROW_H;
+    let q_h = PAD * 2.0 + 24.0 + 8.0 + qrows.len() as f32 * QLINE_H;
+    // 三段合成**一张卡**：当前任务 / 队列 / 队列顺序本来是一条队列的三个截面，
+    // 以前各画各的卡面，读起来像三个互不相干的模块（用户 2026-11-11「有些地方
+    // 不需要分模块，本来就在一页的」）。卡面罩住整段，段间只留一道发丝线。
+    //
+    // One card for all three sections: the running job, the queue and the queue order
+    // are three slices of one queue, but each used to paint its own face and read as
+    // three unrelated modules (user, 2026-11-11). One face spans them all; sections are
+    // separated by a hairline only.
+    let total = RUN_H + list_h + q_h;
+    card_face(
+        &ui.painter().clone(),
+        Rect::from_min_size(rect.left_top(), Vec2::new(rect.width(), total)),
+    );
     run_card(
         state,
         ui,
         Rect::from_min_size(rect.left_top(), Vec2::new(rect.width(), RUN_H)),
     );
-    y += RUN_H + GAP;
+    y += RUN_H;
+    if !rows.is_empty() {
+        rule(
+            &ui.painter().clone(),
+            rect.left() + PAD,
+            rect.right() - PAD,
+            y,
+            group_ring(),
+        );
+    }
 
-    let list_h = rows.len() as f32 * TROW_H;
     task_list(
         ui,
         Rect::from_min_size(Pos2::new(rect.left(), y), Vec2::new(rect.width(), list_h)),
         rows,
     );
-    y += list_h + GAP;
+    y += list_h;
+    if !qrows.is_empty() {
+        rule(
+            &ui.painter().clone(),
+            rect.left() + PAD,
+            rect.right() - PAD,
+            y,
+            group_ring(),
+        );
+    }
 
-    let q_h = PAD * 2.0 + 24.0 + 8.0 + qrows.len() as f32 * QLINE_H;
     queue_order(
         ui,
         Rect::from_min_size(Pos2::new(rect.left(), y), Vec2::new(rect.width(), q_h)),
@@ -213,7 +244,6 @@ fn task_cards(
 /// The running card: title, chip, percentage and cancel; stage chain; 3 px bar; readouts.
 fn run_card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     let p = ui.painter().clone();
-    card_face(&p, rect);
     let busy = state.queue_busy || state.export_busy || state.merge_busy || state.align_busy;
     let (done_n, total_n, encoding) = match state.queue_progress() {
         Some((d, t, stage)) => (d, t, matches!(stage, aevum_core::export::Stage::Encode)),
@@ -494,7 +524,6 @@ fn run_card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
 /// the card.
 fn task_list(ui: &mut Ui, rect: Rect, rows: &[TaskRow]) {
     let p = ui.painter().clone();
-    card_face(&p, rect);
     for (i, row) in rows.iter().enumerate() {
         let y = rect.top() + i as f32 * TROW_H;
         let r = Rect::from_min_size(Pos2::new(rect.left(), y), Vec2::new(rect.width(), TROW_H));
@@ -594,7 +623,6 @@ fn task_list(ui: &mut Ui, rect: Rect, rows: &[TaskRow]) {
 /// Queue order: the waiting entries in queue order, at most three rows.
 fn queue_order(ui: &mut Ui, rect: Rect, rows: &[QueueRow]) {
     let p = ui.painter().clone();
-    card_face(&p, rect);
     let x0 = rect.left() + PAD;
     let x1 = rect.right() - PAD;
     p.text(

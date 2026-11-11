@@ -680,11 +680,22 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // extra 6 px gaps would squeeze the zoom readout out.
     let gap = if avail >= 320.0 { 12.0 } else { 6.0 };
     let combo_left = x + gap;
+    // 模块是**画布这一页**的分区（序列 / 去闪 / 显影 / 构图 / 成片 / 声音 / 合成），
+    // 离开画布就没有意义：帧表 / 导出 / 任务三页以及序列管理、导出视频两个流程页上，
+    // 这枚下拉只是一块视觉噪音（用户 2026-11-11「有些地方不需要分模块，本来就在
+    // 一页的」）。只在画布上画。
+    //
+    // The modules are **sections of the canvas page alone** (sequence / deflicker /
+    // develop / frame / render / audio / merge). Off the canvas -- frame table, export,
+    // tasks and the sequence / export flow pages -- the dropdown is pure visual noise
+    // (user, 2026-11-11). Paint it on the canvas only.
+    let on_canvas = state.bench == Bench::Develop
+        && super::flow_panel::current_page(state) == super::flow_panel::FlowPage::Develop;
     // 只在左链与右簇链之间确实放得下时才画，更窄的窗宁可收起也不压别人。
     //
     // Painted only when it truly fits between the left chain and the right cluster;
     // a narrower window drops it rather than crushing its neighbours.
-    let combo_drawn = combo_left + combo_w + gap <= chain_left - 8.0;
+    let combo_drawn = on_canvas && combo_left + combo_w + gap <= chain_left - 8.0;
 
     // 缩放：64px 轨道 + 46px 百分比（设计稿 `.zoomc .mini{width:64px} .pct{width:46px}`）。
     // 拖动轨道改 `state.zoom`；点百分比回 100%。轨道上的滑块位置按 0..=400% 映射。
