@@ -443,7 +443,7 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     // second nav strip over the canvas. Numbered rows match Ctrl+Alt+1..4.
                     // Translate the name before joining the number, so English mode never
                     // leaves Chinese inside the composed label.
-                    ui.separator();
+                    super::windows::soft_sep(ui);
                     for b in Bench::ALL {
                         let name = crate::i18n::tr(b.cn());
                         let label = format!("{} {}", b.no(), name);
