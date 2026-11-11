@@ -317,7 +317,7 @@ pub(super) fn step_visual(
 /// Step-bar metrics: gap, segment height, minimum tap target, ideal segment width and
 /// the counter slot on the right.
 const STEP_GAP: f32 = 6.0;
-const STEP_BAR_H: f32 = 28.0;
+const STEP_BAR_H: f32 = 26.0;
 const STEP_MIN_TAP: f32 = 44.0;
 const STEP_IDEAL_W: f32 = 116.0;
 const STEP_COUNTER_W: f32 = 34.0;
@@ -464,12 +464,13 @@ pub fn flow_top_bar(state: &mut AppState, ui: &mut Ui) {
                 resp.is_pointer_button_down_on(),
                 true,
             );
-            // 统一底、统一边框、统一圆角。激活/hover 段走 bevel 渐变——
-            // Win11 chrome 语言的立体感（用户 2026-11-11「厚实感」）。
-            if v.fill == selected() || resp.hovered() && v.fill == elev_hover() {
+            // 去段级胶囊（用户 2026-11-11 二次反馈「悬浮设计不好看」）：
+            // 非激活段**无底**——平底条上只留 编号圆+文字，hover 才给 4% 白；
+            // 激活段保留 bevel 实底+强调描边（唯一的实心段=当前步，视线锚点）。
+            if v.fill == selected() {
                 crate::theme::surface_bevel(&p, rect, v.fill);
-            } else {
-                p.rect_filled(rect, radius_control(), v.fill);
+            } else if resp.hovered() {
+                p.rect_filled(rect, radius_control(), Color32::from_white_alpha(10));
             }
             p.rect_stroke(
                 rect,

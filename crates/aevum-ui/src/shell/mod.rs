@@ -403,13 +403,21 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // behind the panel switch (user measured "nothing is there" while show_flow was off).
     if develop && state.show_flow && state.frame_count() > 1 {
         egui::Panel::top("flow-top")
-            .exact_size(30.0)
-            .frame(egui::Frame::NONE.fill(header()).inner_margin(egui::Margin {
-                left: 10,
-                right: 10,
-                top: 0,
-                bottom: 0,
-            }))
+            .exact_size(34.0)
+            // 去悬浮贴纸化（用户 2026-11-11 二次反馈）：面板**全宽平底**——
+            // 与页签行同一材质（header）+ 底缘 hairline，读作窗口结构而非
+            // 浮在画布上的胶囊。左右内距归零，步骤段自己留呼吸。
+            //
+            // De-stickered: the flow bar is now a full-width flat strip with the
+            // same header material and a bottom hairline -- window structure, not a
+            // floating pill over the canvas. Insets are zero; segments keep their own
+            // breathing room.
+            .frame(
+                egui::Frame::NONE
+                    .fill(header())
+                    .stroke(egui::Stroke::new(1.0, border_strong()))
+                    .inner_margin(egui::Margin::symmetric(0, 0)),
+            )
             .show(root, |ui| flow_panel::flow_top_bar(state, ui));
     }
 
