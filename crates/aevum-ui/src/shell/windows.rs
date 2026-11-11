@@ -19,8 +19,8 @@ use crate::platform;
 use crate::state::{AppState, UpdatePhase};
 use crate::theme::{self, *};
 use egui::{
-    Align, Align2, Color32, Context, Layout, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, Ui,
-    Vec2,
+    Align, Align2, Color32, Context, IdSalt, Layout, Pos2, Rect, RichText, ScrollArea, Sense,
+    Stroke, Ui, Vec2,
 };
 // 拆分自 shell.rs 的 use 树：本模块先全量继承，unused 项按编译警告逐个清。
 
@@ -145,6 +145,7 @@ fn close_hover(ctx: &egui::Context, win_id: egui::Id) {
 }
 
 /// 六扇浮窗的统一 id 表（close_hover 与未来的浮窗级打磨都从这里取）。
+#[allow(deprecated)]
 pub(crate) fn window_ids() -> [egui::Id; 5] {
     [
         egui::Id::new("win-plugins"),
@@ -953,6 +954,7 @@ fn look_row<T: PartialEq + Copy>(
 ///
 /// 面板自己不存样式，所有控件写回 `state.appearance` / `state.layout`，
 /// 帧末比一次快照，变了才重算色板并落盘 —— 全程序只有这一条写路径。
+#[allow(deprecated)]
 pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
     if !state.look_open {
         return;
@@ -1387,6 +1389,7 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
 /// part of the edit panel. The history section is gone -- the dock's History tab has
 /// the full undo/redo. Toggled by `state.show_left` (settings key carried over from the
 /// old column); entrances: the tool-rail icon, the Develop menu, Ctrl+K.
+#[allow(deprecated)]
 pub(super) fn presets_window(state: &mut AppState, ctx: &Context) {
     if !state.show_left {
         return;
@@ -1568,6 +1571,7 @@ pub(super) fn presets_window(state: &mut AppState, ctx: &Context) {
     }
 }
 
+#[allow(deprecated)]
 pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
     if !state.about_open {
         return;
@@ -1690,6 +1694,7 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
 /// Every slow action here only **records an intent**; the real background job starts after
 /// the window closes -- calling an `&mut self` method inside `show` would fight the closure's
 /// borrow of `state`, and collect-then-act is exactly how the plugin market window works.
+#[allow(deprecated)]
 pub(super) fn update_window(state: &mut AppState, ctx: &Context) {
     if !state.update_open {
         return;
