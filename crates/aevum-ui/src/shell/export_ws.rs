@@ -221,9 +221,27 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, ctx: &egui::Context)
     if body.width() <= SIDE_W + GAP || body.height() <= 0.0 {
         return;
     }
-    let side_left = body.right() - SIDE_W;
-    let left = Rect::from_min_max(body.left_top(), Pos2::new(side_left - GAP, body.bottom()));
-    let right = Rect::from_min_max(Pos2::new(side_left, body.top()), body.right_bottom());
+    // PS「导出为」三栏：左「队列」/ 中「预览」/ 右「设置」。此前左列铺满 ~800px
+    // 只放一行队列，是整页最空的地方；把中间还给预览，空白自然消失，且导出前
+    // 永远能看到当前帧（用户 2026-11-12 反馈第 10 条）。
+    //
+    // Three columns like PS "Export As": queue / preview / settings. The old left
+    // column stretched ~800 px for a single queue row; giving the middle back to a
+    // live preview removes the void and always shows the current frame before export.
+    const QUEUE_W: f32 = 232.0;
+    let three = body.width() >= QUEUE_W + SIDE_W + GAP * 2.0 + 200.0;
+    let right_left = body.right() - SIDE_W;
+    let queue_right = body.left() + QUEUE_W;
+    let left = if three {
+        Rect::from_min_max(body.left_top(), Pos2::new(queue_right, body.bottom()))
+    } else {
+        Rect::from_min_max(body.left_top(), Pos2::new(right_left - GAP, body.bottom()))
+    };
+    let mid = Rect::from_min_max(
+        Pos2::new(queue_right + GAP, body.top()),
+        Pos2::new(right_left - GAP, body.bottom()),
+    );
+    let right = Rect::from_min_max(Pos2::new(right_left, body.top()), body.right_bottom());
     // 两栏合成**一块工作区**：以前各画各的圆角卡面，中间留 12px 缝，读起来是
     // 两块并排的积木。现在一张直角底板 + 一道竖分隔线，是 Photoshop / Capture One
     // 的面板分栏语法。
@@ -237,16 +255,157 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, ctx: &egui::Context)
         Stroke::new(1.0, group_ring()),
         StrokeKind::Inside,
     );
-    let divider_x = (side_left - GAP * 0.5).round() + 0.5;
-    p.line_segment(
-        [
-            Pos2::new(divider_x, body.top() + 8.0),
-            Pos2::new(divider_x, body.bottom() - 8.0),
-        ],
-        Stroke::new(1.0, group_ring()),
-    );
+    if three {
+        bevel_v(
+            &p,
+            (queue_right + GAP * 0.5).round(),
+            body.top() + 8.0,
+            body.bottom() - 8.0,
+        );
+        bevel_v(
+            &p,
+            (right_left - GAP * 0.5).round() - 1.0,
+            body.top() + 8.0,
+            body.bottom() - 8.0,
+        );
+    } else {
+        let divider_x = (right_left - GAP * 0.5).round() + 0.5;
+        p.line_segment(
+            [
+                Pos2::new(divider_x, body.top() + 8.0),
+                Pos2::new(divider_x, body.bottom() - 8.0),
+            ],
+            Stroke::new(1.0, group_ring()),
+        );
+    }
     queue_card(state, ui, left);
+    if three {
+        preview_pane(state, ui, mid);
+    }
     settings_card(state, ui, ctx, right);
+}
+
+/// 常驻预览：PS「导出为」的中间一栏。页签「预览 / 双联」是真的开关（接
+/// `state.split`），图像按 Fit 等比缩放，底下只显示只读缩放读数——不画没有
+/// 行为的 +/- 按钮。
+///
+/// Always-on preview, the middle column of PS "Export As". The Preview /
+/// Before-after tabs are real switches (`state.split`); the image fits
+/// proportionally and the footer shows a read-only zoom readout. No inert +/-
+/// buttons.
+fn preview_pane(state: &mut AppState, ui: &mut Ui, rect: Rect) {
+    let p = ui.painter().clone();
+    p.rect_filled(rect, 0.0, matte());
+    const TAB_H: f32 = 30.0;
+    let tab = Rect::from_min_size(rect.left_top(), Vec2::new(rect.width(), TAB_H));
+    p.rect_filled(tab, 0.0, header());
+    bevel_h(&p, tab.left(), tab.right(), tab.bottom() - 1.0);
+
+    let mut x = tab.left() + 10.0;
+    for (idx, (label, want_split)) in [
+        (crate::i18n::t!("预览"), false),
+        (crate::i18n::t!("双联"), true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let on = state.split == want_split;
+        let g = p.layout_no_wrap(
+            label.to_owned(),
+            font(SIZE_LABEL),
+            if on { text() } else { dim() },
+        );
+        let chip =
+            Rect::from_min_size(Pos2::new(x, tab.top()), Vec2::new(g.size().x + 22.0, TAB_H));
+        let resp = ui.interact(
+            chip,
+            ui.make_persistent_id(idx as u64 + 9100),
+            Sense::click(),
+        );
+        if resp.clicked() {
+            state.split = want_split;
+        }
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if on {
+            p.rect_filled(
+                Rect::from_min_size(
+                    Pos2::new(chip.left(), chip.bottom() - 2.0),
+                    Vec2::new(chip.width(), 2.0),
+                ),
+                0.0,
+                accent(),
+            );
+        }
+        p.text(
+            chip.center(),
+            Align2::CENTER_CENTER,
+            label,
+            font(SIZE_LABEL),
+            if on { text() } else { dim() },
+        );
+        x = chip.right() + 6.0;
+    }
+
+    let area =
+        Rect::from_min_max(Pos2::new(rect.left(), tab.bottom()), rect.right_bottom()).shrink(18.0);
+    let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+    let tex = state
+        .plugin_result
+        .clone()
+        .or_else(|| state.texture.clone());
+    let orig = state.texture_orig.clone();
+    let (iw, ih) = (
+        state.preview_size[0].max(1) as f32,
+        state.preview_size[1].max(1) as f32,
+    );
+    let mut zoom = 0.0f32;
+    if let Some(t) = tex {
+        let draw_one = |p: &Painter, r: Rect, handle: &egui::TextureHandle| -> f32 {
+            let fit = (r.width() / iw).min(r.height() / ih).min(1.0).max(0.01);
+            let shown = Vec2::new(iw * fit, ih * fit);
+            let img = Rect::from_center_size(r.center(), shown);
+            p.rect_filled(img.expand(1.0), 0.0, border());
+            p.image(handle.id(), img, uv, Color32::WHITE);
+            fit
+        };
+        if state.split
+            && let Some(o) = orig.as_ref()
+        {
+            let mid_x = area.center().x;
+            let a = Rect::from_min_max(area.left_top(), Pos2::new(mid_x - 3.0, area.bottom()));
+            let b = Rect::from_min_max(Pos2::new(mid_x + 3.0, area.top()), area.right_bottom());
+            zoom = draw_one(&p, a, o);
+            let _ = draw_one(&p, b, &t);
+            p.text(
+                Pos2::new(mid_x, area.top() + 12.0),
+                Align2::CENTER_CENTER,
+                crate::i18n::t!("双联"),
+                font(SIZE_MICRO),
+                muted(),
+            );
+        } else {
+            zoom = draw_one(&p, area, &t);
+        }
+    } else {
+        p.text(
+            area.center(),
+            Align2::CENTER_CENTER,
+            crate::i18n::t!("没有可预览的图像"),
+            font(SIZE_LABEL),
+            dim(),
+        );
+    }
+    if zoom > 0.0 {
+        p.text(
+            Pos2::new(rect.center().x, rect.bottom() - 12.0),
+            Align2::CENTER_CENTER,
+            format!("{:.0}%", zoom * 100.0),
+            mono(SIZE_LABEL),
+            muted(),
+        );
+    }
 }
 
 /// 队列卡：卡头「队列」+ 计数，逐行任务（缩略图 + 名称 + 状态点 + 状态文字）。
