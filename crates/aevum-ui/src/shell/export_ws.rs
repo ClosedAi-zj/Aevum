@@ -809,7 +809,7 @@ fn settings_card(state: &mut AppState, ui: &mut Ui, ctx: &egui::Context, rect: R
             dim(),
         );
         let value_disp = if resp.hovered() {
-            format!("{value}  ▾")
+            format!("{value}  ▼")
         } else {
             value.clone()
         };

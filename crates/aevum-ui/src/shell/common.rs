@@ -1986,8 +1986,8 @@ mod combo_popup_material_tests {
                         .selected_text("X")
                         .show_ui(&mut probe, |ui| {
                             combo_style(ui);
-                            ui.label("自动");
-                            ui.label("黑白");
+                            ui.label(crate::i18n::t!("自动"));
+                            ui.label(crate::i18n::t!("黑白"));
                         });
                 },
             );
