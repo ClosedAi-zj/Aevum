@@ -641,23 +641,28 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
             status_color,
         );
 
-        // 进行中行底部 3px 进度条。
+        // 进度条（R2 色彩系统）：跑动=强调色胶囊（Fluent 口径，带顶部受光线），
+        // 完成=整条 ok 色；待渲/失败不给条——它们没有可读的进度语义，一条空轨道
+        // 只会让人误读成「卡住了」。
         //
-        // The running row's 3 px progress bar along its bottom edge.
-        if running {
+        // Progress bar (R2 colour system): running = accent capsule (Fluent
+        // convention, lit hairline on top), done = full ok-coloured bar; pending and
+        // failed get no bar at all -- they carry no progress semantics, and an empty
+        // track only reads as "stuck".
+        let bar_color = if running {
+            Some(accent())
+        } else if matches!(item.status, aevum_core::queue::QueueStatus::Done) {
+            Some(ok())
+        } else {
+            None
+        };
+        if let Some(bar_color) = bar_color {
             let bar = Rect::from_min_size(
-                Pos2::new(name_x, row.bottom() - 4.0),
-                Vec2::new((row.right() - SIDE_PAD - name_x).max(8.0), 3.0),
+                Pos2::new(name_x, row.bottom() - 6.0),
+                Vec2::new((row.right() - SIDE_PAD - name_x).max(8.0), 5.0),
             );
-            p.rect_filled(bar, 2.0, slider_rail());
-            let frac = row_fraction(state, i);
-            if frac > 0.0 {
-                p.rect_filled(
-                    Rect::from_min_size(bar.left_top(), Vec2::new(bar.width() * frac, 3.0)),
-                    1.5,
-                    warn(),
-                );
-            }
+            let frac = if running { row_fraction(state, i) } else { 1.0 };
+            crate::theme::progress_bar(&p, bar, frac, bar_color);
         }
         if i + 1 < state.queue.len() {
             rule(
@@ -1341,5 +1346,73 @@ mod export_rows_tests {
                 "弹层背板应为暗色主题材质（window_fill），实际 {fill:?}（亮度 {lum}）"
             );
         }
+    }
+    /// R2 进度条判据：轨道=slider_rail 全圆角、填充=调用方给的状态色、宽度按
+    /// frac 换算、顶部有受光线；1% 也要读出一个胶囊宽。
+    ///
+    /// R2 progress-bar criterion: track = slider_rail fully rounded, fill = the
+    /// caller's state colour with width derived from frac, a lit hairline on top;
+    /// even 1% shows a capsule.
+    #[test]
+    fn progress_bar_geometry_and_colors() {
+        let ctx = Context::default();
+        crate::theme::apply(&ctx, 1.0);
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 100.0))),
+            max_texture_side: Some(8192),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |panel| {
+            let mut probe = panel.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 100.0)))
+                    .id_salt("pb-probe"),
+            );
+            let p = probe.painter().clone();
+            crate::theme::progress_bar(
+                &p,
+                Rect::from_min_size(Pos2::new(10.0, 40.0), Vec2::new(300.0, 5.0)),
+                0.25,
+                crate::theme::accent(),
+            );
+        });
+        let mut rects: Vec<(Color32, Rect)> = Vec::new();
+        let mut lines: Vec<Color32> = Vec::new();
+        for clipped in &out.shapes {
+            match &clipped.shape {
+                egui::Shape::Rect(r) => rects.push((r.fill, r.rect)),
+                egui::Shape::LineSegment { points, stroke } => {
+                    lines.push(stroke.color);
+                    let _ = points;
+                }
+                _ => {}
+            }
+        }
+        out.textures_delta.clear();
+        // 轨道：300x5，slider_rail 色；填充：accent 色，宽 = 300*0.25=75。
+        let track = rects
+            .iter()
+            .find(|(c, r)| *c == crate::theme::slider_rail() && (r.width() - 300.0).abs() < 0.5)
+            .expect("应有 300 宽的轨道");
+        assert!(
+            (track.1.height() - 5.0).abs() < 0.5,
+            "轨道应为 5px 高，实际 {:?}",
+            track.1
+        );
+        let fill = rects
+            .iter()
+            .find(|(c, _)| *c == crate::theme::accent())
+            .expect("应有强调色填充");
+        assert!(
+            (fill.1.width() - 75.0).abs() < 0.5,
+            "填充宽应为 75（25%），实际 {}",
+            fill.1.width()
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|c| *c == crate::theme::overlay_white(crate::theme::accent(), 45)),
+            "填充顶部应有受光线"
+        );
     }
 }

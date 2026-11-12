@@ -555,23 +555,19 @@ fn run_card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         }
     }
 
-    // 3px 进度条。
+    // 进度条（R2 色彩系统）：强调色胶囊 + 顶部受光线——任务卡是长任务的主战场，
+    // 一条 3px 的 warn 色细线读不出「正在进行」的份量。
     //
-    // The 3 px progress bar.
-    let bar = Rect::from_min_size(Pos2::new(x0, stage_y + 12.0), Vec2::new(x1 - x0, 3.0));
-    p.rect_filled(bar, 2.0, slider_rail());
+    // Progress bar (R2 colour system): accent capsule with a lit hairline -- task
+    // cards are where long jobs live, and a 3 px warn-coloured sliver cannot carry
+    // "in progress".
+    let bar = Rect::from_min_size(Pos2::new(x0, stage_y + 12.0), Vec2::new(x1 - x0, 5.0));
     let frac = if total_n == 0 {
         0.0
     } else {
         (done_n as f32 / total_n as f32).clamp(0.0, 1.0)
     };
-    if frac > 0.0 {
-        p.rect_filled(
-            Rect::from_min_size(bar.left_top(), Vec2::new(bar.width() * frac, 3.0)),
-            1.5,
-            warn(),
-        );
-    }
+    crate::theme::progress_bar(&p, bar, frac, accent());
 
     // 读数行：当前阶段 / 帧数 / 预计剩余 / 右端常驻说明。
     //

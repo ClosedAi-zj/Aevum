@@ -1668,7 +1668,11 @@ fn system_font_candidates() -> &'static [(&'static str, &'static str, u32)] {
 fn system_bold_candidates() -> &'static [(&'static str, &'static str, u32)] {
     &[
         ("Segoe UI Bold", r"C://Windows//Fonts//segoeuib.ttf", 0),
-        ("Microsoft YaHei UI Bold", r"C://Windows//Fonts//msyhbd.ttc", 1),
+        (
+            "Microsoft YaHei UI Bold",
+            r"C://Windows//Fonts//msyhbd.ttc",
+            1,
+        ),
     ]
 }
 
@@ -2333,6 +2337,48 @@ pub fn groove_v(painter: &egui::Painter, x: f32, y0: f32, y1: f32) {
         ],
         Stroke::new(1.0, Color32::from_white_alpha(26)),
     );
+}
+
+/// 进度条（R2 色彩系统）：5px 全圆角轨道 + 状态色填充 + 填充顶部的受光细线。
+/// Windows 11 的进度条就是「强调色实底 + 圆角胶囊」，受光线给它一点体积而不
+/// 引入渐变色带；语义色由调用方给——跑动=accent、暂停=warn、失败=danger、
+/// 完成=ok（`frac>=1` 整条变状态色，和 Fluent 一个读法）。
+///
+/// Progress bar (R2 colour system): a 5 px fully-rounded track, a state-coloured
+/// fill, and a lit hairline along the fill's top. Windows 11's progress is exactly
+/// "accent solid + rounded capsule"; the hairline gives volume without gradient
+/// banding. The semantic colour comes from the caller -- running = accent,
+/// paused = warn, failed = danger, done = ok (a full bar takes the state colour,
+/// same reading as Fluent).
+pub fn progress_bar(painter: &egui::Painter, rect: egui::Rect, frac: f32, color: Color32) {
+    let frac = frac.clamp(0.0, 1.0);
+    let h = rect.height().round().max(5.0);
+    let bar = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), h));
+    let r = h * 0.5;
+    painter.rect_filled(bar, r, slider_rail());
+    if frac <= 0.0 {
+        return;
+    }
+    // 最短给一个胶囊宽：1% 也读得出「动了」，而不是一条 1px 的划痕。
+    //
+    // The shortest fill is one capsule: 1% should read as "it moved", not a 1 px
+    // scratch.
+    let w = (bar.width() * frac).max(h).min(bar.width());
+    let fill = egui::Rect::from_min_size(bar.min, Vec2::new(w, h));
+    painter.rect_filled(fill, r, color);
+    if w > h {
+        // 受光线只画填充的中段（避开圆角），亮度取填充色提白 45%。
+        //
+        // The hairline runs the fill's straight section only (clear of the caps),
+        // lifted 45% white over the fill colour.
+        painter.line_segment(
+            [
+                Pos2::new(fill.left() + r, bar.min.y.round() + 1.0),
+                Pos2::new(fill.right() - r, bar.min.y.round() + 1.0),
+            ],
+            Stroke::new(1.0, overlay_white(color, 45)),
+        );
+    }
 }
 
 pub fn rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32) {
