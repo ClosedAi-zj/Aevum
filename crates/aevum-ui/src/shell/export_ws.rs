@@ -1302,5 +1302,44 @@ mod export_rows_tests {
             down.contains("H.264") || open.contains("H.264") || stick.contains("H.264"),
             "编码弹层缺 H.264 选项，三帧实际画出：\n{seen}"
         );
+
+        // 弹层材质判据（R9）：弹层开着再渲一帧，取面积最大的实底矩形（= 弹层
+        // 背板），它必须是暗色主题材质（window_fill）——否则同一页上 ComboBox
+        // 弹层与 menu 弹层就是两套材质。
+        //
+        // Popup-material criterion (R9): render one more frame with the popup open,
+        // take the largest filled rect (the popup backdrop) and require the dark
+        // theme material (window_fill) -- otherwise ComboBox popups and menu popups
+        // are two different materials on one page.
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                max_texture_side: Some(8192),
+                ..Default::default()
+            },
+            |panel| {
+                let mut probe =
+                    panel.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("s-probe2"));
+                settings_card(&mut state, &mut probe, &ctx, rect);
+            },
+        );
+        let mut backdrop: Option<(Color32, f32)> = None;
+        for clipped in &out.shapes {
+            if let egui::Shape::Rect(r) = &clipped.shape {
+                let a = r.rect.area();
+                if a > 4000.0 && r.fill.a() > 200 && backdrop.is_none_or(|(_, ba)| a > ba) {
+                    backdrop = Some((r.fill, a));
+                }
+            }
+        }
+        out.textures_delta.clear();
+        if let Some((fill, _)) = backdrop {
+            let lum =
+                0.2126 * fill.r() as f32 + 0.7152 * fill.g() as f32 + 0.0722 * fill.b() as f32;
+            assert!(
+                lum < 110.0,
+                "弹层背板应为暗色主题材质（window_fill），实际 {fill:?}（亮度 {lum}）"
+            );
+        }
     }
 }
