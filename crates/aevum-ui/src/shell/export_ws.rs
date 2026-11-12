@@ -17,10 +17,13 @@
 //! reads worse than a short list.
 
 use egui::{
-    Align2, Color32, CornerRadius, Painter, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2,
+    Align2, Color32, CornerRadius, Painter, Popup, Pos2, Rect, RichText, Sense, Stroke, StrokeKind,
+    Ui, Vec2,
 };
 
 use super::bench;
+use super::menu::{menu_item, menu_style};
+use super::toolbar::bar_value;
 use crate::state::AppState;
 use crate::theme::*;
 
@@ -742,30 +745,156 @@ fn settings_card(state: &mut AppState, ui: &mut Ui, ctx: &egui::Context, rect: R
         .or_else(|| state.last_saved.clone())
         .unwrap_or_default();
     let (dir, file) = split_out(&out_path);
-    let codec = if state.codec.to_ascii_lowercase().contains("264")
-        || state.codec.to_ascii_lowercase().contains("avc")
-    {
-        "H.264 / AVC (MP4)"
-    } else {
-        "H.265 / HEVC (MP4)"
+    // 编码显示：codec 存的是下拉值（HEVC / H.264 / ProRes），此前 ProRes 会漏进
+    // else 分支显示成 H.265——显示改为按值精确匹配（R4 顺手修）。
+    //
+    // Codec display: the stored value is the dropdown string (HEVC / H.264 / ProRes);
+    // ProRes used to fall through the else branch and display as H.265. Match the
+    // value exactly now (fixed in passing, R4).
+    let codec_disp = match state.codec.to_ascii_lowercase().as_str() {
+        c if c.contains("264") || c.contains("avc") => "H.264 / AVC (MP4)",
+        c if c.contains("prores") => "ProRes (MOV)",
+        _ => "H.265 / HEVC (MP4)",
     };
-    let rows: [(&str, String, bool); 6] = [
-        (crate::i18n::t!("编码"), codec.to_owned(), false),
+    // 交互行（R4）：编码 / 帧率 / 分辨率 / 画质 CRF。此前四行只读绘制——值只能回
+    // 显影台选项栏改，本页成了「看得到、改不了」的第二真相。现在值即入口：点击
+    // 弹层直接改（ACR 导出参数行同口径），悬停整行抬起。
+    //
+    // Interactive rows (R4): codec / fps / resolution / CRF. These four were
+    // read-only paint -- values could only be changed back on the develop bench's
+    // options bar, making this page a second truth you can see but not touch. The
+    // value is now the entry point: click opens an editing popup (the ACR export-row
+    // convention) and the whole row lifts on hover.
+    let res_disp = if (state.output_w, state.output_h) == (0, 0) {
+        crate::i18n::t!("原生").to_owned()
+    } else {
+        format!("{} × {}", state.output_w, state.output_h)
+    };
+    let interactive: [(&str, &str, String); 4] = [
+        ("exp-codec", crate::i18n::t!("编码"), codec_disp.to_owned()),
         (
+            "exp-fps",
             crate::i18n::t!("帧率"),
             format!("{:.0}", state.output_fps),
-            false,
         ),
+        ("exp-res", crate::i18n::t!("分辨率"), res_disp),
         (
-            crate::i18n::t!("分辨率"),
-            format!("{} × {}", state.output_w, state.output_h),
-            false,
-        ),
-        (
+            "exp-crf",
             crate::i18n::t!("画质 CRF"),
             format!("{}", state.render_crf),
-            false,
         ),
+    ];
+    for (salt, label, value) in interactive {
+        let row = Rect::from_min_size(Pos2::new(x0, y), Vec2::new(x1 - x0, SROW_H));
+        let resp = ui.interact(row, ui.make_persistent_id(salt), Sense::click());
+        if resp.hovered() {
+            p.rect_filled(row, 4, elev());
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        p.text(
+            Pos2::new(x0, y + SROW_H / 2.0),
+            Align2::LEFT_CENTER,
+            label,
+            font(SIZE_MICRO),
+            dim(),
+        );
+        let value_disp = if resp.hovered() {
+            format!("{value}  ▾")
+        } else {
+            value.clone()
+        };
+        p.text(
+            Pos2::new(x1, y + SROW_H / 2.0),
+            Align2::RIGHT_CENTER,
+            fit_text(
+                &p,
+                &value_disp,
+                font(SIZE_LABEL),
+                text(),
+                row.width() * 0.62,
+            ),
+            font(SIZE_LABEL),
+            text(),
+        );
+        Popup::menu(&resp).show(|ui| match salt {
+            "exp-codec" => {
+                menu_style(ui);
+                for (name, tag) in [("HEVC", "hevc"), ("H.264", "h264"), ("ProRes", "prores")] {
+                    let on = state.codec.to_ascii_lowercase().contains(tag);
+                    if menu_item(ui, &check_prefix(on, name), "") {
+                        state.codec = name.to_owned();
+                    }
+                }
+            }
+            "exp-fps" => {
+                menu_style(ui);
+                for f in [23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 60.0] {
+                    let on = (state.output_fps - f).abs() < 0.01;
+                    let name = if f.fract() == 0.0 {
+                        format!("{:.0}", f)
+                    } else {
+                        format!("{f}")
+                    };
+                    if menu_item(ui, &check_prefix(on, &name), "") {
+                        state.output_fps = f;
+                    }
+                }
+                ui.separator();
+                bar_value(ui, |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut state.output_fps)
+                            .range(1.0..=120.0)
+                            .speed(1.0)
+                            .fixed_decimals(0)
+                            .suffix(" fps"),
+                    )
+                    .changed()
+                });
+            }
+            "exp-res" => {
+                menu_style(ui);
+                for (name, w, h) in [
+                    ("原生", 0u32, 0u32),
+                    ("4K", 3840, 2160),
+                    ("1080p", 1920, 1080),
+                ] {
+                    let on = (state.output_w, state.output_h) == (w, h);
+                    if menu_item(ui, &check_prefix(on, name), "") {
+                        state.output_w = w;
+                        state.output_h = h;
+                    }
+                }
+            }
+            "exp-crf" => {
+                menu_style(ui);
+                bar_value(ui, |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut state.render_crf)
+                            .range(0..=51)
+                            .speed(0.5)
+                            .fixed_decimals(0),
+                    )
+                    .changed()
+                });
+                ui.separator();
+                ui.label(
+                    RichText::new(crate::i18n::t!("小 = 质量高 · 大 = 文件小"))
+                        .size(SIZE_SMALL)
+                        .color(dim()),
+                );
+            }
+            _ => {}
+        });
+        y += SROW_H;
+    }
+
+    // 只读行：输出文件 / 输出目录。路径不在这里改（来源是队列与工程），只回显；
+    // 目录行长文本降一档字号转次级色，标签仍是锚点（R3）。
+    //
+    // Read-only rows: output file / directory. Paths are not edited here (they come
+    // from the queue and the project), so they only echo; the long directory path
+    // renders one size down in secondary ink (R3).
+    let rows: [(&str, String, bool); 2] = [
         (crate::i18n::t!("输出文件"), file, false),
         (crate::i18n::t!("输出目录"), dir, true),
     ];
@@ -968,5 +1097,103 @@ fn fit_tail(
             return out;
         }
         keep -= 1;
+    }
+}
+/// 弹层行首的选中勾：与菜单行同一口径（✓ 前缀）。
+///
+/// The check prefix for popup rows: same convention as the menu row.
+fn check_prefix(on: bool, name: &str) -> String {
+    if on {
+        format!("✓ {name}")
+    } else {
+        format!("   {name}")
+    }
+}
+
+#[cfg(test)]
+mod export_rows_tests {
+    use super::*;
+    use egui::{Context, Event, PointerButton, Pos2, Vec2};
+
+    /// 单独渲染设置卡并收集文字；`events` 为这一帧的指针事件序列。
+    ///
+    /// Render the settings card alone and collect its text; `events` is this
+    /// frame's pointer-event sequence.
+    fn frame(ctx: &Context, state: &mut AppState, rect: Rect, events: Vec<Event>) -> String {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+            max_texture_side: Some(8192),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |panel| {
+            let mut probe =
+                panel.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("s-probe"));
+            settings_card(state, &mut probe, ctx, rect);
+        });
+        let mut text = String::new();
+        for clipped in &out.shapes {
+            if let egui::Shape::Text(t) = &clipped.shape {
+                text.push_str(t.galley.text());
+                text.push('\n');
+            }
+        }
+        out.textures_delta.clear();
+        text
+    }
+
+    /// 编码行（第一交互行）的中心点：卡头 SROW_H+4 之后的第一行。
+    ///
+    /// Centre of the codec row (the first interactive row): right below the
+    /// SROW_H + 4 card head.
+    fn codec_row(rect: Rect) -> Pos2 {
+        Pos2::new(
+            rect.left() + SIDE_PAD + 30.0,
+            rect.top() + SIDE_PAD + SROW_H + 4.0 + SROW_H / 2.0,
+        )
+    }
+
+    /// R4 的核心判据：设置行不再是只读——点「编码」行必须弹出编码选项
+    /// （HEVC / H.264 / ProRes）。此前四行只读绘制，本页是「看得到、改不了」
+    /// 的第二真相。
+    ///
+    /// R4's core criterion: settings rows are no longer read-only -- clicking the
+    /// codec row must open the codec options (HEVC / H.264 / ProRes). Before, the
+    /// four rows were painted echo-only: a second truth you could see but not touch.
+    #[test]
+    fn codec_row_click_opens_the_codec_popup() {
+        let ctx = Context::default();
+        crate::theme::apply(&ctx, 1.0);
+        let mut state = AppState::demo();
+        state.codec = "HEVC".to_owned();
+        let rect = Rect::from_min_size(Pos2::new(1000.0, 100.0), Vec2::new(240.0, 500.0));
+        let at = codec_row(rect);
+        let press = Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        };
+        let release = Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        };
+        // 暖帧 → 移入 → 按下 → 抬起：弹层要在抬起那帧展开并画出全部选项。
+        let _warm = frame(&ctx, &mut state, rect, vec![]);
+        let _hover = frame(&ctx, &mut state, rect, vec![Event::PointerMoved(at)]);
+        let down = frame(&ctx, &mut state, rect, vec![press]);
+        let open = frame(&ctx, &mut state, rect, vec![release]);
+        let stick = frame(&ctx, &mut state, rect, vec![]);
+        let seen = format!("{down}\n----\n{open}\n----\n{stick}");
+        assert!(
+            down.contains("ProRes") || open.contains("ProRes") || stick.contains("ProRes"),
+            "点编码行应弹出编码选项（HEVC / H.264 / ProRes），三帧实际画出：\n{seen}"
+        );
+        assert!(
+            down.contains("H.264") || open.contains("H.264") || stick.contains("H.264"),
+            "编码弹层缺 H.264 选项，三帧实际画出：\n{seen}"
+        );
     }
 }

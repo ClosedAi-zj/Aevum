@@ -132,7 +132,7 @@ pub(super) fn bar_chip_verbatim(ui: &mut Ui, label: &str, active: bool) -> Respo
 /// Numeric inputs in the options bar (.fld .v): strip DragValue's own frame and
 /// colour so readouts take the value blue -- a number is a readout, not a button. The
 /// font family is pinned to `mono()` so every number on a row is monospace and aligns.
-fn bar_value<R>(ui: &mut Ui, run: impl FnOnce(&mut Ui) -> R) -> R {
+pub(super) fn bar_value<R>(ui: &mut Ui, run: impl FnOnce(&mut Ui) -> R) -> R {
     let old_color = ui.style().visuals.override_text_color;
     let old_font = ui.style().override_font_id.clone();
     ui.style_mut().visuals.override_text_color = Some(value());
