@@ -788,17 +788,26 @@ fn settings_card(state: &mut AppState, ui: &mut Ui, ctx: &egui::Context, rect: R
         // 12 px breather. Overflowing paths lose their head, because the tail (the file
         // name) is the part that matters.
         let max_w = (vx1 - x0 - label_w - 12.0).max(40.0);
+        // 路径行（输出目录）值降一档字号并转次级色（R3）：长路径右对齐时与标签
+        // 只隔 12px，主字号白字读起来顶到标签；次级化之后标签仍是这一行的锚点。
+        //
+        // Path rows ("output directory") drop one size and go secondary (R3): a long
+        // right-aligned path leaves only a 12 px breather to the label and, at full size
+        // in white, reads as pressing against it; secondary styling keeps the label as
+        // the row's anchor.
+        let value_font = if is_path { SIZE_SMALL } else { SIZE_LABEL };
+        let value_color = if is_path { muted() } else { text() };
         let text_value = if is_path {
-            fit_tail(&p, &value, font(SIZE_LABEL), text(), max_w)
+            fit_tail(&p, &value, font(value_font), value_color, max_w)
         } else {
-            fit_text(&p, &value, font(SIZE_LABEL), text(), max_w)
+            fit_text(&p, &value, font(value_font), value_color, max_w)
         };
         p.text(
             Pos2::new(vx1, y + SROW_H / 2.0),
             Align2::RIGHT_CENTER,
             text_value,
-            font(SIZE_LABEL),
-            text(),
+            font(value_font),
+            value_color,
         );
         y += SROW_H;
     }
