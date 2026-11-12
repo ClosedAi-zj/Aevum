@@ -1553,8 +1553,10 @@ pub const SIZE_HEADING: f32 = 16.0;
 ///
 /// Slider labels and key/value rows inside panels: one step above the 11 px small size.
 /// 11 reads like a footnote on a 372 px panel, and parameter names are the most-read words
-/// on that screen.
-pub const SIZE_LABEL: f32 = 12.5;
+/// on that screen. Integer 13, not 12.5: fractional sizes rasterize off the pixel grid
+/// and read soft (the "font looks non-standard" complaint) -- every size in the ladder
+/// must land on whole pixels.
+pub const SIZE_LABEL: f32 = 13.0;
 /// 顶部两行（菜单行 36 / 选项栏 46）专用字阶：行高加起来了，标签仍用 11 会
 /// 显得整条栏是空的，所以顶部比正文大一号，面板里的推子标签不受影响。
 ///
@@ -1647,17 +1649,26 @@ pub fn set_fonts(ctx: &Context) {
 /// Microsoft YaHei; the embedded Inter / Noto only back up systems without them. Load
 /// failures (non-Windows, stripped systems) are silent -- embedded fonts stay at the
 /// end of the chain regardless.
-fn system_font_candidates() -> &'static [(&'static str, &'static str)] {
+/// 第三元是 TTC 内的 face 序号：`msyh.ttc` 双 face，0 = 微软雅黑（桌面版），
+/// 1 = **微软雅黑 UI**——Windows 原生应用（记事本/资源管理器/WPS）实际渲染的那
+/// 一张，字距更紧、行高更矮。我们此前从 face 0 装，CJK 与原生 UI 总差半口气
+/// （用户 2026-11-13「字体感觉有问题 不标准」）。
+///
+/// The third tuple element is the face index inside the TTC: `msyh.ttc` carries two
+/// faces, 0 = Microsoft YaHei (desktop), 1 = **Microsoft YaHei UI** -- the one native
+/// Windows apps (Notepad / Explorer / WPS) actually render, with tighter spacing. We
+/// used to install face 0, so CJK always sat half a step off the native UI.
+fn system_font_candidates() -> &'static [(&'static str, &'static str, u32)] {
     &[
-        ("Segoe UI", r"C://Windows//Fonts//segoeui.ttf"),
-        ("Microsoft YaHei UI", r"C://Windows//Fonts//msyh.ttc"),
+        ("Segoe UI", r"C://Windows//Fonts//segoeui.ttf", 0),
+        ("Microsoft YaHei UI", r"C://Windows//Fonts//msyh.ttc", 1),
     ]
 }
 
-fn system_bold_candidates() -> &'static [(&'static str, &'static str)] {
+fn system_bold_candidates() -> &'static [(&'static str, &'static str, u32)] {
     &[
-        ("Segoe UI Bold", r"C://Windows//Fonts//segoeuib.ttf"),
-        ("Microsoft YaHei UI Bold", r"C://Windows//Fonts//msyhbd.ttc"),
+        ("Segoe UI Bold", r"C://Windows//Fonts//segoeuib.ttf", 0),
+        ("Microsoft YaHei UI Bold", r"C://Windows//Fonts//msyhbd.ttc", 1),
     ]
 }
 
@@ -1692,19 +1703,31 @@ fn build_font_definitions() -> FontDefinitions {
     // hinting; the embedded Inter/Noto are not the face Windows Chrome renders.
     let mut lead: Vec<String> = Vec::new();
     let mut lead_bold: Vec<String> = Vec::new();
-    for (name, path) in system_font_candidates() {
+    for (name, path, index) in system_font_candidates() {
         if let Ok(bytes) = std::fs::read(path) {
-            fonts
-                .font_data
-                .insert(name.to_string(), FontData::from_owned(bytes).into());
+            fonts.font_data.insert(
+                name.to_string(),
+                {
+                    let mut fd = FontData::from_owned(bytes);
+                    fd.index = *index;
+                    fd
+                }
+                .into(),
+            );
             lead.push(name.to_string());
         }
     }
-    for (name, path) in system_bold_candidates() {
+    for (name, path, index) in system_bold_candidates() {
         if let Ok(bytes) = std::fs::read(path) {
-            fonts
-                .font_data
-                .insert(name.to_string(), FontData::from_owned(bytes).into());
+            fonts.font_data.insert(
+                name.to_string(),
+                {
+                    let mut fd = FontData::from_owned(bytes);
+                    fd.index = *index;
+                    fd
+                }
+                .into(),
+            );
             lead_bold.push(name.to_string());
         }
     }
