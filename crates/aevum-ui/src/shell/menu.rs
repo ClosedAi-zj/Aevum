@@ -242,7 +242,17 @@ pub(super) fn handle_input(state: &mut AppState, ctx: &Context) {
         }
     }
 
+    // 空格两用仲裁（R8）：按下只置位不播放——画布用它拖平移（PS 肌肉记忆）；
+    // 松开时若没被画布消费，才轮到「播放/暂停」。拖过就当平移，不播放。
+    //
+    // Space's two-job arbiter (R8): a press only sets the flag -- the canvas uses it
+    // to drag-pan (PS muscle memory); on release, if the canvas did not consume it,
+    // play/pause gets its turn. A drag means panning, not playback.
     if ctx.input(|i| i.key_pressed(Key::Space)) {
+        state.space_pending = true;
+    }
+    if ctx.input(|i| i.key_released(Key::Space)) && state.space_pending {
+        state.space_pending = false;
         state.toggle_play();
     }
     // 裁剪态和运镜拖框态下方向键挪取景框（PS/LR 的规矩），其余时候照旧翻帧。

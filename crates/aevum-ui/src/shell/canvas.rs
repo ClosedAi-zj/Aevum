@@ -245,6 +245,20 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     {
         state.pan += resp.drag_delta();
     }
+    // 空格拖拽平移（R8，PS 手感）：按住空格 + 左键拖，任何工具下都能平移；
+    // 消费掉 space_pending，松开空格就不会再触发播放。
+    //
+    // Space-drag panning (R8, the PS feel): hold Space and drag with the left button
+    // to pan under any tool; consuming space_pending here keeps the release from
+    // triggering playback.
+    if state.space_pending
+        && resp.dragged_by(PointerButton::Primary)
+        && state.mask_drag.is_none()
+        && state.mask_paint.is_none()
+    {
+        state.pan += resp.drag_delta();
+        state.space_pending = false;
+    }
     // 双击空白处回到「适应窗口」。四角编辑态里双击要留给「把这个角放回原位」，
     // 所以这一下让给下面的把手；否则拖歪一个角想复位，画面反而缩走了。
     //

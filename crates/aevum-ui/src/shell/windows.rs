@@ -1652,7 +1652,7 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
                         ("Ctrl+K", crate::i18n::t!("预设与快照")),
                         ("H / Z / C", crate::i18n::t!("抓手 / 缩放 / 裁剪")),
                         ("G / \\", crate::i18n::t!("网格 / 前后对比")),
-                        ("空格", crate::i18n::t!("播放 / 暂停")),
+                        ("空格", crate::i18n::t!("播放 / 暂停 · 按住拖动平移")),
                         ("← →", crate::i18n::t!("逐帧（Shift 一次十帧）")),
                         ("1–5 / 0", crate::i18n::t!("星级 / 清除星级")),
                         ("6–9", crate::i18n::t!("红黄绿蓝色标")),

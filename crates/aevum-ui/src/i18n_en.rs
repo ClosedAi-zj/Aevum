@@ -1050,6 +1050,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("撤销最近一步；回到那之前的状态。没有可撤的改动时报错。", "Undo the last step and return to the state before it. Errors when there is nothing to undo."),
     ("播放 / 暂停", "Play / Pause"),
     ("播放 / 暂停（空格）", "Play / pause (Space)"),
+    ("播放 / 暂停 · 按住拖动平移", "Play / pause · hold and drag to pan"),
     ("收起 / 展开底部预览栏", "Collapse / expand the filmstrip"),
     ("收起分组", "Fewer groups"),
     ("收起工作流面板", "Collapse the workflow panel"),

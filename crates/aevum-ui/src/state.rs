@@ -1563,6 +1563,16 @@ pub struct AppState {
     pub fit_scale: f32,
     pub pan: Vec2,
 
+    /// 空格键的两用仲裁（R8）：按下置位，画布拿它拖平移就消费掉；松开时仍在
+    /// 才轮到「播放/暂停」。PS 的空格平移与延时的播放键共用一键的解法。
+    /// 不落盘，不进工程。
+    ///
+    /// The Space key's two-job arbiter (R8): a press sets it, the canvas consumes it
+    /// for drag-panning, and only a release with it still set falls through to
+    /// play/pause -- how PS's space-pan and a timelapse's play key share one key.
+    /// Session-only; never persisted.
+    pub space_pending: bool,
+
     pub playing: bool,
     last_play: Instant,
     pub font_level: usize,

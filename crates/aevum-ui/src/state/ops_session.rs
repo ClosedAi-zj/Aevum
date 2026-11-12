@@ -576,6 +576,7 @@ impl AppState {
             zoom: 1.0,
             fit_scale: 1.0,
             pan: Vec2::ZERO,
+            space_pending: false,
             playing: false,
             last_play: Instant::now(),
             font_level: 0,
