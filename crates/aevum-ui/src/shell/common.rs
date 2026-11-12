@@ -160,14 +160,37 @@ pub(super) fn side_note(ui: &mut Ui, text: &str) {
     );
 }
 
-/// 分组之间只留白，不画线框（macOS 统一工具栏口径）。
+/// 分组之间的缝：纵向列画一道横贯全宽的凹槽（R1 的立体分割线）；横向行
+/// （选项栏等）推进 12px 并画一道竖凹槽——**不许按可用宽分配**：横向布局里
+/// `available_width` 是整行余宽，一口吃掉会把行内其余控件挤到面板外整段消失
+/// （R1 首版回归：选项栏只剩文档页签，工具身份/参数/缩放全部不可见）。
 ///
-/// Whitespace only between groups, no boxes (macOS unified-toolbar convention).
+/// The gap between groups: in a vertical column a full-width horizontal groove (R1's
+/// recessed divider); in a horizontal row (options bar etc.) advance 12 px and paint a
+/// vertical groove. The horizontal branch must NOT allocate by available width: in a
+/// row that is the whole remaining width, and eating it wraps every later control out
+/// of the panel -- R1's first cut made the options bar collapse to just the document
+/// tab (tool identity, parameters, zoom all invisible).
 pub(super) fn group_gap(ui: &mut Ui) {
-    // 组间缝中线画 groove（R1）：留白正中一道凹槽——分割有了「陷进去」
-    // 的立体感（PS 分割线技法），而不是一段空白。
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 12.0), Sense::hover());
-    theme::groove(ui.painter(), rect.left() + 4.0, rect.right() - 4.0, rect.center().y);
+    if ui.layout().is_vertical() {
+        let (rect, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 12.0), Sense::hover());
+        theme::groove(
+            ui.painter(),
+            rect.left() + 4.0,
+            rect.right() - 4.0,
+            rect.center().y,
+        );
+    } else {
+        let h = ui.available_height();
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(12.0, h), Sense::hover());
+        theme::groove_v(
+            ui.painter(),
+            rect.center().x,
+            rect.top() + 5.0,
+            (rect.bottom() - 5.0).max(rect.top() + 6.0),
+        );
+    }
 }
 
 /// 一张分组卡（设计稿 `.grp`）：12px 内距、8px 圆角、6% 白环、卡与卡之间 8px。

@@ -1095,9 +1095,7 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                                 // Paper only holds on a light base: moving to Dark/Black
                                 // falls back to the default PS grey, avoiding the mismatch
                                 // of "dark selected but the UI is still white paper".
-                                if m != ThemeMode::Light
-                                    && state.appearance.skin == Skin::Paper
-                                {
+                                if m != ThemeMode::Light && state.appearance.skin == Skin::Paper {
                                     state.appearance.skin = Skin::Photoshop;
                                 }
                             }

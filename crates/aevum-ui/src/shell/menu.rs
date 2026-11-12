@@ -1690,6 +1690,16 @@ mod chrome_labels_tests {
     }
 
     fn painted_text(ctx: &Context, state: &mut AppState) -> String {
+        // 采第二帧：首帧面板 rect 尚未落定（同 Area 的已知行为），egui 0.37 的
+        // Button 在 `ui.is_rect_visible` 为假时整颗跳过——选项栏里的 menu_button
+        // 文字会整体缺席，量出来是「假红」。暖一帧再取证。
+        //
+        // Sample the second frame: on the first, panel rects have not settled (the
+        // same known behavior as Areas), and egui 0.37's Button paints nothing while
+        // `ui.is_rect_visible` is false -- every menu_button label in the options bar
+        // goes missing and the assertion reads a false red. Warm one frame, then judge.
+        let mut warmup = ctx.run_ui(input(vec![]), |panel| ui(state, panel));
+        warmup.textures_delta.clear();
         let mut out = ctx.run_ui(input(vec![]), |panel| ui(state, panel));
         let mut text = String::new();
         for clipped in &out.shapes {

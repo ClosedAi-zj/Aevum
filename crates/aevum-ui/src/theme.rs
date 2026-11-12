@@ -2213,7 +2213,10 @@ pub fn bevel_h(painter: &egui::Painter, x0: f32, x1: f32, y: f32) {
 /// The same hairline section rule, vertical (options-bar segments, panel vs workspace).
 pub fn bevel_v(painter: &egui::Painter, x: f32, y0: f32, y1: f32) {
     let x = x.round() + 0.5;
-    painter.line_segment([Pos2::new(x, y0), Pos2::new(x, y1)], Stroke::new(1.0, divider()));
+    painter.line_segment(
+        [Pos2::new(x, y0), Pos2::new(x, y1)],
+        Stroke::new(1.0, divider()),
+    );
 }
 
 /// 两种**材质**之间的渐变带：四周各 1px、共四档，把一次 50 灰阶的硬切
@@ -2274,6 +2277,31 @@ pub fn groove(painter: &egui::Painter, x0: f32, x1: f32, y: f32) {
         [
             Pos2::new(x0, y.round() + 1.5),
             Pos2::new(x1, y.round() + 1.5),
+        ],
+        Stroke::new(1.0, Color32::from_white_alpha(26)),
+    );
+}
+
+/// 竖版 groove（横向布局里的组间缝，R1 补丁）：暗线在左、亮线在右。
+/// 光源假设与横版一致（光从上来）：竖切面的受光壁是它的右壁。PS 工具栏
+/// 「工具组之间的竖分隔」就是这对双线。
+///
+/// Vertical groove (group gaps inside a horizontal layout, R1 fix): dark line on
+/// the left, light line on the right -- the same light-from-above assumption as the
+/// horizontal groove (a vertical cut face catches light on its right wall). This is
+/// the pair of lines behind PS's toolbar group separators.
+pub fn groove_v(painter: &egui::Painter, x: f32, y0: f32, y1: f32) {
+    painter.line_segment(
+        [
+            Pos2::new(x.round() + 0.5, y0),
+            Pos2::new(x.round() + 0.5, y1),
+        ],
+        Stroke::new(1.0, Color32::from_black_alpha(115)),
+    );
+    painter.line_segment(
+        [
+            Pos2::new(x.round() + 1.5, y0),
+            Pos2::new(x.round() + 1.5, y1),
         ],
         Stroke::new(1.0, Color32::from_white_alpha(26)),
     );
@@ -2748,9 +2776,21 @@ mod token_tests {
         let mut mats = surfaces(&p).to_vec();
         mats.push(p.elev);
         for s in mats {
-            assert!(contrast(p.text, s) >= 7.0, "纸白正文 {:.2}:1", contrast(p.text, s));
-            assert!(contrast(p.muted, s) >= 4.5, "纸白 MUTED {:.2}", contrast(p.muted, s));
-            assert!(contrast(p.dim, s) >= 4.5, "纸白 DIM {:.2}", contrast(p.dim, s));
+            assert!(
+                contrast(p.text, s) >= 7.0,
+                "纸白正文 {:.2}:1",
+                contrast(p.text, s)
+            );
+            assert!(
+                contrast(p.muted, s) >= 4.5,
+                "纸白 MUTED {:.2}",
+                contrast(p.muted, s)
+            );
+            assert!(
+                contrast(p.dim, s) >= 4.5,
+                "纸白 DIM {:.2}",
+                contrast(p.dim, s)
+            );
         }
         assert!(contrast(p.text, p.field) >= 7.0);
         assert!(contrast(p.on_selected, p.selected) >= 4.5);
