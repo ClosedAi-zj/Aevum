@@ -427,15 +427,29 @@ pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // settings column, and a second "start" would make two finish lines.
     let foot =
         egui::Rect::from_min_max(egui::Pos2::new(area.left(), body.bottom() + 8.0), area.max);
+    // 状态条按可用宽度收（R9）：固定 64 字符的省略在窄窗里整行被右缘裁掉、
+    // 连省略号一起不见——宽度适配才是「收」的正确姿势。
+    //
+    // The footer fits to the available width (R9): a fixed 64-character ellipsis gets
+    // the whole line clipped off the right edge on narrow windows, ellipsis and all --
+    // width fitting is the right way to truncate.
+    let p = ui.painter();
+    let line = crate::i18n::tr_fmt(
+        "{} 段排队 · 输出 {}",
+        &[
+            &state.queue.len(),
+            &state.render_video_out.display().to_string(),
+        ],
+    );
     ui.painter().text(
         egui::Pos2::new(foot.left(), foot.center().y),
         egui::Align2::LEFT_CENTER,
-        crate::i18n::tr_fmt(
-            "{} 段排队 · 输出 {}",
-            &[
-                &state.queue.len(),
-                &crate::theme::ellipsis(&state.render_video_out.display().to_string(), 64),
-            ],
+        crate::theme::fit_text(
+            p,
+            &line,
+            crate::theme::font(SIZE_SMALL),
+            muted(),
+            foot.width() - 24.0,
         ),
         crate::theme::font(SIZE_SMALL),
         muted(),
