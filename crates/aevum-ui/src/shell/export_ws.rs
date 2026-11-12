@@ -146,8 +146,28 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, ctx: &egui::Context)
     // Only buttons with a real handler stay. "Open output folder" and "Retry failed
     // frames" were painted but had no handler (the Response was dropped), so they are
     // removed rather than left as decoys.
-    let (nx, _) = bench::tool_button(ui, x, strip, crate::i18n::t!("导出队列"), true);
-    x = nx;
+    // 「导出队列」是**当前页签**，不是按钮：以前用 `tool_button` 画成可点、
+    // 却把 Response 丢了（全量复查发现），点下去毫无反应就是假控件。改成纯绘制
+    // 的激活页签，不注册 interact。
+    //
+    // "Export queue" is the **active tab**, not an action. It used to be painted
+    // by `tool_button` with its Response dropped (found in the audit), i.e. a
+    // decoy. Draw it as a plain active tab with no interact region.
+    let tab_label = crate::i18n::t!("导出队列");
+    let tab_g = p.layout_no_wrap(tab_label.to_owned(), font(11.0), text());
+    let tab_r = Rect::from_min_size(
+        Pos2::new(x, strip.center().y - 12.0),
+        Vec2::new(tab_g.size().x + 16.0, 24.0),
+    );
+    p.rect_filled(tab_r, 4.0, accent_dim());
+    p.text(
+        tab_r.center(),
+        Align2::CENTER_CENTER,
+        tab_label,
+        font(11.0),
+        text(),
+    );
+    x = tab_r.right() + 4.0;
     let (nx, cur) = bench::tool_button(ui, x, strip, crate::i18n::t!("导出当前帧"), false);
     if cur.clicked() {
         state.request_export_confirm(ctx, true);
