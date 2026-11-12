@@ -121,12 +121,24 @@ pub fn confirm_export_modal(
     let mut go = false;
     let modal = egui::Modal::new(egui::Id::unique("aevum-export-confirm")).show(ui.ctx(), |ui| {
         modal_box(ui, MODAL_W_EXPORT);
+        // 标题（R4）：加粗 + 底缘 soft_rule——与浮窗标题栏同一语言。此前是一行
+        // 不加粗的普通文本，弹层读起来像内容块而不像对话框。
+        //
+        // Title (R4): bold with a soft rule beneath -- the same language as the
+        // floating windows' title bars. It used to be one plain unbolded line, so the
+        // modal read as a content block, not a dialog.
         ui.label(
             RichText::new(crate::i18n::t!("导出参数"))
-                .font(font(SIZE_BODY))
+                .font(bold(SIZE_BODY))
                 .color(text()),
         );
-        ui.add_space(2.0);
+        let rule_y = ui.cursor().top() + 2.0;
+        let rule_x0 = ui.cursor().left();
+        let rule_x1 = ui.cursor().left() + ui.available_width();
+        ui.add_space(6.0);
+        ui.painter()
+            .line_segment([egui::pos2(rule_x0, rule_y), egui::pos2(rule_x1, rule_y)], egui::Stroke::new(1.0, divider()));
+        ui.add_space(4.0);
         let mut pick_dir = false;
         ui.horizontal(|ui| {
             column(ui, COL_SCOPE_W, |ui| {
@@ -283,13 +295,30 @@ fn summary_column(ui: &mut Ui, state: &AppState, form: &ExportChoice) {
         (crate::i18n::tr("画幅"), format!("{} × {}", ow, oh)),
         (crate::i18n::tr("帧率"), format!("{} fps", state.output_fps)),
         (crate::i18n::tr("格式"), fmt),
-        (crate::i18n::tr("目录"), theme::ellipsis(&form.out_dir, 22)),
     ];
+    // 读数行（R4）：标签左 dim、值右 mono——此前标签压在值上面，五行堆成一团
+    // 密字，和导出工作台的读数行不是同一种语言。目录是长路径，保持上下两行。
+    //
+    // Readout rows (R4): label left dim, value right mono -- label stacked on value
+    // used to pile five rows of dense text, a different language from the export
+    // workspace's readout rows. Directory is a long path and stays on two lines.
     for (k, v) in lines {
-        ui.label(RichText::new(k).size(SIZE_SMALL).color(dim()));
-        ui.label(RichText::new(v).font(mono(SIZE_SMALL)).color(text()));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(k).size(SIZE_SMALL).color(dim()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(RichText::new(v).font(mono(SIZE_SMALL)).color(text()));
+            });
+        });
         ui.add_space(3.0);
     }
+    ui.add_space(1.0);
+    ui.label(RichText::new(crate::i18n::tr("目录")).size(SIZE_SMALL).color(dim()));
+    ui.label(
+        RichText::new(theme::ellipsis(&form.out_dir, 24))
+            .font(mono(SIZE_SMALL))
+            .color(text()),
+    );
+    ui.add_space(3.0);
     ui.add_space(6.0);
     // 「原图永不覆写」摆在这里而不是底部：它是这句话的收尾，不是另一颗按钮的注脚。
     //
