@@ -1656,6 +1656,39 @@ mod chrome_labels_tests {
         }
     }
 
+    /// 单独渲染检查器面板并收集其中的文字。
+    ///
+    /// 整壳取证不行：检查器是 `egui::Area` 浮卡，首帧的输出里可以完全没有它的内容
+    /// （Area 要到下一帧才知道自己多大），于是「六页签都在」这条判据会随页面内容
+    /// 变化而忽绿忽红——它量的其实是「这一帧有没有布局到浮卡」。这里直接渲染
+    /// `dock_panel`，量的是「六个页签各带中文名」这件事本身。
+    ///
+    /// Render the inspector panel on its own and collect its text.
+    ///
+    /// Whole-shell sampling does not work: the inspector is a floating `egui::Area`
+    /// whose content can be entirely absent from the first frame's output (an Area
+    /// only learns its size on the next frame), so "all six tabs are named" would flip
+    /// green/red with unrelated page changes -- it was really measuring "did the float
+    /// get laid out this frame". Painting `dock_panel` directly measures the claim
+    /// itself: six tabs, each carrying its Chinese name.
+    fn dock_painted_text(ctx: &Context, state: &mut AppState) -> String {
+        let mut out = ctx.run_ui(input(vec![]), |panel| {
+            let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 860.0));
+            let mut probe =
+                panel.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("dock-probe"));
+            crate::shell::dock::dock_panel(state, &mut probe, 320.0, 860.0);
+        });
+        let mut text = String::new();
+        for clipped in &out.shapes {
+            if let egui::Shape::Text(t) = &clipped.shape {
+                text.push_str(t.galley.text());
+                text.push('\n');
+            }
+        }
+        out.textures_delta.clear();
+        text
+    }
+
     fn painted_text(ctx: &Context, state: &mut AppState) -> String {
         let mut out = ctx.run_ui(input(vec![]), |panel| ui(state, panel));
         let mut text = String::new();
@@ -1696,11 +1729,24 @@ mod chrome_labels_tests {
         for tool in Tool::ALL {
             assert!(!tool.hint().is_empty(), "工具 {} 缺悬停提示", tool.cn());
         }
-        for tab in DockTab::ALL {
+        // dock 六页签单独取证：见 `dock_painted_text` 的说明。
+        //
+        // The six dock tabs are sampled on their own; see `dock_painted_text`.
+        let dock_text = dock_painted_text(&ctx, &mut state);
+        // 期望值写死，不能拿 `tab.cn()` 去比 `tab.cn()` 画出来的字：那是同义反复，
+        // 把页签改名成「资讯」也照样绿（变异实测）。这里断言的是「六个页签的名字
+        // 仍是这六个、且都画出来了」。
+        //
+        // The expectation is literal: comparing painted text against the very
+        // `tab.cn()` that painted it is a tautology -- renaming a tab to a different
+        // word still passed (verified by mutation). What this asserts is that the six
+        // tabs still carry these six names *and* that all of them get painted.
+        const WANT: [&str; 6] = ["调整", "信息", "关键帧", "AI", "历史", "图库"];
+        for (tab, want) in DockTab::ALL.iter().zip(WANT) {
+            assert_eq!(tab.cn(), want, "页签名被改了：{tab:?}");
             assert!(
-                text.contains(tab.cn()),
-                "dock 缺页签「{}」：\n{text}",
-                tab.cn()
+                dock_text.contains(want),
+                "dock 缺页签「{want}」：\n{dock_text}"
             );
         }
     }

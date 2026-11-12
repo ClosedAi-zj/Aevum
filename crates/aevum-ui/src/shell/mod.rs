@@ -466,7 +466,21 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .resizable(false)
             .frame(egui::Frame::NONE.fill(dock()))
             .show(root, |ui| {
-                legacy::palette_column(state, ui, palette_w, ui.available_height());
+                // 右下角的视图工具条（5 枚 24px 按钮）也画在这一列里，所以调色盘
+                // 的内容高度要先让出它的位置：否则「更多分组▾」正好压在胶囊下面
+                // （用户 2026-11-12 截图就是这么被挡住的）。
+                //
+                // The view-tool capsule (five 24 px buttons) is painted inside this
+                // same column, so the palette's content height yields to it first --
+                // otherwise its last row ("more groups") sits under the capsule, which
+                // is exactly what the user's screenshot showed.
+                let tools_reserve = if state.show_viewtools { 42.0 } else { 0.0 };
+                legacy::palette_column(
+                    state,
+                    ui,
+                    palette_w,
+                    (ui.available_height() - tools_reserve).max(120.0),
+                );
                 // 老式布局：那组视图工具/状态读数改画在**这列调色盘**的右下角，
                 // 即窗口最右侧。中心区的 painter 够不到这里，之前移过去会整组
                 // 消失；放进 Panel 内绘制才是真解决（用户第 2 条）。
@@ -568,41 +582,14 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         }
     }
 
-    // 画布右边界按已知的右侧面板宽度夹一次：切模块时 dock 内容一换，egui 的
-    // Panel 会用它记着的「上次宽度」去缩剩余区，而面板自己的 rect 已经是
-    // `exact_size`，两者会连着几十帧对不上（画布因此压在 dock 页签上，见判据
-    // `ui_tokens::text_never_overlaps_in_any_module`）。让位量集中在 `layout.rs`，
-    // 用它算边界比依赖第三方内部状态稳。
-    //
-    // Clamp the canvas right edge from the known right-hand panel widths: switching
-    // modules swaps the dock content, and egui's Panel shrinks the remainder using the
-    // width it remembers while its own rect already honours `exact_size`, so the two
-    // disagree for tens of frames (the canvas ends up sitting on the dock tabs -- see
-    // `text_never_overlaps_in_any_module`). The insets live in `layout.rs`, and deriving
-    // the edge from them beats depending on a third party's internal state.
-    // 内侧那一侧要按 `layout.dock_side` 算：右坞时夹右边、左坞时夹左边。老写法
-    // 一律当右边算，用户把面板摆到左边（布局预设允许，且会落盘）画布就凭空少
-    // 372px，右半边留白。
-    //
-    // The inset goes on the side the dock actually sits on: clamp the right edge for a
-    // right dock, the left edge for a left one. The old code always clamped the right,
-    // so moving the panes to the left (a persisted layout choice) stole 372 px from the
-    // canvas and left a blank band on the right.
     // 画布让位量只有一个来源：`layout::canvas_insets`（面板宽 + 10px 呼吸带）。
-    // 中央面板、画布内部排布、呼吸带绘制全部从这两个数反推，不许再各自加一次 10。
+    // 现代布局里检查器是浮卡、不占 Panel，所以这里的让位量仍是 0；真正把画布
+    // 停在卡片左缘的是下面那句按 `dock_card_left` 夹 `centre`。
     //
     // The canvas insets have a single source: `layout::canvas_insets` (panel width plus
-    // the gutter). The centre panel, the canvas' own layout and the gutter painting all
-    // derive from these two numbers; nothing adds the 10 a second time.
-    // 画布让位：**零**。检查器已经是浮卡（`floating_dock`），不再占布局宽度，
-    // 照片铺到窗口右缘、卡片浮在照片上——这正是设计稿 `.dock` 的读法。让位量仍
-    // 走 `layout::canvas_insets`（单源不变），只是「有没有占位侧栏」= 没有。
-    //
-    // Canvas insets: **zero**. The inspector is a floating card now (`floating_dock`),
-    // it no longer takes layout width, so the photo runs to the window's right edge with
-    // the card floating over it -- exactly the design's `.dock`. The insets still come
-    // from `layout::canvas_insets` (one source), only "a real column reserves space" is
-    // now false.
+    // the 10 px gutter). Under Modern the inspector is a floating card that reserves no
+    // layout width, so the inset stays zero; what actually stops the canvas at the
+    // card's left edge is the `centre` clamp against `dock_card_left` below.
     let insets = crate::layout::canvas_insets(false, dock_left, 0.0);
     // 中间区自己也得钉住：`insets` 只交代画布**内部**怎么排，管不了
     // CentralPanel 占多宽。而 CentralPanel 拿的是「所有面板之后剩下的空间」——
@@ -620,8 +607,38 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // overflow). Handing CentralPanel a computed max_rect keeps it off the panel no
     // matter how long the panel's content gets.
     let available = root.available_rect_before_wrap();
+    // 检查器浮卡的实际左缘：中央区按它夹一次右边界，这条是唯一的夹法。
+    // 以前用 `canvas_insets(dock_w + 10)` 让位，但浮卡的落位还要再减一条右侧
+    // 工具轨（`rail_pad`），两处算法各算各的：1080p 带轨时浮卡在
+    // `full.right - 56 - 300`，而让位只扣了 310，于是导出页最右一列的值被浮卡
+    // 的标签压住 9-10px（多尺寸扫描在 1200/1440/1920 三档都抓到）。现在两边读
+    // 同一个数：浮卡在哪儿，画布与流程页就收到哪儿。
+    //
+    // The floating inspector's real left edge: the centre area clamps against it, and
+    // that is the only clamp. It used to be `canvas_insets(dock_w + 10)`, but the card
+    // also subtracts the right-hand tool rail (`rail_pad`) from its position -- two
+    // separate sums: at 1080p with rails on the card sits at `full.right - 56 - 300`
+    // while the inset only reserved 310, so the export page's right-hand values ended
+    // up under the card's labels by 9-10 px (the sweep caught it at 1200/1440/1920).
+    // Both sides now read one number: where the card is, is where the canvas stops.
+    let dock_card_left = if develop && state.show_dock && !legacy {
+        state.dock_pos.map(|p| p.x).unwrap_or_else(|| {
+            let rail_pad = if state.show_rails { TOOL_W } else { 0.0 };
+            full.right() - DOCK_GUTTER - state.dock_w - rail_pad
+        })
+    } else {
+        f32::INFINITY
+    };
     let centre = if develop {
-        crate::layout::centre_rect(full, available, insets)
+        let mut c = crate::layout::centre_rect(full, available, insets);
+        if dock_card_left.is_finite() {
+            c.max.x = c
+                .max
+                .x
+                .min(dock_card_left - CANVAS_GAP)
+                .max(c.min.x + 240.0);
+        }
+        c
     } else {
         // 整页工作台：没有侧栏，内容区就是顶栏以下的全部（design `.wsview{inset:44px 0 0 0}`）。
         //
@@ -648,23 +665,6 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         };
         forced.unwrap_or_else(|| flow_panel::current_page(state))
     };
-    // 流程页让位量：现代布局里检查器是**浮动**的卡，`canvas_insets` 因此恒为 0
-    // （浮卡不占布局位，画布是有意画到它下面的）。序列管理 / 导出视频这两页按整幅
-    // 宽度排版，于是浮卡正好盖住它们最右一列的值（用户截图里「H.265 / H.26」、
-    // 「C:\Users\zj\App」被切断）。这里按浮卡实际占位（卡宽 + 外留白，与
-    // `floating_dock` 的 `DOCK_GUTTER` 同一口径）显式让一条边。
-    //
-    // Yield width for flow pages: under Modern the inspector is a **floating** card, so
-    // `canvas_insets` is always zero (the card reserves no layout space and the canvas is
-    // meant to run underneath it). The sequence / export pages lay out across the full
-    // width, so the card lands exactly on their right-hand column's values -- the user's
-    // screenshot showed "H.265 / H.26" and "C:\Users\zj\App" cut off. Reserve the card's
-    // real footprint (width + outer gutter, the same measure `floating_dock` uses) here.
-    let dock_occupied = if state.show_dock && !legacy {
-        state.dock_w + DOCK_GUTTER
-    } else {
-        0.0
-    };
     let mut centre_ui = root.new_child(egui::UiBuilder::new().max_rect(centre).id_salt("centre"));
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(if develop { surround() } else { bench_bg() }))
@@ -682,18 +682,12 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             match flow_page_now {
                 flow_panel::FlowPage::Develop => canvas_panel(state, ui, insets.right),
                 other => {
-                    // 流程页在收过右边的子 Ui 里排版，右列的值不会再躲到浮卡底下。
+                    // 流程页直接铺在 `centre` 里：它已经按浮卡让过位，右列不会
+                    // 再被检查器压住。
                     //
-                    // Flow pages lay out inside a right-trimmed child Ui, so their right
-                    // column can no longer hide under the floating card.
-                    let mut inner = ui.max_rect();
-                    if dock_occupied > 0.0 {
-                        if dock_left {
-                            inner.min.x += dock_occupied;
-                        } else {
-                            inner.max.x = (inner.max.x - dock_occupied).max(inner.min.x + 260.0);
-                        }
-                    }
+                    // Flow pages lay out inside `centre`, which already reserves the
+                    // card's width, so their right column cannot hide under it.
+                    let inner = ui.max_rect();
                     let mut page_ui =
                         ui.new_child(egui::UiBuilder::new().max_rect(inner).id_salt("flow-page"));
                     match other {
@@ -741,32 +735,37 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // step caption; fold the card away instead of covering the copy (the sweep
     // measured a 48 px collision at 900x600). Flow steps are NOT excluded: the
     // demo and the real default both carry `flow_step=Some(1)`.
-    if develop
+    let film_card = develop
         && !legacy
         && canvas_page
         && full.height() >= 480.0
         && layout.film.allowed()
-        && state.frame_count() > 0
-    {
-        // 矮窗（<660）用紧凑浮卡而不是整张消失。
+        && state.frame_count() > 0;
+    // 矮窗（<660）用紧凑浮卡而不是整张消失；它同时是视图工具条的抬升依据。
+    //
+    // Short windows (<660) get a compact float rather than losing the strip; the same
+    // height also decides how far the view-tool capsule is lifted.
+    let film_compact = full.height() < 660.0;
+    let film_h = if film_compact {
+        timeline::card_height_compact(state)
+    } else {
+        timeline::card_height(state)
+    };
+    if film_card {
+        let pos = Pos2::new(centre.left() + 12.0, centre.bottom() - 12.0 - film_h);
+        // `centre` 现在已扣掉检查器（`canvas_insets` 按浮卡宽度让位），胶片卡
+        // 夹到 `centre` 右缘就够；但浮卡可以被拖走，拖到左边时会重新压住胶片条，
+        // 所以用户拖过就以它的实际左缘为准再夹一次。
         //
-        // Short windows (<660) get a compact float instead of losing it.
-        let compact = full.height() < 660.0;
-        let card_h = if compact {
-            timeline::card_height_compact(state)
-        } else {
-            timeline::card_height(state)
-        };
-        let pos = Pos2::new(centre.left() + 12.0, centre.bottom() - 12.0 - card_h);
-        // 检查器是**浮卡**、不占 Panel，所以 centre 并没有扣掉它；只按窗口
-        // 百分比算上限会让胶片卡在窄窗压到推子上（900px 截图实证）。
-        // 按检查器实际左缘夹宽，一次仍能读到足够多的相邻帧。
-        //
-        // The inspector is a **floating card**, not a Panel, so `centre` does
-        // not subtract it. A pure window-percentage cap covered the sliders on
-        // narrow windows (verified at 900 px); cap against its real left edge.
+        // `centre` already excludes the inspector (the insets reserve the card's
+        // width), so clamping to its right edge suffices -- but the card can be
+        // dragged, and a dragged-left card would cover the strip again, so honour
+        // its real left edge when the user has moved it.
         let dock_edge_x = if state.show_dock && !legacy {
-            full.right() - TOOL_W - state.dock_w - 8.0
+            state
+                .dock_pos
+                .map(|p| p.x.min(centre.right()))
+                .unwrap_or(centre.right())
         } else {
             full.right()
         };
@@ -776,8 +775,31 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .order(egui::Order::Middle)
             .fixed_pos(pos)
             .show(&ctx, |ui| {
-                timeline::card(state, ui, &ctx, max_w, false, compact)
+                timeline::card(state, ui, &ctx, max_w, false, film_compact)
             });
+    }
+
+    // 视图工具条（5 枚 24px 按钮的胶囊）：现代布局画在这里而不是画布里，因为
+    // 它是**画布右下角**的一层，而画布右下角此刻可能正躺着胶片浮卡。画在画布里
+    // 时两者抢同一个角，胶片卡把胶囊整个盖住（1600×1000 实测：胶囊只剩一小条）。
+    // 现在有胶片卡就把胶囊抬到卡上方 8px，没有就回到画布右下角。
+    //
+    // The view-tool capsule: painted here rather than inside the canvas, because it is
+    // a layer on the canvas' **bottom-right corner** -- the very corner the floating
+    // filmstrip occupies. Drawn from the canvas, the strip buried the capsule (at
+    // 1600x1000 only a sliver survived). With a strip the capsule lifts 8 px above it;
+    // without one it returns to the corner.
+    if develop && !legacy && canvas_page {
+        let bottom = if film_card {
+            centre.bottom() - 12.0 - film_h - 8.0
+        } else {
+            centre.bottom()
+        };
+        let area = Rect::from_min_max(
+            centre.left_top(),
+            Pos2::new(centre.right(), bottom.max(centre.top() + 40.0)),
+        );
+        view_tools(state, root, area);
     }
 
     // 工作台切换已并入菜单行「视图」菜单（用户 2026-11-11「悬浮设计不好看」）：

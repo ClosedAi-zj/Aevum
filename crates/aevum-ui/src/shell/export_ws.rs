@@ -214,12 +214,9 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, ctx: &egui::Context)
         );
     }
 
-    // 内容驱动高度：两栏按「行数」长，不再拉满整窗。以前队列里只有一段任务，
-    // 却挂在一张近 800px 高的空框里——整页最像「半成品」的地方。
+    // 页体从二级工具条下面 12px 起算。
     //
-    // Content-driven height: the two columns grow with the row count instead of
-    // stretching to the window. A single queue entry inside an ~800 px empty frame
-    // was the most half-finished-looking part of the whole app.
+    // The body starts 12 px below the secondary tool strip.
     let body_top = strip.bottom() + BODY_TOP;
     let avail_h = (full.bottom() - BODY_BOTTOM - body_top).max(0.0);
     // 一整块工作区贯穿到窗口底边：内容驱动高度试过，画面变成「上半屏一块板、
@@ -229,12 +226,27 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, ctx: &egui::Context)
     // left the lower half of the screen empty and read as worse-balanced. Cap at 760
     // so very tall windows do not stretch it into a void.
     let wanted_h = avail_h.min(760.0);
-    let body = Rect::from_min_max(
+    let area = Rect::from_min_max(
         Pos2::new(full.left() + BODY_X, body_top),
         Pos2::new(full.right() - BODY_X, body_top + wanted_h),
     );
-    let side_w = side_col(full.width(), SIDE_COL_W);
-    let queue_w = side_col(full.width(), QUEUE_COL_W);
+    body(state, ui, ctx, area);
+}
+
+/// 三栏页体：队列 | 预览 | 设置。**两个入口共用这一套**——整页「导出工作台」
+/// （菜单/编号 3）与流程第三页「导出视频」（显影页里点第 5 步）。此前流程页
+/// 自己写了一套 62/38 的两张卡，同一个功能出现两种界面，且左列铺 900px 只放
+/// 一行队列，是全站最空的地方（用户 2026-11-12 第 10 条）。
+///
+/// The three-column body: queue / preview / settings, **shared by both entries** --
+/// the full-page export bench (menu / number 3) and the flow's third page ("Export
+/// video", reachable from step 5 on the develop page). The flow page used to carry
+/// its own 62/38 two-card body, so one feature had two interfaces, and the widest
+/// column held a single queue row (user's item 10).
+pub(super) fn body(state: &mut AppState, ui: &mut Ui, ctx: &egui::Context, body: Rect) {
+    let p = ui.painter().clone();
+    let side_w = side_col(body.width(), SIDE_COL_W);
+    let queue_w = side_col(body.width(), QUEUE_COL_W);
     if body.width() <= side_w + GAP || body.height() <= 0.0 {
         return;
     }
@@ -477,13 +489,32 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
         .filter(|q| matches!(q.status, aevum_core::queue::QueueStatus::Failed))
         .count();
     let count = crate::i18n::tr_fmt("{} 项 · 完成 {} · 失败 {}", &[&n, &done, &failed]);
-    p.text(
-        Pos2::new(card.right() - SIDE_PAD, band.center().y),
-        Align2::RIGHT_CENTER,
-        count,
-        font(SIZE_MICRO),
-        dim(),
-    );
+    // 卡头只放一行：左「队列」右计数。窄卡（900px 窗的三栏里队列列只有 240）
+    // 放不下两段时整段丢计数，而不是让两段字叠在一起——多尺寸扫描在 900/1080
+    // 两档都抓到过 12px 互压。
+    //
+    // The header carries one line: "queue" left, counts right. On a narrow card
+    // (the queue column is 240 px inside the three-column body at 900 px) the counts
+    // are dropped whole rather than painted over the label -- the sweep caught a 12 px
+    // collision at both 900 and 1080.
+    let head_room = card.width() - 2.0 * SIDE_PAD - 10.0;
+    let label_w = p
+        .layout_no_wrap(crate::i18n::t!("队列").to_owned(), bold(SIZE_LABEL), text())
+        .size()
+        .x;
+    let count_w = p
+        .layout_no_wrap(count.clone(), font(SIZE_MICRO), dim())
+        .size()
+        .x;
+    if label_w + count_w <= head_room {
+        p.text(
+            Pos2::new(card.right() - SIDE_PAD, band.center().y),
+            Align2::RIGHT_CENTER,
+            count,
+            font(SIZE_MICRO),
+            dim(),
+        );
+    }
     rule(&p, card.left(), card.right(), band.bottom(), group_ring());
 
     if n == 0 {
@@ -685,22 +716,20 @@ fn settings_card(state: &mut AppState, ui: &mut Ui, ctx: &egui::Context, rect: R
     let vx1 = rect.right() - 16.0;
     let mut y = rect.top() + SIDE_PAD;
 
-    // 卡头：标题 + 右端「保存到预设」。
+    // 卡头只留标题：原先右端那颗「保存到预设」是纯绘制（没有 interact、没有
+    // 落盘），属于假控件——导出预设的保存不在这一版的能力内，画出来只会让人
+    // 点一下就失去信任。
     //
-    // Header: the title plus a "save as preset" link on the right.
+    // The header keeps the title only. The "save to preset" link on its right was
+    // painted with no interact region and no persistence behind it, i.e. a decoy
+    // control; saving an export preset is not in this version's scope, and painting
+    // it only costs trust the first time someone clicks it.
     p.text(
         Pos2::new(x0, y + 10.0),
         Align2::LEFT_CENTER,
         crate::i18n::t!("导出设置"),
         bold(SIZE_LABEL),
         text(),
-    );
-    p.text(
-        Pos2::new(x1, y + 10.0),
-        Align2::RIGHT_CENTER,
-        crate::i18n::t!("保存到预设"),
-        font(SIZE_MICRO),
-        accent(),
     );
     y += SROW_H + 4.0;
 

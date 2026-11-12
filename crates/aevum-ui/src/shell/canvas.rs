@@ -572,19 +572,11 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         );
     }
 
-    // 视图工具条浮在画布右下角（设计稿 `.viewtools`：5 枚图标的深黑胶囊）。
+    // 视图工具条（设计稿 `.viewtools` 那条 5 枚图标的胶囊）由 `shell::mod` 统一
+    // 摆放：它的位置要避开胶片浮卡，而画布这里不知道卡在哪儿。画布只负责画图。
     //
-    // The view toolbar floats at the canvas's bottom-right corner (the design's
-    // `.viewtools`: a five-icon dark capsule).
-    // 老式布局的视图工具条改由右侧调色盘 Panel 绘制（见 shell::mod），
-    // 这样它才真正落在窗口最右侧且不被中心区裁剪。
-    //
-    // In Legacy the view-tool strip is painted inside the right-hand palette
-    // Panel (see shell::mod) so it really sits at the far right and is not
-    // clipped by the centre area.
-    if state.layout.scheme != crate::layout::Scheme::Legacy {
-        super::view_tools(state, ui, content);
-    }
+    // The view-tool capsule is placed by `shell::mod`, which knows where the floating
+    // filmstrip sits; the canvas only paints pixels.
 
     if state.rulers {
         draw_rulers(ui, body, content, Some(img), scale, hover);
