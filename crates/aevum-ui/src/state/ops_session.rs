@@ -812,6 +812,7 @@ impl AppState {
             last_saved: None,
             headless: false,
             control_enabled: true,
+            shot_mode: false,
             align_report: None,
             align_busy: false,
             align_estimator: Estimator::Template,
@@ -1741,9 +1742,12 @@ impl AppState {
         // 偏好（折叠态）落盘的唯一出口。界面那边只置 `settings_dirty`，帧尾在这里
         // 写一次：右键「全部收起」会一口气改十几个键，逐处写会把文件反复搓。
         // 写失败不打断用户（`settings::save` 自己会出声），置回 false 免得每帧重试。
+        // 一次性截图（shot_mode）不落盘：演示用的临时外观/浮窗位置不该写进用户偏好。
         if self.settings_dirty {
             self.settings_dirty = false;
-            crate::settings::save(&self.settings());
+            if !self.shot_mode {
+                crate::settings::save(&self.settings());
+            }
         }
     }
 

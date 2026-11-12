@@ -176,17 +176,28 @@ fn ctx_seg(ui: &mut Ui, name: &str, note: &str, warn: Option<String>) {
 pub(super) fn doc_tab(state: &mut AppState, p: &egui::Painter, ui: &mut Ui, rect: Rect) {
     let has_seq = state.seq.is_some();
     let resp = ui.interact(rect, ui.make_persistent_id("doc-tab"), Sense::click());
-    let fill = theme::overlay_white(header(), if has_seq { 20 } else { 14 });
-    p.rect_filled(
-        rect,
-        egui::CornerRadius {
-            nw: 4,
-            ne: 4,
-            sw: 0,
-            se: 0,
-        },
-        fill,
-    );
+    // 深色靠「比顶栏亮一点」读出页签；浅色顶栏已近白，再叠白等于看不见，
+    // 页签糊成一行浮字（用户 2026-11-12「不协调」）。浅色改用纯白底 + 发丝描边
+    // 收出页签轮廓，与 WPS 的文档页签同一口径。
+    //
+    // Dark reads the tab as "a touch lighter than the bar"; on light the bar is already
+    // near-white, so overlaying white makes the tab invisible -- it blurs into floating
+    // text. Light uses a white fill plus a hairline outline instead, like WPS's doc tabs.
+    let tab_cr = egui::CornerRadius {
+        nw: 4,
+        ne: 4,
+        sw: 0,
+        se: 0,
+    };
+    let fill = if theme::is_light() {
+        field()
+    } else {
+        theme::overlay_white(header(), if has_seq { 20 } else { 14 })
+    };
+    p.rect_filled(rect, tab_cr, fill);
+    if theme::is_light() {
+        p.rect_stroke(rect, tab_cr, Stroke::new(1.0, border()), StrokeKind::Inside);
+    }
     let name = state
         .seq
         .as_ref()
@@ -427,6 +438,12 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                                 .size(SIZE_LABEL)
                                 .color(text()),
                         )
+                        // 不收宽度时 ComboBox 吃满横向布局的余宽，下拉箭頭被推到
+                        // 行尾、与「自定义」隔出一段空白（用户 2026-11-12「不协调」）。
+                        //
+                        // Without a width the ComboBox eats the row's remaining width and
+                        // the arrow lands at the far end, a blank gap after the label.
+                        .width(110.0)
                         .show_ui(ui, |ui| {
                             combo_style(ui);
                             for name in grade::PRESET_NAMES {
@@ -856,23 +873,23 @@ enum Flow {
 /// 排一次轨。纯函数，不碰 `Ui`、不读状态。
 ///
 /// 规则按顺序尝试，取第一个放得下的方案：
-/// 1. 全展开、按钮 36；
-/// 2. 把面板组（group 1）折成一颗「更多」，按钮保持 36；
-/// 3. 按钮压到 32（上一版的大小）——只缩不重排；
+/// 1. 全展开、按钮 28；
+/// 2. 把面板组（group 1）折成一颗「更多」，按钮保持 28；
+/// 3. 按钮压到最小档 28——只缩不重排；
 /// 4. 再压 2px 兜底。
 ///
 /// **工具组（group 2）永不折叠**：它是每天要点的东西，折进去等于把主要动作藏起来。
 /// 面板组可以折——它们本来就是"一类入口"，折成一颗「更多」仍然一次点开。
 ///
 /// Lays the rail out. A pure function: no `Ui`, no state. It tries, in order: everything at
-/// 36 px; fold the panel group into one "more" entry at 36 px; shrink to 32 px (the previous
-/// size) without rearranging; then 2 px tighter as a last resort. The tool group is **never**
+/// 28 px; fold the panel group into one "more" entry at 28 px; shrink to the 28 px minimum
+/// without rearranging; then 2 px tighter as a last resort. The tool group is **never**
 /// folded -- those are the things clicked every day, and folding them hides the main actions.
 /// The panel group may fold: it is a family of entries anyway, and one "more" click still
 /// reaches them.
 pub(super) fn rail_layout(rect: Rect, items: &[RailItem]) -> RailSlots {
     const PAD: f32 = 8.0;
-    const FOOT_BTN_MIN: f32 = 32.0;
+    const FOOT_BTN_MIN: f32 = RAIL_MIN_BTN;
 
     // 轨底那一枚占掉底部一条，流可用高要减掉它。
     //
@@ -1113,7 +1130,7 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui, half: RailHalf, on_le
         } else {
             muted()
         };
-        icons::paint(&p, rect.shrink(slots.btn * 0.28), it.glyph, color);
+        icons::paint(&p, rect.shrink(slots.btn * 0.22), it.glyph, color);
         if resp.clicked() {
             click = Some(it.kind);
         }
@@ -1131,7 +1148,7 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui, half: RailHalf, on_le
         }
         icons::paint(
             &p,
-            rect.shrink(slots.btn * 0.28),
+            rect.shrink(slots.btn * 0.22),
             Glyph::ChevronDown,
             if resp.hovered() { text() } else { muted() },
         );
@@ -1141,7 +1158,7 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui, half: RailHalf, on_le
 
     if let (Some(resp), true) = (more_resp.as_ref(), !slots.folded.is_empty()) {
         let folded = slots.folded.clone();
-        egui::Popup::menu(resp).width(TOOL_W * 2.6).show(|ui| {
+        egui::Popup::menu(resp).width(TOOL_W * 3.2).show(|ui| {
             for idx in &folded {
                 let it = &items[*idx];
                 let row = ui.horizontal(|ui| {
@@ -1165,7 +1182,7 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui, half: RailHalf, on_le
         }
         icons::paint(
             &p,
-            rect.shrink(RAIL_MIN_BTN * 0.28),
+            rect.shrink(RAIL_MIN_BTN * 0.22),
             it.glyph,
             if resp.hovered() { text() } else { muted() },
         );

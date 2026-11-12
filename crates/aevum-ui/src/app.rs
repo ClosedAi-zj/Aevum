@@ -73,6 +73,13 @@ pub enum Startup {
         color: bool,
         /// 截图前打开「外观与布局」窗口（验浅色主题下的控件配色）。
         look: bool,
+        /// 截图前临时换一套皮肤（`--shot-skin`，认中文名或 kebab-case）。
+        /// 只改上屏、不落盘：shot_mode 会拦住所有偏好写回。
+        ///
+        /// Temporarily swap the skin before the shot (`--shot-skin`, accepts the
+        /// Chinese endonym or kebab-case). On-screen only, never persisted: shot_mode
+        /// blocks every preference write-back.
+        skin: Option<String>,
     },
 }
 
@@ -260,11 +267,36 @@ impl AevumApp {
                 market,
                 color,
                 look,
+                skin,
                 step,
             } => {
                 // 一次性截图不参与回环控制：避免短暂占用序列的 control.json，
                 // 和已经在跑的 GUI 抢同一份文件。
                 state.control_enabled = false;
+                // 截图会话的偏好一律不落盘（临时皮肤 / 浮窗落位都会置脏标记）。
+                state.shot_mode = true;
+                // --shot-skin：只改上屏。纸白强制浅档，顺带把 theme 同步到 Light，
+                // 与外观窗口里点「纸白」的行为一致。CLI 入口已在 main.rs 验过名字
+                // （认不出直接退出码 2）；这里再兜一层，供其它调用方出声。
+                if let Some(name) = skin {
+                    match theme::Skin::from_name(&name) {
+                        Some(s) => {
+                            state.appearance.skin = s;
+                            if s == theme::Skin::Paper {
+                                state.appearance.theme = theme::ThemeMode::Light;
+                            }
+                            theme::set_appearance(state.appearance);
+                            theme::apply(
+                                &cc.egui_ctx,
+                                theme::FONT_ZOOMS
+                                    [state.font_level.min(theme::FONT_ZOOMS.len() - 1)],
+                            );
+                        }
+                        None => {
+                            eprintln!("--shot-skin 认不出皮肤：{name}（按当前皮肤截图）");
+                        }
+                    }
+                }
                 let boot = match open {
                     Some(path) => Boot::Open(path),
                     None => match demo::ensure_demo() {

@@ -2498,6 +2498,16 @@ pub struct AppState {
     /// Whether the loopback control server may start. One-shot modes such as `--shot` turn
     /// it off so they do not fight the resident GUI over the same control.json.
     pub control_enabled: bool,
+    /// 一次性截图模式：禁止把本次会话的偏好写回 settings.json。截图会临时改
+    /// 外观（`--shot-skin`）并让浮窗落位（remember_pos），这两条都会置脏标记；
+    /// 不拦的话，拍一张纸白演示图就会把用户的常驻皮肤悄悄换成纸白。
+    ///
+    /// One-shot screenshot mode: never write this session's preferences back to
+    /// settings.json. A shot temporarily swaps appearance (`--shot-skin`) and lets
+    /// floating windows settle (remember_pos), both of which set the dirty flag; without
+    /// this guard, taking one paper-skin demo shot would silently swap the user's
+    /// resident skin to paper.
+    pub shot_mode: bool,
 
     pub align_report: Option<AlignReport>,
     pub align_busy: bool,

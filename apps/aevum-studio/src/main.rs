@@ -99,6 +99,7 @@ fn main() -> ExitCode {
     let mut shot_step: Option<usize> = None;
     let mut shot_color = false;
     let mut shot_look = false;
+    let mut shot_skin: Option<String> = None;
 
     let mut args = argv.into_iter();
     while let Some(arg) = args.next() {
@@ -145,6 +146,28 @@ fn main() -> ExitCode {
             },
             "--shot-color" => shot_color = true,
             "--shot-look" => shot_look = true,
+            // --shot-skin <名>：截图前临时换皮肤（纸白 / PS 灰 / 石墨 …，或 kebab-case）。
+            // 认不出立刻退出码 2，不能静默拍成默认皮肤——与 --shot-step 同一口径。
+            //
+            // --shot-skin <name>: temporarily swap the skin before the shot (纸白 / PS 灰 /
+            // 石墨 …, or kebab-case). An unknown name exits 2 at once rather than silently
+            // shooting the default skin -- same contract as --shot-step.
+            "--shot-skin" => match args.next() {
+                Some(v) => {
+                    let name = v.to_string_lossy().to_string();
+                    if aevum_ui::theme::Skin::from_name(&name).is_none() {
+                        warn!(
+                            "--shot-skin 认不出「{name}」，可用：纸白 / PS 灰 / 石墨 / 蓝钢 / 暖砂 / 青灰（或 paper / photoshop / graphite / steel / sand / jade）"
+                        );
+                        return ExitCode::from(2);
+                    }
+                    shot_skin = Some(name);
+                }
+                None => {
+                    warn!("--shot-skin 需要一个皮肤名");
+                    return ExitCode::from(2);
+                }
+            },
             "--shot-end" => shot_end = true,
             "--shot-channels" => shot_channels = true,
             "--shot-crop" => shot_crop = true,
@@ -297,6 +320,7 @@ fn main() -> ExitCode {
             step: shot_step,
             color: shot_color,
             look: shot_look,
+            skin: shot_skin,
         },
         (None, Some(dir), _) => Startup::Open(dir),
         (None, None, true) => Startup::Demo,
@@ -436,6 +460,9 @@ fn print_help() {
     say!("  --shot-libstack   配合 --shot-library：给演示目录造两叠并展开一叠，拍堆叠折叠态");
     say!(
         "  --shot-dock <名>  截图前切到右侧面板：调整/信息/关键帧/AI/历史（拍「历史」会先造几步）"
+    );
+    say!(
+        "  --shot-skin <名>  截图前临时换皮肤（纸白/PS 灰/石墨/蓝钢/暖砂/青灰），只改上屏不落盘"
     );
     say!("  --module <模块>   截图时停在指定模块：序列/去闪/显影/构图/成片/声音/合成");
     say!("  --selftest        无显示器跑一遍布局自检");

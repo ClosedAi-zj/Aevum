@@ -1414,6 +1414,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("红黄绿蓝色标", "Red / yellow / green / blue labels"),
     ("约剩 {}s", "about {}s left"),
     ("纯黑", "Black"),
+    ("纸白", "Paper"),
     ("纹理", "Texture"),
     ("线性", "Linear"),
     ("线性/径向/画笔蒙版只改选区，参数独立于全局调色。", "Linear / radial / brush masks change only the selection; their parameters are independent of the global grade."),

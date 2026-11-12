@@ -1089,6 +1089,17 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                                 .clicked()
                             {
                                 state.appearance.theme = m;
+                                // 纸白只在浅底成立：切去深/黑档时退回默认的 PS 灰，
+                                // 避免「明暗选了深色、界面却仍是白纸」的错位状态。
+                                //
+                                // Paper only holds on a light base: moving to Dark/Black
+                                // falls back to the default PS grey, avoiding the mismatch
+                                // of "dark selected but the UI is still white paper".
+                                if m != ThemeMode::Light
+                                    && state.appearance.skin == Skin::Paper
+                                {
+                                    state.appearance.skin = Skin::Photoshop;
+                                }
                             }
                         }
                     });
@@ -1101,6 +1112,15 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
                                 .clicked()
                             {
                                 state.appearance.skin = skin;
+                                // 选纸白即把明暗档同步到浅色：皮肤强制浅档，
+                                // 让「明暗」chip 与实际上屏保持一致。
+                                //
+                                // Picking Paper syncs the theme chip to Light: the skin
+                                // forces the light ladder, so the chip must agree with
+                                // what is actually on screen.
+                                if skin == Skin::Paper {
+                                    state.appearance.theme = ThemeMode::Light;
+                                }
                             }
                         }
                     });
@@ -1372,11 +1392,16 @@ pub(super) fn look_window(state: &mut AppState, ctx: &Context) {
     if (state.appearance, state.layout) != before {
         theme::set_appearance(state.appearance);
         theme::apply_style(ctx, FONT_ZOOMS[state.font_level.min(FONT_ZOOMS.len() - 1)]);
-        crate::settings::save(&state.settings());
+        // 截图模式只改上屏、不落盘：--shot-skin 的临时外观不能写进用户偏好。
+        if !state.shot_mode {
+            crate::settings::save(&state.settings());
+        }
     } else if state.lang != before_lang {
         // 只换了语言：色板与样式不用重算，但设置文件必须落盘 —— 否则下次启动
         // 又回到旧语言，用户会以为切换没生效。仍然只有这一条写路径。
-        crate::settings::save(&state.settings());
+        if !state.shot_mode {
+            crate::settings::save(&state.settings());
+        }
     }
 }
 

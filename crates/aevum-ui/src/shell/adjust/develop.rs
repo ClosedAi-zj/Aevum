@@ -219,14 +219,6 @@ fn quiet_action(ui: &mut Ui, label: &str, active: bool) -> egui::Response {
     resp
 }
 
-/// 设计稿 `--raised2 #3d4046`：`.btnrow .btn`（XMP 一进一出）的底色，比普通
-/// `.btn` 的 `--raised` 再抬一档，因为它在这一卡里是最重的动作。
-///
-/// The design's `--raised2 #3d4046`: the fill of `.btnrow .btn` (import/export XMP),
-/// one step above the plain `.btn` `--raised` because it is the heaviest action in
-/// this card.
-const RAISED2: Color32 = Color32::from_rgb(0x3D, 0x40, 0x46);
-
 /// 「配置文件」组的折叠键。设计稿给这张卡一个自己的 `▾/▸`，而 `state::GROUP_SPECS`
 /// 是本次任务不许动的文件——键名因此走常量而不是字面量：`ui_tokens::
 /// panel_groups_match_the_registry` 只对字面量实参做「必须登记」的双向核对，这里
@@ -258,19 +250,41 @@ const PROFILE_GROUP_KEY: &str = "profile";
 /// inspector reads as a web form. The design uses solid raised buttons that sink to
 /// `--field` with a top inner shadow when pressed -- the same pressed feel as the
 /// options bar, just without the outline.
-fn dock_action(ui: &mut Ui, label: &str, fill: Color32, width: f32) -> egui::Response {
+fn dock_action(ui: &mut Ui, label: &str, width: f32) -> egui::Response {
     let label = crate::i18n::tr(label);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 26.0), Sense::click());
     let pressed = resp.is_pointer_button_down_on();
+    // 三态走主题令牌，与全局按钮同一口径：深色抬起、浅色凹下，字色随底自动翻。
+    // 旧版写死 #3d4046 深底 + text()，在浅色皮肤下是深字压深底、几乎读不出。
+    //
+    // Three states use theme tokens, same contract as global buttons: raised on dark,
+    // sunken on light, label colour flipping with the fill. The old hardcoded #3d4046
+    // fill + text() put dark-on-dark on light skins, nearly unreadable.
     let (bg, fg) = if pressed {
-        (field(), text())
+        (press(), text())
     } else if resp.hovered() {
-        (Color32::from_rgb(0x3D, 0x40, 0x46), text())
+        (elev_hover(), on_elev())
     } else {
-        (fill, text())
+        (elev(), on_elev())
     };
     let p = ui.painter();
     p.rect_filled(rect, 6.0, bg);
+    // 浅色补一圈发丝描边：elev 与分组卡底只差两度灰，无描边时按钮在卡上
+    // 读作一团灰影（用户 2026-11-12「颜色违和」）。深色靠明度差就立得住，
+    // 维持设计稿「raised 无描边」；浅色靠描边收边，与 WPS 的白底按钮同一口径。
+    //
+    // A hairline on light: elev sits only two grey steps from the group-card fill, so
+    // without a stroke the button reads as a grey smudge on the card (user, 2026-11-12:
+    // "the colours clash"). Dark stands on the value step alone and keeps the design's
+    // "raised, no stroke"; light closes the edge with a stroke, like WPS's white buttons.
+    if theme::is_light() {
+        p.rect_stroke(
+            rect,
+            6.0,
+            Stroke::new(1.0, theme::border()),
+            egui::StrokeKind::Inside,
+        );
+    }
     if pressed {
         p.line_segment(
             [
@@ -372,20 +386,20 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         camera_profile_row(state, &ctx, ui);
         // 设计稿 `.btnrow{display:flex;gap:8px;margin-top:8px}` + `.btnrow .btn{flex:1}`：
-        // 两枚等宽、26px 高、`--raised2` 实底，平分卡内宽度。
+        // 两枚等宽、26px 高的实底按钮，平分卡内宽度；底色走主题三态令牌。
         //
-        // Design `.btnrow`: two `flex:1` buttons, 8 px apart, 26 px tall on `--raised2`,
-        // splitting the card's inner width.
+        // Design `.btnrow`: two `flex:1` buttons, 8 px apart, 26 px tall, splitting the
+        // card's inner width; fills come from the theme's three-state tokens.
         ui.add_space(8.0);
         let bw = ((ui.available_width() - 8.0) * 0.5).max(40.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            import_xmp = dock_action(ui, "导入 XMP", RAISED2, bw)
+            import_xmp = dock_action(ui, "导入 XMP", bw)
                 .on_hover_text(crate::i18n::t!(
                     "读入 Lightroom / Camera Raw 预设，替换当前调色参数"
                 ))
                 .clicked();
-            export_xmp = dock_action(ui, "导出 XMP", RAISED2, bw)
+            export_xmp = dock_action(ui, "导出 XMP", bw)
                 .on_hover_text(crate::i18n::t!("把当前调色参数写成 .xmp 预设"))
                 .clicked();
         });
@@ -1208,8 +1222,17 @@ fn camera_profile_row(state: &mut AppState, ctx: &Context, ui: &mut Ui) {
         let s = ui.style_mut();
         s.spacing.interact_size.y = 22.0;
         let w = &mut s.visuals.widgets;
+        // 浅色给发丝描边收边（elev 与卡底太近，无描边读作灰影）；深色维持无描边。
+        //
+        // Light closes the edge with a hairline (elev is too close to the card fill);
+        // dark keeps the stroke-free raised look.
+        let edge = if theme::is_light() {
+            Stroke::new(1.0, theme::border())
+        } else {
+            Stroke::NONE
+        };
         for st in [&mut w.inactive, &mut w.hovered, &mut w.active] {
-            st.bg_stroke = Stroke::NONE;
+            st.bg_stroke = edge;
             st.corner_radius = egui::CornerRadius::same(theme::radius_chip() as u8);
         }
         w.inactive.bg_fill = elev();

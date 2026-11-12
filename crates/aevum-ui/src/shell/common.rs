@@ -164,7 +164,10 @@ pub(super) fn side_note(ui: &mut Ui, text: &str) {
 ///
 /// Whitespace only between groups, no boxes (macOS unified-toolbar convention).
 pub(super) fn group_gap(ui: &mut Ui) {
-    ui.add_space(10.0);
+    // 组间缝中线画 groove（R1）：留白正中一道凹槽——分割有了「陷进去」
+    // 的立体感（PS 分割线技法），而不是一段空白。
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 12.0), Sense::hover());
+    theme::groove(ui.painter(), rect.left() + 4.0, rect.right() - 4.0, rect.center().y);
 }
 
 /// 一张分组卡（设计稿 `.grp`）：12px 内距、8px 圆角、6% 白环、卡与卡之间 8px。
