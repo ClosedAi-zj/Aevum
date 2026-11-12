@@ -921,6 +921,17 @@ impl AppState {
     /// Routing only: all four read the same sequence and parameters, so the canvas,
     /// selected frame and scroll positions are still where they were when you switch back.
     pub fn set_bench(&mut self, bench: crate::shell::Bench) {
+        if bench != crate::shell::Bench::Develop && self.bench == crate::shell::Bench::Develop {
+            // 离开显影台收起预设与快照浮窗（R7 巡检）：预设是调色工具，在帧表 /
+            // 任务台没有对象可作用，auto-open 只会盖住那两页自己的左列。设置里的
+            // show_left 不回写——回到显影台，它还按上次的开关展开。
+            //
+            // Leaving Develop collapses the presets window (R7 sweep): presets are a
+            // grading tool with no subject on the frame table / tasks benches, and
+            // auto-open only covers those pages' own left columns. The settings key
+            // is untouched -- back on Develop it expands per the saved toggle.
+            self.show_left = false;
+        }
         self.bench = bench;
     }
 
