@@ -1524,6 +1524,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("请求取消正在跑的体检；在一批文件之间生效，清单保持上一次结果。", "Ask to cancel a running check; takes effect between batches of files and the list keeps its previous result."),
     ("请求取消正在进行的多帧合并（HDR / 全景 / 星空堆栈 / 时间合成 / 焦点合成）；在两帧之间生效。无参数。", "Ask to cancel the running multi-frame merge (HDR / panorama / star stack / time blend / focus merge); it takes effect between two frames. Takes no arguments."),
     ("请求取消正在进行的多帧合并（HDR / 全景 / 星空堆栈 / 时间合成 / 焦点合成）；核心算法是一整块，取消在两帧之间生效，已读进来的帧不会留下半成品。", "Request cancellation of the merge in progress (HDR / panorama / star stacking / time blending / focus stacking); the core algorithm is one block, so cancellation only takes effect between two frames and no half-written output is left behind."),
+    ("核心算法金标：15/15 通过 · 容差 1e-4", "Core algorithms: 15/15 golden cases pass, tolerance 1e-4"),
     ("请求取消正在进行的导出；已经写下的素材不会被删除。", "Ask to cancel a running export; files already written are not deleted."),
     ("请求取消队列；已渲完的段保留，未开始的段仍为待渲。", "Ask to cancel the queue; finished items stay, unstarted ones remain pending."),
     ("读 .cube 失败：{}", "Could not read the .cube: {}"),

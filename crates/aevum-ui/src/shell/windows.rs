@@ -1672,7 +1672,16 @@ pub(super) fn about_window(state: &mut AppState, ctx: &Context) {
             ui.add_space(8.0);
             soft_sep(ui);
             ui.horizontal(|ui| {
-                ui.label(theme::caps("GOLDEN 15/15 · 1e-4"));
+                // 内部黑话出窗（R6）：「GOLDEN 15/15 · 1e-4」是验收口径的行话，
+                // 用户读不出意思——翻成一句完整的话，数字保留。
+                //
+                // Internal jargon leaves the window (R6): "GOLDEN 15/15 · 1e-4" is
+                // acceptance-bench shorthand; say it as a sentence, keep the numbers.
+                ui.label(
+                    RichText::new(crate::i18n::t!("核心算法金标：15/15 通过 · 容差 1e-4"))
+                        .size(SIZE_SMALL)
+                        .color(dim()),
+                );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui
                         .button(RichText::new(crate::i18n::t!("知道了")).size(SIZE_SMALL))
