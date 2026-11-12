@@ -256,14 +256,17 @@ pub fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32) {
         Glyph::Heal => {
             // 一颗斑（圆 + 中心点）加一枚右上角的十字：修复画笔的语义是「把这块
             // 重新生成掉」，不是「涂一层颜色」，所以用十字而不是橡皮/画笔形状。
+            // R2：圆收到 0.24、十字臂加长到 0.26 并与圆彻底脱开——16px 下短臂
+            // 会糊成一粒杂点，十字读不出来。
             //
             // A blemish (circle plus centre dot) with a cross in the upper right: the healing
             // brush means "regenerate this patch", not "paint over it", so a cross reads better
-            // than an eraser or a brush nib.
-            painter.circle_stroke(pt(r, 0.4, 0.6), s * 0.26, st);
-            painter.circle_filled(pt(r, 0.4, 0.6), s * 0.06, color);
-            seg(painter, pt(r, 0.72, 0.16), pt(r, 0.94, 0.16), st);
-            seg(painter, pt(r, 0.83, 0.05), pt(r, 0.83, 0.27), st);
+            // than an eraser or a brush nib. R2: circle to 0.24, cross arms to 0.26 and fully
+            // clear of the circle -- at 16 px short arms blur into one speck.
+            painter.circle_stroke(pt(r, 0.36, 0.64), s * 0.24, st);
+            painter.circle_filled(pt(r, 0.36, 0.64), s * 0.07, color);
+            seg(painter, pt(r, 0.66, 0.22), pt(r, 0.92, 0.22), st);
+            seg(painter, pt(r, 0.79, 0.09), pt(r, 0.79, 0.35), st);
         }
         Glyph::Crop => {
             seg(painter, pt(r, 0.22, 0.0), pt(r, 0.22, 0.78), st);
@@ -272,27 +275,40 @@ pub fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32) {
             seg(painter, pt(r, 0.78, 0.22), pt(r, 0.78, 1.0), st);
         }
         Glyph::Compare => {
+            // 前后对比：左半是「原片」，用 45% 透明填——R2 之前用实心填，16px 下
+            // 外框+分隔线+实心糊成一整块闷方，语义（一分为二）完全读不出。
+            //
+            // Before/after: the left half is "the original", filled at 45% -- a solid
+            // fill used to merge with the outline and divider into one opaque blob at
+            // 16 px, and the split (the whole point) disappeared.
             let body = scaled(r, 0.08, 0.18, 0.92, 0.82);
             painter.rect_stroke(body, 0, st, StrokeKind::Inside);
-            painter.rect_filled(scaled(r, 0.08, 0.18, 0.5, 0.82), 0, color);
+            painter.rect_filled(
+                scaled(r, 0.08, 0.18, 0.5, 0.82),
+                0,
+                color.gamma_multiply(0.45),
+            );
             seg(painter, pt(r, 0.5, 0.1), pt(r, 0.5, 0.9), st);
         }
         Glyph::Grid => {
-            let body = scaled(r, 0.08, 0.08, 0.92, 0.92);
-            painter.rect_stroke(body, 0, st, StrokeKind::Inside);
-            for k in 1..3 {
-                let t = k as f32 / 3.0;
+            // 网格：R2 去掉外框——外框+4 内线 9 笔在 16px 糊成一团；改成 PS 口径的
+            // 井字（#）：2 竖 + 2 横全等长、同笔画，四端留半格呼吸，一眼可读。
+            //
+            // Grid: R2 drops the outer box -- box plus four inner lines (9 strokes) turned
+            // to mush at 16 px. It is now the PS-style hash (#): two verticals and two
+            // horizontals of equal length and stroke, half a cell of air at each end.
+            for t in [0.3f32, 0.7] {
                 seg(
                     painter,
-                    pt(r, t, 0.08),
-                    pt(r, t, 0.92),
-                    Stroke::new(sw * 0.7, color),
+                    pt(r, t, 0.06),
+                    pt(r, t, 0.94),
+                    Stroke::new(sw * 0.85, color),
                 );
                 seg(
                     painter,
-                    pt(r, 0.08, t),
-                    pt(r, 0.92, t),
-                    Stroke::new(sw * 0.7, color),
+                    pt(r, 0.06, t),
+                    pt(r, 0.94, t),
+                    Stroke::new(sw * 0.85, color),
                 );
             }
         }
