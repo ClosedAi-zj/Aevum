@@ -242,13 +242,11 @@ pub(super) fn doc_tab(state: &mut AppState, p: &egui::Painter, ui: &mut Ui, rect
 
 pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     let full = ui.max_rect();
-    theme::rule(
-        ui.painter(),
-        full.left(),
-        full.right(),
-        full.bottom(),
-        border(),
-    );
+    // 选项栏下沿用亮暗双线收口：单条发丝线让两行顶栏糊成一条平带。
+    //
+    // A light/dark bevel closes the options bar: one hairline let the two top
+    // bars blur into a flat band.
+    theme::bevel_h(ui.painter(), full.left(), full.right(), full.bottom() - 1.0);
 
     // 文档页签贴在选项行左端、压着下缘线：文件名回答的是"这一行在编辑哪个文档"，
     // 属于选项行，不属于图像；搬下来之后画布整块还给画面。
@@ -1266,13 +1264,7 @@ pub(super) fn status_bar_needed(state: &AppState) -> bool {
 
 pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
     let full = ui.max_rect();
-    theme::rule(
-        ui.painter(),
-        full.left(),
-        full.right(),
-        full.top(),
-        border(),
-    );
+    theme::bevel_h(ui.painter(), full.left(), full.right(), full.top());
     // LapseOne 把「导出中 (1/19, 4%)」常驻在状态栏最左：长任务跑到哪一步，
     // 不该只有点开渲染面板才看得到。导出和队列共用这一格，谁在跑显示谁。
     // 插件在飞时这一格归插件：名字 + 进度 + 一枚取消，毕竟它是用户刚刚

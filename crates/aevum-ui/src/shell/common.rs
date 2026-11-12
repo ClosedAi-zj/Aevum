@@ -185,20 +185,40 @@ pub(super) fn group_card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     // halve the fill contrast, group gap 18→10. Groups stay legible through the fill
     // shift alone; the column reads as one continuous panel.
     ui.add_space(10.0);
-    egui::Frame::NONE
+    let out = egui::Frame::NONE
         .fill(theme::group_fill())
         .corner_radius((theme::radius_panel() - 4.0).max(2.0))
         .inner_margin(egui::Margin::same(10))
-        .show(ui, add)
-        .inner
+        .show(ui, add);
+    // PS 式双线：卡片上沿亮、下沿暗，读作「嵌在连续面板里的一段」而不是一块
+    // 深色积木。两条线各 1px、从当前皮肤自己的抬升面/凹槽面派生。
+    //
+    // PS-style bevel pair: a lit top edge and a dark bottom edge make the card read
+    // as a section inside one continuous panel rather than a dark brick. Both rules
+    // are 1 px and derive from the skin's own raised / sunken materials.
+    let r = out.response.rect;
+    theme::bevel_h(ui.painter(), r.left() + 3.0, r.right() - 3.0, r.top());
+    theme::bevel_h(
+        ui.painter(),
+        r.left() + 3.0,
+        r.right() - 3.0,
+        r.bottom() - 1.0,
+    );
+    out.inner
 }
 
 /// 选项栏的分段竖线（界面稿 .opt-sep）：1 × 20 的 divider 竖线，
 /// 把「工具身份 / 工具参数 / 上下文」三段隔开 —— 不用线的话，
 /// 参数一多就糊成一条连续的按钮带。
 pub(super) fn opt_sep(ui: &mut Ui) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, 20.0), Sense::hover());
-    ui.painter().rect_filled(rect, 0, divider());
+    // 竖分隔也用亮暗双线：PS 的工具选项栏靠凹槽把「工具 / 参数 / 上下文」
+    // 三段分开，单条 1px 灰线在亮面板上几乎看不见，整行就糊成一条带。
+    //
+    // A light/dark bevel for the vertical separator too: PS grooves divide the
+    // tool / parameter / context groups; one faint grey hairline disappeared on
+    // the light panel and the whole row flattened into a band.
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(2.0, 20.0), Sense::hover());
+    theme::bevel_v(ui.painter(), rect.left(), rect.top(), rect.bottom());
     ui.add_space(4.0);
 }
 

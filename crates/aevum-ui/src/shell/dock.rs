@@ -335,20 +335,12 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
     // A 1 px top edge light: dark cards gain depth from value steps and a lit top
     // edge, not a heavier shadow. A plain divider blurs the rim into a grey band;
     // 8% white reads as a genuinely lit edge.
-    theme::rule(
-        &p,
-        strip.left(),
-        strip.right(),
-        strip.top(),
-        Color32::from_white_alpha(20),
-    );
-    theme::rule(
-        &p,
-        strip.left(),
-        strip.right(),
-        strip.bottom(),
-        border_strong(),
-    );
+    // 页签条同样用亮暗双线收口：上沿亮、下沿暗，读作一段嵌进去的栏。
+    //
+    // The tab strip closes with the same bevel pair: lit top, dark bottom, one
+    // recessed band.
+    theme::bevel_h(&p, strip.left(), strip.right(), strip.top());
+    theme::bevel_h(&p, strip.left(), strip.right(), strip.bottom() - 1.0);
 
     // 面板页签用下划线而不是分段胶囊：一条 HEADER 上排六个名字，
     // 选中项靠白字 + 2px 强调线认，和 PS 的调板页签同一套读法。

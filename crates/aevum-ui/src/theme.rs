@@ -368,10 +368,10 @@ const DARK: Ladder = Ladder {
 const PHOTOSHOP: Ladder = Ladder {
     bar: 32.7,      // 菜单行 #535353
     surround: 15.7, // 画布外 #282828
-    canvas: 17.0,
-    panel: 31.5, // 面板 ≈#505050（实测 #535353 压暗半档，给正文 7:1 留余量）
-    dock: 32.3,
-    chrome: 33.0,
+    canvas: 16.0,
+    panel: 32.7, // 面板 #535353（PS 实测值）
+    dock: 33.0,
+    chrome: 33.5,
     bg: 34.0,
     header: 32.7,
     // 34.0：刻意与 `slider_rail()`（PS 下 mix(group_fill, 白12%) = #555555）错开——
@@ -379,11 +379,11 @@ const PHOTOSHOP: Ladder = Ladder {
     //
     // 34.0 deliberately misses `slider_rail()` (= #555555 under PS): `rail_count`
     // counts those filled rects, and a collision would count group widgets as sliders.
-    elev: 34.0, // 控件底略亮于分组面（深色分支的单调断言）
-    elev_h: 37.0,
-    field: 12.0, // 输入框内嵌暗 #1F1F1F
-    field_hover: 14.0,
-    thumb: 6.0,
+    elev: 36.0, // 控件底：> chrome（深色单调链），且与 slider_rail 错开
+    elev_h: 38.5,
+    field: 26.0, // #424242：PS 输入框凹槽档（面板 83 → 凹槽 66，只差 17）
+    field_hover: 28.5,
+    thumb: 20.0,
     text: 100.0,
     muted: 89.0,
     dim: 86.0,
@@ -929,6 +929,14 @@ pub fn row_hover() -> Color32 {
 /// as two layers. The pure-black theme does not force #101114 (a #212327 card on black
 /// looks dirty); it steps down its own ladder instead.
 pub fn bench_bg() -> Color32 {
+    // PS 灰下整页工作台底必须是**工作区灰 #282828**：硬编码的 #101114 会让
+    // 页头/面板/画布衬底出现三级互不相关的黑（用户 2026-11-12「色彩深度杂乱」）。
+    //
+    // Under PS grey the bench background must be the **workspace grey #282828**:
+    // the hard-coded #101114 produced three unrelated blacks.
+    if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Photoshop {
+        return Color32::from_rgb(0x28, 0x28, 0x28);
+    }
     match appearance().theme {
         ThemeMode::Light => Color32::from_rgb(0xf2, 0xf3, 0xf5),
         ThemeMode::Black => Color32::from_rgb(0x0b, 0x0c, 0x0d),
@@ -945,6 +953,14 @@ pub fn bench_bg() -> Color32 {
 /// in a fixed viewport; a black or tinted matte becomes a "black border" and
 /// biases colour judgement. Neutral mid-grey is what Lightroom/Capture One use.
 pub fn matte() -> Color32 {
+    // PS 的画布衬底与工作区同色 #282828；原来固定 #1F1F1F，在亮灰面板旁
+    // 就是一整块突兀的纯黑。
+    //
+    // PS uses the workspace grey #282828 as its canvas matte; the fixed #1F1F1F
+    // read as an abrupt black slab next to the light panels.
+    if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Photoshop {
+        return Color32::from_rgb(0x28, 0x28, 0x28);
+    }
     if is_light() {
         Color32::from_rgb(0xE6, 0xE6, 0xE6)
     } else {
@@ -964,12 +980,18 @@ pub fn group_fill() -> Color32 {
     if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Graphite {
         return Color32::from_rgb(0x28, 0x2B, 0x30);
     }
-    // PS 灰的分组面：比面板亮半档（#3E3E3E），PS 靠这条微差 + 无边框分隔分组。
+    // PS 灰的分组面：#505050，与面板 #535353 只差 3 档 —— PS/Lightroom 的右侧
+    // 是**一整块连续面板**，分组靠亮暗双线分隔，不靠把每张卡压成深色块。
+    // 真正内嵌的是输入框（field #424242）。此前分组卡用凹槽色、输入框又另造
+    // 一级纯黑，才出现「几个黑或灰色相差过大」。
     //
-    // The PS-grey group fill sits half a step above the panel (#3E3E3E); PS separates
-    // groups with this faint difference and no strokes at all.
+    // The PS-grey group fill is #505050, only 3 steps below the #535353 panel: in
+    // PS/Lightroom the right column is **one continuous panel**, groups divided by a
+    // light/dark bevel pair rather than dark card slabs. Only inputs sink (field
+    // #424242). Earlier the cards used the sunken shade and inputs invented another
+    // black, which produced the "several unrelated blacks/greys".
     if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Photoshop {
-        return Color32::from_rgb(0x3E, 0x3E, 0x3E);
+        return Color32::from_rgb(0x50, 0x50, 0x50);
     }
     let p = palette().panel;
     if is_light() {
@@ -2001,6 +2023,47 @@ pub fn paint_chip(
 /// 1 px hairline separator: the caller supplies the colour. The `DIVIDER` step is lifted
 /// one step (about 15% white), so group separators that use divider get a visible line;
 /// the stroke stays a 1 px hairline, never an outline.
+/// PS 式立体分隔：一条亮线 + 一条暗线，读作「凹槽」而不是「把两块切开」。
+/// 亮线取抬升面、暗线取内嵌输入面，因此每套皮肤自动得到自己的一对值。
+///
+/// PS-style bevel divider: one light rule plus one dark rule, read as a groove
+/// instead of a cut. Light comes from the raised material, dark from the sunken
+/// input material, so every skin derives its own pair.
+/// 凹槽的暗边：由输入面再压暗一档，1px 用不面积累成黑块。
+///
+/// The groove's dark edge: one step below the input surface. At 1 px it reads as
+/// an edge, never as another black slab.
+pub fn bevel_dark() -> Color32 {
+    mix(field(), Color32::BLACK, 0.55)
+}
+
+pub fn bevel_h(painter: &egui::Painter, x0: f32, x1: f32, y: f32) {
+    let y = y.round() + 0.5;
+    painter.line_segment(
+        [Pos2::new(x0, y), Pos2::new(x1, y)],
+        Stroke::new(1.0, elev_hover()),
+    );
+    painter.line_segment(
+        [Pos2::new(x0, y + 1.0), Pos2::new(x1, y + 1.0)],
+        Stroke::new(1.0, bevel_dark()),
+    );
+}
+
+/// 竖向的同一对亮暗线（面板与工作区、工具轨与面板的分界）。
+///
+/// The same light/dark pair, vertical (panel vs workspace, rail vs panel).
+pub fn bevel_v(painter: &egui::Painter, x: f32, y0: f32, y1: f32) {
+    let x = x.round() + 0.5;
+    painter.line_segment(
+        [Pos2::new(x, y0), Pos2::new(x, y1)],
+        Stroke::new(1.0, bevel_dark()),
+    );
+    painter.line_segment(
+        [Pos2::new(x + 1.0, y0), Pos2::new(x + 1.0, y1)],
+        Stroke::new(1.0, elev_hover()),
+    );
+}
+
 pub fn rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32) {
     painter.line_segment(
         [
