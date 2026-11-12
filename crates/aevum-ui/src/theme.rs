@@ -1103,6 +1103,12 @@ pub const STATUS_H: f32 = 30.0;
 /// six tools / appearance), and a 36 px button inside 48 leaves only 6 px a side, so icons
 /// crowd the edge. 56 gives 10 px each side, following Photoshop's single-column tool strip:
 /// slightly wider than the buttons so clicks and group gaps have room.
+/// 工具轨宽 56：36px 按钮 + 左右各 10px 留白（`rail_button_keeps_ten_px_on_each_side`
+/// 锁定）。试过收窄到 48，图标会顶到轨边且判据报红，故保留这一有依据的值。
+///
+/// Rail width 56: a 36 px button plus 10 px on each side (pinned by
+/// `rail_button_keeps_ten_px_on_each_side`). Narrowing it to 48 was tried and
+/// reverted -- icons touched the edge and the judgement went red.
 pub const TOOL_W: f32 = 56.0;
 /// 轨上按钮的边长：32 在三项组里偏小、在 15 项里又挤，36 是"够点、又不至于让轨变粗"的档。
 ///
@@ -1144,7 +1150,7 @@ pub const STEP_H: f32 = 22.0;
 ///
 /// Width of the left workflow panel: just enough for the current step's 3-5 actions;
 /// wider starts eating the canvas.
-pub const FLOW_W: f32 = 200.0;
+pub const FLOW_W: f32 = 208.0;
 /// 工作流面板的最小窗口宽度：低于这个值强制收起，保住画布的可用面积。
 ///
 /// Minimum window width for the workflow panel; below it the panel is forced closed to
@@ -1246,6 +1252,43 @@ pub fn modal_max_h(vp_h: f32) -> f32 {
 /// we ran ~40% wider and squeezed the canvas. At 300 px the label column, the readout box
 /// and a usable rail still fit, and it is the closest comfortable value to PS.
 pub const DOCK_W: f32 = 300.0;
+/// 整页工作台的内容列上限 1280、两侧内距 16（8px 网格）。
+/// 三个工作台此前各写各的：任务页 980 居中、帧表/导出页铺满，同一套软件里
+/// 出现两种页面宽度。现在页头与正文都由这一个函数给出，天然对齐。
+///
+/// Full-page bench content column: 1280 cap, 16 px side inset (8 px grid). The
+/// three benches used to disagree -- Tasks centred at 980, Table/Export filled
+/// the window. Head and body now derive from this one function, so they align.
+pub const CONTENT_MAX_W: f32 = 1280.0;
+pub const PAGE_PAD_X: f32 = 16.0;
+
+/// 页面内容列宽：宽窗收在 1280，窄窗铺满可用区，下限 320 保证两栏还能分。
+///
+/// Body column width: capped at 1280 on wide windows, fills the available width
+/// on narrow ones, with a 320 floor so two columns still fit.
+pub fn content_col(window_w: f32) -> f32 {
+    (window_w - 2.0 * PAGE_PAD_X).clamp(320.0, CONTENT_MAX_W)
+}
+
+/// 侧栏统一档 288（8px 网格）：检查器 300、帧表左列 300、导出设置 272、
+/// 导出队列 232 这些散值收进同一套刻度。
+///
+/// One side-column step, 288 px (8 px grid): the inspector 300, table left 300,
+/// export settings 272 and queue 232 all collapse into one scale.
+pub const SIDE_COL_W: f32 = 288.0;
+pub const QUEUE_COL_W: f32 = 240.0;
+
+/// 按窗口宽自适应侧栏：1440 用基准档，窄窗按比例收，下限 208 保证标签与
+/// 数值还能并排放。固定宽度在 900px 窗口会把主内容挤出面板，这是「子界面
+/// 适应性」的主要来源。
+///
+/// Responsive side column: base at 1440, proportional on narrow windows, 208
+/// floor so label/value pairs still fit. Fixed widths were what pushed main
+/// content out of its panel at 900 px.
+pub fn side_col(window_w: f32, base: f32) -> f32 {
+    (base * (window_w / 1440.0)).clamp(base.min(208.0), base)
+}
+
 /// 最外那条 28px 竖条：网格 / 胶片 / 曲线三个开关，界面稿里是 ⌗ ◐ ◑ 三枚。
 ///
 /// The outermost 28 px vertical strip: grid / filmstrip / curve toggles, drawn as three
@@ -2049,29 +2092,73 @@ pub fn bevel_dark() -> Color32 {
 
 pub fn bevel_h(painter: &egui::Painter, x0: f32, x1: f32, y: f32) {
     let y = y.round() + 0.5;
-    painter.line_segment(
-        [Pos2::new(x0, y), Pos2::new(x1, y)],
-        Stroke::new(1.0, elev_hover()),
-    );
-    painter.line_segment(
-        [Pos2::new(x0, y + 1.0), Pos2::new(x1, y + 1.0)],
-        Stroke::new(1.0, bevel_dark()),
-    );
+    // 三档：亮 → 中间 → 暗。PS 的凹槽不是「亮线 + 暗线」两根，中间还有一档
+    // 过渡灰；少了它，两级之间仍是一次硬切（用户 2026-11-12「颜色过渡还有差距」）。
+    //
+    // Three steps: light -> mid -> dark. A PS groove is not just two rules; the
+    // mid grey is what removes the hard cut between them.
+    let hi = elev_hover();
+    let lo = bevel_dark();
+    for i in 0..3 {
+        let t = i as f32 / 2.0;
+        painter.line_segment(
+            [Pos2::new(x0, y + i as f32), Pos2::new(x1, y + i as f32)],
+            Stroke::new(1.0, mix(hi, lo, t)),
+        );
+    }
 }
 
-/// 竖向的同一对亮暗线（面板与工作区、工具轨与面板的分界）。
+/// 竖向的同一组三档渐变（面板与工作区、工具轨与面板的分界）。
 ///
-/// The same light/dark pair, vertical (panel vs workspace, rail vs panel).
+/// The same three-step ramp, vertical (panel vs workspace, rail vs panel).
 pub fn bevel_v(painter: &egui::Painter, x: f32, y0: f32, y1: f32) {
     let x = x.round() + 0.5;
-    painter.line_segment(
-        [Pos2::new(x, y0), Pos2::new(x, y1)],
-        Stroke::new(1.0, bevel_dark()),
-    );
-    painter.line_segment(
-        [Pos2::new(x + 1.0, y0), Pos2::new(x + 1.0, y1)],
-        Stroke::new(1.0, elev_hover()),
-    );
+    let hi = elev_hover();
+    let lo = bevel_dark();
+    for i in 0..3 {
+        let t = i as f32 / 2.0;
+        painter.line_segment(
+            [Pos2::new(x + i as f32, y0), Pos2::new(x + i as f32, y1)],
+            Stroke::new(1.0, mix(lo, hi, t)),
+        );
+    }
+}
+
+/// 两种**材质**之间的渐变带：四周各 1px、共四档，把一次 50 灰阶的硬切
+/// 摊成四次 10 灰阶的小步。PS 在工作区 #282828 与面板 #535353 之间正是
+/// 用 #383838 / #424242 / #4A4A4A 这几档铺过去的（用户截图实测）。
+///
+/// A ramp between two **materials**: four 1 px steps turn one 50-grey-level
+/// cut into four ~10-level steps. PS bridges workspace #282828 and panel
+/// #535353 with exactly #383838 / #424242 / #4A4A4A.
+pub fn ramp_v(painter: &egui::Painter, x: f32, y0: f32, y1: f32, from: Color32, to: Color32) {
+    let x = x.round() + 0.5;
+    for i in 0..6 {
+        // 含 t=1：最后一档就是相邻材质本身。少了它，过渡带走完仍会
+        // 在最后一像素撞回一次大跳变（实机扫描实测 31 灰阶）。
+        //
+        // Include t=1: the last step IS the neighbouring material. Without it
+        // the ramp ends in another hard cut (a 31-level jump measured on screen).
+        let t = (i + 1) as f32 / 6.0;
+        painter.line_segment(
+            [Pos2::new(x + i as f32, y0), Pos2::new(x + i as f32, y1)],
+            Stroke::new(1.0, mix(from, to, t)),
+        );
+    }
+}
+
+/// 横向的同一条材质渐变带（页头与工作区、状态栏与内容之间）。
+///
+/// The same material ramp, horizontal (page head vs work area, status bar vs body).
+pub fn ramp_h(painter: &egui::Painter, x0: f32, x1: f32, y: f32, from: Color32, to: Color32) {
+    let y = y.round() + 0.5;
+    for i in 0..6 {
+        let t = (i + 1) as f32 / 6.0;
+        painter.line_segment(
+            [Pos2::new(x0, y + i as f32), Pos2::new(x1, y + i as f32)],
+            Stroke::new(1.0, mix(from, to, t)),
+        );
+    }
 }
 
 pub fn rule(painter: &egui::Painter, x0: f32, x1: f32, y: f32, color: Color32) {

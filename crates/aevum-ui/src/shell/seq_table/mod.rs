@@ -25,11 +25,6 @@ use super::bench;
 use crate::state::AppState;
 use crate::theme::bench_bg;
 
-/// 左侧预览列宽：设计稿 `#vTable .ws-body{grid-template-columns:300px minmax(0,1fr)}`。
-///
-/// Left preview column width, per the design's table body grid.
-const SIDE_W: f32 = 300.0;
-
 /// 画整页帧表。
 ///
 /// Draw the whole frame-table page.
@@ -100,7 +95,10 @@ pub(super) fn page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     );
     let left = egui::Rect::from_min_size(
         body.left_top() + egui::vec2(16.0, 0.0),
-        egui::vec2(SIDE_W, body.height()),
+        egui::vec2(
+            crate::theme::side_col(full.width(), crate::theme::SIDE_COL_W),
+            body.height(),
+        ),
     );
     let right = egui::Rect::from_min_max(
         egui::Pos2::new(left.right() + 12.0, body.top()),

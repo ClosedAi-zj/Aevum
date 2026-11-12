@@ -466,7 +466,16 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             .resizable(false)
             .frame(egui::Frame::NONE.fill(dock()))
             .show(root, |ui| {
-                legacy::palette_column(state, ui, palette_w, ui.available_height())
+                legacy::palette_column(state, ui, palette_w, ui.available_height());
+                // 老式布局：那组视图工具/状态读数改画在**这列调色盘**的右下角，
+                // 即窗口最右侧。中心区的 painter 够不到这里，之前移过去会整组
+                // 消失；放进 Panel 内绘制才是真解决（用户第 2 条）。
+                //
+                // Legacy: the view-tool / status strip is painted at the bottom of
+                // **this palette column**, i.e. the far right of the window. The
+                // centre painter cannot reach here (the strip vanished when moved
+                // there before); drawing inside the Panel is the real fix.
+                view_tools(state, ui, ui.max_rect());
             });
         if layout.film.allowed() && state.frame_count() > 0 {
             egui::Panel::bottom("legacy-film")
@@ -707,11 +716,11 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     {
         let p = root.painter().clone();
         p.rect_filled(band, 0.0, surround());
-        let x = line_x.round() + 0.5;
-        p.line_segment(
-            [Pos2::new(x, band.top()), Pos2::new(x, band.bottom())],
-            Stroke::new(1.0, border()),
-        );
+        // 从工作区灰到检查器面板灰铺四档中间灰，避免 40 → 83 一步硬切。
+        //
+        // Four intermediate steps from workspace grey to panel grey, instead of
+        // one 40 -> 83 cut.
+        ramp_v(&p, line_x, band.top(), band.bottom(), surround(), panel());
     }
 
     // 现代布局的胶片条回到**悬浮卡**（用户 2026-11-12「现代前端下，底部采用之前的
@@ -735,22 +744,40 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     if develop
         && !legacy
         && canvas_page
-        && full.height() >= 660.0
+        && full.height() >= 480.0
         && layout.film.allowed()
         && state.frame_count() > 0
     {
-        let card_h = timeline::card_height(state);
-        let pos = Pos2::new(centre.left() + 12.0, centre.bottom() - 12.0 - card_h);
-        // 缩略图放大到 108×72 后卡宽上限放宽到窗口 72%：仍不把画布切成两半，
-        // 但一次能读到足够多的相邻帧，而不是只挤下三四张。
+        // 矮窗（<660）用紧凑浮卡而不是整张消失。
         //
-        // With 108x72 thumbnails the cap widens to 72% of the window: still short
-        // of splitting the canvas, but enough neighbouring frames to read a run.
-        let max_w = (full.width() * 0.72).max(480.0);
+        // Short windows (<660) get a compact float instead of losing it.
+        let compact = full.height() < 660.0;
+        let card_h = if compact {
+            timeline::card_height_compact(state)
+        } else {
+            timeline::card_height(state)
+        };
+        let pos = Pos2::new(centre.left() + 12.0, centre.bottom() - 12.0 - card_h);
+        // 检查器是**浮卡**、不占 Panel，所以 centre 并没有扣掉它；只按窗口
+        // 百分比算上限会让胶片卡在窄窗压到推子上（900px 截图实证）。
+        // 按检查器实际左缘夹宽，一次仍能读到足够多的相邻帧。
+        //
+        // The inspector is a **floating card**, not a Panel, so `centre` does
+        // not subtract it. A pure window-percentage cap covered the sliders on
+        // narrow windows (verified at 900 px); cap against its real left edge.
+        let dock_edge_x = if state.show_dock && !legacy {
+            full.right() - TOOL_W - state.dock_w - 8.0
+        } else {
+            full.right()
+        };
+        let cap = dock_edge_x - (centre.left() + 12.0) - 12.0;
+        let max_w = (full.width() * 0.72).min(cap).max(320.0);
         egui::Area::new(egui::Id::unique("film-card"))
             .order(egui::Order::Middle)
             .fixed_pos(pos)
-            .show(&ctx, |ui| timeline::card(state, ui, &ctx, max_w, false));
+            .show(&ctx, |ui| {
+                timeline::card(state, ui, &ctx, max_w, false, compact)
+            });
     }
 
     // 工作台切换已并入菜单行「视图」菜单（用户 2026-11-11「悬浮设计不好看」）：

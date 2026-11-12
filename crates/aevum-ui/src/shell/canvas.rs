@@ -576,7 +576,15 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     //
     // The view toolbar floats at the canvas's bottom-right corner (the design's
     // `.viewtools`: a five-icon dark capsule).
-    super::view_tools(state, ui, content);
+    // 老式布局的视图工具条改由右侧调色盘 Panel 绘制（见 shell::mod），
+    // 这样它才真正落在窗口最右侧且不被中心区裁剪。
+    //
+    // In Legacy the view-tool strip is painted inside the right-hand palette
+    // Panel (see shell::mod) so it really sits at the far right and is not
+    // clipped by the centre area.
+    if state.layout.scheme != crate::layout::Scheme::Legacy {
+        super::view_tools(state, ui, content);
+    }
 
     if state.rulers {
         draw_rulers(ui, body, content, Some(img), scale, hover);

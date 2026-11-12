@@ -417,21 +417,21 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
             w.hovered.fg_stroke = Stroke::new(1.0, text());
             ui.spacing_mut().button_padding = Vec2::new(7.0, 4.0);
             ui.menu_button(
-                RichText::new(crate::i18n::t!("文件")).size(SIZE_CHROME_LABEL),
+                RichText::new(crate::i18n::t!("文件")).font(bold(SIZE_CHROME_LABEL)),
                 |ui| {
                     menu_style(ui);
                     file_menu(state, ui, ctx);
                 },
             );
             ui.menu_button(
-                RichText::new(crate::i18n::t!("编辑")).size(SIZE_CHROME_LABEL),
+                RichText::new(crate::i18n::t!("编辑")).font(bold(SIZE_CHROME_LABEL)),
                 |ui| {
                     menu_style(ui);
                     edit_menu(state, ui, ctx);
                 },
             );
             ui.menu_button(
-                RichText::new(crate::i18n::t!("视图")).size(SIZE_CHROME_LABEL),
+                RichText::new(crate::i18n::t!("视图")).font(bold(SIZE_CHROME_LABEL)),
                 |ui| {
                     menu_style(ui);
                     view_menu(state, ui, ctx);
@@ -456,14 +456,14 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                 },
             );
             ui.menu_button(
-                RichText::new(crate::i18n::t!("插件")).size(SIZE_CHROME_LABEL),
+                RichText::new(crate::i18n::t!("插件")).font(bold(SIZE_CHROME_LABEL)),
                 |ui| {
                     menu_style(ui);
                     plugin_menu(state, ui, ctx);
                 },
             );
             ui.menu_button(
-                RichText::new(crate::i18n::t!("帮助")).size(SIZE_CHROME_LABEL),
+                RichText::new(crate::i18n::t!("帮助")).font(bold(SIZE_CHROME_LABEL)),
                 |ui| {
                     menu_style(ui);
                     help_menu(state, ui);

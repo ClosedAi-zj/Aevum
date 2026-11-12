@@ -139,22 +139,36 @@ fn close_hover(ctx: &egui::Context, win_id: egui::Id) {
     let Some(resp) = ctx.read_response(close_id) else {
         return;
     };
-    if !resp.hovered() {
-        return;
-    }
     let layer = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Tooltip,
         win_id.with("close-hover-skin"),
     ));
-    let r = resp.rect.expand(6.0);
-    layer.rect_filled(r, 4.0, Color32::from_rgb(0xC4, 0x2B, 0x1C));
+    // 静止态也接管外观：egui 内建 ✕ 只有约 20px，与 28px 的标题栏/页签
+    // 按钮不是一套规格。用标题栏底色盖掉它，再画统一 28×28 的按钮与叉；
+    // hover 时整块换成 Windows 红底白叉。
+    //
+    // Take over the idle look too: egui's built-in cross is ~20 px, a different
+    // size spec from the 28 px title/tab buttons. Cover it with the title-bar
+    // colour, then paint one 28x28 button; hover swaps to the Windows red.
+    let r = egui::Rect::from_center_size(resp.rect.center(), egui::Vec2::splat(28.0));
+    let hovered = resp.hovered();
+    layer.rect_filled(
+        r,
+        4.0,
+        if hovered {
+            Color32::from_rgb(0xC4, 0x2B, 0x1C)
+        } else {
+            header()
+        },
+    );
     let c = r.center();
-    let s = 4.5;
+    let s = 5.0;
     let (a, b) = (c - egui::vec2(s, s), c + egui::vec2(s, s));
-    layer.line_segment([a, b], Stroke::new(1.6, Color32::WHITE));
+    let ink = if hovered { Color32::WHITE } else { dim() };
+    layer.line_segment([a, b], Stroke::new(1.6, ink));
     layer.line_segment(
         [egui::pos2(a.x, b.y), egui::pos2(b.x, a.y)],
-        Stroke::new(1.6, Color32::WHITE),
+        Stroke::new(1.6, ink),
     );
 }
 

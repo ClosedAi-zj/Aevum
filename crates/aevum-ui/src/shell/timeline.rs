@@ -70,6 +70,18 @@ fn strip_h(state: &AppState) -> f32 {
     state.film_height().min(THUMB_H)
 }
 
+/// 矮窗紧凑卡高度：省掉头行与曲线块，只留缩略图行 + 走带。
+///
+/// Compact card height for short windows: header and curve omitted, thumbnails
+/// plus transport only.
+pub(super) fn card_height_compact(state: &AppState) -> f32 {
+    let mut h = PAD * 2.0 + TP_MT + TP_H;
+    if state.show_film {
+        h += strip_h(state);
+    }
+    h
+}
+
 /// 卡片高度 = 内距 + 头行 + [曲线 + 间距] + [缩略图行] + 走带。
 ///
 /// Card height = paddings + header + [curve + gap] + [thumb row] + transport.
@@ -196,13 +208,24 @@ fn card_width(state: &AppState, ui: &Ui, max_w: f32) -> f32 {
 /// shadow/radius are dropped because this is a docked bar, not a card over the
 /// photo. Header, curve, thumbnails and transport are shared verbatim between
 /// both forms -- no new widgets.
-pub(super) fn card(state: &mut AppState, ui: &mut Ui, ctx: &Context, max_w: f32, docked: bool) {
+pub(super) fn card(
+    state: &mut AppState,
+    ui: &mut Ui,
+    ctx: &Context,
+    max_w: f32,
+    docked: bool,
+    compact: bool,
+) {
     let w = if docked {
         ui.available_width().max(CARD_MIN_W)
     } else {
         card_width(state, ui, max_w)
     };
-    let h = card_height(state);
+    let h = if compact {
+        card_height_compact(state)
+    } else {
+        card_height(state)
+    };
     let rect = Rect::from_min_size(ui.min_rect().min, Vec2::new(w, h));
     ui.set_min_size(Vec2::new(w, h));
     ui.set_max_size(Vec2::new(w, h));
@@ -252,15 +275,22 @@ pub(super) fn card(state: &mut AppState, ui: &mut Ui, ctx: &Context, max_w: f32,
         Sense::click_and_drag(),
     );
 
-    header(
-        state,
-        ui,
-        &p,
-        Rect::from_min_size(Pos2::new(inner.left(), y), Vec2::new(inner.width(), HEAD_H)),
-    );
-    y += HEAD_H;
+    // 矮窗紧凑版不画头行/曲线：只有缩略图与走带，卡高从 134 降到 112，
+    // 既保留悬浮设计，又不盖住流程步的说明文字。
+    //
+    // The compact variant skips header/curve: thumbnails and transport only,
+    // 134 -> 112 px, keeping the float without covering flow-step captions.
+    if !compact {
+        header(
+            state,
+            ui,
+            &p,
+            Rect::from_min_size(Pos2::new(inner.left(), y), Vec2::new(inner.width(), HEAD_H)),
+        );
+        y += HEAD_H;
+    }
 
-    if state.show_curves {
+    if state.show_curves && !compact {
         // 设计稿 `.curve{margin:0 2px 5px}`：曲线块比缩略图行左右各内缩 2px。
         //
         // The design inset the curve block 2 px on each side.

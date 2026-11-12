@@ -84,6 +84,44 @@ pub(super) fn column(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         rect.width(),
         (rect.bottom() - y).max(96.0),
     );
+
+    // 关键帧分布条：信息卡吃满列高后下方留白很大，把它变成一条真实数据
+    // 刻度（每个关键帧一枚竖标），不是装饰、不是假控件。
+    //
+    // A real keyframe distribution ruler fills the spare space below the info
+    // card: one tick per keyframe. Data, not decoration or a decoy control.
+    let n = state.frame_count();
+    if n > 0 && rect.height() > 320.0 {
+        let p = ui.painter().clone();
+        let base = rect.bottom() - 42.0;
+        let bar = Rect::from_min_size(
+            Pos2::new(rect.left() + PAD, base),
+            Vec2::new((rect.width() - 2.0 * PAD).max(20.0), 3.0),
+        );
+        p.rect_filled(bar, 1.0, field());
+        for &k in state.keyframes.keys() {
+            let x = bar.left() + bar.width() * (k as f32 / n as f32);
+            p.rect_filled(
+                Rect::from_center_size(Pos2::new(x, bar.center().y), egui::vec2(2.0, 11.0)),
+                0.0,
+                accent(),
+            );
+        }
+        p.text(
+            Pos2::new(bar.left(), base + 16.0),
+            egui::Align2::LEFT_CENTER,
+            crate::i18n::t!("关键帧"),
+            font(11.0),
+            dim(),
+        );
+        p.text(
+            Pos2::new(bar.right(), base + 16.0),
+            egui::Align2::RIGHT_CENTER,
+            format!("{} / {}", state.keyframes.len(), n),
+            mono(11.0),
+            dim(),
+        );
+    }
 }
 
 /// 摘要块高度：10 上距 + 22 标题 + 2 + 五行 × 22 + 芯片行 + 10 下距。
@@ -472,21 +510,30 @@ fn info_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32, h: f32) -> f32
             font(11.0),
             dim(),
         );
-        let vfont = font(11.0);
-        let v = fit_text(
-            &p,
-            &v,
-            vfont.clone(),
-            muted(),
-            (w - PAD * 2.0 - 96.0).max(60.0),
-        );
-        p.text(
-            Pos2::new(card.right() - PAD, mid),
-            Align2::RIGHT_CENTER,
-            v,
-            vfont,
-            muted(),
-        );
+        // 值按「标签实测宽之后真正剩下的宽度」裁：侧栏现在随窗口收窄，
+        // 英文 "Auto transitions" 比固定预留的 96px 更宽，旧写法会把值
+        // 压到标签上（多尺寸扫描 900/1080 实测 15.3px）。
+        //
+        // Clip the value to the width left after the **measured** label: the
+        // side column is now responsive and English labels exceed the old fixed
+        // 96 px reserve, pushing the value onto the label (15.3 px measured).
+        let label = crate::i18n::tr(k);
+        let label_w = p
+            .layout_no_wrap(label.to_owned(), font(11.0), dim())
+            .size()
+            .x;
+        let free = w - PAD * 2.0 - label_w - 10.0;
+        if free > 12.0 {
+            let vfont = font(11.0);
+            let v = fit_text(&p, &v, vfont.clone(), muted(), free);
+            p.text(
+                Pos2::new(card.right() - PAD, mid),
+                Align2::RIGHT_CENTER,
+                v,
+                vfont,
+                muted(),
+            );
+        }
         y += KV_H;
         // 设计稿 `.kv2:last-of-type{box-shadow:none}`：最后一行不收边。
         //
@@ -563,20 +610,35 @@ fn info_card(state: &mut AppState, ui: &mut Ui, at: Pos2, w: f32, h: f32) -> f32
         Stroke::new(1.0, divider()),
     );
     y += 6.0;
+    let sec_label = crate::i18n::t!("自动过渡");
+    let sec_w = p
+        .layout_no_wrap(sec_label.to_owned(), font(11.0), text())
+        .size()
+        .x;
     p.text(
         Pos2::new(card.left() + PAD, y + 9.0),
         Align2::LEFT_CENTER,
-        crate::i18n::t!("自动过渡"),
+        sec_label,
         font(11.0),
         text(),
     );
-    p.text(
-        Pos2::new(card.right() - PAD, y + 9.0),
-        Align2::RIGHT_CENTER,
-        crate::i18n::tr_fmt("{} 个关键帧 · {} 段", &[&keys, &segs_n]),
-        font(11.0),
-        dim(),
-    );
+    // 右侧读数按标题实测宽裁：侧栏随窗口收窄后英文 "Auto transitions" 与
+    // "0 keyframes · 0 segments" 会正面相撞（多尺寸扫描 900/1080 实测）。
+    //
+    // Clip the right-hand readout to the measured title width: with a responsive
+    // side column the two English strings collided head-on (measured 15.3 px).
+    let sec_free = w - PAD * 2.0 - sec_w - 10.0;
+    if sec_free > 12.0 {
+        let sec_val = crate::i18n::tr_fmt("{} 个关键帧 · {} 段", &[&keys, &segs_n]);
+        let short = fit_text(&p, &sec_val, font(11.0), dim(), sec_free);
+        p.text(
+            Pos2::new(card.right() - PAD, y + 9.0),
+            Align2::RIGHT_CENTER,
+            short,
+            font(11.0),
+            dim(),
+        );
+    }
     y += 22.0;
 
     let keys_list: Vec<usize> = state.keyframes.keys().copied().collect();

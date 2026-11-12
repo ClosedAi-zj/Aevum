@@ -26,14 +26,6 @@ use super::bench;
 use crate::state::AppState;
 use crate::theme::*;
 
-/// 右列摘要卡宽 300：`#vTasks .ws-body{grid-template-columns:minmax(0,1fr) 300px}`。
-///
-/// Right summary column, per the design grid.
-const SIDE_W: f32 = 300.0;
-/// 页体最大宽 980 并居中：`#vTasks .ws-body{max-width:980px;margin:0 auto}`。
-///
-/// Body max width, centred, per the design.
-const BODY_MAX_W: f32 = 980.0;
 /// 页体内距：左右 16、上 12、下 16。
 ///
 /// Body insets.
@@ -117,7 +109,8 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
     // The subtitle keeps the numbers only: the old sentence explained what the task card
     // is for, and the user asked for less prose ("too much explaining").
     let sub = crate::i18n::tr_fmt("{} 个在跑 · 队列 {} 项", &[&running, &state.queue.len()]);
-    let (head, back) = bench::page_head(ui, crate::i18n::t!("后台任务"), &sub, BODY_MAX_W, BODY_X);
+    let col_w = content_col(full.width());
+    let (head, back) = bench::page_head(ui, crate::i18n::t!("后台任务"), &sub, col_w, BODY_X);
     // 页头左端的返回块：任务页没有侧栏也没有画布，这里是唯一的可见出口。
     //
     // The back chip at the head's left edge: the tasks bench has neither rails nor
@@ -151,7 +144,8 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
     //
     // Body: 980 max, centred (giving up the insets on a narrower window), two columns
     // plus the full-width history card.
-    let inner_w = (BODY_MAX_W.min(full.width()) - 2.0 * BODY_X).max(320.0);
+    let inner_w = col_w;
+    let side_w = side_col(full.width(), SIDE_COL_W);
     let left_x = full.center().x - inner_w / 2.0;
     let body_top = head.bottom() + BODY_TOP;
     let available = (full.bottom() - body_top - 16.0).max(0.0);
@@ -160,11 +154,11 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
     }
     let left = Rect::from_min_size(
         Pos2::new(left_x, body_top),
-        Vec2::new((inner_w - SIDE_W - GAP).max(240.0), available),
+        Vec2::new((inner_w - side_w - GAP).max(240.0), available),
     );
     let right = Rect::from_min_size(
         Pos2::new(left.right() + GAP, body_top),
-        Vec2::new(SIDE_W, available),
+        Vec2::new(side_w, available),
     );
 
     // 行数据先算好：卡片高度由行数决定（设计稿的四行是「三实一空」，空数据时只留一条）。
@@ -221,7 +215,39 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, _ctx: &egui::Context
     let hist_top = body_top + col_h + GAP;
     task_cards(state, ui, left, &rows, &qrows);
     aside(state, ui, right);
-    history(ui, left_x, inner_w, hist_top, &hrows);
+    let hist_avail = (panel_h - (hist_top - body_top) - 28.0).max(60.0);
+    history(ui, left_x, inner_w, hist_top, &hrows, hist_avail);
+    // 页脚：把内容不足时的一大片空白收口成「内容区 + 状态栏」，
+    // 而不是让底板下半空着像没做完。两侧都是已有文案/读数，不是装饰。
+    //
+    // A footer turns the empty lower half into "content + status", instead of
+    // a half-empty board. Both sides are existing copy/readouts, not decoration.
+    let foot_h = 28.0;
+    let foot = Rect::from_min_max(
+        Pos2::new(surface.left(), surface.bottom() - foot_h),
+        surface.right_bottom(),
+    );
+    p.rect_filled(foot, 0.0, group_fill());
+    bevel_h(&p, foot.left(), foot.right(), foot.top());
+    p.text(
+        Pos2::new(foot.left() + PAD, foot.center().y),
+        Align2::LEFT_CENTER,
+        crate::i18n::t!("后台运行 · 关闭面板不中断"),
+        font(SIZE_MICRO),
+        dim(),
+    );
+    let done = state
+        .queue
+        .iter()
+        .filter(|q| matches!(q.status, aevum_core::queue::QueueStatus::Done))
+        .count();
+    p.text(
+        Pos2::new(foot.right() - PAD, foot.center().y),
+        Align2::RIGHT_CENTER,
+        crate::i18n::tr_fmt("{} 项 · 完成 {}", &[&state.queue.len(), &done]),
+        mono(SIZE_MICRO),
+        dim(),
+    );
 }
 
 /// 左列三段的总高（当前任务 + 队列行 + 队列顺序）。
@@ -995,7 +1021,7 @@ fn aside(state: &AppState, ui: &mut Ui, rect: Rect) -> f32 {
 /// 通栏「最近完成」卡：已完成 / 失败的结果行，结果保留。
 ///
 /// The full-width "recently finished" card; finished and failed results stay put.
-fn history(ui: &mut Ui, left: f32, width: f32, top: f32, rows: &[HistoryRow]) {
+fn history(ui: &mut Ui, left: f32, width: f32, top: f32, rows: &[HistoryRow], avail_h: f32) {
     let p = ui.painter().clone();
     let h = PAD * 2.0 + 24.0 + 8.0 + rows.len() as f32 * HROW_H;
     let rect = Rect::from_min_size(Pos2::new(left, top), Vec2::new(width, h));
@@ -1015,6 +1041,34 @@ fn history(ui: &mut Ui, left: f32, width: f32, top: f32, rows: &[HistoryRow]) {
         font(SIZE_MICRO),
         dim(),
     );
+    // 无完成项时把空状态**居中在剩余空间**：内容少时底板下半不该是一块
+    // 什么都没有的灰板。一行说明 + 一枚淡圆环给这块区域一个焦点。
+    //
+    // With nothing finished, centre the empty state in the spare space: the
+    // lower half of the board should not be an unnamed grey slab.
+    if rows.iter().all(|r| r.empty) {
+        let zone = Rect::from_min_size(
+            Pos2::new(rect.left() + PAD, rect.top() + PAD + 32.0),
+            Vec2::new(
+                (rect.width() - 2.0 * PAD).max(40.0),
+                (avail_h - 48.0).max(60.0),
+            ),
+        );
+        let c = zone.center();
+        p.circle_stroke(
+            Pos2::new(c.x, c.y - 24.0),
+            16.0,
+            Stroke::new(1.5, group_ring()),
+        );
+        p.text(
+            Pos2::new(c.x, c.y + 14.0),
+            Align2::CENTER_CENTER,
+            crate::i18n::t!("还没有完成的任务 · 结果会在这里保留"),
+            font(SIZE_LABEL),
+            dim(),
+        );
+        return;
+    }
     let mut y = rect.top() + PAD + 24.0 + 8.0;
     for (i, row) in rows.iter().enumerate() {
         let r = Rect::from_min_size(

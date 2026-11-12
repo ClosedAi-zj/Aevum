@@ -500,9 +500,14 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
         }
     }
 
+    // 28×28：与 TAB_H 同高。原来 18×18 的 × 缩在 30px 页签条里，
+    // 命中区比旁边页签小一圈，看着像贴上去的小点。
+    //
+    // 28x28 to match TAB_H. The old 18x18 close sat inside a 30 px tab strip
+    // with a smaller hit area than every tab beside it -- a stuck-on dot.
     let close = Rect::from_center_size(
         Pos2::new(strip.right() - 16.0, strip.center().y),
-        Vec2::splat(18.0),
+        Vec2::splat(28.0),
     );
     let cr = ui.interact(close, ui.make_persistent_id("dock-close"), Sense::click());
     if cr.hovered() {
@@ -510,7 +515,7 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
     }
     icons::paint(
         &p,
-        close.shrink(5.0),
+        close.shrink(9.0),
         Glyph::Close,
         if cr.hovered() { text() } else { muted() },
     );

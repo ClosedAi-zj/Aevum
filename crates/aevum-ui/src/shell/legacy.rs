@@ -54,5 +54,5 @@ pub(super) fn palette_column(state: &mut AppState, ui: &mut Ui, width: f32, max_
 /// width and the floating shadow is dropped. This is the old mockup's
 /// `.film{height:120px}` reading, with no new widgets.
 pub(super) fn film_strip(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
-    super::timeline::card(state, ui, ctx, ui.available_width(), true);
+    super::timeline::card(state, ui, ctx, ui.available_width(), true, false);
 }

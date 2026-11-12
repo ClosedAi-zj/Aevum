@@ -94,7 +94,10 @@ fn pt(r: Rect, x: f32, y: f32) -> Pos2 {
 /// for small icons).
 /// Colours are not defined here -- callers pass the theme's ACCENT / TEXT / MUTED /
 /// DIM, and the hierarchy follows automatically.
-pub const STROKE_MIN: f32 = 1.0;
+/// 1.2：20px 小图标在灰度抗锯齿下 1.0px 线会发虚，抬到 1.2 才读得实。
+///
+/// 1.2: a 1.0 px stroke on a 20 px icon washes out under greyscale AA.
+pub const STROKE_MIN: f32 = 1.2;
 pub const STROKE_MAX: f32 = 1.8;
 
 fn scaled(r: Rect, x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {

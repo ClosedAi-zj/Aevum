@@ -737,6 +737,7 @@ pub(super) enum RailKind {
     Library,
     Ai,
     Plugins,
+    Benches,
     Tool(Tool),
     Look,
 }
@@ -760,7 +761,8 @@ pub(super) fn rail_items() -> &'static [RailItem] {
             kind,
         }
     }
-    static RAIL: [RailItem; 14] = [
+    static RAIL: [RailItem; 15] = [
+        it(Glyph::Sequence, "切换工作台", 0, RailKind::Benches),
         it(Glyph::Steps, "工作流面板", 0, RailKind::Workflow),
         it(Glyph::Sliders, "预设与快照 (Ctrl+K)", 1, RailKind::Presets),
         it(Glyph::Eye, "蒙版", 1, RailKind::Mask),
@@ -1030,27 +1032,32 @@ fn item_active(state: &AppState, kind: RailKind) -> bool {
         | RailKind::Library
         | RailKind::Ai
         | RailKind::Plugins
-        | RailKind::Look => false,
+        | RailKind::Look
+        | RailKind::Benches => false,
     }
 }
 
 pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui, half: RailHalf, on_left: bool) {
     let full = ui.max_rect();
     let p = ui.painter().clone();
-    // 边框与激活条永远朝「内侧」：左轨取右缘，右轨取左缘。左轨右邻是
-    // 画布（或工作流面板），右轨左邻是参数坞——两种情形都在分界处画线，
-    // 窗口外缘不留线。
+    // 分界永远朝「内侧」：左轨取右缘、右轨取左缘，窗口外缘不留线。
+    // 工具轨（亮 chrome）与画布（暗 surround）之间铺六档中间灰，
+    // 把一次 50 灰阶的硬切摊成小步，方向与轨在哪一侧有关。
     //
-    // The border and the active bar always face inward: a left rail uses its right edge,
-    // a right rail its left edge. The left rail's neighbour is the canvas (or the flow
-    // panel); the right rail's is the dock -- both get the divider at the seam, and the
-    // outer window edge stays clean.
-    let (edge_a, edge_b) = if on_left {
-        (full.right_top(), full.right_bottom())
+    // The seam always faces inward; the outer window edge stays clean. Six
+    // intermediate greys replace one hard border between the light rail and
+    // the dark canvas, ordered by which side the rail is on.
+    let seam_x = if on_left {
+        full.right() - 6.0
     } else {
-        (full.left_top(), full.left_bottom())
+        full.left()
     };
-    p.line_segment([edge_a, edge_b], Stroke::new(1.0, border()));
+    let (from, to) = if on_left {
+        (chrome(), surround())
+    } else {
+        (surround(), chrome())
+    };
+    theme::ramp_v(&p, seam_x, full.top(), full.bottom(), from, to);
 
     let items = rail_items_half(half);
     let slots = rail_layout(full, items);
@@ -1191,6 +1198,23 @@ pub(super) fn tool_rail(state: &mut AppState, ui: &mut Ui, half: RailHalf, on_le
 /// toggles); the rail gets no side channel of its own.
 fn activate_rail(state: &mut AppState, kind: RailKind) {
     match kind {
+        RailKind::Benches => {
+            // 工作台切换曾是画布上一条悬浮导航带，去掉悬浮后入口只剩「视图」
+            // 菜单（用户第 11 条：不要删除，放右侧）。现在它是右侧工具轨第一枚，
+            // 点击按 显影 → 帧表 → 导出 → 任务 循环。
+            //
+            // Bench switching used to be a floating nav strip; after removing the
+            // float only the View menu remained (user #11: don't delete it, put it
+            // on the right). It is now the first entry of the right rail and cycles
+            // Develop -> Table -> Export -> Tasks.
+            let next = match state.bench {
+                crate::shell::Bench::Develop => crate::shell::Bench::Table,
+                crate::shell::Bench::Table => crate::shell::Bench::Export,
+                crate::shell::Bench::Export => crate::shell::Bench::Tasks,
+                crate::shell::Bench::Tasks => crate::shell::Bench::Develop,
+            };
+            state.set_bench(next);
+        }
         RailKind::Workflow => {
             state.show_flow = !state.show_flow;
             state.settings_dirty = true;
@@ -1479,12 +1503,19 @@ mod rail_tests {
         let tools = rail_items_half(RailHalf::Tools);
         assert!(panels.iter().all(|i| i.group <= 1));
         assert!(tools.iter().all(|i| i.group >= 2));
-        assert_eq!(panels.len(), 7, "上半应有 7 枚");
+        assert_eq!(panels.len(), 8, "上半应有 8 枚（含工作台切换）");
         assert_eq!(tools.len(), 7, "下半应有 7 枚");
         assert_eq!(panels.len() + tools.len(), rail_items().len());
         assert!(panels.iter().all(|i| i.group <= 1), "上半只放工作流/面板组");
         assert!(tools.iter().all(|i| i.group >= 2), "下半只放工具组/轨底");
         assert!(!panels.iter().any(|i| i.group == 3), "轨底不在上半");
+        // 工作台切换必须始终在上半（右侧面板入口轨）：删掉这一项判据立刻红。
+        //
+        // Bench switching must stay in the upper (right-hand panel) rail.
+        assert!(
+            panels.iter().any(|i| i.kind == RailKind::Benches),
+            "工作台切换被挤出右侧轨了"
+        );
         assert!(tools.iter().any(|i| i.group == 3), "轨底必须在下半");
         let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(TOOL_W, 800.0));
         let slots = rail_layout(rect, tools);
@@ -1636,6 +1667,6 @@ mod rail_tests {
         // 工具组 6 项 + 面板组 6 项 + 工作流 1 + 外观 1。
         //
         // Six tools, six panel entries, one workflow, one appearance.
-        assert_eq!(items.len(), 14, "条目数变了，判据要跟着改");
+        assert_eq!(items.len(), 15, "条目数变了，判据要跟着改");
     }
 }

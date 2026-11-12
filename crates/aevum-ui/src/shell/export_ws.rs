@@ -24,11 +24,6 @@ use super::bench;
 use crate::state::AppState;
 use crate::theme::*;
 
-/// 右列设置卡宽 272（设计稿 `grid-template-columns:minmax(0,1fr) 272px`）。
-///
-/// Right settings column, per the design grid.
-const SIDE_W: f32 = 272.0;
-
 /// 页体左右内距 16、上 12、下 16：`.ws-body{padding:12px 16px 16px}`。
 ///
 /// Body insets, per `.ws-body`.
@@ -238,7 +233,9 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, ctx: &egui::Context)
         Pos2::new(full.left() + BODY_X, body_top),
         Pos2::new(full.right() - BODY_X, body_top + wanted_h),
     );
-    if body.width() <= SIDE_W + GAP || body.height() <= 0.0 {
+    let side_w = side_col(full.width(), SIDE_COL_W);
+    let queue_w = side_col(full.width(), QUEUE_COL_W);
+    if body.width() <= side_w + GAP || body.height() <= 0.0 {
         return;
     }
     // PS「导出为」三栏：左「队列」/ 中「预览」/ 右「设置」。此前左列铺满 ~800px
@@ -248,10 +245,9 @@ pub(super) fn page(state: &mut AppState, ui: &mut egui::Ui, ctx: &egui::Context)
     // Three columns like PS "Export As": queue / preview / settings. The old left
     // column stretched ~800 px for a single queue row; giving the middle back to a
     // live preview removes the void and always shows the current frame before export.
-    const QUEUE_W: f32 = 232.0;
-    let three = body.width() >= QUEUE_W + SIDE_W + GAP * 2.0 + 200.0;
-    let right_left = body.right() - SIDE_W;
-    let queue_right = body.left() + QUEUE_W;
+    let three = body.width() >= queue_w + side_w + GAP * 2.0 + 200.0;
+    let right_left = body.right() - side_w;
+    let queue_right = body.left() + queue_w;
     let left = if three {
         Rect::from_min_max(body.left_top(), Pos2::new(queue_right, body.bottom()))
     } else {

@@ -429,6 +429,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("切到合成模块的 HDR 合并：同一场景的包围曝光帧合成一张", "Jump to the Merge module's HDR merge: bracket frames of one scene become one image"),
     ("切换右侧模块：序列 / 去闪 / 显影 / 构图 / 成片 / 声音。", "Switch the right-hand module: sequence / deflicker / develop / frame / render / audio."),
     ("切换右侧面板并展开它：调整 / 信息 / 关键帧 / AI / 历史。", "Switch the dock panel and expand it: adjust / info / keys / AI / history."),
+    ("切换工作台", "Switch workspace"),
     ("切换工作流", "Switch workflow"),
     ("切换模块", "Switch module"),
     ("切换面板左右", "Swap panel side"),
