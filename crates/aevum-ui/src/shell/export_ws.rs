@@ -941,14 +941,110 @@ fn settings_card(state: &mut AppState, ui: &mut Ui, ctx: &egui::Context, rect: R
         y += SROW_H;
     }
 
-    // 底部块：一条发丝线 + 队列小结 + 26px 满宽主按钮。
+    // 底部块的锚点先算好：交付口径区块只在「行尾与底部块之间有富余」时展开。
     //
-    // Bottom block: a hairline, a queue summary, then the 26 px full-width primary.
+    // Anchor the bottom block first: the delivery section only unfolds when there is
+    // real room between the rows and it.
     let btn = Rect::from_min_size(
         Pos2::new(rect.left() + 12.0, rect.bottom() - 12.0 - 26.0),
         Vec2::new(rect.width() - 24.0, 26.0),
     );
     let sum_y = btn.top() - 20.0;
+
+    // 交付口径（R5）：平台预设一键套用。设置列中部此前是一整段空腔——六行读数
+    // 之后到底部主按钮之间什么都没有；而平台口径恰是导出前最常点的东西。它不是
+    // 第二真相：与右侧检查器「成片」模块同一份数据、同一次 apply_delivery 写入
+    // （参数可以有两处入口，真相只有一个）。
+    //
+    // Delivery conventions (R5): one-click platform presets. The middle of the
+    // settings column used to be a void -- nothing between the six readout rows and
+    // the pinned primary. Platform conventions are exactly what gets clicked before
+    // an export. This is not a second truth: same table, same `apply_delivery` write
+    // as the "render" module in the inspector (parameters may have two entries; the
+    // truth stays one).
+    if sum_y > y + 72.0 {
+        y += 10.0;
+        rule(&p, x0, x1, y, group_ring());
+        y += 14.0;
+        p.text(
+            Pos2::new(x0, y + 9.0),
+            Align2::LEFT_CENTER,
+            crate::i18n::t!("交付口径"),
+            font(SIZE_MICRO),
+            dim(),
+        );
+        y += SROW_H;
+        let table = delivery_table();
+        let zh = crate::i18n::current() == crate::i18n::Lang::ZH;
+        let chip_h = 26.0;
+        let mut cx = x0;
+        for preset in &table.presets {
+            let name = preset.name(zh).to_owned();
+            let g = p
+                .layout_no_wrap(name.clone(), font(SIZE_SMALL), muted())
+                .size()
+                .x;
+            let w = g + 22.0;
+            if cx + w > x1 {
+                cx = x0;
+                y += chip_h + 6.0;
+            }
+            if y + chip_h > sum_y - 10.0 {
+                break;
+            }
+            let r = Rect::from_min_size(Pos2::new(cx, y), Vec2::new(w, chip_h));
+            let resp = ui.interact(
+                r,
+                ui.make_persistent_id(format!("delivery-{}", preset.key)),
+                Sense::click(),
+            );
+            let on = state.matches_delivery(preset);
+            let fill = if on {
+                selected()
+            } else if resp.hovered() {
+                elev()
+            } else {
+                field()
+            };
+            p.rect_filled(r, radius_control(), fill);
+            if !on {
+                p.rect_stroke(
+                    r,
+                    radius_control(),
+                    Stroke::new(1.0, border()),
+                    StrokeKind::Inside,
+                );
+            }
+            p.text(
+                r.center(),
+                Align2::CENTER_CENTER,
+                &name,
+                font(SIZE_SMALL),
+                if on { on_accent() } else { text() },
+            );
+            let hovered = resp.hovered();
+            let clicked = resp.clicked();
+            if hovered {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            let hint = preset.hint(zh);
+            if !hint.is_empty() {
+                // on_hover_text 消费 Response——放在所有读取之后。
+                //
+                // on_hover_text consumes the Response -- keep it after every read.
+                resp.on_hover_text(hint);
+            }
+            if clicked {
+                state.apply_delivery(preset);
+            }
+            cx += w + 8.0;
+        }
+        y += chip_h + 4.0;
+    }
+
+    // 底部块：一条发丝线 + 队列小结 + 26px 满宽主按钮。
+    //
+    // Bottom block: a hairline, a queue summary, then the 26 px full-width primary.
     if sum_y > y {
         // 发丝线在读数上方（设计稿 `qsum{box-shadow:0 -1px 0}`）：它分开的是设置行与小节脚注。
         //
@@ -1040,6 +1136,17 @@ fn row_fraction(state: &AppState, i: usize) -> f32 {
         Some((done, total, _)) if total > 0 => (done as f32 / total as f32).clamp(0.0, 1.0),
         _ => 0.0,
     }
+}
+
+/// 平台交付口径表：与 `adjust::render` 的「成片」模块同一份（OnceLock 缓存，
+/// 内置表 + `delivery-presets.toml` 覆盖）。
+///
+/// The delivery-preset table, shared with the render module's panel (OnceLock cached;
+/// built-in table overridden by `delivery-presets.toml`).
+fn delivery_table() -> &'static aevum_core::delivery::DeliveryTable {
+    static TABLE: std::sync::OnceLock<aevum_core::delivery::DeliveryTable> =
+        std::sync::OnceLock::new();
+    TABLE.get_or_init(aevum_core::delivery::DeliveryTable::load)
 }
 
 /// 输出路径拆成「目录 / 文件名」；空路径两段都给占位破折号。
