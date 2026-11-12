@@ -1282,7 +1282,12 @@ pub const WIN_LOOK_W: f32 = 340.0;
 pub const WIN_LOOK_H: f32 = 560.0;
 pub const WIN_LOOK_MIN_W: f32 = 316.0;
 pub const WIN_PRESETS_W: f32 = 248.0;
-pub const WIN_PRESETS_H: f32 = 480.0;
+/// 首开高度装下全部三节（内置 10 项 + 快照 + 调色副本）：480 时「调色副本」
+/// 正好拦腰截断（R6 截图实测），560 收进去。
+///
+/// First-open height fits all three sections (10 built-ins + snapshots + grade
+/// copies): at 480 the copies header was cut in half (R6 screenshot); 560 closes it.
+pub const WIN_PRESETS_H: f32 = 560.0;
 pub const WIN_ABOUT_W: f32 = 430.0;
 pub const WIN_ABOUT_H: f32 = 480.0;
 pub const WIN_UPDATE_W: f32 = 480.0;
