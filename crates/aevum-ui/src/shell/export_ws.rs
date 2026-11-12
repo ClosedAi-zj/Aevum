@@ -558,15 +558,20 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
         let row = Rect::from_min_size(Pos2::new(card.left(), y), Vec2::new(card.width(), ROW_H));
         let running = state.queue_current == Some(i);
         if running {
-            p.rect_filled(row, 0.0, warn().gamma_multiply(0.07));
-            // 当前行左侧 2px 琥珀条：`.qtable tr.frow.run td:first-child{inset 2px 0 0 amber}`。
+            // 当前行用强调色系（R5，与进度条同一语义）：7% 强调色底 + 左缘 2px
+            // 强调条。此前是琥珀色——warn 是「暂停/降速」，不该冒充「正在跑」。
+            //
+            // The running row goes accent-family (R5, same semantics as the progress
+            // bar): a 7% accent wash plus a 2 px accent bar on the left edge. It used
+            // to be amber -- warn means "paused/slowing", not "running".
+            p.rect_filled(row, 0.0, accent().gamma_multiply(0.07));
             p.rect_filled(
                 Rect::from_min_size(
                     Pos2::new(row.left() + 1.0, row.top() + 7.0),
                     Vec2::new(2.0, ROW_H - 14.0),
                 ),
                 1.0,
-                warn(),
+                accent(),
             );
         }
 

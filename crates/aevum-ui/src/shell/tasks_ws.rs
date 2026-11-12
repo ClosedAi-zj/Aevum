@@ -511,7 +511,13 @@ fn run_card(state: &mut AppState, ui: &mut Ui, rect: Rect) {
         let d = Rect::from_min_size(Pos2::new(sx, stage_y - 8.0), Vec2::splat(16.0));
         let (fill, ink, ring) = match mark {
             Mark::Done => (ok().gamma_multiply(0.16), ok(), None),
-            Mark::Now => (warn(), Color32::from_rgb(0x1b, 0x13, 0x05), None),
+            // 当前阶段用强调色实底（R5，与进度条同一语义）：warn 是「暂停/降速」
+            // 的颜色，不该冒充「正在跑」。
+            //
+            // The current stage gets the accent fill (R5, same semantics as the
+            // progress bar): warn means "paused/slowing" and must not impersonate
+            // "running".
+            Mark::Now => (accent(), on_accent(), None),
             Mark::Todo => (field(), dim(), Some(group_ring())),
         };
         p.rect_filled(d, 4.0, fill);
@@ -834,18 +840,28 @@ fn aside(state: &AppState, ui: &mut Ui, rect: Rect) -> f32 {
         .filter(|q| matches!(q.status, aevum_core::queue::QueueStatus::Failed))
         .count();
     let running = state.running_jobs();
+    // 摘要瓦片的数字用状态色（R5，与进度条同一套语义）：进行中=强调、完成=ok、
+    // 失败=danger；零值用 muted——不抢视线，也不用 warn 色冒充「进行中」。
+    //
+    // Summary tiles' numbers use the state colours (R5, same semantics as the
+    // progress bars): running = accent, done = ok, failed = danger; zeros go muted --
+    // they must not compete for attention, and warn must not impersonate "running".
     let cells: [(usize, &str, Color32); 4] = [
         (total, crate::i18n::t!("全部任务"), text()),
         (
             running,
             crate::i18n::t!("进行中"),
-            if running > 0 { warn() } else { text() },
+            if running > 0 { accent() } else { muted() },
         ),
-        (done, crate::i18n::t!("已完成"), text()),
+        (
+            done,
+            crate::i18n::t!("已完成"),
+            if done > 0 { ok() } else { muted() },
+        ),
         (
             failed,
             crate::i18n::t!("部分失败"),
-            if failed > 0 { danger() } else { text() },
+            if failed > 0 { danger() } else { muted() },
         ),
     ];
     let cell_w = (x1 - x0 - 8.0) / 2.0;
