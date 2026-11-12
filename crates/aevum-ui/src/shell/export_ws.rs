@@ -363,7 +363,7 @@ fn preview_pane(state: &mut AppState, ui: &mut Ui, rect: Rect) {
     let mut zoom = 0.0f32;
     if let Some(t) = tex {
         let draw_one = |p: &Painter, r: Rect, handle: &egui::TextureHandle| -> f32 {
-            let fit = (r.width() / iw).min(r.height() / ih).min(1.0).max(0.01);
+            let fit = (r.width() / iw).min(r.height() / ih).clamp(0.01, 1.0);
             let shown = Vec2::new(iw * fit, ih * fit);
             let img = Rect::from_center_size(r.center(), shown);
             p.rect_filled(img.expand(1.0), 0.0, border());
