@@ -338,6 +338,58 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     // points, then presence, with no subsection headings in between -- the design's
     // `.srow` rows simply stack. Sliders come from explicit field lists, so display
     // order is decoupled from the table.
+
+    // ── 配置文件 ──────────────────────────────────────────────────────────
+    // 设计稿在基本组之后紧跟一张「配置文件」卡：风格、相机配置、XMP 一进一出。
+    // 三件都是「这幅画面按什么基准渲染」，比基本组的推子低一层，所以单独成卡，
+    // 不再散落在基本组尾巴和面板顶栏。
+    //
+    // The design puts a Profile card right after Basic: style, camera profile and the
+    // XMP pair. All three answer "what basis does this frame render on", one layer
+    // below Basic's sliders, so they get their own card instead of trailing Basic or
+    // sitting in a panel-wide action row.
+    group_card(ui, |ui| {
+        // 键 `profile` 不在 `GROUP_SPECS` 里（state.rs 不动）：`group_header` 只看
+        // `collapsed` 里有没有这个键，缺省即展开；右键的「只看这一组」查不到登记项
+        // 会直接返回，折叠偏好落盘时也会被当作未知键丢弃——不会 panic。
+        //
+        // The key `profile` is absent from `GROUP_SPECS` (state.rs is off-limits):
+        // `group_header` only asks whether `collapsed` holds the key, so it starts
+        // expanded; "solo this group" returns early on the missing registry entry and a
+        // persisted collapse preference is dropped as unknown -- nothing panics.
+        if !group_header(ui, state, PROFILE_GROUP_KEY, "配置文件", false) {
+            return;
+        }
+        style_row(state, ui);
+        // 相机配置行（LR 的 Profile 行）：DCP 决定 RAW 解码后的白平衡、颜色矩阵
+        // 与色调曲线，是所有推子底下的地基。镜头配置仍留在光学组——那是整幅画面
+        // 的几何与暗角校正，和调色不是一件事。
+        //
+        // Camera-profile row (LR's Profile row): DCP takes over white balance, colour
+        // matrix and tone curve after RAW decode, i.e. it sits beneath every slider. The
+        // lens profile stays in Optics -- a whole-frame geometry/vignetting correction,
+        // not grading.
+        let ctx = ui.ctx().clone();
+        camera_profile_row(state, &ctx, ui);
+        // 设计稿 `.btnrow{display:flex;gap:8px;margin-top:8px}` + `.btnrow .btn{flex:1}`：
+        // 两枚等宽、26px 高、`--raised2` 实底，平分卡内宽度。
+        //
+        // Design `.btnrow`: two `flex:1` buttons, 8 px apart, 26 px tall on `--raised2`,
+        // splitting the card's inner width.
+        ui.add_space(8.0);
+        let bw = ((ui.available_width() - 8.0) * 0.5).max(40.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            import_xmp = dock_action(ui, "导入 XMP", RAISED2, bw)
+                .on_hover_text(crate::i18n::t!(
+                    "读入 Lightroom / Camera Raw 预设，替换当前调色参数"
+                ))
+                .clicked();
+            export_xmp = dock_action(ui, "导出 XMP", RAISED2, bw)
+                .on_hover_text(crate::i18n::t!("把当前调色参数写成 .xmp 预设"))
+                .clicked();
+        });
+    });
     group_card(ui, |ui| {
         if !group_header(ui, state, "basic", "基本", true) {
             return;
@@ -456,58 +508,6 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
             changed |= spec_field(ui, state, f);
         }
     });
-
-    // ── 配置文件 ──────────────────────────────────────────────────────────
-    // 设计稿在基本组之后紧跟一张「配置文件」卡：风格、相机配置、XMP 一进一出。
-    // 三件都是「这幅画面按什么基准渲染」，比基本组的推子低一层，所以单独成卡，
-    // 不再散落在基本组尾巴和面板顶栏。
-    //
-    // The design puts a Profile card right after Basic: style, camera profile and the
-    // XMP pair. All three answer "what basis does this frame render on", one layer
-    // below Basic's sliders, so they get their own card instead of trailing Basic or
-    // sitting in a panel-wide action row.
-    group_card(ui, |ui| {
-        // 键 `profile` 不在 `GROUP_SPECS` 里（state.rs 不动）：`group_header` 只看
-        // `collapsed` 里有没有这个键，缺省即展开；右键的「只看这一组」查不到登记项
-        // 会直接返回，折叠偏好落盘时也会被当作未知键丢弃——不会 panic。
-        //
-        // The key `profile` is absent from `GROUP_SPECS` (state.rs is off-limits):
-        // `group_header` only asks whether `collapsed` holds the key, so it starts
-        // expanded; "solo this group" returns early on the missing registry entry and a
-        // persisted collapse preference is dropped as unknown -- nothing panics.
-        if !group_header(ui, state, PROFILE_GROUP_KEY, "配置文件", false) {
-            return;
-        }
-        style_row(state, ui);
-        // 相机配置行（LR 的 Profile 行）：DCP 决定 RAW 解码后的白平衡、颜色矩阵
-        // 与色调曲线，是所有推子底下的地基。镜头配置仍留在光学组——那是整幅画面
-        // 的几何与暗角校正，和调色不是一件事。
-        //
-        // Camera-profile row (LR's Profile row): DCP takes over white balance, colour
-        // matrix and tone curve after RAW decode, i.e. it sits beneath every slider. The
-        // lens profile stays in Optics -- a whole-frame geometry/vignetting correction,
-        // not grading.
-        let ctx = ui.ctx().clone();
-        camera_profile_row(state, &ctx, ui);
-        // 设计稿 `.btnrow{display:flex;gap:8px;margin-top:8px}` + `.btnrow .btn{flex:1}`：
-        // 两枚等宽、26px 高、`--raised2` 实底，平分卡内宽度。
-        //
-        // Design `.btnrow`: two `flex:1` buttons, 8 px apart, 26 px tall on `--raised2`,
-        // splitting the card's inner width.
-        ui.add_space(8.0);
-        let bw = ((ui.available_width() - 8.0) * 0.5).max(40.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            import_xmp = dock_action(ui, "导入 XMP", RAISED2, bw)
-                .on_hover_text(crate::i18n::t!(
-                    "读入 Lightroom / Camera Raw 预设，替换当前调色参数"
-                ))
-                .clicked();
-            export_xmp = dock_action(ui, "导出 XMP", RAISED2, bw)
-                .on_hover_text(crate::i18n::t!("把当前调色参数写成 .xmp 预设"))
-                .clicked();
-        });
-    });
     if import_xmp {
         import_xmp_dialog(state);
     }
@@ -521,26 +521,13 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
     // A sub-section reporting "parameters moved" also lifts that group's bypass: slider
     // paths self-clear in spec_slider, this catches the non-slider ones -- curve and
     // levels point-dragging, dropping a LUT.
-    // 色彩分级紧跟配置文件：设计稿首屏的第三张卡就是它（折叠态）。
+    // PS 顺序（用户 2026-11-12 第 4 条）：首屏是 配置文件 → 基本 两张卡；
+    // 展开后按 曲线 → 颜色混合器 → 色彩分级 → 细节 → 光学 → 几何 → 修复 →
+    // 效果 → 外观 排列。点一下全部展开，参数一个没少——这是披露，不是删除。
     //
-    // Colour grading follows Profile directly: it is the design's third card on the
-    // first screen (collapsed).
-    {
-        let hit = adjust_grade(state, ui);
-        changed |= hit;
-        if hit {
-            state.bypassed.remove("grade");
-        }
-    }
-
-    // 首屏只留 基本 / 配置文件 / 色彩分级（目标图就是这三张卡）；曲线、混合器、
-    // 细节、光学、修复、效果、外观、蒙版与影调细节收在「更多分组」后面。
-    // 点一下全部展开，参数一个没少——这是披露，不是删除。
-    //
-    // The first screen keeps exactly Basic / Profile / Colour grading (the reference has
-    // those three cards); curve, mixer, detail, optics, retouch, effects, look, masks and
-    // tone detail sit behind "more groups". One click expands them all -- disclosure,
-    // not deletion.
+    // PS order (user, 2026-11-12 #4): the first screen is Profile -> Basic; expanding
+    // reveals Curve -> Mixer -> Grading -> Detail -> Optics -> Geometry -> Retouch ->
+    // Effects -> Look. One click expands them all -- disclosure, not deletion.
     if state.show_more_groups {
         // ── 影调细节 ────────────────────────────────────────────────────────
         // 基本组让位给设计稿的六行后，多出来的十三根推子落在这里，默认折叠。
@@ -576,6 +563,10 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
         for (group, hit) in [
             ("curve", adjust_curve(state, ui)),
             ("mixer", adjust_mixer(state, ui)),
+            // PS / ACR 顺序：颜色混合器之后才是色彩分级，再往下是细节与光学。
+            //
+            // PS / ACR order: colour grading follows the mixer, then detail/optics.
+            ("grade", adjust_grade(state, ui)),
             ("detail", adjust_detail(state, ui)),
             ("optics", adjust_optics(state, ui)),
             ("geometry", adjust_geometry(state, ui)),

@@ -452,7 +452,14 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // left edge, matching the old mockup's `.film`. The user rejected the
     // "small floating card in the corner with a large empty gap". Both reuse
     // existing widgets: `dock_panel` and the docked form of `timeline::card`.
-    if develop && legacy {
+    // 图片列表只属于**纯画布页**：序列管理 / 导出视频是两个整页流程页，
+    // 在 900px 窄窗再压一条 134px 胶片条会把它们的说明文字挤到按钮上
+    // （多尺寸扫描实测「H.264」×「开始批量渲染」互压 31.8px）。
+    //
+    // The image list belongs to the **canvas page only**: Sequence / Export are
+    // full-page flows, and a 134 px strip on a 900 px window pushed their copy
+    // onto the action buttons (the sweep measured a 31.8 px collision).
+    if develop && legacy && canvas_page {
         let palette_w = state.dock_w;
         egui::Panel::right("legacy-palette")
             .exact_size(palette_w)
@@ -470,22 +477,6 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
                     legacy::film_strip(state, ui, &ctx);
                 });
         }
-    }
-
-    // 现代布局的胶片条同样贴边通栏：此前是画布左下角一枚圆角浮卡，右侧空一大片，
-    // 是「贴纸感」的最大来源。改成 Panel::bottom 后它和选项栏、工具轨、检查器一起
-    // 构成一副连续的窗口骨架——Photoshop / Capture One 的读法。
-    //
-    // The Modern filmstrip is a full-width bottom Panel too: a rounded card pinned to the
-    // lower-left corner with a big empty gap on its right was the main source of the
-    // "sticker" feel. As a Panel it joins the options bar, rails and inspector into one
-    // continuous window frame, the way Photoshop / Capture One read.
-    if develop && !legacy && canvas_page && layout.film.allowed() && state.frame_count() > 0 {
-        egui::Panel::bottom("film-strip")
-            .exact_size(timeline::card_height(state))
-            .resizable(false)
-            .frame(egui::Frame::NONE.fill(panel()))
-            .show(root, |ui| legacy::film_strip(state, ui, &ctx));
     }
 
     // 4 侧栏。同一侧「先声明的在外」，顺序即由外到内。
@@ -723,6 +714,45 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         );
     }
 
+    // 现代布局的胶片条回到**悬浮卡**（用户 2026-11-12「现代前端下，底部采用之前的
+    // 悬浮设计」）。上一轮把它改成贴边通栏 Panel 后，整条窗口底边被 48 帧缩略图
+    // 钉死，画布反而少了一块；浮卡让图片列表成为「需要时才看的一层」。
+    // 老式布局仍走自己的贴边 Panel，两者互斥，不会画出两条图片列表。
+    //
+    // Modern brings the filmstrip back as a **floating card** (user, 2026-11-12).
+    // The full-width bottom Panel pinned 48 thumbnails to the window edge and took
+    // a permanent bite out of the canvas; a floating card makes the strip a layer
+    // you consult. Legacy keeps its docked Panel; the two are mutually exclusive.
+    // 矮窗（<660 逻辑像素）放不下一张 134px 的浮卡 + 流程步说明文字，
+    // 这时收起浮卡而不是让它盖住文字（多尺寸扫描实测 900x600 互压 48px）。
+    // 流程步本身不排除：demo / 真实默认都带 `flow_step=Some(1)`，排除它
+    // 等于把浮卡整个关掉。
+    //
+    // A short window (<660 logical px) cannot hold a 134 px card plus a flow
+    // step caption; fold the card away instead of covering the copy (the sweep
+    // measured a 48 px collision at 900x600). Flow steps are NOT excluded: the
+    // demo and the real default both carry `flow_step=Some(1)`.
+    if develop
+        && !legacy
+        && canvas_page
+        && full.height() >= 660.0
+        && layout.film.allowed()
+        && state.frame_count() > 0
+    {
+        let card_h = timeline::card_height(state);
+        let pos = Pos2::new(centre.left() + 12.0, centre.bottom() - 12.0 - card_h);
+        // 缩略图放大到 108×72 后卡宽上限放宽到窗口 72%：仍不把画布切成两半，
+        // 但一次能读到足够多的相邻帧，而不是只挤下三四张。
+        //
+        // With 108x72 thumbnails the cap widens to 72% of the window: still short
+        // of splitting the canvas, but enough neighbouring frames to read a run.
+        let max_w = (full.width() * 0.72).max(480.0);
+        egui::Area::new(egui::Id::unique("film-card"))
+            .order(egui::Order::Middle)
+            .fixed_pos(pos)
+            .show(&ctx, |ui| timeline::card(state, ui, &ctx, max_w, false));
+    }
+
     // 工作台切换已并入菜单行「视图」菜单（用户 2026-11-11「悬浮设计不好看」）：
     // 这里不再画 `Area("bench-nav")`，画布顶部没有第二条导航带，导出流程页的
     // 页头标题与「开始批量渲染」按钮因此完整可见。原先那条浮在内容之上的导航卡
@@ -872,7 +902,14 @@ fn top_chrome_h(state: &AppState) -> f32 {
 fn bottom_chrome_h(state: &AppState) -> f32 {
     let mut h = 0.0;
     if state.bench == Bench::Develop {
-        if state.layout.film.allowed() && state.frame_count() > 0 {
+        // 现代布局的胶片条是浮卡，不再占骨架行；老式布局的贴边 Panel 才占。
+        //
+        // The Modern filmstrip floats and takes no chrome row; only the Legacy
+        // docked Panel does.
+        if state.layout.scheme == crate::layout::Scheme::Legacy
+            && state.layout.film.allowed()
+            && state.frame_count() > 0
+        {
             h += timeline::card_height(state);
         }
         if state.layout.status == StatusSlot::Bottom && status_bar_needed(state) {
@@ -1272,6 +1309,14 @@ pub(super) fn view_tools(state: &mut AppState, ui: &mut Ui, content: Rect) {
     let radius = radius_panel() + 6.0;
     let w = ICON * 5.0 + GAP * 4.0 + PAD * 2.0;
     let h = ICON + PAD * 2.0;
+    // 贴在**内容区**最右缘。试过贴到整窗最右缘：老式布局那一列是独立的
+    // `Panel::right` 调色盘，中心区 painter 被裁剪，整组工具会被调色盘吃掉
+    // （截图实测消失）——「放最右」不能以一个看不见的控件为代价。
+    //
+    // Hug the **content area's** right edge. Pinning it to the whole window's
+    // right edge was tried: in Legacy that column is a separate right Panel, the
+    // centre painter is clipped there and the whole strip vanished (verified in
+    // a screenshot). Being rightmost is not worth an invisible control.
     let at = Rect::from_min_size(
         Pos2::new(content.right() - 12.0 - w, content.bottom() - 12.0 - h),
         Vec2::new(w, h),

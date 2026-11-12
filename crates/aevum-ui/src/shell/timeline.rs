@@ -23,7 +23,7 @@ use std::sync::Arc;
 // `.curve`（48px 整块）、`.th{width:72px;height:56px}`、`.tp{height:26px}`。
 //
 // Every number below is the design's: card padding 6, header 24, curve block 48,
-// thumbnail 72x56, transport 26.
+// thumbnail 108x72, transport 26.
 
 /// 卡片内距（设计稿 `padding:6px`）。
 const PAD: f32 = 6.0;
@@ -33,9 +33,16 @@ const HEAD_H: f32 = 22.0;
 const CURVE_H: f32 = 36.0;
 /// 曲线块与缩略图行之间的间距（`.curve{margin-bottom:5px}`）。
 const GAP: f32 = 5.0;
-/// 缩略图格宽 / 格高 / 格距（`.th{72×56}`、`.thumbs{gap:4}`）。
-const THUMB_W: f32 = 72.0;
-const THUMB_H: f32 = 52.0;
+/// 缩略图格宽 / 格高 / 格距：108×72 正好 3:2（用户 2026-11-12「底部预览图
+/// 比例太小」）。旧值 72×52 在 1440 宽下挤进 20 张，每张只有指甲盖大，看不出
+/// 相邻帧的曝光差；放大后一屏约 10 张，才是延时摄影选帧该有的读法。
+///
+/// Thumb cell / gap: 108x72 is exactly 3:2 (user, 2026-11-12: "the bottom
+/// previews are too small"). The old 72x52 crammed 20 nail-sized frames into a
+/// 1440 px window; at ~10 per screen the exposure drift between neighbours is
+/// actually readable.
+const THUMB_W: f32 = 108.0;
+const THUMB_H: f32 = 72.0;
 const THUMB_GAP: f32 = 4.0;
 /// 走带行上缘留白与行高（`.tp{margin-top:6px;height:26px}`）。
 const TP_MT: f32 = 4.0;

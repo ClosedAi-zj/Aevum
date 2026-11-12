@@ -1086,7 +1086,12 @@ pub const MENU_AREA_W: f32 = 240.0;
 /// air above and below and the bar reads as cramped.
 pub const OPTIONS_H: f32 = 40.0;
 pub const TAB_H: f32 = 28.0;
-pub const STATUS_H: f32 = 24.0;
+/// 状态栏高 30（用户 2026-11-12「状态栏是否太小」）：24 装一行 12.5px 字
+/// 只剩 5px 上下呼吸，读数贴着边线，整条像一根细划痕。30 给上下各 8px。
+///
+/// Status bar 30 px tall: at 24 a 12.5 px line had only 5 px of vertical
+/// breathing room and read as a scratch; 30 leaves 8 px on each side.
+pub const STATUS_H: f32 = 30.0;
 /// 工具轨宽 56：设计图 `.toolrail{width:48px}` 是只有 7 枚工具时的宽度。
 ///
 /// 这一版轨上要放 15 项（工作流 / 预设 / 蒙版 / 历史 / 图库 / AI / 插件 / 6 枚工具 /
@@ -1408,7 +1413,12 @@ pub const SIZE_CHROME: f32 = 14.0;
 ///
 /// Secondary labels and status text in the option bar: one step above small, keeping up
 /// with the taller rows.
-pub const SIZE_CHROME_LABEL: f32 = 12.0;
+/// 顶栏/菜单标签 13：PS 的菜单行是 13~14px 的 Segoe UI / 微软雅黑，
+/// 我们原来 12px 配 egui 的灰度抗锯齿，中文笔画细且散，读起来"不板正"。
+///
+/// Chrome labels 13 px: PS menus sit at 13-14 px; at 12 px egui's greyscale
+/// antialiasing left the Chinese strokes thin and loose.
+pub const SIZE_CHROME_LABEL: f32 = 13.0;
 
 // 字体字节只在水印那个 crate 里落一次（`aevum_core::fonts`）：Noto 一份 10 MB，
 // 两个 crate 各 include_bytes! 一次，产物就要多背 10 MB。
