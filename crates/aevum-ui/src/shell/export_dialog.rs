@@ -136,8 +136,10 @@ pub fn confirm_export_modal(
         let rule_x0 = ui.cursor().left();
         let rule_x1 = ui.cursor().left() + ui.available_width();
         ui.add_space(6.0);
-        ui.painter()
-            .line_segment([egui::pos2(rule_x0, rule_y), egui::pos2(rule_x1, rule_y)], egui::Stroke::new(1.0, divider()));
+        ui.painter().line_segment(
+            [egui::pos2(rule_x0, rule_y), egui::pos2(rule_x1, rule_y)],
+            egui::Stroke::new(1.0, divider()),
+        );
         ui.add_space(4.0);
         let mut pick_dir = false;
         ui.horizontal(|ui| {
@@ -312,7 +314,11 @@ fn summary_column(ui: &mut Ui, state: &AppState, form: &ExportChoice) {
         ui.add_space(3.0);
     }
     ui.add_space(1.0);
-    ui.label(RichText::new(crate::i18n::tr("目录")).size(SIZE_SMALL).color(dim()));
+    ui.label(
+        RichText::new(crate::i18n::tr("目录"))
+            .size(SIZE_SMALL)
+            .color(dim()),
+    );
     ui.label(
         RichText::new(theme::ellipsis(&form.out_dir, 24))
             .font(mono(SIZE_SMALL))

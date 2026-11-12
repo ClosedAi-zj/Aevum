@@ -1926,3 +1926,117 @@ mod slider_reset_tests {
         assert!(!still_has_dot, "默认值上还挂着复位点");
     }
 }
+
+#[cfg(test)]
+mod combo_popup_material_tests {
+    use super::*;
+    use egui::{Context, PointerButton, Pos2, Vec2};
+
+    /// R7 判据：ComboBox 弹层的背板必须是暗色主题材质（window_fill）——
+    /// combo 弹层与 menu 弹层、tooltip 在同一页上必须是一套材质。
+    ///
+    /// R7 criterion: a ComboBox popup's backdrop must use the dark theme material
+    /// (window_fill) -- combo popups, menu popups and tooltips share one material set.
+    #[test]
+    fn combo_popup_backdrop_is_dark_theme_material() {
+        let ctx = Context::default();
+        crate::theme::apply(&ctx, 1.0);
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(420.0, 120.0));
+        let at = Pos2::new(60.0, 13.0); // combo 按钮中心（探针顶行）
+        let press = egui::Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        };
+        let release = egui::Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        };
+        let mut frames: Vec<Vec<egui::Event>> = vec![
+            vec![],
+            vec![egui::Event::PointerMoved(at)],
+            vec![press],
+            vec![release],
+        ];
+        // 弹层有淡入动画：release 之后空跑 40 帧让它落定，再取背板——否则取到
+        // 的是半透明中间态，会把「正在淡入」误判成材质。
+        //
+        // Popups fade in: after release, run 40 empty frames to let it settle before
+        // sampling the backdrop -- otherwise a mid-fade frame reads as the material.
+        for _ in 0..40 {
+            frames.push(vec![]);
+        }
+        let mut backdrop: Option<Color32> = None;
+        let mut dbg_all = String::new();
+        for (fi, events) in frames.iter().enumerate() {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(rect),
+                    max_texture_side: Some(8192),
+                    events: events.clone(),
+                    ..Default::default()
+                },
+                |panel| {
+                    let mut probe =
+                        panel.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("cp-probe"));
+                    egui::ComboBox::from_id_salt("probe-combo")
+                        .selected_text("X")
+                        .show_ui(&mut probe, |ui| {
+                            combo_style(ui);
+                            ui.label("自动");
+                            ui.label("黑白");
+                        });
+                },
+            );
+            // 展开帧里找高度 >=40 的不透明实底矩形（= 弹层背板；combo 按钮只有
+            // 26px 高，弹层装两行必然更高）。
+            // 背板藏在嵌套 Shape::Vec 里（popup 的 Frame 整组绘制），要递归展开。
+            fn collect(shapes: &[egui::Shape], dbg: &mut String, backdrop: &mut Option<Color32>) {
+                for sh in shapes {
+                    match sh {
+                        egui::Shape::Vec(v) => collect(v, dbg, backdrop),
+                        egui::Shape::Rect(r) => {
+                            dbg.push_str(&format!(
+                                "rect {:?} fill {:?}
+",
+                                r.rect, r.fill
+                            ));
+                            let a = r.rect.area();
+                            if a > 800.0 && r.rect.height() >= 40.0 && r.fill.a() > 200 {
+                                *backdrop = Some(r.fill);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            let mut dbg = String::new();
+            let flat: Vec<egui::Shape> = out.shapes.iter().map(|c| c.shape.clone()).collect();
+            collect(&flat, &mut dbg, &mut backdrop);
+            dbg_all.push_str(&format!(
+                "-- frame {fi} --
+{dbg}"
+            ));
+            out.textures_delta.clear();
+        }
+        let fill = backdrop.unwrap_or_else(|| {
+            panic!(
+                "点击 ComboBox 后应有弹层背板。逐帧：
+{dbg_all}"
+            )
+        });
+        // 落定态必须逐位等于 window_fill（bg()）——半透明背板会让照片透过下拉
+        // 菜单显形，是「违和」的源头。
+        //
+        // The settled backdrop must equal window_fill (bg()) bit-for-bit -- a
+        // translucent backdrop lets the photo show through the dropdown.
+        assert_eq!(
+            fill,
+            crate::theme::bg(),
+            "ComboBox 弹层背板落定后应为 window_fill，实际 {fill:?}"
+        );
+    }
+}
