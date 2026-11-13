@@ -28,20 +28,20 @@ use std::sync::OnceLock;
 /// 强调色 #6366F1：选中/主按钮/进度/焦点，全应用唯一彩色。
 ///
 /// Accent #6366F1: selection / primary button / progress / focus -- the only color.
-pub const ACCENT: Color32 = Color32::from_rgb(0x63, 0x66, 0xF1);
+pub const ACCENT: Color32 = Color32::from_rgb(0x8B, 0x5C, 0xF6);
 /// 强调色 hover（提亮一档）。
 ///
 /// Accent hover, one step lighter.
-pub const ACCENT_HOVER: Color32 = Color32::from_rgb(0x7A, 0x7D, 0xF4);
+pub const ACCENT_HOVER: Color32 = Color32::from_rgb(0xA7, 0x8B, 0xFA);
 /// 强调色按压（压暗一档）。
 ///
 /// Accent pressed, one step darker.
-pub const ACCENT_PRESSED: Color32 = Color32::from_rgb(0x4F, 0x52, 0xD6);
+pub const ACCENT_PRESSED: Color32 = Color32::from_rgb(0x7C, 0x3A, 0xED);
 /// 强调色淡染（chip/徽标的 18% 染底）。
 ///
 /// Accent tint for chips/badges (~18% wash).
 pub fn accent_tint() -> Color32 {
-    Color32::from_rgba_unmultiplied(0x63, 0x66, 0xF1, 46)
+    Color32::from_rgba_unmultiplied(0x8B, 0x5C, 0xF6, 46)
 }
 
 // ============ 背景层级（由深到浅） ============
@@ -49,19 +49,19 @@ pub fn accent_tint() -> Color32 {
 /// SUNKEN：输入井/画布井——比底再深一档，靠「凹」读出可输入。
 ///
 /// SUNKEN: input wells / canvas well, one step below BASE.
-pub const SUNKEN: Color32 = Color32::from_rgb(0x16, 0x16, 0x1F);
+pub const SUNKEN: Color32 = Color32::from_rgb(0x10, 0x10, 0x18);
 /// BASE：应用底/侧栏/面板——#1E1E2E。
 ///
 /// BASE: app background / sidebar / panels -- #1E1E2E.
-pub const BASE: Color32 = Color32::from_rgb(0x1E, 0x1E, 0x2E);
+pub const BASE: Color32 = Color32::from_rgb(0x17, 0x17, 0x22);
 /// SURFACE：卡片/浮出面板——比 BASE 亮一档。
 ///
 /// SURFACE: cards / raised panels, one step above BASE.
-pub const SURFACE: Color32 = Color32::from_rgb(0x26, 0x26, 0x3A);
+pub const SURFACE: Color32 = Color32::from_rgb(0x1F, 0x1F, 0x2E);
 /// OVERLAY：弹层/菜单/浮窗——再亮一档，配合投影读出「浮」。
 ///
 /// OVERLAY: popovers / menus / floats, above SURFACE, paired with a shadow.
-pub const OVERLAY: Color32 = Color32::from_rgb(0x2E, 0x2E, 0x48);
+pub const OVERLAY: Color32 = Color32::from_rgb(0x26, 0x26, 0x38);
 
 /// 旧名兼容：`ELEVATED` = [`SURFACE`]，`FIELD` = [`SUNKEN`]，`BG` = [`BASE`]。
 ///
@@ -81,6 +81,12 @@ pub fn hairline() -> Color32 {
 /// 强发丝线：白 12%（hover 描边/窗框）。
 ///
 /// Strong hairline: white at 12% (hover outline / window frame).
+pub const TXFILL: Color32 = Color32::from_rgb(0xC9, 0xCD, 0xD9);
+pub const KNOB: Color32 = Color32::WHITE;
+pub const ACCENT_TEXT: Color32 = Color32::from_rgb(0xA7, 0x8B, 0xFA);
+pub const ON_ACCENT: Color32 = Color32::WHITE;
+pub const STAR: Color32 = Color32::from_rgb(0xF2, 0xC9, 0x4C);
+
 pub fn hairline_strong() -> Color32 {
     Color32::from_white_alpha(30)
 }
@@ -90,15 +96,15 @@ pub fn hairline_strong() -> Color32 {
 /// 主文字。
 ///
 /// Primary text.
-pub const TEXT: Color32 = Color32::from_rgb(0xE8, 0xE8, 0xF4);
+pub const TEXT: Color32 = Color32::from_rgb(0xE9, 0xEA, 0xF6);
 /// 次要文字（标签/元信息）。
 ///
 /// Secondary text (labels / metadata).
-pub const TEXT_MUTED: Color32 = Color32::from_rgb(0xA4, 0xA8, 0xC0);
+pub const TEXT_MUTED: Color32 = Color32::from_rgb(0xA6, 0xAB, 0xC4);
 /// 弱文字（占位/禁用）。
 ///
 /// Faint text (placeholder / disabled).
-pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x6C, 0x70, 0x90);
+pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x71, 0x76, 0x8E);
 
 // ============ 状态色（只出现在状态点/横幅，不做控件主色） ============
 
@@ -244,7 +250,7 @@ pub fn apply_modern_dark(ctx: &egui::Context) {
     visuals.dark_mode = true;
     // 圆角三档：窗/卡 12，控件 8；菜单/弹层按窗档。
     let r_win = CornerRadius::same(R_CARD);
-    let r_ctl = CornerRadius::same(R_CONTROL);
+    let r_ctl = CornerRadius::same(8);
     visuals.window_corner_radius = r_win;
     visuals.menu_corner_radius = r_win;
     for w in [
@@ -301,32 +307,32 @@ pub fn apply_modern_dark(ctx: &egui::Context) {
     let mut style = Style::default();
     style.visuals = visuals.clone();
     // 留白刻度：行距 12×10、控件内距 12×7、窗边距 16、菜单边距 12。
-    style.spacing.item_spacing = Vec2::new(SP3, 10.0);
-    style.spacing.button_padding = pad_control();
+    style.spacing.item_spacing = Vec2::new(10.0, 8.0);
+    style.spacing.button_padding = Vec2::new(10.0, 6.0);
     style.spacing.window_margin = Margin::same(WIN_MARGIN as i8);
     style.spacing.menu_margin = Margin::same(12);
-    style.spacing.slider_width = 220.0;
+    style.spacing.slider_width = 200.0;
     style.spacing.slider_rail_height = 4.0;
-    style.spacing.interact_size = Vec2::new(40.0, ROW_H);
+    style.spacing.interact_size = Vec2::new(40.0, 26.0);
     style.spacing.indent = 22.0;
     style.animation_time = 0.15;
     style.interaction.interact_radius = 8.0;
     style.interaction.show_tooltips_only_when_still = true;
-    // 字阶：11 元信息 / 12.5 小字 / 14 正文与按钮 / 15.5 标题（700）/ 13 等宽。
+    // 字阶（12px 密度体系）：10.5 元信息 / 12 正文与按钮 / 13 标题（700）/ 11.5 等宽。
     style.text_styles = BTreeMap::from([
         (
             TextStyle::Small,
-            FontId::new(11.0, FontFamily::Proportional),
+            FontId::new(10.5, FontFamily::Proportional),
         ),
-        (TextStyle::Body, FontId::new(14.0, FontFamily::Proportional)),
+        (TextStyle::Body, FontId::new(12.0, FontFamily::Proportional)),
         (
             TextStyle::Button,
-            FontId::new(14.0, FontFamily::Proportional),
+            FontId::new(11.5, FontFamily::Proportional),
         ),
-        (TextStyle::Heading, FontId::new(15.5, bold_family())),
+        (TextStyle::Heading, FontId::new(13.0, bold_family())),
         (
             TextStyle::Monospace,
-            FontId::new(13.0, FontFamily::Monospace),
+            FontId::new(11.5, FontFamily::Monospace),
         ),
     ]);
     style.drag_value_text_style = TextStyle::Monospace;

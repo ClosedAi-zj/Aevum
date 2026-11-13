@@ -26,6 +26,7 @@ pub mod platform;
 pub mod preview_bench;
 pub mod settings;
 pub mod shell;
+pub mod shell2;
 pub mod state;
 pub mod theme;
 pub mod theme_modern;
