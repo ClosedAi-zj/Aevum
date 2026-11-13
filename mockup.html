@@ -60,6 +60,15 @@
     --space-4: 16px; --space-5: 20px; --space-6: 24px;
     --row-h: 32px;
 
+    /* —— 玻璃材质（Liquid Glass / Fluent Acrylic 口径）—— */
+    --glass-bg: color-mix(in srgb, var(--bg) 55%, transparent);
+    --glass-line: rgba(255,255,255,.14);
+    --glass-blur: blur(14px) saturate(140%);
+
+    /* —— 键位随行（Superhuman 口径：快捷键贴在动作旁）—— */
+    --kbd-bg: var(--surface);
+    --kbd-line: var(--hairline-2);
+
     /* —— 投影两档 —— */
     --shadow-window: 0 14px 36px rgba(0,0,0,.48);
     --shadow-popup: 0 10px 28px rgba(0,0,0,.4);
@@ -86,6 +95,14 @@
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
+  /* —— 键位随行（Superhuman）：快捷键贴在动作旁 —— */
+  .kbd { display:inline-flex; align-items:center; font-family: var(--font); font-size:10px;
+         color: var(--text-2); background: var(--kbd-bg); border:1px solid var(--kbd-line);
+         border-radius:4px; padding:1px 6px; font-variant-numeric:tabular-nums; }
+  /* —— 玻璃片（Liquid Glass / Acrylic）：backdrop blur + 半透明 + 细边 —— */
+  .glass { background: var(--glass-bg); border:1px solid var(--glass-line);
+           backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }
+
   /* —— 强调色候选三选一（body[data-variant] 切换；默认 blue）——
      用量收敛：只用于 选中 / 主按钮 / 进度；滑轨填充已转中性 --txfill */
   body[data-variant="blue"]  { --accent:#3B82F6; --accent-hover:#60A5FA; --accent-pressed:#2563EB; --accent-tint:rgba(59,130,246,.18); --accent-text:#60A5FA; }
@@ -105,7 +122,9 @@
              display:flex; align-items:center; padding:0 var(--space-3); gap:2px; flex:none; }
   .logo { display:flex; align-items:center; gap:9px; margin-right:var(--space-3); }
   .logo .mark { width:20px; height:20px; }
-  .logo .name { font-size: var(--fs-title); font-weight:600; letter-spacing:.3px; }
+  .logo .name { font-size: var(--fs-title); font-weight:600; letter-spacing:.3px;
+                background: linear-gradient(90deg, var(--text) 55%, var(--accent-text));
+                -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
   .menu {transition: background-color .12s ease-out, border-color .12s ease-out, outline-color .12s ease-out, color .12s ease-out;  font-size: var(--fs-body); color:var(--text-2); padding:6px var(--space-3);
           border-radius: var(--radius-ctl); cursor:default; }
   .menu:hover { background: var(--hover); color: var(--text); }
@@ -176,7 +195,7 @@
   .preset {transition: background-color .12s ease-out, border-color .12s ease-out, outline-color .12s ease-out, color .12s ease-out;  border:1px solid var(--hairline); border-radius: var(--radius-ctl); overflow:hidden;
             background:var(--surface); cursor:default; }
   .preset { transition: border-color .12s ease-out, transform .12s ease-out; }
-  .preset:hover { border-color: var(--hover-line); background: var(--overlay); transform: translateY(-1px); }
+  .preset:hover { border-color: var(--hover-line); background: var(--overlay); transform: translateY(-2px); }
   .preset.on { border-color: var(--accent); box-shadow:0 0 0 1px var(--accent); }
   .preset .g { height:34px; }
   .preset .n { font-size:11.5px; color:var(--text-2); padding:5px var(--space-2); }
@@ -244,6 +263,13 @@
   .thirds .h2 { top:66.6%; left:0; right:0; height:1px; }
   .photo-meta { position:absolute; left:0; bottom:-24px; font-size:11.5px; color:var(--text-3);
                 font-variant-numeric:tabular-nums; letter-spacing:.2px; }
+  .cmdbar { position:absolute; left:50%; top:14px; transform:translateX(-50%); z-index:3;
+            display:flex; align-items:center; gap:10px; padding:6px 12px;
+            border-radius: var(--radius); box-shadow: var(--shadow-popup);
+            transition: border-color .12s ease-out, box-shadow .12s ease-out; }
+  .cmdbar:hover { border-color: var(--hover-line);
+                  box-shadow: var(--shadow-popup), 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
+  .cmdtxt { font-size: var(--fs-small); color: var(--text-2); }
   .zoomchip { position:absolute; right:16px; bottom:14px; font-size: var(--fs-small); color:var(--text-2);
               background: color-mix(in srgb, var(--bg) 85%, transparent);
               border:1px solid var(--hairline); border-radius: var(--radius-ctl);
@@ -313,8 +339,9 @@
   .filmrow { flex:1; display:flex; gap:9px; padding:0 var(--space-3) 10px; overflow:hidden; }
   .thumb {transition: background-color .12s ease-out, border-color .12s ease-out, outline-color .12s ease-out, color .12s ease-out;  width:126px; flex:none; border-radius: var(--space-1); overflow:hidden; position:relative;
            outline:1px solid var(--hairline); cursor:default; }
-  .thumb { transition: outline-color .12s ease-out, transform .12s ease-out; }
-  .thumb:hover { outline-color: var(--hover-line); transform: translateY(-1px); }
+  .thumb { transition: outline-color .12s ease-out, transform .12s ease-out, box-shadow .12s ease-out; }
+  .thumb:hover { outline-color: var(--hover-line); transform: translateY(-2px);
+                 box-shadow: 0 8px 22px rgba(0,0,0,.35); }
   .thumb.sel { outline:2px solid var(--text); outline-offset:-1px; }
   .thumb.sel::after { content:""; position:absolute; left:0; right:0; bottom:0; height:3px;
                       background:var(--accent); }
@@ -328,7 +355,7 @@
                font-variant-numeric:tabular-nums; }
   .transport .link { color:var(--text); }
   .transport .dot { width:7px; height:7px; border-radius:50%; background:var(--warn); display:inline-block;
-                    margin-right:6px; vertical-align:1px; }
+                    margin-right:6px; vertical-align:1px; box-shadow:0 0 10px color-mix(in srgb, var(--warn) 65%, transparent); }
   .transport .spacer { flex:1; }
 
   /* ================= 状态栏 ================= */
@@ -371,7 +398,7 @@
       <svg width="8" height="8"><path d="M2 2 L8 8 M8 2 L2 8" stroke="var(--text-3)" stroke-width="1.3" stroke-linecap="round"/></svg>
     </span>
     <svg width="15" height="15" viewBox="0 0 16 16"><path d="M5.6 8.2 V4.2 a1.05 1.05 0 0 1 2.1 0 V7.4 M7.7 7.4 V3.4 a1.05 1.05 0 0 1 2.1 0 V7.4 M9.8 7.4 V4.6 a1.05 1.05 0 0 1 2.1 0 V8.6 M5.6 8.2 L4.4 7 a1.02 1.02 0 0 0-1.45 1.44 l2.5 3.2 c.85 1.05 1.85 1.6 3.3 1.6 1.95 0 3.15-1.35 3.15-3.3 V8.6" fill="none" stroke="var(--text)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <b style="color:var(--text);font-weight:400">抓手</b>
+    <b style="color:var(--text);font-weight:400">抓手</b> <span class="kbd">H</span>
     <svg width="9" height="9" viewBox="0 0 10 10"><path d="M2 3.5 L5 6.5 L8 3.5" fill="none" stroke="var(--text-3)" stroke-width="1.3" stroke-linecap="round"/></svg>
     <span class="vsep"></span>
     <span class="kv">原始
@@ -538,7 +565,12 @@
         <div class="mask-frame"><i class="n"></i><i class="s"></i><i class="w"></i><i class="e"></i></div>
         <div class="photo-meta">松赞林寺 · NEF · 24mm · f/8 · 1/250 · ISO 100</div>
       </div>
-      <span class="zoomchip">100%</span>
+      <span class="zoomchip glass">100%</span>
+      <div class="cmdbar glass">
+        <svg width="13" height="13" viewBox="0 0 16 16"><path d="M8 2 L9.3 6.7 L14 8 L9.3 9.3 L8 14 L6.7 9.3 L2 8 L6.7 6.7 Z" fill="none" stroke="var(--accent-text)" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        <span class="cmdtxt">运行命令 · 搜索帧 · 问 Agent…</span>
+        <span class="kbd">Ctrl K</span>
+      </div>
     </div>
 
     <!-- ---- 右：参数面板与直方图 ---- -->
