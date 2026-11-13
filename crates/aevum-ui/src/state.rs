@@ -430,6 +430,16 @@ pub fn normalise_preset_order(raw: &[String]) -> Vec<&'static str> {
 }
 
 pub fn default_collapsed() -> HashSet<&'static str> {
+    // 刻意不在这里替用户折上 `profile`：落盘的 `collapsed` 是一份明确表态的
+    // 列表，不含某键就代表「保持展开」。擅自插入会覆盖用户偏好（用户 2026-11-13
+    // 的 settings.json 正是这种情况）。PS 那种一行下拉框的密度，由用户点一下
+    // 组头获得；折叠态的落盘与恢复由 `settings()` / `legacy_group_key()` 保证。
+    //
+    // Deliberately do NOT fold `profile` here: a persisted `collapsed` list is an
+    // explicit statement and a missing key means "keep it open". Inserting one would
+    // override the user's preference (exactly the case in the 2026-11-13 settings).
+    // PS's one-line density comes from folding the header manually; persistence is
+    // guaranteed by `settings()` / `legacy_group_key()`.
     GROUP_SPECS
         .iter()
         .filter(|s| !s.open)
@@ -456,6 +466,15 @@ pub fn group_spec(key: &str) -> Option<&'static GroupSpec> {
 /// names fold into new ones, and "copies" (moved to the presets window) is dropped.
 /// Renaming without mapping would silently wipe the user's persisted preferences.
 pub fn legacy_group_key(raw: &str) -> Option<&'static str> {
+    // `profile` 不在 GROUP_SPECS 里（它是调色基准行，不是参数分区），但折叠态
+    // 会落盘，恢复时必须原样收下，否则 `group_spec` 查表会把它当未知键丢掉。
+    //
+    // `profile` is outside GROUP_SPECS (it is a rendering-basis row, not a
+    // parameter section), yet its collapse state is persisted. Keep it as-is on
+    // restore or `group_spec` would drop it as an unknown key.
+    if raw == "profile" {
+        return Some("profile");
+    }
     let mapped = match raw {
         "color" => "basic",
         "parametric" | "levels" => "curve",

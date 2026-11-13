@@ -15,6 +15,7 @@ use super::*;
 //
 // The "only show changed" gate lives in common (shared with `spec_slider`) and is not in
 // mod.rs's use tree, hence the direct import.
+use crate::icons::{self, Glyph};
 use crate::shell::common::spec_visible;
 /// 分区内的次级小标题（ACR 的 subsection heading）：小号、半粗、弱色，上方留一口气。
 /// 与 `group_header` 不同，它不进折叠登记表——折叠始终以九分区组为单位，
@@ -84,30 +85,89 @@ fn collapse_groups_chip(ui: &mut Ui, state: &mut AppState) {
     }
 }
 
-/// 「更多分组」折叠口：一行 26px，居中「更多分组 ▸」，点开展开其余参数组。
+/// PS 式披露列表（用户 2026-11-13 以 PS 调色盘为对照）：不再只画一行
+/// 「更多分组 ▾」，而是把其余分区列成 **57px 折叠头 + 3px 暗线 = 60px 等距行**，
+/// 与 PS「亮 / 颜色 / 效果 / 曲线 / 混色器 / 颜色分级 / 细节」的连续行一致。
+/// 点任一行仍按原产品规则展开全部分区，并把该组滚到视野内——披露规则没改，
+/// 只是把「一个入口」换成「一组可读的行」。
 ///
-/// A one-row "more groups" disclosure: centred, 26 px tall; clicking it expands the
-/// remaining parameter groups.
+/// PS-style disclosure (user, 2026-11-13): instead of one "More groups" chip, the
+/// remaining sections are listed as **57 px collapsed headers + 3 px rule = 60 px
+/// evenly spaced rows**, matching PS's continuous Tone/Color/Effects/Curves/Mixer/
+/// Color Grading/Detail rows. Clicking any row still expands all sections per the
+/// existing product rule and scrolls that section into view -- the disclosure rule
+/// is unchanged; one bare entry becomes a readable list of rows.
 fn more_groups_chip(ui: &mut Ui, state: &mut AppState) {
-    let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::click());
-    let p = ui.painter().clone();
-    let label = format!("{} ▼", crate::i18n::t!("更多分组"));
-    if resp.hovered() {
-        p.rect_filled(row, radius_control(), elev());
+    const MORE: &[(&str, &str)] = &[
+        ("tone-extra", "影调细节"),
+        ("curve", "曲线"),
+        ("mixer", "颜色混合器"),
+        ("grade", "色彩分级"),
+        ("detail", "细节"),
+        ("effects", "效果"),
+        ("look", "外观（.cube）"),
+    ];
+    for (idx, (key, cn)) in MORE.iter().enumerate() {
+        let (rule, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), Sense::hover());
+        theme::groove(ui.painter(), rule.left(), rule.right(), rule.center().y);
+        let (row, resp) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 57.0), Sense::click());
+        let hovered = resp.hovered();
+        let p = ui.painter().clone();
+        if hovered {
+            p.rect_filled(row, 0.0, elev());
+        }
+        // 内距与 `common::group_card` + `group_header` 一致：12px 卡片内距 +
+        // 19 箭头 / 50 标题 = 面板左缘起 31 / 62px（PS 实测）。
+        // Same insets as `common::group_card` + `group_header`: 12 px frame padding
+        // plus 19 / 50 = 31 / 62 px from the panel edge (measured in PS).
+        icons::paint(
+            &p,
+            Rect::from_center_size(
+                Pos2::new(row.left() + 31.0, row.center().y),
+                Vec2::splat(11.0),
+            ),
+            Glyph::ChevronRight,
+            muted(),
+        );
+        p.text(
+            Pos2::new(row.left() + 62.0, row.center().y),
+            Align2::LEFT_CENTER,
+            crate::i18n::tr(cn),
+            bold(SIZE_LABEL + 2.0),
+            text(),
+        );
+        icons::paint(
+            &p,
+            Rect::from_center_size(
+                Pos2::new(row.right() - 25.0, row.center().y),
+                Vec2::splat(14.0),
+            ),
+            Glyph::Eye,
+            dim(),
+        );
+        if resp.clicked() {
+            state.show_more_groups = true;
+            state.dock_focus = Some((*key).to_owned());
+        }
+        // 完整清单只在首行给一次；每行都弹长提示会盖住下面的组头。
+        // The full list appears once on the first row; repeating it on every row
+        // would cover the headers underneath.
+        let hint = if idx == 0 {
+            format!(
+                "{} · {}",
+                crate::i18n::t!("更多分组"),
+                crate::i18n::t!("曲线 / 颜色混合器 / 细节 / 光学 / 效果 / 蒙版")
+            )
+        } else {
+            crate::i18n::t!("更多分组").to_owned()
+        };
+        resp.on_hover_text(hint);
+        if hovered {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
     }
-    p.text(
-        row.center(),
-        Align2::CENTER_CENTER,
-        label,
-        font(SIZE_SMALL),
-        if resp.hovered() { text() } else { dim() },
-    );
-    if resp.clicked() {
-        state.show_more_groups = true;
-    }
-    resp.on_hover_text(crate::i18n::t!(
-        "曲线 / 颜色混合器 / 细节 / 光学 / 效果 / 蒙版"
-    ));
 }
 
 pub(super) fn spec_field(ui: &mut Ui, state: &mut AppState, field: Field) -> bool {
@@ -391,7 +451,14 @@ pub(super) fn adjust_develop(state: &mut AppState, ui: &mut Ui) {
         // Design `.btnrow`: two `flex:1` buttons, 8 px apart, 26 px tall, splitting the
         // card's inner width; fills come from the theme's three-state tokens.
         ui.add_space(8.0);
-        let bw = ((ui.available_width() - 8.0) * 0.5).max(40.0);
+        // PS 的「配置文件」行只有标签 + 下拉框 + 一枚小图标；我们多出 XMP
+        // 一进一出两枚按钮，若按 `flex:1` 铺满整行就成了两块大积木，把整组
+        // 撑成三行。改成按实测文案宽排的小按钮，右侧留白还给面板。
+        //
+        // PS's Profile row is just a label, a dropdown and one small icon. Our extra
+        // XMP pair used to stretch to `flex:1` across the whole row, turning the
+        // group into three heavy lines. Size them to their labels instead.
+        let bw = 96.0;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             import_xmp = dock_action(ui, "导入 XMP", bw)

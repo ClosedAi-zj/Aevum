@@ -303,11 +303,19 @@ impl AppState {
         // 折叠态按登记表次序输出：`HashSet` 的遍历顺序每次进程都不同，原样写文件
         // 会让「什么都没改」也产生 diff，也让 golden/回归比对没法做。排序之后
         // 同一份界面状态永远写出一份字节相同的 JSON。
-        let collapsed: Vec<String> = GROUP_SPECS
+        let mut collapsed: Vec<String> = GROUP_SPECS
             .iter()
             .filter(|s| self.collapsed.contains(s.key))
             .map(|s| s.key.to_owned())
             .collect();
+        // `profile` 是表外组（不在 GROUP_SPECS），但同样是合法的折叠键；
+        // 不写出来，用户折上「配置文件」重启就又展开了。
+        //
+        // `profile` is outside GROUP_SPECS but is a valid collapse key; without
+        // this, folding the Profile row would not survive a restart.
+        if self.collapsed.contains("profile") {
+            collapsed.push("profile".to_owned());
+        }
         crate::settings::Settings {
             appearance: self.appearance,
             layout: self.layout,

@@ -193,43 +193,38 @@ pub(super) fn group_gap(ui: &mut Ui) {
     }
 }
 
-/// 一张分组卡（设计稿 `.grp`）：12px 内距、8px 圆角、6% 白环、卡与卡之间 8px。
-/// 组头也画在卡内——这是「卡中卡」真正成立的地方；把组头留在卡外，卡只剩内容
-/// 一条，标题与卡会读成两个互不相干的层。
+/// 分组行（PS 2025 / Camera Raw 口径，2026-11-13 用 `PrintWindow` 抓真实客户区
+/// 以及用户截图像素逐行测量得到的事实）：分组是**连续通栏行**，每行 57px 内容加
+/// 3px `#343434` 暗线 = 60px 严格等距（实测 y=331/391/451/511/571/631/691 七行
+/// 完全均匀）；组头与面板同色 `#535353`，没有圆角卡片、没有投影、没有上亮下暗
+/// 双线；展开内容区才是 `#454545`（暗一档）。
 ///
-/// One group card (design `.grp`): 12 px padding, 8 px radius, 6 % white ring and
-/// 8 px between cards. The header lives inside as well -- that is what makes the
-/// card-in-card read as one block; leaving the header outside turns the card into a
-/// strip of body that is visually unrelated to its title.
+/// 我们的旧实现是「独立圆角卡 + 卡片底色 + bevel 双线 + 10px 缝」，块高随组内
+/// 内容变，间距实测 17/22/66/81px 忽松忽紧，一屏只放得下两组——这就是对照图
+/// 里「丑」的主要来源。现在去掉整层卡片壳：只画一道 3px 通栏凹槽线，靠
+/// **固定内距**把折叠组凑到 57px（16.5 上 + 24 组头 + 16.5 下），与线合计 60px。
+/// 组头行高仍是设计稿 24px（`visual_consistency` 判据锁着），不改那个数。
+///
+/// Group row (PS 2025 / Camera Raw, measured from a real `PrintWindow` client capture
+/// and the user's screenshot): groups are **continuous full-width rows** -- 57 px of
+/// content plus a 3 px `#343434` rule = exactly 60 px (measured y=331/391/451/...
+/// seven evenly spaced rows). Headers share the panel's `#535353`; no rounded cards,
+/// shadows or bevel pairs. Only the expanded body is a step darker (`#454545`).
+/// Our old "rounded card + fill + bevel + 10 px gap" made row height follow content
+/// (gaps measured 17/22/66/81 px) and fit only two groups on screen -- the main
+/// source of the mismatch. All of that shell is gone; fixed padding makes a collapsed
+/// group 16.5 + 24 + 16.5 = 57 px, plus the 3 px rule = 60 px. The header's own
+/// 24 px row stays (pinned by `visual_consistency`).
 pub(super) fn group_card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    // ACR 连续面板口径（视觉验收 2026-11-11：卡中卡四件套=割裂感首因）：
-    // 去 1px 白环、圆角收到 4、内外底色差减半（group_fill 已按验收调），
-    // 组间缝 18→10——组仍可辨（靠底色差），但整列读作一张连续面板。
-    //
-    // ACR continuous-panel convention (visual audit 2026-11-11: the card-in-card
-    // quartet was the top fragmentation source): drop the 1 px ring, radius 8→4,
-    // halve the fill contrast, group gap 18→10. Groups stay legible through the fill
-    // shift alone; the column reads as one continuous panel.
-    ui.add_space(10.0);
+    // 3px 通栏分隔线：PS 靠这条暗线切行，不靠块与块之间的留白。
+    // A full-width 3 px rule: PS separates rows with this dark line, not with gaps.
+    let (rule, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), Sense::hover());
+    theme::groove(ui.painter(), rule.left(), rule.right(), rule.center().y);
+    // 直角、无底色、无描边：组头与面板是同一张连续表面。
+    // Square, unfilled, unstroked: header and panel are one continuous surface.
     let out = egui::Frame::NONE
-        .fill(theme::group_fill())
-        .corner_radius((theme::radius_panel() - 4.0).max(2.0))
-        .inner_margin(egui::Margin::same(10))
+        .inner_margin(egui::Margin::symmetric(12, 17))
         .show(ui, add);
-    // PS 式双线：卡片上沿亮、下沿暗，读作「嵌在连续面板里的一段」而不是一块
-    // 深色积木。两条线各 1px、从当前皮肤自己的抬升面/凹槽面派生。
-    //
-    // PS-style bevel pair: a lit top edge and a dark bottom edge make the card read
-    // as a section inside one continuous panel rather than a dark brick. Both rules
-    // are 1 px and derive from the skin's own raised / sunken materials.
-    let r = out.response.rect;
-    theme::bevel_h(ui.painter(), r.left() + 3.0, r.right() - 3.0, r.top());
-    theme::bevel_h(
-        ui.painter(),
-        r.left() + 3.0,
-        r.right() - 3.0,
-        r.bottom() - 1.0,
-    );
     out.inner
 }
 
@@ -425,12 +420,21 @@ pub(super) fn group_header(
     let open = !state.collapsed.contains(key);
     // 悬停是一整条圆角高亮，不是方条：macOS 侧栏分组头的口径。
     if resp.hovered() {
-        p.rect_filled(rect.shrink(2.0), radius_control(), elev());
+        // PS 的组头 hover 是**整行**通栏微亮，不是一枚浮起的圆角按钮。
+        // 补回外层的 17px 上/下内距与 12px 左右内距，让高亮铺满整个 57px 行。
+        //
+        // PS highlights the **whole row** on hover, not a raised rounded button;
+        // add back the outer padding so the wash covers the full 57 px row.
+        let row = Rect::from_min_max(
+            Pos2::new(rect.left() - 12.0, rect.top() - 17.0),
+            Pos2::new(rect.right() + 12.0, rect.bottom() + 17.0),
+        );
+        p.rect_filled(row, 0.0, elev());
     }
     icons::paint(
         p,
         Rect::from_center_size(
-            Pos2::new(rect.left() + 6.0, rect.center().y),
+            Pos2::new(rect.left() + 19.0, rect.center().y),
             Vec2::splat(11.0),
         ),
         if open {
@@ -459,7 +463,15 @@ pub(super) fn group_header(
     // Left edge inside the card: the design puts about 6 px between the chevron and
     // the title, and the card's 12 px padding already lands the title at x~18. Using
     // 18 keeps the title and the labels below it on the same column.
-    let title_x = rect.left() + 18.0;
+    // PS 实测（用户截图 631px 宽）：箭头 x≈81、组名 x≈112、面板内容左缘 x≈50，
+    // 即箭头距左 31px、组名距左 62px、两者相距 21px。旧值 18 让标题贴着箭头，
+    // 整行读成一团；这里按实测摆，组名不再与下面的参数标签对齐——PS 也是错开的。
+    //
+    // Measured from PS (631 px crop): chevron x~81, group name x~112, content left
+    // x~50 -- 31 px / 62 px insets, 21 px apart. The old 18 crammed the title against
+    // the chevron. Group names intentionally do not align with parameter labels;
+    // PS offsets them too.
+    let title_x = rect.left() + 50.0;
     p.galley(
         Pos2::new(title_x, rect.center().y - title_galley.size().y * 0.5),
         title_galley.clone(),
