@@ -596,17 +596,18 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
         draw_rulers(ui, body, content, Some(img), scale, hover);
     }
 
-    // 浮动直方图卡（左上）+ 无序列提示卡：现代布局按设计稿把直方图搬到了画布上，
-    // 视线第一落点就是数据。老式布局改由右侧调色盘页签下画同一份直方图
-    // （`dock::dock_panel`），这里就不摆浮卡了——两处同时画等于一份数据出现两次。
+    // 直方图卡（左上）+ 无序列提示卡。两种布局都在画布上摆同一张卡：
+    // 老式布局此前把直方图画进右侧调色盘，于是同一块面板在现代是「配置/基本…」、
+    // 在老式是「直方图 + 配置/基本…」，两种布局像两套软件（用户 2026-11-13
+    // 「现代跟老式调色盘栏这里的风格不同 需要统一」）。现在调色盘只画参数，
+    // 直方图只有画布这一处，且保留原有的拖动 / 缩放。
     //
-    // The floating histogram card (top-left) plus the empty-state hint: Modern follows
-    // the design and moves the histogram onto the canvas. Legacy draws that same
-    // histogram under the right-hand palette's tab row (`dock::dock_panel`), so no
-    // floating card here -- painting both would show one dataset twice.
-    if state.layout.scheme != crate::layout::Scheme::Legacy {
-        let _card = super::canvas_cards::histogram_card(state, ui, content);
-    }
+    // Histogram card (top-left) plus the empty-state hint. Both layouts show the same
+    // card on the canvas: Legacy used to paint the histogram inside the right palette,
+    // so one panel read as "Profile/Basic..." in Modern and "histogram + Profile/
+    // Basic..." in Legacy -- two products. The palette now holds parameters only, the
+    // canvas owns the single histogram, and dragging/resizing still work.
+    let _card = super::canvas_cards::histogram_card(state, ui, content);
     super::canvas_cards::empty_hint(state, ui, content);
 }
 

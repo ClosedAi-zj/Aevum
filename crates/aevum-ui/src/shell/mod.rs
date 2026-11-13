@@ -1086,9 +1086,16 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
             //
             // Pinned height: when content is shorter, pad the card up to that height;
             // the ScrollArea already caps the content so nothing spills out.
-            if let Some(h) = user_h {
-                card = Rect::from_min_size(card.min, Vec2::new(w, card.height().max(h)));
-            }
+            // 面板高度**贯穿到底**：不再由内容决定。此前现代布局的卡只长到内容高度，
+            // 同一块面板在老式布局（Panel 撑满）与它之间一高一矮，两种布局看着像
+            // 两套软件（用户 2026-11-13「现代跟老式调色盘栏这里的风格不同 需要统一」）。
+            // 内容不足时留白落在卡内（像邮件客户端的列表区），卡底始终贴到工具条预留带。
+            //
+            // The card always reaches the bottom instead of hugging its content: the same
+            // panel used to be tall in Legacy (a Panel fills) and short here, which read
+            // as two different products (user, 2026-11-13). Spare space now stays inside
+            // the card, whose bottom edge always meets the view-tool reserve.
+            card = Rect::from_min_size(card.min, Vec2::new(w, card.height().max(cap)));
 
             // ---- 页签行空白区：整段可拖 + 还原/放大按钮（用户 2026-11-10）----
             // 此前整卡只有页签行右端 22px 暗点把手能拖——用户按住卡片拖不动，

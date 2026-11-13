@@ -111,37 +111,43 @@ fn more_groups_chip(ui: &mut Ui, state: &mut AppState) {
         let (rule, _) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), Sense::hover());
         theme::groove(ui.painter(), rule.left(), rule.right(), rule.center().y);
+        // 与 `common::group_card` 同样的抵销：让 3px 线与 30px 行紧贴，行距 33px，
+        // 和真实分组头同一节奏（否则这一列 41px、序列那列 34px，同面板两种节奏）。
+        // Same cancellation as `common::group_card`: the 3 px rule butts against the
+        // 30 px row for a 33 px pitch, matching real headers instead of 41 vs 34.
+        ui.add_space(-ui.spacing().item_spacing.y);
         let (row, resp) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::click());
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
         let hovered = resp.hovered();
         let p = ui.painter().clone();
         if hovered {
             p.rect_filled(row, 0.0, elev());
         }
-        // 与 `group_header` 相同的等比内距：面板左缘起 18 / 36px，眼睛距右 18px。
-        // Same scaled insets as `group_header`: 18 / 36 px from the left, eye 18 px
-        // from the right.
+        // 与 `group_header` 逐像素对齐：30px 行、箭头距左 18、标题距左 34、眼睛距右 16，
+        // 标题 13px 粗体（与真实组头同一套，两处节奏不能分叉）。
+        // Pixel-aligned with `group_header`: 30 px row, chevron at 18, title at 34,
+        // eye 16 from the right, 13 px bold title -- one rhythm, not two.
         icons::paint(
             &p,
             Rect::from_center_size(
                 Pos2::new(row.left() + 18.0, row.center().y),
-                Vec2::splat(11.0),
+                Vec2::splat(10.0),
             ),
             Glyph::ChevronRight,
             muted(),
         );
         p.text(
-            Pos2::new(row.left() + 36.0, row.center().y),
+            Pos2::new(row.left() + 34.0, row.center().y),
             Align2::LEFT_CENTER,
             crate::i18n::tr(cn),
-            bold(SIZE_LABEL + 2.0),
+            bold(SIZE_LABEL),
             text(),
         );
         icons::paint(
             &p,
             Rect::from_center_size(
-                Pos2::new(row.right() - 18.0, row.center().y),
-                Vec2::splat(14.0),
+                Pos2::new(row.right() - 16.0, row.center().y),
+                Vec2::splat(13.0),
             ),
             Glyph::Eye,
             dim(),

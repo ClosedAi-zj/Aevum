@@ -220,6 +220,15 @@ pub(super) fn group_card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     // A full-width 3 px rule: PS separates rows with this dark line, not with gaps.
     let (rule, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), Sense::hover());
     theme::groove(ui.painter(), rule.left(), rule.right(), rule.center().y);
+    // 抵掉分配后自动追加的 item_spacing：否则「3px 线 + 4px 间距 + 30px 行」把行距
+    // 撑到 41px，而序列等直接用 `group_header` 的模块是 34px —— 同一面板两种节奏
+    // （2026-11-13 实测）。负值只作用于这一处相邻，不影响组内控件间距。
+    //
+    // Cancel the implicit item_spacing after the allocation: otherwise the 3 px rule +
+    // 4 px gap + 30 px row makes a 41 px pitch while modules that call `group_header`
+    // directly sit at 34 px -- two rhythms in one panel. The negative space only bridges
+    // this one junction and leaves in-group widget spacing untouched.
+    ui.add_space(-ui.spacing().item_spacing.y);
     // 直角、无底色、无描边：组头与面板是同一张连续表面。
     // Square, unfilled, unstroked: header and panel are one continuous surface.
     let out = egui::Frame::NONE
@@ -392,32 +401,25 @@ pub(super) fn group_header(
     // full-width hairline separators were ACR's grammar: eight groups read as one long
     // table, and that is exactly what "the texture is wrong" points at -- a rule only
     // cuts, it never says "this is one block".
-    // 组头 24px（设计稿 `.grp-h{height:24px}`）。旧版 32px 是卡外组头的口径；
-    // 组头搬进卡后，24px + 卡内距 12 才和参考图的呼吸一致。
+    // 组头行高 30px（用户 2026-11-13「不还是很宽吗，直接修改细一点 符合人眼观察」）。
+    // 三轮回溯：57px 是照抄 PS 的绝对像素（PS 内容区 510px 宽，57/510=11%），搬到
+    // 我们 300px 的面板上就是 19%，一行又厚又空；收到 40px 仍偏厚（14%），因为
+    // 标题本身是 15px 粗体，行高再大就成了一条横带。现在 30px（含 3px 凹槽线共
+    // 33px = 11%）与 PS 的比例一致，配 13px 粗体标题，密度回到「清单」而不是
+    // 「标题列表」。文字行 gh=24 保留（`visual_consistency` 判据锁着），hover 只
+    // 铺这 24px，上下各留 3px，视觉上是一行可点的条目而不是一条宽横带。
     //
-    // Header 24 px (design `.grp-h`). The old 32 px belonged to a header outside the
-    // card; once the header moves inside, 24 px plus the card's 12 px padding matches
-    // the reference's breathing room.
-    // 组头**自己**占满 57px 行（PS 实测 57+3=60），不再靠 `group_card` 的
-    // 上下内距凑数：序列 / 去闪等模块直接调用本函数，外层没有那层内距，
-    // 于是同一个组头在不同模块出现 24px / 57px 两种节奏。这里统一后，
-    // 所有 40+ 处调用点行距一致。
-    //
-    // The header owns the full 57 px row (PS: 57+3=60). It no longer relies on
-    // group_card's vertical padding: Sequence / Deflicker call this directly
-    // without that padding, which produced two different row rhythms from one
-    // function. All 40+ call sites now share the same rhythm.
-    // 行高也要按**面板宽度比例**，不能照抄 PS 的 57px：PS 内容区 510px 宽，
-    // 57/510 = 11%；我们面板 300px 宽却用 57px = 19%，整行又厚又空
-    // （用户 2026-11-13 连问两次「ps 有这么宽吗」）。收到 40px（含 3px 线
-    // 共 43px = 14%），字行 gh=24 仍居中，判据锁的 `let gh = 24.0` 不变。
-    //
-    // Row height must scale with panel width too: PS's 57 px over a 510 px
-    // content area is 11%; the same 57 px on our 300 px panel is 19% and reads
-    // as a fat, empty row. Shrink to 40 px (43 px with the 3 px rule).
+    // Header row 30 px (user, 2026-11-13: still too wide, make it thinner to match the
+    // eye). History: 57 px copied PS's absolute pixels (PS content 510 px wide,
+    // 57/510 = 11%), which on our 300 px panel became 19% -- a fat, empty row. 40 px
+    // was still 14%, because the title itself is 15 px bold; any taller and the row
+    // turns into a band. 30 px (33 px with the 3 px groove = 11%) matches PS's ratio
+    // with a 13 px bold title, so the panel reads as a list again, not as headings.
+    // The 24 px text line (gh) stays for `visual_consistency`; hover fills only those
+    // 24 px, leaving 3 px above and below.
     let gh = 24.0;
     let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::click());
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
     if state.dock_focus.as_deref() == Some(key) {
         // 只推一次：egui 在下一帧把目标滚到位，截图时机在 900ms 之后，足够稳定。
         resp.scroll_to_me(Some(Align::Min));
@@ -454,7 +456,7 @@ pub(super) fn group_header(
         p,
         Rect::from_center_size(
             Pos2::new(rect.left() + 6.0, rect.center().y),
-            Vec2::splat(11.0),
+            Vec2::splat(10.0),
         ),
         if open {
             Glyph::ChevronDown
@@ -469,13 +471,16 @@ pub(super) fn group_header(
             muted()
         },
     );
-    // 组名 13px / 600（设计稿 `.grp-h .lb`）：它是卡片的标题，比下面的
-    // 参数名重一档才立得住卡片层级；用真粗体字族而非描边加粗。
+    // 组名 13px / 600（设计稿 `.grp-h .lb`）：与参数名同字号、靠**字重**分层。
+    // 上一版 `SIZE_LABEL + 2`（15px 粗体）在 300px 面板里大过页签与读数，整列读成
+    // 一串标题（用户 2026-11-13「字体大小那些都调整下」）。13px 粗体既立得住
+    // 分区层级，又不会压过面板里真正要读的参数值。
     //
-    // Group name 13 px / 600 (the design's `.grp-h .lb`): as the card's title it
-    // must outweigh the 12 px parameter labels to carry the card hierarchy; this
-    // uses the real bold family, not a faux-bold stroke.
-    let title_galley = p.layout_no_wrap(title.to_owned(), bold(SIZE_LABEL + 2.0), text());
+    // Group name 13 px / 600: same size as the parameter labels, separated by
+    // **weight** instead. The previous `SIZE_LABEL + 2` (15 px bold) outgrew the tabs
+    // and readouts on a 300 px panel, turning the column into a list of headings.
+    // 13 px bold still carries the section level without shouting over the values.
+    let title_galley = p.layout_no_wrap(title.to_owned(), bold(SIZE_LABEL), text());
     // 卡内左缘：设计稿 `.grp-h` 的箭头与标题相距约 6px，卡内距 12px 已经把
     // 标题推到 x≈18。这里取 18，标题与下面 `.srow` 的标签列不再差一截。
     //
@@ -491,7 +496,7 @@ pub(super) fn group_header(
     // content area is ~505 px wide and 31 / 62 px = 6% / 12%. Our 300 px panel
     // would spend 21% on the same 62 px, leaving a wide empty left band (user,
     // 2026-11-13). Scaled: 18 / 36 px; minus the group card's 12 px padding -> 6 / 24.
-    let title_x = rect.left() + 24.0;
+    let title_x = rect.left() + 22.0;
     p.galley(
         Pos2::new(title_x, rect.center().y - title_galley.size().y * 0.5),
         title_galley.clone(),
@@ -534,8 +539,8 @@ pub(super) fn group_header(
         // reset, leaving a conspicuous gap. The eye now owns the rightmost slot and the
         // reset slides out to its left on hover only.
         let er = Rect::from_center_size(
-            Pos2::new(rect.right() - 6.0, rect.center().y),
-            Vec2::splat(20.0),
+            Pos2::new(rect.right() - 8.0, rect.center().y),
+            Vec2::splat(18.0),
         );
         let eresp = ui.interact(
             er,

@@ -223,16 +223,6 @@ pub(super) const TAB_RESERVE_W: f32 = 26.0;
 /// so the floating card remains grabbable.
 pub(super) const TAB_DRAG_GAP: f32 = 32.0;
 
-/// 老式布局里调色盘自带的直方图槽位高度：绘图区 94 + EXIF 行 21，与画布浮卡
-/// 的 `HIST_EXIF_H` 同一口径。旧版稿 `.histo` 就在 `.dock-tabs` 下面，
-/// 所以老式方案把直方图收回调色盘，画布上不再另摆一张浮卡。
-///
-/// Height of the histogram slot inside the Legacy palette: 94 plot + 21 EXIF
-/// row, the same measure as the floating canvas card's `HIST_EXIF_H`. In the
-/// old mockup `.histo` sits under `.dock-tabs`, so Legacy puts the histogram
-/// back in the palette and no longer floats a second card over the canvas.
-const DOCK_HIST_H: f32 = 115.0;
-
 /// 每个页签的实测宽：文字宽 + 12px 内距（关键帧页签带计数徽标时再加 18px），
 /// 夹在 30 与「均分上限」之间。dock_panel 与 mod.rs 共用同一条公式——页签
 /// 右对齐后，左端空出的槽位才是还原钮与拖动区；两边各算各的就会重叠。
@@ -558,42 +548,21 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
                     bottom: 8,
                 })
                 .show(ui, |ui| {
-                    // 直方图归哪一侧由界面风格决定，两种布局各只有一处、绝不重复：
-                    // * 现代（默认）：画布左上的浮动卡片（设计稿 .histcard），这里直接进参数区；
-                    // * 老式：放在本调色盘页签行下面（旧版稿 .dock-tabs → .histo），
-                    //   画布不再摆浮卡，读起来就是老式设置页「面板顶上一条直方图」。
+                    // 直方图归画布：两种布局都在画布左上角摆同一张可拖可缩的直方图卡
+                    // （`canvas_cards::histogram_card`）。调色盘顶部一律直接进参数区——
+                    // 此前老式布局在本页签行下面又画了一份，于是同一块面板在现代是
+                    // 「配置/基本…」、在老式是「直方图 + 配置/基本…」，两种布局看着
+                    // 像两套软件（用户 2026-11-13「现代跟老式调色盘栏这里的风格不同
+                    // 需要统一」）。只留一处，两种布局的面板从第一行起就是同一个样子。
                     //
-                    // Which side owns the histogram follows the interface scheme, with
-                    // exactly one copy in either layout:
-                    // * Modern (default): the top-left floating canvas card (.histcard),
-                    //   so this jumps straight into the parameter area;
-                    // * Legacy: right here under the palette's tab row (the old mockup's
-                    //   .dock-tabs -> .histo), with no floating card on the canvas --
-                    //   the classic settings-page "histogram on top of the panel" reading.
-                    if state.layout.scheme == crate::layout::Scheme::Legacy && state.hist.is_some()
-                    {
-                        // 左右各留 4px：`histogram` 内部按浮卡口径再缩 4px 画凹槽，
-                        // 槽位贴着内距起画会把左缘山形切掉（老式调色盘实测）。
-                        //
-                        // Four px on each side: `histogram` insets its well by 4 px
-                        // (the floating-card convention), so a slot flush with the
-                        // margin clips the left edge of the mountains (measured in
-                        // the Legacy palette).
-                        let (hist_rect, _) = ui.allocate_exact_size(
-                            Vec2::new(ui.available_width(), DOCK_HIST_H),
-                            Sense::hover(),
-                        );
-                        let hist_rect = hist_rect.shrink2(Vec2::new(4.0, 0.0));
-                        ui.scope_builder(
-                            UiBuilder::new()
-                                .id_salt("legacy-dock-hist")
-                                .max_rect(hist_rect),
-                            |ui| histogram(ui, state),
-                        );
-                        ui.add_space(6.0);
-                    } else {
-                        ui.add_space(2.0);
-                    }
+                    // The histogram belongs to the canvas: both layouts show the same
+                    // draggable/resizable card at the canvas' top-left
+                    // (`canvas_cards::histogram_card`), and the palette dives straight
+                    // into parameters. Legacy used to paint a second copy under this tab
+                    // row, so the same panel read as "Profile/Basic..." in Modern and
+                    // "histogram + Profile/Basic..." in Legacy -- two products.
+                    // One owner only, so both layouts open with the same first row.
+                    ui.add_space(2.0);
                     // 纵向按内容收缩：卡高 = 内容高，只有撞到上限才长到上限并出滚动条。
                     // 横向不许缩（[false, _]）——卡宽恒等于 `dock_w`，否则短内容会把
                     // 卡收窄，右侧少一条边。
