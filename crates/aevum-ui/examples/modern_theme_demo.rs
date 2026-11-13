@@ -170,8 +170,8 @@ impl eframe::App for Demo {
 
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("导入 XMP").clicked() {}
-                if ui.button("导出 XMP").clicked() {}
+                let _ = ui.button("导入 XMP");
+                let _ = ui.button("导出 XMP");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (r, _) = ui.allocate_exact_size(Vec2::new(160.0, 8.0), Sense::hover());
                     let p = ui.painter();
@@ -194,7 +194,7 @@ impl eframe::App for Demo {
                             .fill(ELEVATED)
                             .stroke(Stroke::new(1.0, Color32::from_white_alpha(18)))
                     };
-                    if ui.add(btn).clicked() {}
+                    let _ = ui.add(btn);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(egui::Button::new(RichText::new("禁用按钮").size(13.0)).sense(Sense::hover()).fill(BG).stroke(Stroke::new(1.0, Color32::from_white_alpha(6))));

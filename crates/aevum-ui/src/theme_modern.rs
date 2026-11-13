@@ -236,6 +236,7 @@ fn font_definitions() -> FontDefinitions {
 /// Apply once at the app entry: fonts first, then `set_visuals()` +
 /// `set_style_of()` (egui 0.37's renamed `set_style`), pinning the theme
 /// preference to Dark. Idempotent.
+#[allow(clippy::field_reassign_with_default)] // 有意在 Default 上逐项覆盖：Visuals 三十余字段只有十来项需要改
 pub fn apply_modern_dark(ctx: &egui::Context) {
     ctx.set_fonts(font_definitions());
 

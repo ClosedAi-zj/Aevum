@@ -96,7 +96,7 @@ impl eframe::App for Spec {
                 ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.5), Sense::hover());
             ui.painter().rect_filled(r, 0.0, hairline());
             ui.label(
-                RichText::new(format!("白 7%  ·  hover 用白 12%"))
+                RichText::new("白 7%  ·  hover 用白 12%")
                     .font(FontId::new(10.5, egui::FontFamily::Monospace))
                     .color(TEXT_FAINT),
             );
@@ -115,7 +115,7 @@ impl eframe::App for Spec {
             ] {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(format!("{name}"))
+                        RichText::new(name)
                             .font(FontId::new(11.0, egui::FontFamily::Monospace))
                             .color(TEXT_FAINT),
                     );
@@ -236,13 +236,10 @@ impl eframe::App for Spec {
                     egui::Button::new(RichText::new("主按钮").color(Color32::WHITE)).fill(ACCENT),
                 );
                 ui.add(egui::Button::new("次按钮").fill(SURFACE));
-                if ui
-                    .add(
-                        egui::Button::new(RichText::new("悬停态").color(Color32::WHITE))
-                            .fill(ACCENT_HOVER.gamma_multiply(0.26)),
-                    )
-                    .hovered()
-                {}
+                let _ = ui.add(
+                    egui::Button::new(RichText::new("悬停态").color(Color32::WHITE))
+                        .fill(ACCENT_HOVER.gamma_multiply(0.26)),
+                );
                 ui.add(
                     egui::Button::new(RichText::new("禁用").color(TEXT_FAINT))
                         .fill(BASE)

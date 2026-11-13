@@ -416,10 +416,11 @@ impl eframe::App for Demo {
                     let n = cards().into_iter().filter(|c| c.visible_in(self.view)).count();
                     ui.label(RichText::new(format!("{n} 段")).size(12.5).color(TEXT_MUTED));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add(egui::Button::new(RichText::new("＋ 新建序列").size(13.0).color(Color32::WHITE)).fill(ACCENT).min_size(Vec2::new(0.0, 32.0)))
-                            .clicked()
-                        {}
+                        let _ = ui.add(
+                            egui::Button::new(RichText::new("＋ 新建序列").size(13.0).color(Color32::WHITE))
+                                .fill(ACCENT)
+                                .min_size(Vec2::new(0.0, 32.0)),
+                        );
                     });
                 });
                 ui.add_space(14.0);
