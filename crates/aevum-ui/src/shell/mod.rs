@@ -547,16 +547,26 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
                 .resizable(false)
                 .frame(egui::Frame::NONE.fill(chrome()))
                 .show(root, |ui| tool_rail(state, ui, right_half, false));
-            let (left_id, left_half) = if panels_on_right {
+            let (inner_id, inner_half) = if panels_on_right {
                 ("rail-tools", RailHalf::Tools)
             } else {
                 ("rail-panels", RailHalf::Panels)
             };
-            egui::Panel::left(left_id)
+            // 两根轨都挂在**窗口右侧**：用户 2026-11-13「这些图标全部移动到最右边，
+            // 不要在调色界面的左边」。同侧先声明的在外——面板入口轨已在最外层（最右），
+            // 工具轨紧贴它内侧，两列一起落在右缘；左缘只留给画布与流程面板。
+            // 让位与凹槽方向都按右轨算（on_left=false）。
+            //
+            // Both rails dock on the **right edge**: user, 2026-11-13, "move all these
+            // icons to the far right, not on the left of the grading panel". On one side
+            // the first declaration is outermost: the panel-entry rail stays far right,
+            // the tools rail sits just inside it. Left edge is left to canvas and flow.
+            // Clearance and seam direction both follow a right-hand rail (on_left=false).
+            egui::Panel::right(inner_id)
                 .exact_size(TOOL_W)
                 .resizable(false)
                 .frame(egui::Frame::NONE.fill(chrome()))
-                .show(root, |ui| tool_rail(state, ui, left_half, true));
+                .show(root, |ui| tool_rail(state, ui, inner_half, false));
         }
         // 检查器：贴窗口右缘的浮卡，与工具轨开不开无关。
         //
@@ -623,7 +633,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // Both sides now read one number: where the card is, is where the canvas stops.
     let dock_card_left = if develop && state.show_dock && !legacy {
         state.dock_pos.map(|p| p.x).unwrap_or_else(|| {
-            let rail_pad = if state.show_rails { TOOL_W } else { 0.0 };
+            let rail_pad = if state.show_rails { 2.0 * TOOL_W } else { 0.0 };
             full.right() - DOCK_GUTTER - state.dock_w - rail_pad
         })
     } else {
@@ -1007,7 +1017,7 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
     // With the rails on, the card must clear the rail on its side: a rail is a Panel and
     // paints under an Area, so the card would bury it whole (ticking "View -> tool rails"
     // looked like the right-hand rail never appeared).
-    let rail_pad = if state.show_rails { TOOL_W } else { 0.0 };
+    let rail_pad = if state.show_rails { 2.0 * TOOL_W } else { 0.0 };
     let default_pos = Pos2::new(
         if right {
             full.right() - DOCK_GUTTER - w - rail_pad
@@ -1105,9 +1115,12 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
             let widths = dock::tab_widths(&ui.painter().clone(), w, !state.keyframes.is_empty());
             let tabs_left = card.right() - dock::TAB_RESERVE_W - widths.iter().sum::<f32>();
             let zone = Rect::from_min_max(
-                Pos2::new(card.left() + dock::TAB_SLOT_W + 2.0, card.top() + 2.0),
                 Pos2::new(
-                    (tabs_left - 4.0).max(card.left() + dock::TAB_SLOT_W + 6.0),
+                    card.left() + dock::TAB_SLOT_W + dock::FILTER_W + 4.0,
+                    card.top() + 2.0,
+                ),
+                Pos2::new(
+                    (tabs_left - 4.0).max(card.left() + dock::TAB_SLOT_W + dock::FILTER_W + 8.0),
                     card.top() + 26.0,
                 ),
             );

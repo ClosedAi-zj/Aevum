@@ -68,112 +68,82 @@ fn dock_resize_handle(state: &mut AppState, ui: &mut Ui, card: Rect) {
     }
 }
 
-/// 「仅显示已改动」开关行：设计稿 `.dock-tools{height:24px;justify-content:flex-end}`
-/// + `.onlychg`（24px 行、13px 字、圆角 4；开启时蓝底 + 12px 复选框白勾）。
+/// 「仅显示已改动」开关：页签条上一枚 20px 图标按钮（还原钮右侧）。
 ///
-/// 这一行在参数区之上、页签之下，右对齐——它是「看什么」的过滤器，不是参数，
-/// 所以不占分组卡内的位置。绘制顺序固定为 背景 → 控件 → 文字：ON 的蓝底与
-/// OFF hover 的抬升底都是不透明实色，画在控件之后会把复选框和白勾整个埋掉。
+/// 用户 2026-11-13：「去掉这个按钮，或者将其变为图标，不要让他占用这么多界面」。
+/// 此前它在参数区顶部**独占一整行 24px**，右对齐「复选框 + 六个汉字」约 130px 宽，
+/// 整条深色带只有右端一点内容。收成图标后功能不变，行高与宽度全部还给参数区。
+/// 绘制顺序固定 背景 → 控件：ON 的蓝底与 OFF hover 的抬升底都是不透明实色，
+/// 后画会把复选框与白勾整个埋掉（`only_changed_background_precedes_the_tick` 锁着）。
 ///
-/// The "only show changed" switch row, per the design's `.dock-tools` / `.onlychg`
-/// (24 px row, 13 px text, 4 px radius; when on: blue wash plus a 12 px checkbox tick).
-///
-/// It sits between the tabs and the parameter area, right-aligned: it filters what is
-/// *shown*, so it must not sit inside any group card. Paint order is fixed as
-/// background -> control -> text: the opaque ON wash and OFF-hover fill would bury the
-/// checkbox and its tick if drawn after them.
-fn dock_tools(state: &mut AppState, ui: &mut Ui) {
-    // 设计稿里这行是「亮色正文」，不是 10px 的灰注释：它是会改变整个面板内容的
-    // 过滤器，权重必须和组头同级。
-    //
-    // In the design this is bright body text, not a 10 px grey caption: it filters the
-    // whole panel, so it must rank with the group headers.
-    let (row, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::hover());
-    let galley = ui.painter().layout_no_wrap(
-        crate::i18n::t!("仅显示已改动").to_owned(),
-        font(SIZE_BODY),
-        if state.only_changed {
-            accent()
-        } else {
-            muted()
-        },
-    );
-    // 开关 affordance：一枚 12px 复选框 + 选中勾。纯右对齐文字看不出能点。
-    // 状态由复选框自己表达，不再画前置圆点——它落在框内会压住左缘，
-    // 为它留的 9px 也是死空。
-    //
-    // Toggle affordance: a 12 px checkbox with a tick. Right-aligned plain text does
-    // not read as clickable. The checkbox alone carries the state; the extra leading
-    // dot sat inside the box and only wasted 9 px of width.
-    const BOX: f32 = 12.0;
-    let w = galley.size().x + 12.0 + BOX + 6.0;
-    let chip = Rect::from_min_max(
-        Pos2::new(row.right() - w, row.center().y - 12.0),
-        Pos2::new(row.right(), row.center().y + 12.0),
-    );
-    let resp = ui.interact(chip, ui.make_persistent_id("only-changed"), Sense::click());
+/// The "only show changed" switch: a 20 px icon button on the tab strip, just right
+/// of the restore button. It used to own a full 24 px row with a right-aligned
+/// "checkbox + label" chip (~130 px), leaving a mostly empty dark band. Collapsing it
+/// to an icon keeps the behaviour and returns the row to the parameter area.
+/// Paint order is background -> control: the opaque ON wash and OFF-hover fill would
+/// bury the checkbox and tick (pinned by `only_changed_background_precedes_the_tick`).
+fn dock_tools(state: &mut AppState, ui: &mut Ui, rect: Rect) {
+    let resp = ui.interact(rect, ui.make_persistent_id("only-changed"), Sense::click());
+    let hovered = resp.hovered();
     let p = ui.painter().clone();
 
-    // ① 背景层：必须最先画。accent_dim()/elev() 都是不透明实色，画在复选框之后
-    //    会让 ON 态只剩一片蓝底、OFF hover 时框直接消失（审阅 B2）。
-    //
-    // ① Background first: accent_dim()/elev() are opaque. Painted after the checkbox
-    //    they erase the tick in the ON state and the outline on OFF hover (review B2).
+    // ① 背景层。
+    // ① Background.
     if state.only_changed {
-        p.rect_filled(chip, 4.0, accent_dim());
+        p.rect_filled(rect, radius_control(), accent_dim());
         p.rect_stroke(
-            chip,
-            4.0,
+            rect,
+            radius_control(),
             Stroke::new(1.0, accent().gamma_multiply(0.34)),
             StrokeKind::Inside,
         );
-    } else if resp.hovered() {
-        p.rect_filled(chip, 4.0, elev());
+    } else if hovered {
+        p.rect_filled(rect, radius_control(), elev());
     }
 
-    // ② 控件层：12px 复选框 + 白勾 / 空框描边。
-    let box_r = Rect::from_min_size(
-        Pos2::new(chip.left() + 6.0, chip.center().y - BOX * 0.5),
-        Vec2::splat(BOX),
-    );
+    // ② 图标层：一枚 10px 复选框（ON 带白勾，OFF 空框）。文字交给悬停提示，
+    //    既省宽度又保住中英两条文案的使用点。
+    //
+    // ② Icon: one 10 px checkbox (white tick when on, outline when off). The label
+    //    moves to the hover tooltip, saving width and keeping both i18n entries live.
+    const BOX: f32 = 10.0;
+    let box_r = Rect::from_center_size(rect.center(), Vec2::splat(BOX));
     if state.only_changed {
-        p.rect_filled(box_r, 3.0, accent());
+        p.rect_filled(box_r, 2.0, accent());
         p.line_segment(
             [
-                Pos2::new(box_r.left() + 2.5, box_r.center().y),
-                Pos2::new(box_r.center().x - 1.0, box_r.bottom() - 3.0),
+                Pos2::new(box_r.left() + 2.0, box_r.center().y),
+                Pos2::new(box_r.center().x - 0.5, box_r.bottom() - 2.5),
             ],
             Stroke::new(1.4, Color32::WHITE),
         );
         p.line_segment(
             [
-                Pos2::new(box_r.center().x - 1.0, box_r.bottom() - 3.0),
-                Pos2::new(box_r.right() - 2.0, box_r.top() + 2.5),
+                Pos2::new(box_r.center().x - 0.5, box_r.bottom() - 2.5),
+                Pos2::new(box_r.right() - 2.0, box_r.top() + 2.0),
             ],
             Stroke::new(1.4, Color32::WHITE),
         );
     } else {
         p.rect_stroke(
             box_r,
-            3.0,
+            2.0,
             Stroke::new(1.0, border_strong()),
             StrokeKind::Inside,
         );
     }
 
-    // ③ 文字层。
-    p.text(
-        Pos2::new(chip.left() + 6.0 + BOX + 6.0, chip.center().y),
-        Align2::LEFT_CENTER,
-        crate::i18n::t!("仅显示已改动"),
-        font(SIZE_BODY),
-        if state.only_changed { text() } else { muted() },
-    );
     if resp.clicked() {
         state.only_changed = !state.only_changed;
     }
-    resp.on_hover_text(crate::i18n::t!("只显示已偏离默认值的参数"));
+    resp.on_hover_text(format!(
+        "{}\n{}",
+        crate::i18n::t!("仅显示已改动"),
+        crate::i18n::t!("只显示已偏离默认值的参数")
+    ));
+    if hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
 }
 
 /// 页签左端槽位：还原/放大钮（18px）+ 两侧空气。mod.rs 的还原钮与拖动区、
@@ -183,6 +153,12 @@ fn dock_tools(state: &mut AppState, ui: &mut Ui) {
 /// mod.rs's button and drag zone and dock_panel's tab layout all derive from this
 /// one constant, so the two layers cannot collide.
 pub(super) const TAB_SLOT_W: f32 = 26.0;
+
+/// 页签条上「仅显示已改动」图标的槽位宽：还原钮之后的 20px。
+///
+/// Slot width of the "only show changed" icon on the tab strip: 20 px after the
+/// restore button.
+pub(super) const FILTER_W: f32 = 20.0;
 
 /// 页签行右端预留：只放 ×（18px + 两侧空气）。旧值 52 还要容一组暗点把手；
 /// 拖动已由左端槽位 + 空白拖动区承担，暗点成了冗余装饰，省回 22px 给页签。
@@ -341,6 +317,17 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
     // recessed band.
     theme::bevel_h(&p, strip.left(), strip.right(), strip.top());
     theme::bevel_h(&p, strip.left(), strip.right(), strip.bottom() - 1.0);
+
+    // 过滤器图标占还原钮之后的 20px：原先它在滚动区顶部独占一行，现在与页签
+    // 同行，参数区不再有那条空带。
+    //
+    // The filter icon takes the 20 px after the restore button: it used to own a whole
+    // row above the scroll area; now it shares the tab strip and the empty band is gone.
+    let filter_rect = Rect::from_center_size(
+        Pos2::new(strip.left() + TAB_SLOT_W + FILTER_W * 0.5, strip.center().y),
+        Vec2::splat(FILTER_W),
+    );
+    dock_tools(state, ui, filter_rect);
 
     // 面板页签用下划线而不是分段胶囊：一条 HEADER 上排六个名字，
     // 选中项靠白字 + 2px 强调线认，和 PS 的调板页签同一套读法。
@@ -615,10 +602,7 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
                     let out = scroll.show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         match state.dock_tab {
-                            DockTab::Adjust => {
-                                dock_tools(state, ui);
-                                adjust_tab(state, ui)
-                            }
+                            DockTab::Adjust => adjust_tab(state, ui),
                             DockTab::Info => info_tab(state, ui),
                             DockTab::Keys => keys_tab(state, ui),
                             DockTab::Ai => ai_tab(state, ui),
@@ -1196,7 +1180,8 @@ mod dock_paint_tests {
         theme::apply(&ctx, 1.0);
         let mut state = AppState::new();
         state.only_changed = true;
-        let mut draw = |ui: &mut Ui| dock_tools(&mut state, ui);
+        let icon = Rect::from_min_size(Pos2::new(4.0, 4.0), Vec2::splat(20.0));
+        let mut draw = |ui: &mut Ui| dock_tools(&mut state, ui, icon);
         let mut out = ctx.run_ui(input(320.0, 40.0), &mut draw);
         let mut wash: Option<usize> = None;
         let mut tick: Option<usize> = None;

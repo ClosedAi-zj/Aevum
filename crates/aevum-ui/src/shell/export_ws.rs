@@ -1368,7 +1368,7 @@ mod export_rows_tests {
             ..Default::default()
         };
         let mut out = ctx.run_ui(input, |panel| {
-            let mut probe = panel.new_child(
+            let probe = panel.new_child(
                 egui::UiBuilder::new()
                     .max_rect(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 100.0)))
                     .id_salt("pb-probe"),

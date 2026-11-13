@@ -210,26 +210,27 @@ pub(super) fn group_card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     // quartet was the top fragmentation source): drop the 1 px ring, radius 8→4,
     // halve the fill contrast, group gap 18→10. Groups stay legible through the fill
     // shift alone; the column reads as one continuous panel.
-    ui.add_space(10.0);
-    let out = egui::Frame::NONE
-        .fill(theme::group_fill())
-        .corner_radius((theme::radius_panel() - 4.0).max(2.0))
-        .inner_margin(egui::Margin::same(10))
-        .show(ui, add);
-    // PS 式双线：卡片上沿亮、下沿暗，读作「嵌在连续面板里的一段」而不是一块
-    // 深色积木。两条线各 1px、从当前皮肤自己的抬升面/凹槽面派生。
+    // PS 连续行语法（用户 2026-11-13 以 PS「效果 / 曲线 / 混色器」为参考：
+    // 「我们的间距有问题不和谐」）。实测 PS 是 `#535353` 通栏 + `#343434` 3px
+    // 凹槽线，每行 57+3=60px 严格等距；我们的旧实现是「独立圆角块 + 上亮下暗
+    // 双线」，块高随组内内容变，间距实测 17/22/66/81px，忽松忽紧。
+    // 现在每张组卡不再自己画壳（无独立底色 / 无圆角 / 无 bevel），只在组间
+    // 留固定 10px 并画一道通栏凹槽；内距 12 让折叠组落到 10+12+24+12=58px，
+    // 接近 PS 的 60px，且**与展开与否无关**。
     //
-    // PS-style bevel pair: a lit top edge and a dark bottom edge make the card read
-    // as a section inside one continuous panel rather than a dark brick. Both rules
-    // are 1 px and derive from the skin's own raised / sunken materials.
-    let r = out.response.rect;
-    theme::bevel_h(ui.painter(), r.left() + 3.0, r.right() - 3.0, r.top());
-    theme::bevel_h(
-        ui.painter(),
-        r.left() + 3.0,
-        r.right() - 3.0,
-        r.bottom() - 1.0,
-    );
+    // PS continuous-row grammar (user, 2026-11-13, citing PS's Effects / Curves /
+    // Color Mixer: "our spacing is off"). Measured: PS is a #535353 full-width band
+    // with a #343434 3 px groove, every row exactly 57+3=60 px. Our old version used
+    // independent rounded cards with a lit/dark bevel pair; card height followed the
+    // group's content, so gaps measured 17/22/66/81 px -- uneven. Now a group paints
+    // no shell of its own (no separate fill, radius or bevel): only a fixed 10 px gap
+    // with one full-width groove. 12 px inner padding puts a collapsed group at
+    // 10+12+24+12=58 px, close to PS's 60 px and independent of expanded state.
+    let (gap, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 10.0), Sense::hover());
+    theme::groove(ui.painter(), gap.left(), gap.right(), gap.center().y);
+    let out = egui::Frame::NONE
+        .inner_margin(egui::Margin::same(12))
+        .show(ui, add);
     out.inner
 }
 
@@ -425,7 +426,14 @@ pub(super) fn group_header(
     let open = !state.collapsed.contains(key);
     // 悬停是一整条圆角高亮，不是方条：macOS 侧栏分组头的口径。
     if resp.hovered() {
-        p.rect_filled(rect.shrink(2.0), radius_control(), elev());
+        // 通栏高亮：PS 的组头是连续面板里的一段，不是浮起的圆角按钮。
+        // Full-width hover: a PS header is a segment of one continuous panel, not a
+        // raised rounded button.
+        let bar = Rect::from_min_max(
+            Pos2::new(rect.left(), rect.top() + 1.0),
+            Pos2::new(rect.right(), rect.bottom() - 1.0),
+        );
+        p.rect_filled(bar, 0.0, elev());
     }
     icons::paint(
         p,
@@ -452,7 +460,13 @@ pub(super) fn group_header(
     // Group name 13 px / 600 (the design's `.grp-h .lb`): as the card's title it
     // must outweigh the 12 px parameter labels to carry the card hierarchy; this
     // uses the real bold family, not a faux-bold stroke.
-    let title_galley = p.layout_no_wrap(title.to_owned(), bold(SIZE_LABEL + 2.0), text());
+    // 16px 真粗体：PS 参考里组名比参数标签重一号、也更亮，靠排版而不是靠
+    // 边框建立层级。行高仍是设计稿的 24px（判据锁着），16px 字放得下。
+    //
+    // 16 px real bold: in the PS reference group names outweigh the parameter labels
+    // by one step, so hierarchy comes from type, not from a border. The row stays at
+    // the design's 24 px (pinned by a judgement), which fits 16 px type.
+    let title_galley = p.layout_no_wrap(title.to_owned(), bold(SIZE_TITLE), text());
     // 卡内左缘：设计稿 `.grp-h` 的箭头与标题相距约 6px，卡内距 12px 已经把
     // 标题推到 x≈18。这里取 18，标题与下面 `.srow` 的标签列不再差一截。
     //
