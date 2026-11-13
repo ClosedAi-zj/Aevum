@@ -7,7 +7,7 @@
 //! [`aevum_ui::theme_modern`], so what you see is exactly the token value.
 
 use aevum_ui::theme_modern::*;
-use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align2, Color32, FontId, Rect, RichText, Sense, Stroke, Vec2};
 
 fn hex(c: Color32) -> String {
     format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b())
