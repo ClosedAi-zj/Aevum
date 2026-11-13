@@ -28,6 +28,7 @@ pub mod settings;
 pub mod shell;
 pub mod state;
 pub mod theme;
+pub mod theme_modern;
 pub mod widgets;
 pub mod win_parent;
 
