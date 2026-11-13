@@ -189,6 +189,15 @@ fn dock_tools(state: &mut AppState, ui: &mut Ui) {
 /// Left slot of the tab strip: the restore button (18 px) plus air on both sides.
 /// mod.rs's button and drag zone and dock_panel's tab layout all derive from this
 /// one constant, so the two layers cannot collide.
+/// 调色盘顶部直方图槽位高度：绘图区 94 + EXIF 行 21，与画布浮卡同一份读数。
+/// 此前老式布局把直方图搬进面板时就有了这个数；一度被删（改成搬到画布），
+/// 现在两种布局都放回面板，常量恢复。
+///
+/// Height of the palette's histogram slot: a 94 px plot plus a 21 px EXIF row, the
+/// same readout as the canvas card. It was dropped once when the histogram moved to
+/// the canvas; both layouts keep it in the panel now, so the constant is back.
+const DOCK_HIST_H: f32 = 115.0;
+
 pub(super) const TAB_SLOT_W: f32 = 26.0;
 
 /// 页签行右端预留：只放 ×（18px + 两侧空气）。旧值 52 还要容一组暗点把手；
@@ -548,21 +557,38 @@ pub(super) fn dock_panel(state: &mut AppState, ui: &mut Ui, width: f32, max_h: f
                     bottom: 8,
                 })
                 .show(ui, |ui| {
-                    // 直方图归画布：两种布局都在画布左上角摆同一张可拖可缩的直方图卡
-                    // （`canvas_cards::histogram_card`）。调色盘顶部一律直接进参数区——
-                    // 此前老式布局在本页签行下面又画了一份，于是同一块面板在现代是
-                    // 「配置/基本…」、在老式是「直方图 + 配置/基本…」，两种布局看着
-                    // 像两套软件（用户 2026-11-13「现代跟老式调色盘栏这里的风格不同
-                    // 需要统一」）。只留一处，两种布局的面板从第一行起就是同一个样子。
+                    // 直方图就在调色盘页签下面，**两种布局都如此**：老式风格本来就是
+                    // 「面板顶上一块直方图」（旧版稿 .dock-tabs → .histo），把它搬到画布上
+                    // 变成一块压着照片的浮块，既不是老式、也不算统一（用户 2026-11-13
+                    // 「老式风格的直方图为什么要单独一个悬浮块」）。现代布局也收回面板，
+                    // 于是两种布局的调色盘从第一行起完全一致。
                     //
-                    // The histogram belongs to the canvas: both layouts show the same
-                    // draggable/resizable card at the canvas' top-left
-                    // (`canvas_cards::histogram_card`), and the palette dives straight
-                    // into parameters. Legacy used to paint a second copy under this tab
-                    // row, so the same panel read as "Profile/Basic..." in Modern and
-                    // "histogram + Profile/Basic..." in Legacy -- two products.
-                    // One owner only, so both layouts open with the same first row.
-                    ui.add_space(2.0);
+                    // The histogram sits right under the palette's tab row in **both**
+                    // layouts: Legacy always meant "a histogram at the top of the panel"
+                    // (old mockup .dock-tabs -> .histo). Moving it onto the canvas made it a
+                    // floating block over the photo -- neither Legacy nor unified (user,
+                    // 2026-11-13). Modern pulls it back into the panel too, so both
+                    // layouts open identically.
+                    if state.hist.is_some() {
+                        // 左右各留 4px：`histogram` 内部按浮卡口径再缩 4px 画凹槽，
+                        // 槽位贴着内距起画会把左缘山形切掉（老式调色盘实测）。
+                        //
+                        // Four px on each side: `histogram` insets its well by 4 px (the
+                        // floating-card convention), so a slot flush with the margin would
+                        // clip the left edge of the mountains (measured in Legacy).
+                        let (hist_rect, _) = ui.allocate_exact_size(
+                            Vec2::new(ui.available_width(), DOCK_HIST_H),
+                            Sense::hover(),
+                        );
+                        let hist_rect = hist_rect.shrink2(Vec2::new(4.0, 0.0));
+                        ui.scope_builder(
+                            UiBuilder::new().id_salt("dock-hist").max_rect(hist_rect),
+                            |ui| histogram(ui, state),
+                        );
+                        ui.add_space(6.0);
+                    } else {
+                        ui.add_space(2.0);
+                    }
                     // 纵向按内容收缩：卡高 = 内容高，只有撞到上限才长到上限并出滚动条。
                     // 横向不许缩（[false, _]）——卡宽恒等于 `dock_w`，否则短内容会把
                     // 卡收窄，右侧少一条边。

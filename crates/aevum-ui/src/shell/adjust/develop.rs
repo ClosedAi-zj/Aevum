@@ -108,18 +108,20 @@ fn more_groups_chip(ui: &mut Ui, state: &mut AppState) {
         ("look", "外观（.cube）"),
     ];
     for (idx, (key, cn)) in MORE.iter().enumerate() {
-        let (rule, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), Sense::hover());
-        theme::groove(ui.painter(), rule.left(), rule.right(), rule.center().y);
-        // 与 `common::group_card` 同样的抵销：让 3px 线与 30px 行紧贴，行距 33px，
-        // 和真实分组头同一节奏（否则这一列 41px、序列那列 34px，同面板两种节奏）。
-        // Same cancellation as `common::group_card`: the 3 px rule butts against the
-        // 30 px row for a 33 px pitch, matching real headers instead of 41 vs 34.
+        // 与 `group_header` 完全一致的 3px 分隔带（同一个 `theme::row_sep()` token）：
+        // 披露行与真实组头必须长得一样，否则同一列里两种节奏。
+        // The same `theme::row_sep()` band as `group_header`: disclosure rows and real
+        // headers must look identical, or one column shows two rhythms.
+        let (sep, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), Sense::hover());
+        // 与 `group_header` 同样铺满整列 + 抵掉自动间距（两处必须逐像素一致）。
+        // Full-bleed and spacing-cancelled exactly like `group_header`.
+        let sep = sep.expand2(Vec2::new(12.0, 0.0));
         ui.add_space(-ui.spacing().item_spacing.y);
         let (row, resp) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
         let hovered = resp.hovered();
         let p = ui.painter().clone();
+        p.rect_filled(sep, 0.0, theme::row_sep());
         if hovered {
             p.rect_filled(row, 0.0, elev());
         }

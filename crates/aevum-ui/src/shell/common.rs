@@ -216,21 +216,15 @@ pub(super) fn group_gap(ui: &mut Ui) {
 /// group 16.5 + 24 + 16.5 = 57 px, plus the 3 px rule = 60 px. The header's own
 /// 24 px row stays (pinned by `visual_consistency`).
 pub(super) fn group_card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    // 3px 通栏分隔线：PS 靠这条暗线切行，不靠块与块之间的留白。
-    // A full-width 3 px rule: PS separates rows with this dark line, not with gaps.
-    let (rule, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), Sense::hover());
-    theme::groove(ui.painter(), rule.left(), rule.right(), rule.center().y);
-    // 抵掉分配后自动追加的 item_spacing：否则「3px 线 + 4px 间距 + 30px 行」把行距
-    // 撑到 41px，而序列等直接用 `group_header` 的模块是 34px —— 同一面板两种节奏
-    // （2026-11-13 实测）。负值只作用于这一处相邻，不影响组内控件间距。
+    // 这里只负责**左右内距**：行间那道 3px 分隔带由 `group_header` 自己画，
+    // 因为序列 / 去闪等模块的组头是直接调用 `group_header` 的、不经过本函数。
+    // 若在这里再画一条，经过 `group_card` 的组会出现双线、不经过的组一条都没有
+    // ——正是用户 2026-11-13 截图里「他们有分割线我们没有」的成因。
     //
-    // Cancel the implicit item_spacing after the allocation: otherwise the 3 px rule +
-    // 4 px gap + 30 px row makes a 41 px pitch while modules that call `group_header`
-    // directly sit at 34 px -- two rhythms in one panel. The negative space only bridges
-    // this one junction and leaves in-group widget spacing untouched.
-    ui.add_space(-ui.spacing().item_spacing.y);
-    // 直角、无底色、无描边：组头与面板是同一张连续表面。
-    // Square, unfilled, unstroked: header and panel are one continuous surface.
+    // This only owns the **side padding**: the 3 px separator is painted by
+    // `group_header` itself, because Sequence / Deflicker call it directly without
+    // going through this function. Painting one here as well would double the rule for
+    // carded groups and leave uncarded ones bare -- exactly the 2026-11-13 screenshot.
     let out = egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(12, 0))
         .show(ui, add);
@@ -418,6 +412,32 @@ pub(super) fn group_header(
     // The 24 px text line (gh) stays for `visual_consistency`; hover fills only those
     // 24 px, leaving 3 px above and below.
     let gh = 24.0;
+    // 行间 3px 分隔带：**画在组头自己身上**，不依赖外层 `group_card`。此前它只
+    // 在 `group_card` 里画，而序列 / 去闪等 57 处组头是直接调用本函数的，于是
+    // 那些列一条线都没有，八组读成一张没有分隔的长表（用户 2026-11-13 截图对比
+    // PS：「他们的有分割线 我们没有」）。
+    //
+    // The 3 px separator belongs to the header itself, not to `group_card`. It used to
+    // live in `group_card` only, while Sequence / Deflicker call this function directly
+    // at 57 sites -- those columns ended up with no rule at all, so eight groups read as
+    // one undivided table (user, 2026-11-13, comparing with PS).
+    let (sep, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), Sense::hover());
+    // 分隔带**铺满整列**：PS 的缝横贯面板左右边缘，而 `group_header` 拿到的是内容宽
+    // （外层面板 10px 内距 + 分组卡 12px 内距都已被扣掉），照原样画会变成一条缩进
+    // 的表格线，一列读下来仍像「表格里的行」而不是「面板被切开」。向外各扩 12px
+    // 正好顶到面板内缘（多出的部分由 dock 的裁剪框收掉）。
+    //
+    // Full-bleed: PS's rule spans the panel edge to edge, while `group_header` only sees
+    // the content width (the dock's 10 px padding and the card's 12 px are already
+    // subtracted). Drawn as-is it becomes an indented table line. Expanding 12 px each
+    // side reaches the panel's inner edge; the dock's clip rect trims any excess.
+    // keep the content width: the band is the block, a wider rule slices
+    // the window instead
+    // 抵掉分配后自动追加的 item_spacing：否则「3px 带 + 8px 间距 + 30px 行」把行距
+    // 撑到 41px，而 PS 换算到 300px 面板是 35px。
+    // Cancel the implicit item_spacing: the 3 px band + 8 px gap + 30 px row made a
+    // 41 px pitch, while PS scales to ~35 px on a 300 px panel.
+    ui.add_space(-ui.spacing().item_spacing.y);
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
     if state.dock_focus.as_deref() == Some(key) {
@@ -429,6 +449,10 @@ pub(super) fn group_header(
         state.collapsed.remove(key);
     }
     let p = ui.painter();
+    p.rect_filled(sep, 0.0, theme::row_sep());
+    // 行底：比面板亮 3% 的一整条面（PS 的 `#535353` 行底），hover 再抬一档。
+    // Row band: one surface 3% above the panel (PS's `#535353` row), hover lifts again.
+    p.rect_filled(rect, 0.0, theme::row_band());
     // 组头只留「箭头 + 标题 + 眼睛」三件：箭头表示开合，标题是分区名，
     // 眼睛是这一组是否参与预览。多一枚滑杆图标只是重复「这里是参数区」，
     // 却把标题推右 9px、让整列失去共同的左缘。

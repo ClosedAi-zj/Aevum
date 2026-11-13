@@ -595,19 +595,12 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     if state.rulers {
         draw_rulers(ui, body, content, Some(img), scale, hover);
     }
-
-    // 直方图卡（左上）+ 无序列提示卡。两种布局都在画布上摆同一张卡：
-    // 老式布局此前把直方图画进右侧调色盘，于是同一块面板在现代是「配置/基本…」、
-    // 在老式是「直方图 + 配置/基本…」，两种布局像两套软件（用户 2026-11-13
-    // 「现代跟老式调色盘栏这里的风格不同 需要统一」）。现在调色盘只画参数，
-    // 直方图只有画布这一处，且保留原有的拖动 / 缩放。
+    // 直方图不再画在画布上：两种布局都把它放进调色盘页签下面（老式风格本来就是
+    // 「面板顶上一块直方图」）。画布只留无序列提示卡。
     //
-    // Histogram card (top-left) plus the empty-state hint. Both layouts show the same
-    // card on the canvas: Legacy used to paint the histogram inside the right palette,
-    // so one panel read as "Profile/Basic..." in Modern and "histogram + Profile/
-    // Basic..." in Legacy -- two products. The palette now holds parameters only, the
-    // canvas owns the single histogram, and dragging/resizing still work.
-    let _card = super::canvas_cards::histogram_card(state, ui, content);
+    // No histogram on the canvas: both layouts keep it under the palette's tab row
+    // (Legacy always meant "a histogram at the top of the panel"). The canvas keeps
+    // only the empty-state hint.
     super::canvas_cards::empty_hint(state, ui, content);
 }
 

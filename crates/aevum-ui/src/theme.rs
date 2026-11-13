@@ -2297,6 +2297,43 @@ pub fn ramp_h(painter: &egui::Painter, x0: f32, x1: f32, y: f32, from: Color32, 
 /// light one, 1 px each -- the pair synthesizes a groove recessed into the panel.
 /// A single line, however dark, reads as a scratch; the pair reads as structure
 /// (classic Windows groove, same as ACR).
+/// 分组行之间的 3px 分隔带（PS 2025 实测口径：`#535353` 行 + `#343434` 3px 带）。
+/// 用实底填充而不是 1px 双线：PS 的缝是一条 3px 的暗带，1px 刻线在深色面板上
+/// 几乎看不见，一列八组读下来就是「一张没有分隔的长表」（用户 2026-11-13
+/// 「他们的有分割线 我们没有」）。
+///
+/// 3 px separator band between group rows (measured in PS 2025: a `#535353` row on a
+/// `#343434` band). A solid fill, not a 1 px engraved pair: PS's gap is a 3 px dark
+/// band, while a hairline almost disappears on a dark panel and eight groups read as
+/// one undivided table (user, 2026-11-13: "theirs has dividers, ours has none").
+/// 分组行的行底：比面板亮 3%，让每一行成为一块**面**而不只是两条线之间的空白。
+/// PS 2025 的分组行是 `#535353` 的实底、缝是 `#343434` 的暗带，行与缝的明度差
+/// 才是「一行一行分得开」的来源；只画线不铺底，一列读下来仍是「表格里的行」。
+///
+/// Row band: 3% above the panel so each row is a **surface**, not just the gap between
+/// two rules. PS 2025 rows are solid `#535353` on `#343434` gaps; that value step -- not
+/// the rule alone -- is what makes the rows read as blocks.
+pub fn row_band() -> Color32 {
+    if is_light() {
+        mix(panel(), Color32::WHITE, 0.5)
+    } else {
+        mix(panel(), Color32::WHITE, 0.065)
+    }
+}
+
+pub fn row_sep() -> Color32 {
+    // 深色面板压 36% 黑（#505050 -> #333333，与 PS 实测同档）；浅色只压 10%，
+    // 否则在亮面上会变成一道黑杠。
+    //
+    // 36% black on dark panels (#505050 -> #333333, matching PS), only 10% on light
+    // ones, where a darker mix would read as a black bar.
+    mix(
+        panel(),
+        Color32::BLACK,
+        if is_light() { 0.10 } else { 0.36 },
+    )
+}
+
 pub fn groove(painter: &egui::Painter, x0: f32, x1: f32, y: f32) {
     painter.line_segment(
         [
