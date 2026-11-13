@@ -459,6 +459,26 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // The image list belongs to the **canvas page only**: Sequence / Export are
     // full-page flows, and a 134 px strip on a 900 px window pushed their copy
     // onto the action buttons (the sweep measured a 31.8 px collision).
+    // 面板入口轨必须**先于调色盘**声明：egui 同侧「先声明的在外」，老式布局的
+    // 调色盘是一根 `Panel::right`，若轨在它之后声明就会被挤到调色盘**左边**
+    // ——正是用户 2026-11-13 指出的「依旧不把调色盘左边的按钮移到它右侧」。
+    // 把它提到最外层后，无论现代（浮卡）还是老式（贴边 Panel），这列图标都在
+    // 调色盘右边。另一根工具轨保持 `Panel::left` 原样，不跟着搬。
+    //
+    // The panel-entry rail must be declared **before** the palette: on one side egui
+    // puts the first declaration outermost. Legacy's palette is a `Panel::right`, so
+    // a rail declared after it lands on the palette's *left* -- exactly the bug the
+    // user called out. Declaring first puts these icons on the palette's right in
+    // both Modern (floating card) and Legacy (docked Panel). The tools rail keeps
+    // its original `Panel::left`; it does not move.
+    if develop && state.show_rails {
+        egui::Panel::right("rail-panels")
+            .exact_size(TOOL_W)
+            .resizable(false)
+            .frame(egui::Frame::NONE.fill(chrome()))
+            .show(root, |ui| tool_rail(state, ui, RailHalf::Panels, false));
+    }
+
     if develop && legacy && canvas_page {
         let palette_w = state.dock_w;
         egui::Panel::right("legacy-palette")
@@ -512,14 +532,6 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // the lower tools / foot at the left edge -- seven entries each, symmetric. The
     // appearance window's "tool rail right/left" mirrors both.
     let dock_left = layout.dock_side.is_left();
-    // 面板入口轨恒定在**窗口最右**（用户 2026-11-11 裁决「这个工具栏移动到最右侧」）。
-    // 此前它随 `layout.rail` 镜像，设成左就把这列图标推到检查器左边，夹在画布与
-    // 检查器之间，读起来像放错了地方。工具轨保持另一侧。
-    //
-    // The panel-entry rail always sits at the **far right** (user, 2026-11-11: "move
-    // this toolbar to the far right"). It used to mirror `layout.rail`, which could pin
-    // it between the canvas and the inspector. The tools rail keeps the other side.
-    let panels_on_right = true;
 
     // 工具轨、右坞、工作流面板都只属于显影工作台。帧表 / 导出 / 任务是整页视图
     // （design `.wsview`），任何侧栏在那里都会把 300px 宽的表格挤出屏幕。
@@ -537,36 +549,17 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
         // the tools still switch by keyboard (H hand / Z zoom ...), and the panel entries
         // live in ☰ and in the inspector tabs.
         if state.show_rails {
-            let (right_id, right_half) = if panels_on_right {
-                ("rail-panels", RailHalf::Panels)
-            } else {
-                ("rail-tools", RailHalf::Tools)
-            };
-            egui::Panel::right(right_id)
-                .exact_size(TOOL_W)
-                .resizable(false)
-                .frame(egui::Frame::NONE.fill(chrome()))
-                .show(root, |ui| tool_rail(state, ui, right_half, false));
-            let (inner_id, inner_half) = if panels_on_right {
-                ("rail-tools", RailHalf::Tools)
-            } else {
-                ("rail-panels", RailHalf::Panels)
-            };
-            // 两根轨都挂在**窗口右侧**：用户 2026-11-13「这些图标全部移动到最右边，
-            // 不要在调色界面的左边」。同侧先声明的在外——面板入口轨已在最外层（最右），
-            // 工具轨紧贴它内侧，两列一起落在右缘；左缘只留给画布与流程面板。
-            // 让位与凹槽方向都按右轨算（on_left=false）。
+            // 「最左边那列按钮不要动」：工具轨仍在窗口最左，保持基线位置。
+            // 面板入口轨已在上面单独声明（见其注释），这里不再画第二遍。
             //
-            // Both rails dock on the **right edge**: user, 2026-11-13, "move all these
-            // icons to the far right, not on the left of the grading panel". On one side
-            // the first declaration is outermost: the panel-entry rail stays far right,
-            // the tools rail sits just inside it. Left edge is left to canvas and flow.
-            // Clearance and seam direction both follow a right-hand rail (on_left=false).
-            egui::Panel::right(inner_id)
+            // "Do not move the leftmost column": the tools rail stays at the far
+            // left, unchanged. The panel-entry rail is declared earlier above and
+            // must not be painted twice.
+            egui::Panel::left("rail-tools")
                 .exact_size(TOOL_W)
                 .resizable(false)
                 .frame(egui::Frame::NONE.fill(chrome()))
-                .show(root, |ui| tool_rail(state, ui, inner_half, false));
+                .show(root, |ui| tool_rail(state, ui, RailHalf::Tools, true));
         }
         // 检查器：贴窗口右缘的浮卡，与工具轨开不开无关。
         //
@@ -633,7 +626,7 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // Both sides now read one number: where the card is, is where the canvas stops.
     let dock_card_left = if develop && state.show_dock && !legacy {
         state.dock_pos.map(|p| p.x).unwrap_or_else(|| {
-            let rail_pad = if state.show_rails { 2.0 * TOOL_W } else { 0.0 };
+            let rail_pad = if state.show_rails { TOOL_W } else { 0.0 };
             full.right() - DOCK_GUTTER - state.dock_w - rail_pad
         })
     } else {
@@ -1017,7 +1010,7 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
     // With the rails on, the card must clear the rail on its side: a rail is a Panel and
     // paints under an Area, so the card would bury it whole (ticking "View -> tool rails"
     // looked like the right-hand rail never appeared).
-    let rail_pad = if state.show_rails { 2.0 * TOOL_W } else { 0.0 };
+    let rail_pad = if state.show_rails { TOOL_W } else { 0.0 };
     let default_pos = Pos2::new(
         if right {
             full.right() - DOCK_GUTTER - w - rail_pad
@@ -1115,12 +1108,9 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
             let widths = dock::tab_widths(&ui.painter().clone(), w, !state.keyframes.is_empty());
             let tabs_left = card.right() - dock::TAB_RESERVE_W - widths.iter().sum::<f32>();
             let zone = Rect::from_min_max(
+                Pos2::new(card.left() + dock::TAB_SLOT_W + 2.0, card.top() + 2.0),
                 Pos2::new(
-                    card.left() + dock::TAB_SLOT_W + dock::FILTER_W + 4.0,
-                    card.top() + 2.0,
-                ),
-                Pos2::new(
-                    (tabs_left - 4.0).max(card.left() + dock::TAB_SLOT_W + dock::FILTER_W + 8.0),
+                    (tabs_left - 4.0).max(card.left() + dock::TAB_SLOT_W + 6.0),
                     card.top() + 26.0,
                 ),
             );

@@ -1592,6 +1592,20 @@ fn view_menu(state: &mut AppState, ui: &mut Ui, _ctx: &Context) {
         &mut state.show_curves,
         RichText::new(crate::i18n::t!("曲线")).size(SIZE_BODY),
     );
+
+    menu_sep(ui);
+    // 「仅显示已改动」：从调色盘顶部独占 24px 的整行收进菜单（用户 2026-11-13
+    // 「去掉这个按钮…不要让他占用这么多界面」）。它是看什么的过滤器，属于视图
+    // 选项；一枚勾选即可，面板不再为它留空带，页签条上也不再挂孤零零的方框。
+    //
+    // "Only show changed": it used to own a whole 24 px row at the top of the palette.
+    // The user asked to remove the button; it is a viewing filter, so one checkbox
+    // here is enough. No empty band in the panel, no stray box on the tab strip.
+    ui.checkbox(
+        &mut state.only_changed,
+        RichText::new(crate::i18n::t!("仅显示已改动")).size(SIZE_BODY),
+    )
+    .on_hover_text(crate::i18n::t!("只显示已偏离默认值的参数"));
 }
 
 fn help_menu(state: &mut AppState, ui: &mut Ui) {
@@ -1800,6 +1814,7 @@ mod chrome_labels_tests {
             "显示工具选项栏",
             "显示流程步骤条",
             "画布铺满窗口",
+            "仅显示已改动",
         ] {
             assert!(text.contains(want), "视图菜单缺「{want}」：\n{text}");
         }
