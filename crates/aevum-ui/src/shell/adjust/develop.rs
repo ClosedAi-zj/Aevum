@@ -112,27 +112,26 @@ fn more_groups_chip(ui: &mut Ui, state: &mut AppState) {
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), Sense::hover());
         theme::groove(ui.painter(), rule.left(), rule.right(), rule.center().y);
         let (row, resp) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 57.0), Sense::click());
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::click());
         let hovered = resp.hovered();
         let p = ui.painter().clone();
         if hovered {
             p.rect_filled(row, 0.0, elev());
         }
-        // 内距与 `common::group_card` + `group_header` 一致：12px 卡片内距 +
-        // 19 箭头 / 50 标题 = 面板左缘起 31 / 62px（PS 实测）。
-        // Same insets as `common::group_card` + `group_header`: 12 px frame padding
-        // plus 19 / 50 = 31 / 62 px from the panel edge (measured in PS).
+        // 与 `group_header` 相同的等比内距：面板左缘起 18 / 36px，眼睛距右 18px。
+        // Same scaled insets as `group_header`: 18 / 36 px from the left, eye 18 px
+        // from the right.
         icons::paint(
             &p,
             Rect::from_center_size(
-                Pos2::new(row.left() + 31.0, row.center().y),
+                Pos2::new(row.left() + 18.0, row.center().y),
                 Vec2::splat(11.0),
             ),
             Glyph::ChevronRight,
             muted(),
         );
         p.text(
-            Pos2::new(row.left() + 62.0, row.center().y),
+            Pos2::new(row.left() + 36.0, row.center().y),
             Align2::LEFT_CENTER,
             crate::i18n::tr(cn),
             bold(SIZE_LABEL + 2.0),
@@ -141,7 +140,7 @@ fn more_groups_chip(ui: &mut Ui, state: &mut AppState) {
         icons::paint(
             &p,
             Rect::from_center_size(
-                Pos2::new(row.right() - 25.0, row.center().y),
+                Pos2::new(row.right() - 18.0, row.center().y),
                 Vec2::splat(14.0),
             ),
             Glyph::Eye,

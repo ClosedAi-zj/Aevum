@@ -40,8 +40,6 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         // expand/collapse.)
         egui::Frame::NONE
             .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 let n = state.frame_count();
@@ -106,8 +104,6 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         // expand/collapse.)
         egui::Frame::NONE
             .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .show(ui, |ui| {
         let n = state.frame_count();
@@ -303,8 +299,6 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         // expand/collapse.)
         egui::Frame::NONE
             .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 let busy = state.qa_busy;
@@ -447,8 +441,6 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         // expand/collapse.)
         egui::Frame::NONE
             .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 let n = state.frame_count();
@@ -555,8 +547,6 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         // expand/collapse.)
         egui::Frame::NONE
             .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 if let Some(report) = &state.align_report {
@@ -630,8 +620,6 @@ pub(super) fn adjust_sequence(state: &mut AppState, ui: &mut Ui) {
         // expand/collapse.)
         egui::Frame::NONE
             .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 kv_dense(ui, "测光长边", "512 px", muted());
@@ -657,8 +645,6 @@ pub(super) fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
         // expand/collapse.)
         egui::Frame::NONE
             .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .show(ui, |ui| {
         changed |= slider(
@@ -753,8 +739,6 @@ pub(super) fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
         // expand/collapse.)
         egui::Frame::NONE
             .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 if let Some(a) = &state.analysis {
@@ -814,8 +798,6 @@ pub(super) fn adjust_deflicker(state: &mut AppState, ui: &mut Ui) {
         // expand/collapse.)
         egui::Frame::NONE
             .fill(theme::chrome())
-            .stroke(egui::Stroke::new(1.0, theme::divider()))
-            .corner_radius((theme::radius_panel() - 4.0).max(2.0))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 let p = &mut state.params;

@@ -223,7 +223,7 @@ pub(super) fn group_card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     // 直角、无底色、无描边：组头与面板是同一张连续表面。
     // Square, unfilled, unstroked: header and panel are one continuous surface.
     let out = egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(12, 17))
+        .inner_margin(egui::Margin::symmetric(12, 0))
         .show(ui, add);
     out.inner
 }
@@ -398,8 +398,26 @@ pub(super) fn group_header(
     // Header 24 px (design `.grp-h`). The old 32 px belonged to a header outside the
     // card; once the header moves inside, 24 px plus the card's 12 px padding matches
     // the reference's breathing room.
+    // 组头**自己**占满 57px 行（PS 实测 57+3=60），不再靠 `group_card` 的
+    // 上下内距凑数：序列 / 去闪等模块直接调用本函数，外层没有那层内距，
+    // 于是同一个组头在不同模块出现 24px / 57px 两种节奏。这里统一后，
+    // 所有 40+ 处调用点行距一致。
+    //
+    // The header owns the full 57 px row (PS: 57+3=60). It no longer relies on
+    // group_card's vertical padding: Sequence / Deflicker call this directly
+    // without that padding, which produced two different row rhythms from one
+    // function. All 40+ call sites now share the same rhythm.
+    // 行高也要按**面板宽度比例**，不能照抄 PS 的 57px：PS 内容区 510px 宽，
+    // 57/510 = 11%；我们面板 300px 宽却用 57px = 19%，整行又厚又空
+    // （用户 2026-11-13 连问两次「ps 有这么宽吗」）。收到 40px（含 3px 线
+    // 共 43px = 14%），字行 gh=24 仍居中，判据锁的 `let gh = 24.0` 不变。
+    //
+    // Row height must scale with panel width too: PS's 57 px over a 510 px
+    // content area is 11%; the same 57 px on our 300 px panel is 19% and reads
+    // as a fat, empty row. Shrink to 40 px (43 px with the 3 px rule).
     let gh = 24.0;
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), gh), Sense::click());
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::click());
     if state.dock_focus.as_deref() == Some(key) {
         // 只推一次：egui 在下一帧把目标滚到位，截图时机在 900ms 之后，足够稳定。
         resp.scroll_to_me(Some(Align::Min));
@@ -420,21 +438,22 @@ pub(super) fn group_header(
     let open = !state.collapsed.contains(key);
     // 悬停是一整条圆角高亮，不是方条：macOS 侧栏分组头的口径。
     if resp.hovered() {
-        // PS 的组头 hover 是**整行**通栏微亮，不是一枚浮起的圆角按钮。
-        // 补回外层的 17px 上/下内距与 12px 左右内距，让高亮铺满整个 57px 行。
+        // 只铺满 `rect` 自己这一行，**不向外扩**：序列 / 去闪等模块的组头直接
+        // 调用 `group_header`（外面没有 group_card 的 17px 内距），上一版按 17px
+        // 外扩会把高亮画到上一行、盖住「对齐质量」下半截（用户 2026-11-13 截图）。
+        // hover 块绝不能依赖调用方的内距。
         //
-        // PS highlights the **whole row** on hover, not a raised rounded button;
-        // add back the outer padding so the wash covers the full 57 px row.
-        let row = Rect::from_min_max(
-            Pos2::new(rect.left() - 12.0, rect.top() - 17.0),
-            Pos2::new(rect.right() + 12.0, rect.bottom() + 17.0),
-        );
-        p.rect_filled(row, 0.0, elev());
+        // Fill only `rect`, never expand outward: Sequence / Deflicker call
+        // `group_header` directly with no group_card padding, so the previous 17 px
+        // expansion painted the wash over the previous row and clipped its text
+        // (user screenshot, 2026-11-13). Hover must not assume caller padding.
+        let line = Rect::from_center_size(rect.center(), Vec2::new(rect.width(), gh));
+        p.rect_filled(line, 0.0, elev());
     }
     icons::paint(
         p,
         Rect::from_center_size(
-            Pos2::new(rect.left() + 19.0, rect.center().y),
+            Pos2::new(rect.left() + 6.0, rect.center().y),
             Vec2::splat(11.0),
         ),
         if open {
@@ -463,15 +482,16 @@ pub(super) fn group_header(
     // Left edge inside the card: the design puts about 6 px between the chevron and
     // the title, and the card's 12 px padding already lands the title at x~18. Using
     // 18 keeps the title and the labels below it on the same column.
-    // PS 实测（用户截图 631px 宽）：箭头 x≈81、组名 x≈112、面板内容左缘 x≈50，
-    // 即箭头距左 31px、组名距左 62px、两者相距 21px。旧值 18 让标题贴着箭头，
-    // 整行读成一团；这里按实测摆，组名不再与下面的参数标签对齐——PS 也是错开的。
+    // 内距要按**面板宽度比例**换算，不能照抄 PS 的绝对像素：PS 调色盘内容区
+    // 约 505px 宽，箭头 31px / 组名 62px = 6% / 12%；我们面板只有 300px，
+    // 直接套 62px 会占 21%，左侧空出一大片（用户 2026-11-13「你做那么宽吗」）。
+    // 等比后为 18 / 36px；扣掉 group_card 的 12px 左右内距，这里是 6 / 24。
     //
-    // Measured from PS (631 px crop): chevron x~81, group name x~112, content left
-    // x~50 -- 31 px / 62 px insets, 21 px apart. The old 18 crammed the title against
-    // the chevron. Group names intentionally do not align with parameter labels;
-    // PS offsets them too.
-    let title_x = rect.left() + 50.0;
+    // Insets must scale with **panel width**, not copy PS's absolute pixels: PS's
+    // content area is ~505 px wide and 31 / 62 px = 6% / 12%. Our 300 px panel
+    // would spend 21% on the same 62 px, leaving a wide empty left band (user,
+    // 2026-11-13). Scaled: 18 / 36 px; minus the group card's 12 px padding -> 6 / 24.
+    let title_x = rect.left() + 24.0;
     p.galley(
         Pos2::new(title_x, rect.center().y - title_galley.size().y * 0.5),
         title_galley.clone(),
@@ -514,7 +534,7 @@ pub(super) fn group_header(
         // reset, leaving a conspicuous gap. The eye now owns the rightmost slot and the
         // reset slides out to its left on hover only.
         let er = Rect::from_center_size(
-            Pos2::new(rect.right() - 13.0, rect.center().y),
+            Pos2::new(rect.right() - 6.0, rect.center().y),
             Vec2::splat(20.0),
         );
         let eresp = ui.interact(
