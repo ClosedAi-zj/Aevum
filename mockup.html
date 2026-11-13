@@ -19,7 +19,7 @@
     --sunken: #101018;        /* 输入井 / 画布井 */
 
     /* —— 强调色（唯一彩色）—— */
-    --accent: #8B5CF6;
+    --accent: #8B5CF6;   /* 定稿：用户在设计面板亲自选定 */
     --accent-hover: #A78BFA;
     --accent-pressed: #7C3AED;
     --accent-tint: rgba(139,92,246,.18);   /* chip 淡染 */
@@ -75,12 +75,12 @@
     --ink-shadow: 0 1px 3px rgba(0,0,0,.9);
 
     /* —— 字体 —— */
-    --font: "Inter","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",noto,sans-serif;
-    --fs-meta: 11px; --fs-small: 12.5px; --fs-body: 13px; --fs-title: 14px;
-    line-height: 1.5;
+    --font: "Inter","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",noto,sans-serif; /* CJK 显式走原生雅黑 UI */
+    --fs-meta: 10.5px; --fs-small: 11.5px; --fs-body: 12px; --fs-title: 13px;
+    line-height: 1.45;
 
     /* —— 布局尺寸 —— */
-    --sidebar-w: 268px; --dock-w: 340px; --film-h: 118px;
+    --sidebar-w: 248px; --dock-w: 300px; --film-h: 112px;
 
     /* —— 其余 UI 面 —— */
     --page-bg: #0a0a10;                 /* mockup 页面底（窗外的桌面） */
@@ -120,7 +120,7 @@
          background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E"); }
 
   /* ================= 菜单行 ================= */
-  .menubar { height:44px; background: var(--menubar-mat), var(--bg); border-bottom:1px solid var(--hairline);
+  .menubar { height:40px; background: var(--menubar-mat), var(--bg); border-bottom:1px solid var(--hairline);
              display:flex; align-items:center; padding:0 var(--space-3); gap:2px; flex:none; }
   .logo { display:flex; align-items:center; gap:9px; margin-right:var(--space-3); }
   .logo .mark { width:20px; height:20px; }
@@ -131,11 +131,11 @@
           border-radius: var(--radius-ctl); cursor:default; }
   .menu:hover { background: var(--hover); color: var(--text); }
   .spacer { flex:1; }
-  .modpick { display:flex; align-items:center; gap: var(--space-2); font-size: var(--fs-body);
+  .modpick { display:flex; align-items:center; gap: var(--space-2); font-size: var(--fs-small);
              color:var(--text); background:var(--surface); border:1px solid var(--hairline-2);
-             border-radius: var(--radius-ctl); padding:5px var(--space-3); }
+             border-radius: var(--radius-ctl); padding:4px var(--space-3);; white-space:nowrap; }}
   .btn-primary { font-size: var(--fs-body); font-weight:500; color:var(--on-accent);
-                 border-radius: var(--radius-ctl); padding:6px 18px; cursor:default;
+                 border-radius: var(--radius-ctl); padding:5px 16px; cursor:default;
                  border:1px solid transparent;
                  background:
                    linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,0) 46%) padding-box,
@@ -152,20 +152,20 @@
   .winbtns .cls { color: var(--danger); }
 
   /* ================= 选项栏 ================= */
-  .optionsbar { height:40px; background:var(--bg); border-bottom:1px solid var(--hairline);
+  .optionsbar { height:36px; background:var(--bg); border-bottom:1px solid var(--hairline);
                 display:flex; align-items:center; padding:0 var(--space-3); gap: var(--space-3);
                 flex:none; }
   .doctab { display:flex; align-items:center; gap:9px; background:var(--surface);
             border:1px solid var(--hairline-2); border-radius: var(--radius-ctl);
-            height:29px; padding:0 var(--space-3); font-size: var(--fs-small); color:var(--text); }
+            height:29px; padding:0 var(--space-3); font-size: var(--fs-small); color:var(--text);; white-space:nowrap; }}
   .doctab .mod { width:6px; height:6px; border-radius:50%; background:var(--accent); }
   .vsep { width:1px; height:18px; background:var(--hairline); margin:0 2px; }
-  .kv { display:flex; align-items:center; gap:6px; font-size: var(--fs-small); color:var(--text-2); }
+  .kv { display:flex; align-items:center; gap:6px; font-size: var(--fs-small); color:var(--text-2); white-space:nowrap; }
   .kv b { color:var(--text); font-weight:400; font-variant-numeric:tabular-nums; }
   .btn {transition: background-color .12s ease-out, border-color .12s ease-out, outline-color .12s ease-out, color .12s ease-out;  font-size: var(--fs-small); color:var(--text); border:1px solid var(--hairline-2);
          border-radius: var(--radius-ctl); padding: var(--space-1) 14px; cursor:default; }
   .btn:hover { background: var(--hover); border-color: var(--hover-line); }
-  .badge { display:flex; align-items:center; gap:6px; }
+  .badge { display:flex; align-items:center; gap:6px; white-space:nowrap; }
   .badge .n { background: var(--accent-tint); color:var(--accent-text); font-size: var(--fs-small);
               border-radius: var(--radius-chip); padding:2px 9px; font-variant-numeric:tabular-nums; }
 
@@ -190,11 +190,11 @@
   .left { width: var(--sidebar-w); background: var(--panel-mat);
           display:flex; flex-direction:column; flex:none; min-height:0;
           box-shadow: inset 0 1px 0 var(--mat-top), var(--shadow-panel); z-index:1; }
-  .lhead { height:36px; display:flex; align-items:center; padding:0 14px; gap: var(--space-2);
-           flex:none; border-bottom:1px solid var(--hairline); }
+  .lhead { height:32px; display:flex; align-items:center; padding:0 14px; gap: var(--space-2);
+           flex:none; border-bottom:1px solid var(--hairline); white-space:nowrap; }
   .lhead .t { font-size: var(--fs-title); font-weight:600; }
   .lhead .en { font-size: var(--fs-meta); color:var(--text-3); }
-  .lsec { padding:10px var(--space-3) var(--space-3); border-bottom:1px solid var(--hairline); }
+  .lsec { padding:10px var(--space-3) 10px; border-bottom:1px solid var(--hairline); }
   .lsec h4 { font-size:10.5px; font-weight:600; color:var(--text-3); display:flex;
              align-items:center; gap:7px; margin-bottom:9px; letter-spacing:2.5px; }
   .lsec h4 .chev { margin-left:auto; }
@@ -274,7 +274,7 @@
   .thirds .v2 { left:66.6%; top:0; bottom:0; width:1px; }
   .thirds .h1 { top:33.3%; left:0; right:0; height:1px; }
   .thirds .h2 { top:66.6%; left:0; right:0; height:1px; }
-  .photo-meta { position:absolute; left:0; bottom:-24px; font-size:11.5px; color:var(--text-3);
+  .photo-meta { position:absolute; left:0; bottom:-24px; font-size: var(--fs-meta); color:var(--text-3);
                 font-variant-numeric:tabular-nums; letter-spacing:.2px; }
   .cmdbar { position:absolute; left:50%; top:14px; transform:translateX(-50%); z-index:3;
             display:flex; align-items:center; gap:10px; padding:6px 12px;
@@ -297,17 +297,17 @@
   .dock { width: var(--dock-w); background: var(--panel-mat);
           display:flex; flex-direction:column; flex:none; min-height:0;
           box-shadow: inset 0 1px 0 var(--mat-top), var(--shadow-panel-l); z-index:1; }
-  .docktabs { height:40px; display:flex; align-items:stretch; padding:0 var(--space-2);
-              border-bottom:1px solid var(--hairline); flex:none; }
+  .docktabs { height:34px; display:flex; align-items:stretch; padding:0 var(--space-2);
+              border-bottom:1px solid var(--hairline); flex:none; overflow:hidden; }
   .docktab {transition: background-color .12s ease-out, border-color .12s ease-out, outline-color .12s ease-out, color .12s ease-out;  display:flex; align-items:center; padding:0 13px; font-size: var(--fs-small);
-             color:var(--text-2); position:relative; cursor:default; }
+             color:var(--text-2); position:relative; cursor:default;; white-space:nowrap; }}
   .docktab:hover { color:var(--text); }
   .docktab.on { color:var(--text); font-weight:500; }
   .docktab.on::after { content:""; position:absolute; left:9px; right:9px; bottom:0; height:2px;
                        background:var(--accent); border-radius:1px; }
   .docktab .x { margin-left:auto; color:var(--text-3); padding-left:6px; }
   .dockbody { flex:1; overflow:hidden; display:flex; flex-direction:column; }
-  .histwrap { padding:14px var(--space-4) var(--space-3); border-bottom:1px solid var(--hairline); flex:none; }
+  .histwrap { padding:12px 14px 10px; border-bottom:1px solid var(--hairline); flex:none; }
   .histaxis { display:flex; justify-content:space-between; font-size:10px; color:var(--text-3);
               font-variant-numeric:tabular-nums; padding:3px 1px 0; border-top:1px solid var(--hairline);
               margin-top:2px; }
@@ -317,18 +317,18 @@
              font-variant-numeric:tabular-nums; }
   .rgbread i { width:7px; height:7px; border-radius:2px; display:inline-block; margin-right: var(--space-1); }
   .grp { border-bottom:1px solid var(--hairline); }
-  .grphead { display:flex; align-items:center; gap: var(--space-2); padding:12px 16px 10px; }
-  .grphead .nm { font-size: var(--fs-title); font-weight:600; color:var(--text); }
+  .grphead { display:flex; align-items:center; gap: var(--space-2); padding:10px 14px 8px; }
+  .grphead .nm { font-size: 12px; font-weight:600; color:var(--text); letter-spacing:1.6px; }
   .grphead .side { margin-left:auto; display:flex; align-items:center; gap:10px; color:var(--text-3); }
-  .grpbody { padding:0 var(--space-4) var(--space-4); }
-  .srow { position:relative; height:30px; }
-  .srow .lab { position:absolute; left:0; top:3px; font-size: var(--fs-small); color:var(--text-2); }
-  .srow .val { position:absolute; right:0; top:3px; font-size: var(--fs-small); color:var(--text);
+  .grpbody { padding:0 14px var(--space-3); }
+  .srow { position:relative; height:26px; }
+  .srow .lab { position:absolute; left:0; top:2px; font-size: var(--fs-small); color:var(--text-2); }
+  .srow .val { position:absolute; right:0; top:2px; font-size: var(--fs-small); color:var(--text);
                font-variant-numeric:tabular-nums; }
-  .srow .rail { position:absolute; left:0; right:0; top:24px; height:2px; background:var(--hairline-2);
+  .srow .rail { position:absolute; left:0; right:0; top:20px; height:2px; background:var(--hairline-2);
                 border-radius:1px; }
-  .srow .fillr { position:absolute; left:0; top:24px; height:2px; background:var(--txfill); border-radius:1px; }
-  .srow .knob { position:absolute; top:18.5px; width:12px; height:12px; border-radius:50%;
+  .srow .fillr { position:absolute; left:0; top:20px; height:2px; background:var(--txfill); border-radius:1px; }
+  .srow .knob { position:absolute; top:15.5px; width:12px; height:12px; border-radius:50%;
                 background: var(--knob); border:1px solid var(--sunken); box-shadow: var(--knob-shadow); }
   .srow:hover { background: var(--hover); }
   .grad-fill { background: var(--band-temp); }
@@ -355,7 +355,7 @@
   .cdots { display:flex; gap: var(--space-1); align-items:center; }
   .cdots i { width:9px; height:9px; border-radius:50%; }
   .filmrow { flex:1; display:flex; gap:9px; padding:0 var(--space-3) 10px; overflow:hidden; }
-  .thumb {transition: background-color .12s ease-out, border-color .12s ease-out, outline-color .12s ease-out, color .12s ease-out;  width:126px; flex:none; border-radius: var(--space-1); overflow:hidden; position:relative;
+  .thumb {transition: background-color .12s ease-out, border-color .12s ease-out, outline-color .12s ease-out, color .12s ease-out;  width:114px; flex:none; border-radius: var(--space-1); overflow:hidden; position:relative;
            outline:1px solid var(--hairline); cursor:default; }
   .thumb { transition: outline-color .12s ease-out, transform .12s ease-out, box-shadow .12s ease-out; }
   .thumb:hover { outline-color: var(--hover-line); transform: translateY(-2px);
@@ -377,7 +377,7 @@
   .transport .spacer { flex:1; }
 
   /* ================= 状态栏 ================= */
-  .status { height:26px; background:var(--bg); border-top:1px solid var(--hairline); display:flex;
+  .status { height:24px; background:var(--bg); border-top:1px solid var(--hairline); display:flex;
             align-items:center; gap:18px; padding:0 var(--space-3); font-size: var(--fs-small);
             color:var(--text-3); flex:none; font-variant-numeric:tabular-nums; }
   .status .v { color:var(--text-2); }
