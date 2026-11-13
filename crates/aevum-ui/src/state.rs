@@ -2707,6 +2707,18 @@ pub struct AppState {
     pub queue_path: PathBuf,
     pub queue_busy: bool,
     pub queue_current: Option<usize>,
+    /// 每段的实际耗时（秒），与 `queue` 等长；导出页表格的「耗时」列读它。
+    ///
+    /// Per-segment elapsed seconds, parallel to `queue`; feeds the table's elapsed column.
+    pub queue_secs: Vec<f32>,
+    /// 当前段的开始时刻：用来算「已用」与「预计剩余」。
+    ///
+    /// Start instant of the running segment, for elapsed and ETA.
+    pub queue_row_start: Option<std::time::Instant>,
+    /// 导出页表格里选中的行：行操作（移除 / 打开位置）只作用于它。
+    ///
+    /// Selected row in the export table; row actions apply to it only.
+    pub queue_selected: Option<usize>,
     queue_done: Arc<AtomicUsize>,
     queue_total: Arc<AtomicUsize>,
     queue_stage: Arc<AtomicU8>,

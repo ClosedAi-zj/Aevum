@@ -717,7 +717,7 @@ fn queue_card(state: &AppState, ui: &mut Ui, rect: Rect) {
 ///
 /// The settings card: 24 px label/value rows plus a full-width 26 px primary button
 /// pinned to the card's bottom.
-fn settings_card(state: &mut AppState, ui: &mut Ui, ctx: &egui::Context, rect: Rect) {
+pub(super) fn settings_card(state: &mut AppState, ui: &mut Ui, ctx: &egui::Context, rect: Rect) {
     let p = ui.painter().clone();
 
     let x0 = rect.left() + SIDE_PAD;

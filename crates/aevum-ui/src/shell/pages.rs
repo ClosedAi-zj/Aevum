@@ -333,148 +333,336 @@ fn cell(state: &mut AppState, ui: &mut Ui, ctx: &Context, i: usize, w: f32, h: f
     resp.on_hover_text(format!("第 {} 帧 · 双击进调色", i + 1));
 }
 
-/// 导出视频页：LapseOne 式「队列 + 设置 + 进度」。
+/// 导出视频页：**队列表格** + 右侧导出设置。
 ///
-/// Export page: LapseOne-style queue + settings + progress.
+/// 用户 2026-11-13 指定要设计稿 `deliverables/aevum-lapseone-redesign.html` 里那张
+/// 表格（状态 / 序列名称 / 导出目录 / 输出设置 / 进度 / 耗时），而不是之前那版
+/// 「左队列浮卡 + 中预览 + 右设置」。此前这页是 `export_ws::body` 的三栏复用，
+/// 一屏只能看见一段；批量导出真正要读的是「每一段跑到哪了」。
+///
+/// The export page: a **queue table** plus the export-settings column.
+/// The user (2026-11-13) asked for the table from
+/// `deliverables/aevum-lapseone-redesign.html` (status / sequence / folder / output
+/// setup / progress / elapsed) instead of the earlier queue-card + preview + settings
+/// three-column reuse, which could only show one segment at a time.
 pub(super) fn export_page(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
-    ui.add_space(6.0);
+    let area = ui.available_rect_before_wrap();
+    if area.width() < 560.0 || area.height() < 220.0 {
+        return;
+    }
+    let done = state
+        .queue
+        .iter()
+        .filter(|q| matches!(q.status, aevum_core::queue::QueueStatus::Done))
+        .count();
+    let failed = state
+        .queue
+        .iter()
+        .filter(|q| matches!(q.status, aevum_core::queue::QueueStatus::Failed))
+        .count();
+    let stat = crate::i18n::tr_fmt(
+        "{} 段 · 完成 {} · 失败 {}",
+        &[&state.queue.len(), &done, &failed],
+    );
+
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(crate::i18n::tr("导出视频"))
-                .font(crate::theme::bold(SIZE_TITLE))
+                .font(bold(SIZE_TITLE))
                 .color(text()),
         );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // 主行动（开始批量渲染）不在这里：它钉在设置列底部，一页只留一个
-            // 「终点」。运行中才在页头给「取消队列」——那是唯一一处急停入口，
-            // 埋在设置列底反而找不到。
-            //
-            // The primary ("start batch render") is not here: it lives at the bottom
-            // of the settings column so the page has exactly one finish line. While a
-            // batch runs, "cancel" appears in the head -- the one emergency stop
-            // should not be buried at the bottom of a column.
-            if state.queue_busy {
-                if primary_button(ui, "取消队列").clicked() {
-                    state.stop_queue();
-                }
-            } else {
-                if secondary_button(ui, "加入当前序列").clicked()
-                    && let Err(e) = state.add_current_to_queue()
-                {
-                    state.error = Some(e);
-                }
-                if !state.queue.is_empty() && secondary_button(ui, "清空队列").clicked() {
-                    state.clear_queue_rows();
-                }
+        ui.add_space(10.0);
+        ui.label(RichText::new(stat).size(SIZE_SMALL).color(muted()));
+    });
+    ui.add_space(4.0);
+
+    // 操作条：整批的四个动作 + 唯一主行动。窄窗按实测宽度逐枚收起，绝不压字。
+    ui.horizontal(|ui| {
+        if state.queue_busy {
+            if primary_button(ui, "取消队列").clicked() {
+                state.stop_queue();
             }
-        });
+        } else if primary_button(ui, "开始批量导出").clicked()
+            && let Err(e) = state.start_queue(ctx)
+        {
+            state.error = Some(e);
+        }
+        if !state.queue_busy
+            && secondary_button(ui, "加入当前序列").clicked()
+            && let Err(e) = state.add_current_to_queue()
+        {
+            state.error = Some(e);
+        }
+        if !state.queue_busy && secondary_button(ui, "更新队列顺序").clicked() {
+            state.queue.sort_by(|a, b| a.root.cmp(&b.root));
+            state.queue_secs.clear();
+            state.queue_selected = None;
+            state.save_queue();
+        }
+        if !state.queue_busy
+            && secondary_button(ui, "移除选中").clicked()
+            && let Some(i) = state.queue_selected
+        {
+            state.remove_queue_at(i);
+        }
+        if !state.queue_busy && secondary_button(ui, "清空已完成").clicked() {
+            // 只清已完成的段：失败与待跑的必须留下，否则清一次就把待办也删了。
+            // Drop finished rows only: failed and pending segments must survive.
+            let keep: Vec<_> = state
+                .queue
+                .iter()
+                .filter(|q| !matches!(q.status, aevum_core::queue::QueueStatus::Done))
+                .cloned()
+                .collect();
+            if keep.len() != state.queue.len() {
+                state.queue = keep;
+                state.queue_secs.clear();
+                state.queue_selected = None;
+                state.save_queue();
+            }
+        }
     });
     ui.add_space(6.0);
 
-    // 概况：帧数 / 片长 / 队列段数。LapseOne 的导出页先回答「要导什么」。
-    let fps = state.output_fps.max(1.0);
-    let secs = state.frame_count() as f32 / fps;
-    ui.horizontal(|ui| {
-        for (k, v) in [
-            ("序列帧数", format!("{}", state.frame_count())),
-            (
-                "片长",
-                format!("{:02}:{:02}", (secs / 60.0) as u32, (secs % 60.0) as u32),
-            ),
-            ("队列", crate::i18n::tr_fmt("{} 段", &[&state.queue.len()])),
-        ] {
-            card_stat(ui, k, &v);
-        }
-    });
+    let body = ui.available_rect_before_wrap();
+    if body.height() < 80.0 {
+        return;
+    }
+    const SIDE_W: f32 = 268.0;
+    const GAP: f32 = 10.0;
+    let side_w = SIDE_W.min((body.width() - 260.0).max(200.0));
+    let table = egui::Rect::from_min_max(
+        body.min,
+        egui::Pos2::new(body.right() - side_w - GAP, body.bottom()),
+    );
+    let side =
+        egui::Rect::from_min_max(egui::Pos2::new(body.right() - side_w, body.top()), body.max);
+    queue_table(state, ui, table);
+    super::export_ws::settings_card(state, ui, ctx, side);
+}
 
-    if let Some((done, total, stage)) = state.queue_progress() {
-        let frac = if total > 0 {
-            done as f32 / total as f32
+/// 队列表格本体：表头 + 一行一段。
+///
+/// The queue table: a header row plus one row per segment.
+fn queue_table(state: &mut AppState, ui: &mut Ui, rect: egui::Rect) {
+    if rect.width() < 240.0 || rect.height() < 60.0 {
+        return;
+    }
+    let p = ui.painter().clone();
+    p.rect_filled(rect, 0.0, panel());
+    p.rect_stroke(
+        rect,
+        0.0,
+        egui::Stroke::new(1.0, border()),
+        egui::StrokeKind::Inside,
+    );
+
+    const PAD: f32 = 10.0;
+    const HEAD_H: f32 = 26.0;
+    const ROW_H: f32 = 26.0;
+    const ST_W: f32 = 68.0;
+    const IDX_W: f32 = 30.0;
+    const SPEC_W: f32 = 92.0;
+    const PROG_W: f32 = 96.0;
+    const TIME_W: f32 = 50.0;
+    let flex = (rect.width() - 2.0 * PAD - ST_W - IDX_W - SPEC_W - PROG_W - TIME_W).max(120.0);
+    let name_w = flex * 0.44;
+    let out_w = flex - name_w;
+    let x0 = rect.left() + PAD;
+    let cols = [
+        ("状态", ST_W),
+        ("#", IDX_W),
+        ("序列名称", name_w),
+        ("导出目录", out_w),
+        ("输出设置", SPEC_W),
+        ("进度", PROG_W),
+        ("耗时", TIME_W),
+    ];
+
+    let head = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), HEAD_H));
+    p.rect_filled(head, 0.0, elev());
+    p.line_segment(
+        [
+            egui::Pos2::new(head.left(), head.bottom() - 0.5),
+            egui::Pos2::new(head.right(), head.bottom() - 0.5),
+        ],
+        egui::Stroke::new(1.0, border()),
+    );
+    let mut cx = x0;
+    for (label, w) in cols {
+        // 表头按列宽裁：英文列名比中文长，窄窗下会压到下一列（多尺寸扫描实测
+        // 1080 下「Folder」压「Output setup」1.2px）。裁到列宽内，永不外溢。
+        //
+        // Clip each header to its column: English names are wider than the Chinese
+        // ones and cross into the next column on narrow windows (measured 1.2 px at
+        // 1080). Fitting to the column keeps it inside, always.
+        p.text(
+            egui::Pos2::new(cx, head.center().y),
+            egui::Align2::LEFT_CENTER,
+            fit_text(
+                &p,
+                crate::i18n::tr(label),
+                font(SIZE_SMALL),
+                muted(),
+                w - 4.0,
+            ),
+            font(SIZE_SMALL),
+            muted(),
+        );
+        cx += w;
+    }
+
+    if state.queue.is_empty() {
+        p.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            crate::i18n::tr("队列是空的：先回到画布把序列加入队列"),
+            font(SIZE_LABEL),
+            dim(),
+        );
+        return;
+    }
+
+    let progress = state.queue_progress();
+    let mut y = head.bottom();
+    let rows_bottom = rect.bottom() - 6.0;
+    let mut clicked: Option<usize> = None;
+    for i in 0..state.queue.len() {
+        if y + ROW_H > rows_bottom {
+            break;
+        }
+        let row = egui::Rect::from_min_size(
+            egui::Pos2::new(rect.left(), y),
+            Vec2::new(rect.width(), ROW_H),
+        );
+        let resp = ui.interact(row, ui.make_persistent_id(("queue-row", i)), Sense::click());
+        if state.queue_selected == Some(i) {
+            p.rect_filled(row, 0.0, accent_dim());
+        } else if resp.hovered() {
+            p.rect_filled(row, 0.0, row_hover());
+        }
+        if resp.clicked() {
+            clicked = Some(i);
+        }
+        let Some(item) = state.queue.get(i) else {
+            break;
+        };
+        let running = state.queue_busy && state.queue_current == Some(i);
+        let (status_text, status_color) = match item.status {
+            aevum_core::queue::QueueStatus::Done => ("完成", ok()),
+            aevum_core::queue::QueueStatus::Failed => ("失败", danger()),
+            _ if running => ("进行中", accent_hover()),
+            _ => ("待处理", dim()),
+        };
+        let mut cx = x0;
+        p.text(
+            egui::Pos2::new(cx, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            crate::i18n::tr(status_text),
+            font(SIZE_SMALL),
+            status_color,
+        );
+        cx += ST_W;
+        p.text(
+            egui::Pos2::new(cx, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            format!("{}", i + 1),
+            font(SIZE_SMALL),
+            dim(),
+        );
+        cx += IDX_W;
+        let name = std::path::Path::new(&item.root)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| item.root.clone());
+        p.text(
+            egui::Pos2::new(cx, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            fit_text(&p, &name, font(SIZE_SMALL), text(), name_w - 8.0),
+            font(SIZE_SMALL),
+            text(),
+        );
+        cx += name_w;
+        p.text(
+            egui::Pos2::new(cx, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            fit_text(&p, &item.out, font(SIZE_SMALL), dim(), out_w - 8.0),
+            font(SIZE_SMALL),
+            dim(),
+        );
+        cx += out_w;
+        let spec = format!("{} · {}×{}", item.codec, item.width, item.height);
+        p.text(
+            egui::Pos2::new(cx, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            fit_text(&p, &spec, font(SIZE_SMALL), muted(), SPEC_W - 8.0),
+            font(SIZE_SMALL),
+            muted(),
+        );
+        cx += SPEC_W;
+        // 进度条：跑的那段读实时比例，完成的是 100%，其余是 0。
+        // Progress: live ratio for the running row, 100% when done, 0 otherwise.
+        let frac = if matches!(item.status, aevum_core::queue::QueueStatus::Done) {
+            1.0
+        } else if running {
+            progress
+                .map(|(d, t, _)| if t > 0 { d as f32 / t as f32 } else { 0.0 })
+                .unwrap_or(0.0)
         } else {
             0.0
         };
-        let phase = match stage {
-            aevum_core::export::Stage::Frames => "写帧",
-            aevum_core::export::Stage::Encode => "编码",
-        };
-        ui.add_space(6.0);
-        ui.add(
-            egui::ProgressBar::new(frac).desired_height(10.0).text(
-                RichText::new(crate::i18n::tr_fmt("{}{}/{}", &[&phase, &done, &total]))
-                    .size(SIZE_SMALL),
-            ),
+        let bar = egui::Rect::from_min_size(
+            egui::Pos2::new(cx, row.center().y - 4.0),
+            Vec2::new(PROG_W - 40.0, 8.0),
         );
-    }
-
-    ui.add_space(8.0);
-
-    // 页体：与整页「导出工作台」共用同一套三栏（队列 | 预览 | 设置）。此前这里是
-    // 自己写的一套 62/38 两张卡，同一个功能出现两种界面，而且左列铺满 900px 只放
-    // 一行队列——全站最空的地方（用户 2026-11-12 第 10 条）。
-    //
-    // Body: the same three-column layout (queue / preview / settings) the full-page
-    // export bench uses. This page used to carry its own 62/38 two-card body, giving
-    // one feature two interfaces and leaving a 900 px column holding a single row.
-    const FOOT_H: f32 = 28.0;
-    let area = ui.available_rect_before_wrap();
-    let body_h = (area.height() - FOOT_H - 8.0).max(160.0);
-    let body = egui::Rect::from_min_size(area.min, Vec2::new(area.width(), body_h));
-    super::export_ws::body(state, ui, ctx, body);
-
-    // 底栏只报事实：主行动已钉在设置列底部，这里再放一颗「开始」就是两个终点。
-    //
-    // The footer reports facts only: the primary already lives at the bottom of the
-    // settings column, and a second "start" would make two finish lines.
-    let foot =
-        egui::Rect::from_min_max(egui::Pos2::new(area.left(), body.bottom() + 8.0), area.max);
-    // 状态条按可用宽度收（R9）：固定 64 字符的省略在窄窗里整行被右缘裁掉、
-    // 连省略号一起不见——宽度适配才是「收」的正确姿势。
-    //
-    // The footer fits to the available width (R9): a fixed 64-character ellipsis gets
-    // the whole line clipped off the right edge on narrow windows, ellipsis and all --
-    // width fitting is the right way to truncate.
-    let p = ui.painter();
-    let line = crate::i18n::tr_fmt(
-        "{} 段排队 · 输出 {}",
-        &[
-            &state.queue.len(),
-            &state.render_video_out.display().to_string(),
-        ],
-    );
-    ui.painter().text(
-        egui::Pos2::new(foot.left(), foot.center().y),
-        egui::Align2::LEFT_CENTER,
-        crate::theme::fit_text(
-            p,
-            &line,
-            crate::theme::font(SIZE_SMALL),
+        crate::theme::progress_bar(&p, bar, frac, status_color);
+        p.text(
+            egui::Pos2::new(bar.right() + 6.0, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            format!("{:.0}%", frac * 100.0),
+            font(SIZE_SMALL),
             muted(),
-            foot.width() - 24.0,
-        ),
-        crate::theme::font(SIZE_SMALL),
-        muted(),
-    );
-}
-
-/// 概况格：小标签 + 值。
-///
-/// A summary cell: small label plus value.
-fn card_stat(ui: &mut Ui, k: &str, v: &str) {
-    let frame = egui::Frame::NONE
-        .fill(panel())
-        .stroke(egui::Stroke::new(1.0, border()))
-        .corner_radius(radius_control())
-        .inner_margin(egui::Margin::symmetric(12, 6));
-    frame.show(ui, |ui| {
-        ui.vertical(|ui| {
-            ui.label(
-                RichText::new(crate::i18n::tr(k))
-                    .size(SIZE_SMALL)
-                    .color(muted()),
-            );
-            ui.label(RichText::new(v).size(SIZE_BODY).color(text()));
-        });
-    });
+        );
+        cx += PROG_W;
+        let secs = state
+            .queue_secs
+            .get(i)
+            .copied()
+            .unwrap_or_default()
+            .max(if running {
+                state
+                    .queue_row_start
+                    .map(|s| s.elapsed().as_secs_f32())
+                    .unwrap_or_default()
+            } else {
+                0.0
+            });
+        let time = if secs > 0.5 {
+            format!("{:02}:{:02}", (secs / 60.0) as u32, (secs % 60.0) as u32)
+        } else {
+            "—".to_owned()
+        };
+        p.text(
+            egui::Pos2::new(cx, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            time,
+            font(SIZE_SMALL),
+            muted(),
+        );
+        // 行底一道发丝线：表格靠线读行，不靠斑马纹。
+        // A hairline under each row: the table reads by rules, not zebra stripes.
+        p.line_segment(
+            [
+                egui::Pos2::new(row.left() + 1.0, row.bottom() - 0.5),
+                egui::Pos2::new(row.right() - 1.0, row.bottom() - 0.5),
+            ],
+            egui::Stroke::new(1.0, border()),
+        );
+        y += ROW_H;
+    }
+    if let Some(i) = clicked {
+        state.queue_selected = Some(i);
+    }
 }
 
 /// 常规按钮（中性底 + 1px 边）。

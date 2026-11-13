@@ -479,6 +479,42 @@ pub(super) fn menu_row(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     help_menu(state, ui);
                 },
             );
+            // 工作台切换：**顶栏常显**的分段控件（用户 2026-11-13「我不喜欢这几个
+            // 选项悬浮」）。它原本是画布上方一条悬浮胶囊，被嫌悬浮后整条被并进
+            // 「视图」菜单——等于藏起来了。现在钉进菜单行：永远看得见、也不再压
+            // 在照片上，四项编号与 Ctrl+Alt+1..4 对应。
+            //
+            // Bench switcher: an always-visible segmented control in the menu row
+            // (user, 2026-11-13: disliked the floating pill). It used to hover over the
+            // canvas and was folded into the View menu -- effectively hidden. Docked in
+            // the menu row it is always reachable, never covers the photo, and the four
+            // numbers still match Ctrl+Alt+1..4.
+            ui.add_space(14.0);
+            // 分段控件自成一簇：chip 之间 4px，和菜单/撤销重做之间各留 14px，
+            // 否则挤成「帮助 1显影 2帧表 …」一条字。
+            // The segmented control is its own cluster: 4 px between chips and 14 px
+            // from both neighbours, or it reads as one long run of text.
+            let spacing_backup = ui.spacing().item_spacing.x;
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for b in Bench::ALL {
+                let active = state.bench == b;
+                let label = format!("{} {}", b.no(), crate::i18n::tr(b.cn()));
+                let ink = if active { on_accent() } else { muted() };
+                let btn =
+                    egui::Button::new(RichText::new(label).size(SIZE_CHROME_LABEL).color(ink))
+                        .fill(if active {
+                            accent()
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
+                        .corner_radius(radius_control())
+                        .min_size(egui::Vec2::new(0.0, 20.0));
+                let resp = ui.add(btn).on_hover_text(format!("Ctrl+Alt+{}", b.no()));
+                if resp.clicked() {
+                    state.set_bench(b);
+                }
+            }
+            ui.spacing_mut().item_spacing.x = spacing_backup;
         },
     );
     x = menu_bar.response.rect.right() + 8.0;

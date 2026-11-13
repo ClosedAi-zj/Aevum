@@ -22,7 +22,12 @@ impl AppState {
         self.queue = queue::load(&self.queue_path);
     }
 
-    pub(super) fn save_queue(&mut self) {
+    /// 落盘队列：导出页的批量操作（排序 / 清空已完成）改完必须立刻写回，
+    /// 否则下次启动读到的是旧顺序。
+    ///
+    /// Persist the queue: the export page's batch actions must write back at once, or
+    /// the next launch reads the old order.
+    pub(crate) fn save_queue(&mut self) {
         if let Err(e) = queue::save(&self.queue_path, &self.queue) {
             self.error = Some(crate::i18n::tr_fmt("队列保存失败：{}", &[&e]));
         }
@@ -224,6 +229,14 @@ impl AppState {
 
         self.queue_busy = true;
         self.queue_current = Some(0);
+        // 每次开跑都把逐段耗时清零，并把起点钉在现在：表格的「耗时 / 预计剩余」
+        // 读的就是这两个。
+        //
+        // Reset per-segment timings on every run and pin the start to now: the table's
+        // elapsed / ETA columns read exactly these two.
+        self.queue_secs = vec![0.0; n];
+        self.queue_row_start = Some(std::time::Instant::now());
+        self.queue_selected = None;
         self.cancel_queue.store(false, Ordering::SeqCst);
         self.queue_done.store(0, Ordering::Relaxed);
         self.queue_total.store(0, Ordering::Relaxed);
@@ -312,6 +325,13 @@ impl AppState {
             return false;
         }
         self.queue.remove(index);
+        // 耗时表与队列等长：删一段就要删同一位，否则后面每段的耗时会串位。
+        // Keep the timing list the same length as the queue: dropping a segment must
+        // drop its slot, or every later segment shows the wrong elapsed time.
+        if index < self.queue_secs.len() {
+            self.queue_secs.remove(index);
+        }
+        self.queue_selected = None;
         self.save_queue();
         true
     }
@@ -322,6 +342,8 @@ impl AppState {
         }
         let cleared = self.queue.len();
         self.queue.clear();
+        self.queue_secs.clear();
+        self.queue_selected = None;
         self.save_queue();
         cleared
     }

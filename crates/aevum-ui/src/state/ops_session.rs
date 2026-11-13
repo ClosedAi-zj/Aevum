@@ -878,6 +878,9 @@ impl AppState {
             queue_path: queue::default_path(),
             queue_busy: false,
             queue_current: None,
+            queue_secs: Vec::new(),
+            queue_row_start: None,
+            queue_selected: None,
             queue_done: Arc::new(AtomicUsize::new(0)),
             queue_total: Arc::new(AtomicUsize::new(0)),
             queue_stage: Arc::new(AtomicU8::new(0)),
@@ -2227,6 +2230,22 @@ impl AppState {
                     status,
                     note,
                 } => {
+                    // 记下这一段的实际耗时（导出页表格的「耗时」列），并把起点挪到
+                    // 下一段：队列是一段接一段跑的，这一段的结束就是下一段的开始。
+                    //
+                    // Record this segment's elapsed time (the table's elapsed column) and
+                    // move the start mark to the next one: the queue runs back-to-back, so
+                    // one segment's end is the next one's start.
+                    if let Some(start) = self.queue_row_start.take() {
+                        let secs = start.elapsed().as_secs_f32();
+                        if self.queue_secs.len() <= index {
+                            self.queue_secs.resize(index + 1, 0.0);
+                        }
+                        if let Some(slot) = self.queue_secs.get_mut(index) {
+                            *slot = secs;
+                        }
+                    }
+                    self.queue_row_start = Some(std::time::Instant::now());
                     if let Some(item) = self.queue.get_mut(index) {
                         item.status = status;
                         item.note = note;
