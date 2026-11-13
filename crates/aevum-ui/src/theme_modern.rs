@@ -1,14 +1,20 @@
-//! 现代暗色主题（v18 方向）：indigo 强调 + 圆角 12 + 柔和投影 + Inter 字体 + 充足留白。
+//! v18 统一令牌模块（方向：Arc / Linear / Raycast 系现代暗色工作台）。
 //!
-//! 与 [`crate::theme`]（旧壳的六皮肤三层体系）完全独立：本模块只提供
-//! [`apply_modern_dark`]，接收 [`egui::Context`] 一次性安装字体 + Visuals + Style，
-//! 不读 AppState、不碰旧皮肤。设计稿见 docs/aevum-v18-mockup.html。
+//! 全应用唯一色源：**任何其它模块禁止写死 `egui::Color32` 裸色**——一律经本模块
+//! 的常量与访问器取色。应用入口调用 [`apply_modern_dark`] 一次性
+//! `set_visuals` + `set_style`（egui 0.37 的等价入口是 `set_style_of`）套用全局。
 //!
-//! A modern dark theme (v18 direction): indigo accent + 12 px corner radius +
-//! soft shadows + Inter type + generous whitespace. Fully independent of the old
-//! six-skin [`crate::theme`] system; [`apply_modern_dark`] takes an [`egui::Context`]
-//! and installs fonts + Visuals + Style in one call. Mockups live in
-//! docs/aevum-v18-mockup.html.
+//! 层级语言：`BASE 底 → SURFACE 卡 → OVERLAY 浮层 → SUNKEN 井`，
+//! 分隔只用一根白 α 发丝线；强调色唯一（indigo #6366F1），选中=实底+白字，
+//! hover=白 α 极淡染；圆角三档（窗/卡 12 · 控件 8 · 徽标 6）；
+//! 投影两档（窗/浮层）大 blur 低 alpha；字体 Inter + Noto Sans SC，真 700 字族。
+//!
+//! The single color source of the app: no other module may hardcode
+//! `egui::Color32` literals -- everything goes through these constants and
+//! accessors. The app entry calls [`apply_modern_dark`] once, which runs
+//! `set_visuals` + `set_style` (egui 0.37's `set_style_of`) globally.
+//! Layer language: BASE -> SURFACE -> OVERLAY -> SUNKEN, hairline separators,
+//! one accent (indigo), three radius tiers, two soft shadow tiers.
 
 use egui::{
     Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Shadow, Style,
@@ -17,66 +23,176 @@ use egui::{
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
-/// 强调色 #6366F1（indigo）：唯一彩色，用于选中/主按钮/进度/焦点。
+// ============ 强调色（唯一彩色） ============
+
+/// 强调色 #6366F1：选中/主按钮/进度/焦点，全应用唯一彩色。
 ///
-/// Accent #6366F1 (indigo): the single color, for selection / primary buttons /
-/// progress / focus.
+/// Accent #6366F1: selection / primary button / progress / focus -- the only color.
 pub const ACCENT: Color32 = Color32::from_rgb(0x63, 0x66, 0xF1);
-/// 悬停态强调色（强调色提亮一档）。
+/// 强调色 hover（提亮一档）。
 ///
-/// Hover accent, one step lighter than [`ACCENT`].
+/// Accent hover, one step lighter.
 pub const ACCENT_HOVER: Color32 = Color32::from_rgb(0x7A, 0x7D, 0xF4);
-/// 按压态强调色（压暗一档）。
+/// 强调色按压（压暗一档）。
 ///
-/// Pressed accent, one step darker than [`ACCENT`].
+/// Accent pressed, one step darker.
 pub const ACCENT_PRESSED: Color32 = Color32::from_rgb(0x4F, 0x52, 0xD6);
+/// 强调色淡染（chip/徽标的 18% 染底）。
+///
+/// Accent tint for chips/badges (~18% wash).
+pub fn accent_tint() -> Color32 {
+    Color32::from_rgba_unmultiplied(0x63, 0x66, 0xF1, 46)
+}
 
-/// 主背景 #1E1E2E（用户钦定）。
-///
-/// Base background #1E1E2E (as specified).
-pub const BG: Color32 = Color32::from_rgb(0x1E, 0x1E, 0x2E);
-/// 悬浮面（卡片/弹层比主背景亮一档）。
-///
-/// Elevated surface (cards/popups), one step lighter than [`BG`].
-pub const ELEVATED: Color32 = Color32::from_rgb(0x26, 0x26, 0x3A);
-/// 输入框底（比主背景暗一档，让光标对比清晰）。
-///
-/// Text-edit background, one step darker than [`BG`].
-pub const FIELD: Color32 = Color32::from_rgb(0x18, 0x18, 0x26);
+// ============ 背景层级（由深到浅） ============
 
-/// 主文字 #E6E6F2。
+/// SUNKEN：输入井/画布井——比底再深一档，靠「凹」读出可输入。
 ///
-/// Primary text #E6E6F2.
-pub const TEXT: Color32 = Color32::from_rgb(0xE6, 0xE6, 0xF2);
-/// 次要文字。
+/// SUNKEN: input wells / canvas well, one step below BASE.
+pub const SUNKEN: Color32 = Color32::from_rgb(0x16, 0x16, 0x1F);
+/// BASE：应用底/侧栏/面板——#1E1E2E。
 ///
-/// Secondary text.
-pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x9C, 0xA0, 0xB8);
-/// 弱文字（占位/禁用）。
+/// BASE: app background / sidebar / panels -- #1E1E2E.
+pub const BASE: Color32 = Color32::from_rgb(0x1E, 0x1E, 0x2E);
+/// SURFACE：卡片/浮出面板——比 BASE 亮一档。
 ///
-/// Faint text (placeholder/disabled).
-pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x6A, 0x6E, 0x85);
+/// SURFACE: cards / raised panels, one step above BASE.
+pub const SURFACE: Color32 = Color32::from_rgb(0x26, 0x26, 0x3A);
+/// OVERLAY：弹层/菜单/浮窗——再亮一档，配合投影读出「浮」。
+///
+/// OVERLAY: popovers / menus / floats, above SURFACE, paired with a shadow.
+pub const OVERLAY: Color32 = Color32::from_rgb(0x2E, 0x2E, 0x48);
 
-/// 细边框：白 7%（深底上读作一根发丝线）。
+/// 旧名兼容：`ELEVATED` = [`SURFACE`]，`FIELD` = [`SUNKEN`]，`BG` = [`BASE`]。
 ///
-/// Thin border: white at 7% -- reads as one hairline on the dark base.
-pub fn border_line() -> Color32 {
+/// Legacy aliases kept so earlier examples keep compiling.
+pub const ELEVATED: Color32 = SURFACE;
+pub const FIELD: Color32 = SUNKEN;
+pub const BG: Color32 = BASE;
+
+// ============ 发丝分隔线 ============
+
+/// 发丝线：白 7%——区块间唯一分隔手段（禁 bevel/凹槽/条纹）。
+///
+/// Hairline: white at 7% -- the only separator between sections.
+pub fn hairline() -> Color32 {
     Color32::from_white_alpha(18)
 }
-
-/// 加粗字族名（真 700 face，禁假加粗）。
+/// 强发丝线：白 12%（hover 描边/窗框）。
 ///
-/// Bold family name (real 700 faces; synthetic bold is off the table).
-pub fn bold_family() -> FontFamily {
-    FontFamily::Name("modern-bold".into())
+/// Strong hairline: white at 12% (hover outline / window frame).
+pub fn hairline_strong() -> Color32 {
+    Color32::from_white_alpha(30)
 }
 
-/// 装配字体：Inter（可变字体，默认 400）+ Noto Sans SC 500 打头，
-/// 700 子集组成独立 bold 字族；等宽族与正文同链。装配一次缓存共享。
+// ============ 文字阶梯 ============
+
+/// 主文字。
 ///
-/// Font assembly: Inter (variable, default 400) + Noto Sans SC 500 lead; the two
-/// 700 subsets form a separate bold family; the mono family shares the same chain.
-/// Built once and cached -- `apply` runs on startup and on every zoom change.
+/// Primary text.
+pub const TEXT: Color32 = Color32::from_rgb(0xE8, 0xE8, 0xF4);
+/// 次要文字（标签/元信息）。
+///
+/// Secondary text (labels / metadata).
+pub const TEXT_MUTED: Color32 = Color32::from_rgb(0xA4, 0xA8, 0xC0);
+/// 弱文字（占位/禁用）。
+///
+/// Faint text (placeholder / disabled).
+pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x6C, 0x70, 0x90);
+
+// ============ 状态色（只出现在状态点/横幅，不做控件主色） ============
+
+/// 完成/成功。
+///
+/// Done / success.
+pub const OK: Color32 = Color32::from_rgb(0x5F, 0xBF, 0x7A);
+/// 警示（降速/暂停/长任务）。
+///
+/// Warning (slowed / paused / long job).
+pub const WARN: Color32 = Color32::from_rgb(0xE0, 0xB1, 0x5E);
+/// 错误。
+///
+/// Error.
+pub const DANGER: Color32 = Color32::from_rgb(0xF8, 0x71, 0x71);
+
+// ============ 圆角三档 ============
+
+/// 窗/卡档：12。
+///
+/// Window / card tier: 12.
+pub const R_CARD: u8 = 12;
+/// 控件档：8（按钮/输入/菜单项）。
+///
+/// Control tier: 8 (buttons / inputs / menu rows).
+pub const R_CONTROL: u8 = 8;
+/// 徽标档：6（chip/小标签）。
+///
+/// Badge tier: 6 (chips / small tags).
+pub const R_CHIP: u8 = 6;
+
+// ============ 间距刻度（4 基准网格） ============
+
+/// 间距刻度：4 / 8 / 12 / 16 / 20 / 24。
+///
+/// Spacing scale: 4 / 8 / 12 / 16 / 20 / 24.
+pub const SP1: f32 = 4.0;
+pub const SP2: f32 = 8.0;
+pub const SP3: f32 = 12.0;
+pub const SP4: f32 = 16.0;
+pub const SP5: f32 = 20.0;
+pub const SP6: f32 = 24.0;
+/// 列表行高。
+///
+/// List row height.
+pub const ROW_H: f32 = 32.0;
+/// 控件内距。
+///
+/// Control padding.
+pub fn pad_control() -> Vec2 {
+    Vec2::new(12.0, 7.0)
+}
+/// 窗口/页面边距。
+///
+/// Window / page margin.
+pub const WIN_MARGIN: f32 = 16.0;
+
+// ============ 投影两档 ============
+
+/// 窗投影：大 blur 低 alpha，向下飘。
+///
+/// Window shadow: large blur, low alpha, drifting down.
+pub fn shadow_window() -> Shadow {
+    Shadow {
+        offset: [0, 14],
+        blur: 36,
+        spread: 0,
+        color: Color32::from_black_alpha(120),
+    }
+}
+/// 浮层投影：比窗投影收一档。
+///
+/// Popup shadow, one tier tighter than [`shadow_window`].
+pub fn shadow_popup() -> Shadow {
+    Shadow {
+        offset: [0, 10],
+        blur: 28,
+        spread: 0,
+        color: Color32::from_black_alpha(100),
+    }
+}
+
+/// 加粗字族名（真 700 face；禁假加粗/font-synthesis）。
+///
+/// Bold family name (real 700 faces; synthetic bold forbidden).
+pub fn bold_family() -> FontFamily {
+    FontFamily::Name("v18-bold".into())
+}
+
+/// 字体装配：Inter（可变，400）+ Noto Sans SC 500 打头，700 子集独立 bold 族；
+/// 等宽族与正文同链（数字与中文同脸）。装配一次缓存。
+///
+/// Font assembly: Inter (variable, 400) + Noto Sans SC 500 lead; the 700 subsets
+/// form a separate bold family; the mono family shares the body chain. Built once.
 fn font_definitions() -> FontDefinitions {
     static DEFS: OnceLock<FontDefinitions> = OnceLock::new();
     DEFS.get_or_init(|| {
@@ -102,10 +218,6 @@ fn font_definitions() -> FontDefinitions {
             list.insert(0, "inter".to_owned());
             list.insert(1, "noto".to_owned());
         }
-        // bold 字族：700 子集打头，其后整条接上常规链（缺字回落为常规体，不出豆腐）。
-        //
-        // Bold family: 700 subsets lead, then the whole regular chain follows (missing
-        // glyphs fall back to regular instead of tofu).
         let bold: Vec<String> = vec![
             "inter-bold".to_owned(),
             "noto-bold".to_owned(),
@@ -118,53 +230,50 @@ fn font_definitions() -> FontDefinitions {
     .clone()
 }
 
-/// 现代暗色主题：调用 `ctx.set_visuals()` 与 `ctx.set_style()` 各一次，
-/// 一次性安装字体、圆角 12、强调色 #6366F1、深底 #1E1E2E、柔和投影、细边框、
-/// 充足留白。幂等（重复调用只是覆盖同一套值）。
+/// 应用入口处一次性套用：先装字体，再 `set_visuals()` + `set_style_of()`
+/// （egui 0.37 的 set_style 等价入口），并把主题偏好钉在 Dark。幂等。
 ///
-/// The modern dark theme: calls `ctx.set_visuals()` and `ctx.set_style()` once each,
-/// installing fonts, 12 px corner radius, accent #6366F1, dark base #1E1E2E, soft
-/// shadows, thin borders and generous whitespace. Idempotent (re-calls overwrite
-/// with the same values).
+/// Apply once at the app entry: fonts first, then `set_visuals()` +
+/// `set_style_of()` (egui 0.37's renamed `set_style`), pinning the theme
+/// preference to Dark. Idempotent.
 pub fn apply_modern_dark(ctx: &egui::Context) {
     ctx.set_fonts(font_definitions());
 
     let mut visuals = Visuals::default();
     visuals.dark_mode = true;
-    // 圆角 12px：窗口/菜单/弹层/控件统一一档，可勾选小控件同样 12（16px 的
-    // checkbox 会读成圆片，正是「柔和现代」要的形状）。
-    //
-    // 12 px radius across windows/menus/popups/widgets alike; small checkable
-    // controls share it too -- a 16 px checkbox reads as a soft pill, which is the
-    // intended modern shape.
-    let r12 = CornerRadius::same(12);
-    visuals.window_corner_radius = r12;
-    visuals.menu_corner_radius = r12;
-    visuals.widgets.noninteractive.corner_radius = r12;
-    visuals.widgets.inactive.corner_radius = r12;
-    visuals.widgets.hovered.corner_radius = r12;
-    visuals.widgets.active.corner_radius = r12;
-    visuals.widgets.open.corner_radius = r12;
-    // 面
-    visuals.panel_fill = BG;
-    visuals.window_fill = ELEVATED;
-    visuals.extreme_bg_color = FIELD;
-    visuals.text_edit_bg_color = Some(FIELD);
-    visuals.code_bg_color = FIELD;
+    // 圆角三档：窗/卡 12，控件 8；菜单/弹层按窗档。
+    let r_win = CornerRadius::same(R_CARD);
+    let r_ctl = CornerRadius::same(R_CONTROL);
+    visuals.window_corner_radius = r_win;
+    visuals.menu_corner_radius = r_win;
+    for w in [
+        &mut visuals.widgets.noninteractive,
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        w.corner_radius = r_ctl;
+    }
+    // 背景层级
+    visuals.panel_fill = BASE;
+    visuals.window_fill = OVERLAY;
+    visuals.extreme_bg_color = SUNKEN;
+    visuals.text_edit_bg_color = Some(SUNKEN);
+    visuals.code_bg_color = SUNKEN;
     visuals.faint_bg_color = Color32::from_white_alpha(10);
-    // 细边框：一律 1px 低 alpha；窗框白 9%。
-    let hairline = egui::Stroke::new(1.0, border_line());
-    visuals.window_stroke = egui::Stroke::new(1.0, Color32::from_white_alpha(24));
-    visuals.widgets.noninteractive.bg_stroke = hairline;
-    visuals.widgets.inactive.bg_stroke = hairline;
-    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, Color32::from_white_alpha(40));
+    // 细边框
+    visuals.window_stroke = egui::Stroke::new(1.0, hairline_strong());
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, hairline());
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, hairline());
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, hairline_strong());
     visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
-    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, Color32::from_white_alpha(40));
-    visuals.widgets.noninteractive.bg_fill = BG;
-    visuals.widgets.noninteractive.weak_bg_fill = BG;
-    visuals.widgets.inactive.bg_fill = ELEVATED;
-    visuals.widgets.inactive.weak_bg_fill = ELEVATED;
-    visuals.widgets.hovered.bg_fill = ACCENT_HOVER.gamma_multiply(0.28);
+    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, hairline_strong());
+    visuals.widgets.noninteractive.bg_fill = BASE;
+    visuals.widgets.noninteractive.weak_bg_fill = BASE;
+    visuals.widgets.inactive.bg_fill = SURFACE;
+    visuals.widgets.inactive.weak_bg_fill = SURFACE;
+    visuals.widgets.hovered.bg_fill = ACCENT_HOVER.gamma_multiply(0.26);
     visuals.widgets.hovered.weak_bg_fill = Color32::from_white_alpha(14);
     visuals.widgets.active.bg_fill = ACCENT_PRESSED;
     visuals.widgets.active.weak_bg_fill = ACCENT_PRESSED;
@@ -176,24 +285,12 @@ pub fn apply_modern_dark(ctx: &egui::Context) {
     visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, Color32::WHITE);
     visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, Color32::WHITE);
     visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, TEXT);
-    // 选中：强调色实底 + 白字（用户恒定项）。
+    // 选中：强调色实底 + 白字
     visuals.selection.bg_fill = ACCENT;
     visuals.selection.stroke = egui::Stroke::new(1.0, Color32::from_white_alpha(90));
-    // 柔和投影：大 blur、低 alpha、向下偏移——飘起来但不脏边。
-    //
-    // Soft shadows: large blur, low alpha, downward offset -- lifted, not dirty.
-    visuals.window_shadow = Shadow {
-        offset: [0, 12],
-        blur: 32,
-        spread: 0,
-        color: Color32::from_black_alpha(130),
-    };
-    visuals.popup_shadow = Shadow {
-        offset: [0, 8],
-        blur: 24,
-        spread: 0,
-        color: Color32::from_black_alpha(110),
-    };
+    // 柔和投影两档
+    visuals.window_shadow = shadow_window();
+    visuals.popup_shadow = shadow_popup();
     visuals.slider_trailing_fill = true;
     visuals.striped = false;
     visuals.handle_shape = egui::style::HandleShape::Circle;
@@ -202,36 +299,30 @@ pub fn apply_modern_dark(ctx: &egui::Context) {
 
     let mut style = Style::default();
     style.visuals = visuals.clone();
-    // 留白：控件内距 12×8、行距 12×10、窗口边距 14、菜单边距 12。
-    //
-    // Whitespace: control padding 12x8, row spacing 12x10, window margin 14,
-    // menu margin 12.
-    style.spacing.item_spacing = Vec2::new(12.0, 10.0);
-    style.spacing.button_padding = Vec2::new(12.0, 8.0);
-    style.spacing.window_margin = Margin::same(14);
+    // 留白刻度：行距 12×10、控件内距 12×7、窗边距 16、菜单边距 12。
+    style.spacing.item_spacing = Vec2::new(SP3, 10.0);
+    style.spacing.button_padding = pad_control();
+    style.spacing.window_margin = Margin::same(WIN_MARGIN as i8);
     style.spacing.menu_margin = Margin::same(12);
     style.spacing.slider_width = 220.0;
     style.spacing.slider_rail_height = 4.0;
-    style.spacing.interact_size = Vec2::new(40.0, 34.0);
+    style.spacing.interact_size = Vec2::new(40.0, ROW_H);
     style.spacing.indent = 22.0;
     style.animation_time = 0.15;
     style.interaction.interact_radius = 8.0;
     style.interaction.show_tooltips_only_when_still = true;
-    // 字阶：12 小字 / 14 正文与按钮 / 16 标题（700 真字族）/ 13 等宽数字。
-    //
-    // Type ladder: 12 small / 14 body & button / 16 heading (real 700 family) /
-    // 13 mono digits.
+    // 字阶：11 元信息 / 12.5 小字 / 14 正文与按钮 / 15.5 标题（700）/ 13 等宽。
     style.text_styles = BTreeMap::from([
         (
             TextStyle::Small,
-            FontId::new(12.0, FontFamily::Proportional),
+            FontId::new(11.0, FontFamily::Proportional),
         ),
         (TextStyle::Body, FontId::new(14.0, FontFamily::Proportional)),
         (
             TextStyle::Button,
             FontId::new(14.0, FontFamily::Proportional),
         ),
-        (TextStyle::Heading, FontId::new(16.0, bold_family())),
+        (TextStyle::Heading, FontId::new(15.5, bold_family())),
         (
             TextStyle::Monospace,
             FontId::new(13.0, FontFamily::Monospace),
@@ -239,13 +330,7 @@ pub fn apply_modern_dark(ctx: &egui::Context) {
     ]);
     style.drag_value_text_style = TextStyle::Monospace;
 
-    // 两次显式调用（用户要求）：先 set_visuals()，再等价于 set_style() 的
-    // set_style_of()（egui 0.37 把 set_style 改名为 set_style_of(theme, style)；
-    // 深/浅两份都写同一套，主题偏好切到 Dark——本函数就是暗色主题）。
-    //
-    // The two explicit calls (as requested): set_visuals() first, then egui 0.37's
-    // set_style() equivalent set_style_of(theme, style); both themes get the same
-    // style and the preference is pinned to Dark -- this function IS the dark theme.
+    // 两次显式调用：set_visuals() + set_style_of()（0.37 的 set_style）。
     ctx.set_visuals(visuals);
     ctx.set_style_of(egui::Theme::Dark, style.clone());
     ctx.set_style_of(egui::Theme::Light, style);
