@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>恒晷 v18 · Tauri PoC</title>
+<style>
+  :root {
+    --bg:#171722; --surface:#1F1F2E; --overlay:#262638; --sunken:#101018;
+    --accent:#8B5CF6; --accent-hover:#A78BFA; --accent-tint:rgba(139,92,246,.18);
+    --text:#E9EAF6; --text-2:#A6ABC4; --text-3:#71768E;
+    --hairline:rgba(255,255,255,.07); --hairline-2:rgba(255,255,255,.12);
+    --ok:#5FBF7A; --warn:#E0B15E;
+    --r-card:12px; --r-ctl:8px; --r-chip:8px;
+    font-synthesis: none;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html,body { background: var(--page-bg, #0a0a10); }
+  body {
+    font-family: "Inter","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",noto,sans-serif;
+    font-size: 12px; line-height: 1.45; color: var(--text);
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app { width:100vw; height:100vh; display:flex; flex-direction:column;
+         overflow:hidden; background: var(--bg); position: relative; }
+
+  .menubar { height:38px; background:var(--bg); border-bottom:1px solid var(--hairline);
+             display:flex; align-items:center; padding:0 var(--space-3, 12px); gap:2px; flex:none; }
+  .logo { display:flex; align-items:center; gap:8px; margin-right:12px; }
+  .logo .name { font-size:13px; font-weight:600;
+                background: linear-gradient(90deg, var(--text) 55%, var(--accent-text, #A78BFA));
+                -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .menu { font-size:12px; color:var(--text-2); padding:5px 11px; border-radius:8px; }
+  .menu:hover { background:rgba(255,255,255,.09); color:var(--text); }
+  .spacer { flex:1; }
+  .modpick { font-size:11.5px; color:var(--text); background:var(--surface);
+             border:1px solid var(--hairline-2); border-radius:8px; padding:4px 12px;
+             white-space:nowrap; }
+  .btn-primary { font-size:11.5px; font-weight:500; color:#fff; background:var(--accent);
+                 border:1px solid transparent; border-radius:8px; padding:5px 16px;
+                 background-image: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,0) 46%);
+                 box-shadow: 0 4px 16px rgba(139,92,246,.3), inset 0 1px 0 rgba(255,255,255,.18);
+                 transition: box-shadow .12s ease-out, background-color .12s ease-out; }
+  .btn-primary:hover { background-color: var(--accent-hover);
+                       box-shadow: 0 6px 20px rgba(139,92,246,.4), inset 0 1px 0 rgba(255,255,255,.18); }
+
+  .optionsbar { height:36px; background:var(--bg); border-bottom:1px solid var(--hairline);
+                display:flex; align-items:center; padding:0 12px; gap:11px; flex:none; }
+  .doctab { display:flex; align-items:center; gap:8px; background:var(--surface);
+            border:1px solid var(--hairline-2); border-radius:8px; height:27px;
+            padding:0 11px; font-size:11.5px; color:var(--text); white-space:nowrap; }
+  .doctab .mod { width:6px; height:6px; border-radius:50%; background:var(--accent); }
+  .vsep { width:1px; height:17px; background:var(--hairline); margin:0 2px; }
+  .kv { font-size:11.5px; color:var(--text-2); white-space:nowrap; }
+  .kv b { color:var(--text); font-weight:400; font-variant-numeric:tabular-nums; }
+  .badge { font-size:11.5px; white-space:nowrap; background:rgba(139,92,246,.18);
+           color:var(--accent-text, #A78BFA); border-radius:8px; padding:1px 9px; }
+  .badge.plain { background:none; color:var(--text-2); }
+  .btn { font-size:11.5px; color:var(--text); border:1px solid var(--hairline-2);
+         border-radius:8px; padding:4px 14px; cursor:default; background:none;
+         transition: background-color .12s ease-out, border-color .12s ease-out; }
+  .btn:hover { background:rgba(255,255,255,.10); border-color:rgba(255,255,255,.22); }
+
+  .mid { flex:1; display:flex; min-height:0; }
+
+  .airail { width:42px; background:linear-gradient(180deg,#1C1C2A,#181825);
+            display:flex; flex-direction:column; align-items:center; padding:10px 0; gap:6px;
+            flex:none; box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 8px 0 20px rgba(0,0,0,.24);
+            z-index:2; }
+  .ai-btn { width:30px; height:30px; border-radius:8px; display:flex; align-items:center;
+            justify-content:center; color:var(--text-2); font-size:13px;
+            transition: background-color .12s ease-out; }
+  .ai-btn:hover { background:rgba(255,255,255,.09); color:var(--text); }
+  .ai-btn.on { background:rgba(139,92,246,.18); color:var(--accent-text,#A78BFA);
+               box-shadow: inset 0 0 0 1px rgba(139,92,246,.55); }
+  .ai-gap { height:12px; flex:none; }
+
+  .left { width:246px; background:linear-gradient(180deg,#1C1C2A,#181825);
+          display:flex; flex-direction:column; flex:none; min-height:0;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 10px 0 26px rgba(0,0,0,.26); z-index:1; }
+  .lhead { height:32px; display:flex; align-items:center; padding:0 14px; gap:8px;
+           flex:none; border-bottom:1px solid var(--hairline); }
+  .lhead .t { font-size:13px; font-weight:600; }
+  .lhead .en { font-size:10.5px; color:var(--text-3); }
+  .lsec { padding:10px 12px 10px; border-bottom:1px solid var(--hairline); }
+  .lsec h4 { font-size:10px; font-weight:600; color:var(--text-3); letter-spacing:2.5px;
+             margin-bottom:8px; }
+  .presets { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .preset { border:1px solid var(--hairline); border-radius:8px; overflow:hidden;
+            background:var(--surface); }
+  .preset.on { border-color:var(--accent); box-shadow:0 0 18px rgba(139,92,246,.22); }
+  .preset .g { height:30px; }
+  .g1 { background:linear-gradient(160deg,#2c2c4a,#5a5a8a 60%,#8a8ac0); }
+  .g2 { background:linear-gradient(160deg,#3a2a4a,#a05c3e 60%,#e8a25a); }
+  .g3 { background:linear-gradient(160deg,#1c2a42,#4a6e9e 60%,#a2c4e0); }
+  .g4 { background:linear-gradient(160deg,#20202a,#4a4a52 60%,#9e9ea6); }
+  .g5 { background:linear-gradient(160deg,#2a1e3e,#6e3e5a 60%,#c47a8a); }
+  .g6 { background:linear-gradient(160deg,#1e2e2a,#3e6e5a 60%,#8ac49e); }
+  .preset .n { font-size:10.5px; color:var(--text-2); padding:4px 8px; }
+  .preset.on .n { color:var(--text); }
+
+  .canvas { flex:1; background:var(--sunken); position:relative; display:flex;
+            align-items:center; justify-content:center; min-width:0;
+            box-shadow: inset 0 0 48px rgba(0,0,0,.32); }
+  .canvas::before { content:""; position:absolute; inset:0; pointer-events:none;
+            background:
+              radial-gradient(640px 420px at 74% 16%, rgba(139,92,246,.10), transparent 65%),
+              radial-gradient(520px 380px at 12% 86%, rgba(94,234,212,.05), transparent 60%); }
+  .photo-wrap { position:relative; }
+  #stream { display:block; width:640px; height:360px; border-radius:2px;
+            box-shadow: 0 18px 40px rgba(0,0,0,.55); }
+  .photo-meta { position:absolute; left:0; bottom:-22px; font-size:10.5px; color:var(--text-3);
+                font-variant-numeric:tabular-nums; }
+  .cmdbar { position:absolute; left:50%; top:12px; transform:translateX(-50%); z-index:3;
+            display:flex; align-items:center; gap:10px; padding:5px 12px;
+            border-radius:12px; border:1px solid transparent;
+            background:
+              linear-gradient(rgba(23,23,34,.55), rgba(23,23,34,.55)) padding-box,
+              linear-gradient(135deg, rgba(255,255,255,.22), rgba(255,255,255,.05) 55%, rgba(139,92,246,.45)) border-box;
+            backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%);
+            box-shadow: 0 10px 28px rgba(0,0,0,.4); }
+  .cmdbar svg { display:block; }
+  .cmdtxt { font-size:11.5px; color:var(--text-2); }
+  .kbd { display:inline-flex; font-size:10px; color:var(--text-2); background:var(--surface);
+         border:1px solid var(--hairline-2); border-radius:4px; padding:1px 6px; }
+  .zoomchip { position:absolute; right:14px; bottom:12px; font-size:11.5px; color:var(--text-2);
+              border-radius:8px; padding:3px 11px; background:rgba(23,23,34,.55);
+              backdrop-filter: blur(14px); border:1px solid var(--hairline);
+              font-variant-numeric:tabular-nums; }
+  .fpschip { position:absolute; left:14px; top:12px; z-index:5; font-size:11px;
+             color:var(--ok); background:rgba(23,23,34,.75); border:1px solid rgba(95,191,122,.4);
+             border-radius:6px; padding:3px 10px; font-variant-numeric:tabular-nums; }
+
+  .dock { width:300px; background:linear-gradient(180deg,#1C1C2A,#181825);
+          display:flex; flex-direction:column; flex:none; min-height:0;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.05), -10px 0 26px rgba(0,0,0,.26); z-index:1; }
+  .docktabs { height:34px; display:flex; align-items:stretch; padding:0 8px;
+              border-bottom:1px solid var(--hairline); flex:none; }
+  .docktab { display:flex; align-items:center; padding:0 9px; font-size:11.5px;
+             color:var(--text-2); position:relative; white-space:nowrap; }
+  .docktab.on { color:var(--text); font-weight:500; }
+  .docktab.on::after { content:""; position:absolute; left:9px; right:9px; bottom:0; height:2px;
+                       background:var(--accent); border-radius:1px; }
+  .dockbody { flex:1; overflow:hidden; display:flex; flex-direction:column; }
+  .grphead { display:flex; align-items:center; gap:8px; padding:10px 14px 8px; }
+  .grphead .nm { font-size:12px; font-weight:600; color:var(--text); letter-spacing:1.6px; }
+  .grp-body { padding:0 14px 12px; }
+  .srow { position:relative; height:26px; }
+  .srow .lab { position:absolute; left:0; top:2px; font-size:11.5px; color:var(--text-2); }
+  .srow .val { position:absolute; right:0; top:2px; font-size:11.5px; color:var(--text);
+               font-variant-numeric:tabular-nums; }
+  .srow .rail { position:absolute; left:0; width:62%; top:20px; height:2px;
+                background:rgba(255,255,255,.12); border-radius:1px; }
+  .srow .fillr { position:absolute; left:0; top:20px; height:2px; background:#C9CDD9; border-radius:1px; }
+  .srow .knob { position:absolute; top:15.5px; width:12px; height:12px; border-radius:50%;
+                background:#fff; border:1px solid var(--sunken); box-shadow:0 1px 3px rgba(0,0,0,.4); }
+  .srow input[type=range] { position:absolute; left:0; width:62%; top:12px; height:20px;
+                opacity:0; cursor:ew-resize; }
+  .grp { border-bottom:1px solid var(--hairline); }
+  .grphead2 { display:flex; align-items:center; gap:8px; padding:10px 14px 8px; }
+  .grphead2 .nm { font-size:12px; font-weight:600; color:var(--text); }
+  .hairline { height:1px; background:var(--hairline); flex:none; }
+  .moregrp { text-align:center; font-size:11.5px; color:var(--text-3); padding:12px 0 16px; }
+  .footbtns { display:flex; gap:8px; padding:4px 0 8px; }
+  .footbtns .btn { flex:1; text-align:center; }
+  .dockfoot { border-top:1px solid var(--hairline); padding:10px 14px 14px; }
+  .dockfoot .bigprimary { width:100%; text-align:center; font-size:11.5px; font-weight:600;
+            color:#fff; background:var(--accent); border-radius:8px; padding:8px 0; }
+
+  .film { height:112px; background:linear-gradient(180deg,#1C1C2A,#181825);
+          border-top:1px solid var(--hairline); flex:none; display:flex; flex-direction:column; }
+  .filmhead { height:30px; display:flex; align-items:center; padding:0 12px; gap:12px;
+              font-size:11.5px; color:var(--text-2); flex:none; }
+  .filmhead .tit { color:var(--text); font-weight:500; }
+  .filmhead .spacer { flex:1; }
+  .filmrow { flex:1; display:flex; gap:8px; padding:0 12px 10px; overflow:hidden; }
+  .thumb { width:114px; flex:none; border-radius:4px; overflow:hidden; position:relative;
+           background:#101018; outline:1px solid var(--hairline); }
+  .thumb.sel { outline:2px solid var(--text); outline-offset:-1px; }
+  .thumb.sel::after { content:""; position:absolute; left:0; right:0; bottom:0; height:3px;
+                      background:var(--accent); }
+  .thumb .no { position:absolute; left:5px; bottom:3px; font-size:10px; color:#fff;
+               text-shadow:0 1px 3px rgba(0,0,0,.9); font-variant-numeric:tabular-nums; z-index:2; }
+  .thumb svg { position:absolute; inset:0; width:100%; height:100%; }
+  .status { height:24px; background:var(--bg); border-top:1px solid var(--hairline);
+            display:flex; align-items:center; gap:18px; padding:0 12px;
+            font-size:10.5px; color:var(--text-3); flex:none; font-variant-numeric:tabular-nums; }
+  .status .spacer { flex:1; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <div class="menubar">
+    <div class="logo">
+      <svg width="18" height="18" viewBox="0 0 20 20"><rect x="1.5" y="1.5" width="17" height="17" rx="4" fill="none" stroke="#8B5CF6" stroke-width="1.8"/><rect x="6" y="6" width="8" height="8" rx="2" fill="#8B5CF6"/></svg>
+      <span class="name">恒晷</span>
+    </div>
+    <span class="menu">文件</span><span class="menu">编辑</span><span class="menu">视图</span>
+    <span class="menu">插件</span><span class="menu">帮助</span>
+    <span class="spacer"></span>
+    <span class="modpick">显影 ▾</span>
+    <span class="btn-primary">导出…</span>
+    <span class="winbtns" style="display:flex;gap:4px;margin-left:14px">
+      <span style="width:30px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--text-2)"><svg width="10" height="10"><path d="M1 5 h8" stroke="currentColor" stroke-width="1.2"/></svg></span>
+      <span style="width:30px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--text-2)"><svg width="10" height="10"><rect x="1.2" y="1.2" width="7.6" height="7.6" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></span>
+      <span style="width:30px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--danger)"><svg width="10" height="10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span>
+    </span>
+  </div>
+
+  <div class="optionsbar">
+    <span class="doctab"><span class="mod"></span>松赞林寺-198 ✕</span>
+    <svg width="14" height="14" viewBox="0 0 16 16"><path d="M5.6 8.2 V4.2 a1.05 1.05 0 0 1 2.1 0 V7.4 M7.7 7.4 V3.4 a1.05 1.05 0 0 1 2.1 0 V7.4 M9.8 7.4 V4.6 a1.05 1.05 0 0 1 2.1 0 V8.6 M5.6 8.2 L4.4 7 a1.02 1.02 0 0 0-1.45 1.44 l2.5 3.2 c.85 1.05 1.85 1.6 3.3 1.6 1.95 0 3.15-1.35 3.15-3.3 V8.6" fill="none" stroke="var(--text)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <b style="color:var(--text);font-weight:400">抓手</b> <span class="kbd">H</span>
+    <span class="vsep"></span>
+    <span class="kv">原始 ▾</span>
+    <span class="btn">自动</span><span class="btn">复位</span>
+    <span class="vsep"></span>
+    <span class="badge">蒙版 0 个</span>
+    <span class="badge">显影 3 项调整</span>
+    <span class="spacer"></span>
+    <span class="kv">画幅 <b>1280 × 720</b></span>
+    <span class="kv">撤销 Ctrl+Z</span>
+    <span class="kv"><b>100% ▾</b></span>
+  </div>
+
+  <div class="mid">
+    <aside class="airail">
+      <span class="ai-btn on">✦</span>
+      <span class="ai-btn">💬</span>
+      <span class="ai-btn">✨</span>
+      <span class="ai-gap"></span>
+      <span class="ai-btn">⊞</span>
+    </aside>
+
+    <aside class="left">
+      <div class="lhead"><span class="t">预设与历史</span><span class="en">Presets · History</span></div>
+      <div class="lsec">
+        <h4>预设</h4>
+        <div class="presets">
+          <div class="preset on"><div class="g g1"></div><div class="n">标准</div></div>
+          <div class="preset"><div class="g g2"></div><div class="n">鲜艳风光</div></div>
+          <div class="preset"><div class="g g3"></div><div class="n">冷色电影</div></div>
+          <div class="preset"><div class="g g4"></div><div class="n">黑白对比</div></div>
+          <div class="preset"><div class="g g5"></div><div class="n">复古胶片</div></div>
+          <div class="preset"><div class="g g6"></div><div class="n">青橙调</div></div>
+        </div>
+      </div>
+      <div class="lsec">
+        <h4>历史 <span style="margin-left:auto;font-size:10px">12 步</span></h4>
+        <div style="font-size:11.5px;color:var(--text);padding:3px 8px;border-radius:8px;background:rgba(139,92,246,.18);border-left:2px solid var(--accent)">
+          径向渐变蒙版 · 天空提亮<div style="font-size:10.5px;color:var(--text-3)">21:47 · 当前</div>
+        </div>
+        <div style="font-size:11.5px;color:var(--text-2);padding:3px 8px">高光 −30 · 阴影 +18</div>
+        <div style="font-size:11.5px;color:var(--text-2);padding:3px 8px">曝光 +0.35 · 对比度 +12</div>
+        <div style="font-size:11.5px;color:var(--text-2);padding:3px 8px">HSL 蓝色 明度 −8</div>
+        <div style="font-size:11.5px;color:var(--text-2);padding:3px 8px">色温 5500 K</div>
+      </div>
+      <div class="lfoot" style="margin-top:auto;padding:10px 12px;border-top:1px solid var(--hairline);display:flex;gap:8px">
+        <span class="btn" style="flex:1;text-align:center">撤销一步</span>
+        <span class="btn" style="flex:1;text-align:center">回到此处</span>
+      </div>
+    </aside>
+
+    <div class="canvas">
+      <span class="fpschip" id="fps">测量中…</span>
+      <div class="photo-wrap">
+        <canvas id="stream" width="640" height="360"></canvas>
+        <div class="photo-meta" style="position:absolute;left:0;bottom:-22px;font-size:10.5px;color:var(--text-3)">松赞林寺 · NEF · 24mm · f/8 · 1/250 · ISO 100</div>
+      </div>
+      <span class="zoomchip">100%</span>
+      <div class="cmdbar">
+        <svg width="13" height="13" viewBox="0 0 16 16"><path d="M8 2 L9.3 6.7 L14 8 L9.3 9.3 L8 14 L6.7 9.3 L2 8 L6.7 6.7 Z" fill="none" stroke="#A78BFA" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        <span class="cmdtxt">运行命令 · 搜索帧 · 问 Agent…</span>
+        <span class="kbd">Ctrl K</span>
+      </div>
+    </div>
+
+    <aside class="dock">
+      <div class="docktabs">
+        <span class="docktab on">调整</span><span class="docktab">信息</span><span class="docktab">关键帧</span>
+        <span class="docktab">AI</span><span class="docktab">历史</span><span class="docktab">图库</span>
+        <span style="margin-left:auto;color:var(--text-3);font-size:10px;padding-left:6px">✕</span>
+      </div>
+      <div class="dockbody">
+        <div style="padding:12px 14px 10px;border-bottom:1px solid var(--hairline)">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px">直方图</div>
+          <svg width="100%" height="78" viewBox="0 0 300 96" preserveAspectRatio="none">
+            <path d="M0 96 L0 72 C10 66 16 44 24 34 C30 27 36 26 42 32 C50 42 58 52 68 56 C80 61 92 62 104 62 C118 62 128 58 140 58 C154 58 164 62 176 64 C190 66 202 64 214 62 C228 60 240 64 252 68 C264 72 276 78 288 82 L300 86 L300 96 Z" fill="#c96a5e" opacity=".45"/>
+            <path d="M0 96 L0 76 C10 70 16 50 24 40 C30 33 38 30 46 36 C56 44 66 52 78 57 C92 62 106 64 120 64 C136 64 148 60 160 58 C174 56 186 56 198 58 C212 60 224 65 236 69 C248 73 262 78 276 82 L300 88 L300 96 Z" fill="#5fae6b" opacity=".42"/>
+            <path d="M0 96 L0 80 C10 76 16 60 24 52 C30 46 38 44 46 48 C56 54 66 62 78 66 C92 71 106 72 120 72 C136 72 148 68 160 66 C174 64 186 64 198 66 C212 68 224 72 236 76 C248 80 262 84 276 87 L300 90 L300 96 Z" fill="#5b8fc9" opacity=".46"/>
+            <path d="M0 96 L0 74 C10 68 16 48 24 38 C30 30 36 28 42 34 C50 44 58 54 68 58 C80 63 92 63 104 63 C118 63 128 59 140 59 C154 59 164 63 176 65 C190 67 202 65 214 63 C228 61 240 65 252 70 C264 74 276 80 288 84 L300 88" fill="none" stroke="#eaeaea" stroke-width="1.3" opacity=".9"/>
+          </svg>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-3);padding:3px 1px 0;border-top:1px solid var(--hairline)">
+            <span>0</span><span>64</span><span>128</span><span>192</span><span>255</span>
+          </div>
+        </div>
+        <div style="border-bottom:1px solid var(--hairline)">
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 14px 8px">
+            <span style="font-size:12px;font-weight:600">配置文件</span>
+            <span style="margin-left:auto;font-size:10.5px;color:var(--text-3)">👁</span>
+          </div>
+          <div style="padding:0 14px 12px">
+            <div style="display:flex;justify-content:space-between;font-size:11.5px;padding:5px 0">
+              <span style="color:var(--text-2)">风格</span><span style="color:var(--text)">标准 ▾</span>
+            </div>
+            <div style="display:flex;gap:8px;padding:4px 0 6px">
+              <span class="btn" style="flex:1;text-align:center">导入 XMP</span>
+              <span class="btn" style="flex:1;text-align:center">导出 XMP</span>
+            </div>
+          </div>
+        </div>
+        <div style="border-bottom:1px solid var(--hairline)">
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 14px 8px">
+            <span style="font-size:12px;font-weight:600">基本</span>
+            <span style="margin-left:auto;display:flex;gap:10px">
+              <span class="btn" style="padding:2px 9px;font-size:10.5px">自动</span>
+              <span class="btn" style="padding:2px 9px;font-size:10.5px">复位</span>
+            </span>
+          </div>
+          <div style="padding:0 14px 12px" id="sliders"></div>
+        </div>
+        <div style="padding:10px 14px">
+          <div style="font-size:12px;font-weight:600;margin-bottom:8px">HSL / 颜色 <span style="font-size:10.5px;color:var(--text-3);font-weight:400">2 项</span></div>
+          <div style="display:flex;gap:6px;padding-bottom:8px">
+            <i style="flex:1;height:14px;border-radius:4px;background:#e05a4e"></i><i style="flex:1;height:14px;border-radius:4px;background:#e08a3e"></i><i style="flex:1;height:14px;border-radius:4px;background:#d1b23e"></i><i style="flex:1;height:14px;border-radius:4px;background:#5fae6b"></i><i style="flex:1;height:14px;border-radius:4px;background:#4f83c2"></i><i style="flex:1;height:14px;border-radius:4px;background:#6e5ac2"></i><i style="flex:1;height:14px;border-radius:4px;background:#9e5ab4"></i><i style="flex:1;height:14px;border-radius:4px;background:#b45a7a"></i>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11.5px">
+            <span style="color:var(--text-2)">蓝色 明度</span><span style="color:var(--text)">−8</span>
+          </div>
+          <div style="position:relative;height:2px;background:rgba(255,255,255,.12);border-radius:1px;margin:8px 0">
+            <div style="position:absolute;left:0;width:38%;height:2px;background:#C9CDD9;border-radius:1px"></div>
+            <div style="position:absolute;left:23.6%;top:-5px;width:12px;height:12px;border-radius:50%;background:#fff;border:1px solid var(--sunken)"></div>
+          </div>
+        </div>
+        <div style="padding:10px 14px 14px;border-top:1px solid var(--hairline)">
+          <div style="display:flex;justify-content:space-between;font-size:11.5px;padding-bottom:8px">
+            <span style="color:var(--text-2)">队列</span><span style="color:var(--text-2)">1 项 · 待渲 1</span>
+          </div>
+          <div style="width:100%;text-align:center;font-size:11.5px;font-weight:600;color:#fff;background:var(--accent);border-radius:8px;padding:8px 0">立即导出</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="film">
+    <div class="filmhead">
+      <span class="tit">胶片条 · 48 帧</span>
+      <span>筛选 ☆☆☆☆☆ ✓ ✕ ●●●●</span>
+      <span style="color:var(--text)">清除筛选</span>
+      <span class="spacer"></span><span>曲线</span>
+    </div>
+    <div class="filmrow" id="filmrow"></div>
+  </div>
+
+  <div class="status">
+    <span>画布 1280 × 720</span><span>蒙版 0 个</span><span>显影 3 项调整</span>
+    <span class="spacer"></span><span>流式预览 640×360</span><span>24 fps · 48 帧</span>
+  </div>
+</div>
+
+<script>
+  // ---- 胶片条（静态种子）----
+  const filmrow = document.getElementById('filmrow');
+  for (let i = 0; i < 10; i++) {
+    const d = document.createElement('div');
+    d.className = 'thumb' + (i === 2 ? ' sel' : '');
+    const bright = [0.74, 0.87, 1, 1.12, 1, 0.72, 1, 1.08, 1, 0.82][i];
+    d.innerHTML = `<div style="position:absolute;inset:0;background:linear-gradient(180deg,#14304a 0%,#2e4a63 40%,#c46a3e 72%,#e89a52 86%,#ffc87a 100%);filter:brightness(${bright})"></div>`;
+    const no = document.createElement('span');
+    no.className = 'no'; no.textContent = String(i + 1).padStart(4, '0');
+    d.appendChild(no);
+    filmrow.appendChild(d);
+  }
+
+  // ---- 参数滑轨（真绑定 set_params）----
+  const sliderDefs = [
+    ['曝光', 'exposure', -3, 3, 0.35, v => v.toFixed(2) + ' EV'],
+    ['对比度', 'contrast', -50, 50, 12, v => v.toFixed(0)],
+  ];
+  const sl = document.getElementById('sliders');
+  for (const [lab, key, lo, hi, init, fmt] of sliderDefs) {
+    const row = document.createElement('div');
+    row.className = 'srow';
+    const frac = ((init - lo) / (hi - lo) * 100).toFixed(1);
+    row.innerHTML = `
+      <span class="lab">${lab}</span><span class="val" id="v-${key}">${fmt(init)}</span>
+      <div class="rail"></div><div class="fillr" id="f-${key}" style="width:${frac}%"></div>
+      <div class="knob" id="k-${key}" style="left:${frac}%"></div>
+      <input type="range" min="${lo}" max="${hi}" step="0.01" value="${init}" id="r-${key}">`;
+    sl.appendChild(row);
+    const input = row.querySelector('input');
+    input.addEventListener('input', () => {
+      const v = parseFloat(input.value);
+      document.getElementById('v-' + key).textContent = fmt(v);
+      const f = ((v - lo) / (hi - lo) * 100).toFixed(1) + '%';
+      document.getElementById('f-' + key).style.width = f;
+      document.getElementById('k-' + key).style.left = f;
+      window.__tauri_rpc?.invoke('set_params', { exposure: sl.__ex, contrast: sl.__ct });
+    });
+    input.dataset.key = key;
+  }
+  // 发送参数（滑轨联动）
+  function pushParams() {
+    const ex = parseFloat(document.getElementById('r-exposure').value);
+    const ct = parseFloat(document.getElementById('r-contrast').value);
+    window.__pocSetParams(ex, ct);
+  }
+  for (const key of ['exposure', 'contrast']) {
+    document.getElementById('r-' + key).addEventListener('input', pushParams);
+  }
+
+  // ---- 流式画布 + FPS 计数 ----
+  const canvas = document.getElementById('stream');
+  const ctx2d = canvas.getContext('2d');
+  const fpsEl = document.getElementById('fps');
+  let frames = 0, t0 = performance.now(), fpsShown = 0;
+
+  function tick(now) {
+    frames++;
+    const dt = now - t0;
+    if (dt >= 500) {
+      fpsShown = frames / (dt / 1000);
+      frames = 0; t0 = now;
+      fpsEl.textContent = '流式 ' + fpsShown.toFixed(1) + ' fps';
+      window.__tauri_rpc?.invoke('fps_report', { fps: fpsShown });
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  // Tauri v2：先 invoke 拿到 Channel；onmessage 收帧画布
+  const invoke = window.__TAURI_INTERNALS__.invoke;
+  // WS 二进制流：绕开 IPC JSON 序列化（921KB/帧 JSON 不可行，二进制帧 33ms 一帧可行）
+  const ws = new WebSocket('ws://127.0.0.1:8932');
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = (ev) => {
+    const img = new ImageData(new Uint8ClampedArray(ev.data), 640, 360);
+    ctx2d.putImageData(img, 0, 0);
+  };
+  window.__pocSetParams = (ex, ct) => invoke('set_params', { exposure: ex, contrast: ct });
+  pushParams(); // 初始参数同步（WS 每帧读共享参数）
+</script>
+
+</body>
+</html>

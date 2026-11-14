@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "恒晷 v18 PoC",
+  "version": "1.10.0",
+  "identifier": "studio.aevum.poc",
+  "build": {
+    "frontendDist": "./frontend"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "恒晷 v18 · Tauri PoC",
+        "width": 1600,
+        "height": 1000,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

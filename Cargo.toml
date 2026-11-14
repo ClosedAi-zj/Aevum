@@ -5,6 +5,7 @@ members = [
     "crates/aevum-ui",
     "crates/aevum-mcp",
     "apps/aevum-studio",
+    "crates/aevum-tauri",
 ]
 
 [workspace.package]

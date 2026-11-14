@@ -1,0 +1,23 @@
+[package]
+name = "aevum-tauri"
+version = "1.10.0"
+edition = "2024"
+license = "MIT"
+description = "v18 PoC：Tauri 2 窗口承载 mockup.html 设计，验证画布纹理流式传输帧率"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tungstenite = "0.24"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+aevum-core = { path = "../aevum-core" }
+
+[features]
+# PoC 默认特性即可；custom-protocol 仅在打包时需要
+
+[lib]
+name = "poc_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
