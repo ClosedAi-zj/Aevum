@@ -203,6 +203,23 @@ fn font_definitions() -> FontDefinitions {
     static DEFS: OnceLock<FontDefinitions> = OnceLock::new();
     DEFS.get_or_init(|| {
         let mut fonts = FontDefinitions::default();
+        // 系统字体优先（旧 theme.rs 的关键决策，v18 初版丢了）：
+        // Segoe UI（拉丁）+ 雅黑 UI face1（中文原生渲染），Inter/Noto 只兜底。
+        let sys: [(&str, &str, u32); 2] = [
+            ("Segoe UI", r"C://Windows//Fonts//segoeui.ttf", 0),
+            ("Microsoft YaHei UI", r"C://Windows//Fonts//msyh.ttc", 1),
+        ];
+        for (name, path, index) in sys {
+            if let Ok(bytes) = std::fs::read(path) {
+                let mut fd = FontData::from_owned(bytes);
+                fd.index = index;
+                // 关次像素分箱：egui 文档自认会「更糊」
+                let mut tweak = egui::FontTweak::default();
+                tweak.subpixel_binning = Some(false);
+                fd.tweak = tweak;
+                fonts.font_data.insert(name.to_string(), fd.into());
+            }
+        }
         fonts.font_data.insert(
             "inter".to_owned(),
             FontData::from_static(aevum_core::fonts::INTER).into(),
@@ -211,6 +228,18 @@ fn font_definitions() -> FontDefinitions {
             "noto".to_owned(),
             FontData::from_static(aevum_core::fonts::NOTO_SC).into(),
         );
+        let sys_bold: [(&str, &str, u32); 1] =
+            [("Segoe UI Bold", r"C://Windows//Fonts//segoeuib.ttf", 0)];
+        for (name, path, index) in sys_bold {
+            if let Ok(bytes) = std::fs::read(path) {
+                let mut fd = FontData::from_owned(bytes);
+                fd.index = index;
+                let mut tweak = egui::FontTweak::default();
+                tweak.subpixel_binning = Some(false);
+                fd.tweak = tweak;
+                fonts.font_data.insert(name.to_string(), fd.into());
+            }
+        }
         fonts.font_data.insert(
             "inter-bold".to_owned(),
             FontData::from_static(aevum_core::fonts::INTER_BOLD).into(),
@@ -221,10 +250,17 @@ fn font_definitions() -> FontDefinitions {
         );
         for family in [FontFamily::Proportional, FontFamily::Monospace] {
             let list = fonts.families.entry(family).or_default();
-            list.insert(0, "inter".to_owned());
-            list.insert(1, "noto".to_owned());
+            let lead = ["Segoe UI", "Microsoft YaHei UI"];
+            for (k, name) in lead.iter().enumerate() {
+                if fonts.font_data.contains_key(*name) {
+                    list.insert(k, name.to_string());
+                }
+            }
+            list.insert(2, "inter".to_owned());
+            list.insert(3, "noto".to_owned());
         }
         let bold: Vec<String> = vec![
+            "Segoe UI Bold".to_owned(),
             "inter-bold".to_owned(),
             "noto-bold".to_owned(),
             "inter".to_owned(),
@@ -298,6 +334,9 @@ pub fn apply_modern_dark(ctx: &egui::Context) {
     // 柔和投影两档
     visuals.window_shadow = shadow_window();
     visuals.popup_shadow = shadow_popup();
+    // 次像素分箱：egui 文档自认「更糊」——关掉后 Latin 对齐像素网格更锐
+    // （CJK 本就恒关）；需要更均匀的 kerning 时可回调。
+    visuals.text_options.subpixel_binning = false;
     visuals.slider_trailing_fill = true;
     visuals.striped = false;
     visuals.handle_shape = egui::style::HandleShape::Circle;
