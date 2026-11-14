@@ -8,8 +8,7 @@
 //! programmatic photo texture, none of the old shell files touched.
 
 use egui::{
-    Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, TextureHandle, Vec2,
-    pos2,
+    Align2, Color32, FontId, Rect, RichText, Sense, Stroke, StrokeKind, TextureHandle, Vec2, pos2,
 };
 
 use crate::state::AppState;

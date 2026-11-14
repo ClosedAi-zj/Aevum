@@ -214,8 +214,10 @@ fn font_definitions() -> FontDefinitions {
                 let mut fd = FontData::from_owned(bytes);
                 fd.index = index;
                 // 关次像素分箱：egui 文档自认会「更糊」
-                let mut tweak = egui::FontTweak::default();
-                tweak.subpixel_binning = Some(false);
+                let tweak = egui::FontTweak {
+                    subpixel_binning: Some(false),
+                    ..egui::FontTweak::default()
+                };
                 fd.tweak = tweak;
                 fonts.font_data.insert(name.to_string(), fd.into());
             }
@@ -234,8 +236,10 @@ fn font_definitions() -> FontDefinitions {
             if let Ok(bytes) = std::fs::read(path) {
                 let mut fd = FontData::from_owned(bytes);
                 fd.index = index;
-                let mut tweak = egui::FontTweak::default();
-                tweak.subpixel_binning = Some(false);
+                let tweak = egui::FontTweak {
+                    subpixel_binning: Some(false),
+                    ..egui::FontTweak::default()
+                };
                 fd.tweak = tweak;
                 fonts.font_data.insert(name.to_string(), fd.into());
             }
