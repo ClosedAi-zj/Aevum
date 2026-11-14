@@ -297,7 +297,7 @@ impl ShellV18 {
                 Color32::from_rgb(0x8a, 0xc4, 0x9e),
             ),
         ];
-        let names = names;
+
         for (i, name) in names.iter().enumerate() {
             let on = self.preset == i;
             let (r, resp) = ui
