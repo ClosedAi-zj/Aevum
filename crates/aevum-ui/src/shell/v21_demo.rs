@@ -440,9 +440,6 @@ struct Proto {
     /// 文档名（顶栏页签，桥接同步 `seq.display_name()`）。
     /// Document name for the top-bar tab, synced from `seq.display_name()`.
     doc_name: String,
-    /// 已选帧号（filmhead「已选」读数，桥接同步）。
-    /// Selected frame index for the filmhead readout.
-    sel: usize,
     /// 缩放百分比读数（画布每帧回填；照片像素 / 显示宽）。
     /// Zoom percent readout, back-filled by the canvas each frame.
     zoom_pct: f32,
@@ -4802,7 +4799,6 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
             kfs: Vec::new(),
             module: crate::state::Module::Develop,
             doc_name: String::new(),
-            sel: 0,
             zoom_pct: 100.0,
             zoom_100: 1.0,
             fps: 24.0,
@@ -4909,6 +4905,43 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
         st.deflicker = state.def_strength;
         st.smooth_win = state.def_window;
 
+        // ---- 真应用状态 → demo 显示（必须在绘制前：文档名/历史切换面板路径，
+        // 原来在帧尾同步，首帧画的是 demo 假数据、第二帧才换成真值——观感是
+        // 「闪一下假界面」，胶囊判据的冷/热帧也各走各的面板路径）。
+        //
+        // Real-state sync must run BEFORE the paint: doc_name/history pick
+        // different panel paths, so a post-paint sync made frame 1 flash the
+        // demo fakes and left the pill criterion comparing two different paths.
+        // ----
+        // ---- 真应用状态 → demo 显示（绘制前同步）----
+        st.tasks = state.queue.len();
+        st.rating = state.ratings.get(&state.selected).copied().unwrap_or(0);
+        st.kfs = state.keyframes.keys().copied().collect();
+        st.module = state.module;
+        st.fps = state.output_fps.max(1.0);
+        // 文档名：真序列名（单帧报照片名，多帧报文件夹名——core 口径）。
+        st.doc_name = state
+            .seq
+            .as_ref()
+            .map(|s| s.display_name())
+            .unwrap_or_else(|| crate::i18n::t!("未命名").to_string());
+        // 真历史行：steps() 是旧→新，列表要新→旧；「当前步」= cursor。
+        // 按 (len, cursor) 变更才重建，平常帧零分配。
+        let (hlen, hcur) = (state.history.steps().len(), state.history.cursor());
+        if st.hist_len != hlen || st.hist_cursor != hcur {
+            st.hist_len = hlen;
+            st.hist_cursor = hcur;
+            let rows: Vec<(String, bool)> = state
+                .history
+                .steps()
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(i, s)| (s.label.clone(), i == hcur))
+                .collect();
+            st.hist_rows = std::sync::Arc::new(rows);
+            st.hist_total = hlen;
+        }
         // ---- demo 原样绘制（画布井矩形由 mod.rs 单源推入）----
         st.ui(root, canvas);
 
@@ -5012,37 +5045,6 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
         // 去闪两杆走的是逐帧测光链，不走显影重算。
         if (state.def_strength, state.def_window) != def_before {
             state.recompute_deflicker();
-        }
-
-        // ---- 真应用状态 → demo 显示（任务胶囊 / 星标 / 关键帧车道）----
-        st.tasks = state.queue.len();
-        st.rating = state.ratings.get(&state.selected).copied().unwrap_or(0);
-        st.kfs = state.keyframes.keys().copied().collect();
-        st.module = state.module;
-        st.sel = state.selected;
-        st.fps = state.output_fps.max(1.0);
-        // 文档名：真序列名（单帧报照片名，多帧报文件夹名——core 口径）。
-        st.doc_name = state
-            .seq
-            .as_ref()
-            .map(|s| s.display_name())
-            .unwrap_or_else(|| crate::i18n::t!("未命名").to_string());
-        // 真历史行：steps() 是旧→新，列表要新→旧；「当前步」= cursor。
-        // 按 (len, cursor) 变更才重建，平常帧零分配。
-        let (hlen, hcur) = (state.history.steps().len(), state.history.cursor());
-        if st.hist_len != hlen || st.hist_cursor != hcur {
-            st.hist_len = hlen;
-            st.hist_cursor = hcur;
-            let rows: Vec<(String, bool)> = state
-                .history
-                .steps()
-                .iter()
-                .enumerate()
-                .rev()
-                .map(|(i, s)| (s.label.clone(), i == hcur))
-                .collect();
-            st.hist_rows = std::sync::Arc::new(rows);
-            st.hist_total = hlen;
         }
     });
 }

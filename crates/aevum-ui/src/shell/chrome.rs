@@ -387,10 +387,15 @@ mod chrome_tests {
         let ctx = Context::default();
         theme::apply(&ctx, 1.0);
         let mut state = AppState::new();
-        let mut cold = ctx.run_ui(
-            frame(Pos2::new(700.0, MENU_H * 0.5), false, false),
-            |root| ui(&mut state, root),
-        );
+        // 冷帧落在菜单行左端（品牌标记之前）：旧取点 x=700 在 v21 几何里正
+        // 压在最小化按钮上——冷帧自己也画出了胶囊，热冷差就成了负数。
+        //
+        // The cold frame parks at the far left of the bar, before the brand mark;
+        // the old x=700 lands on the minimize button under the v21 geometry, so
+        // the cold frame painted its own pill and the delta went negative.
+        let mut cold = ctx.run_ui(frame(Pos2::new(2.0, MENU_H * 0.5), false, false), |root| {
+            ui(&mut state, root)
+        });
         let cold_shapes = cold.shapes.len();
         cold.textures_delta.clear();
         let mut hot = ctx.run_ui(frame(win_btn_center(2), false, false), |root| {
