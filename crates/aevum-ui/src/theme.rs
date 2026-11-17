@@ -719,19 +719,24 @@ impl Palette {
             danger: Color32::from_rgb(0xFF, 0x69, 0x61),
             ok: Color32::from_rgb(0x30, 0xD1, 0x58),
             thumb_bg: nb(l.thumb),
-            // v20：阈值 0.56 → 0.32。强调色提到 #A78BFA（亮度 0.336）后，
-            // 白字对比只有 2.7:1，必须换深字（hsl 同相 l=12，6.2:1）。
-            // 阈值压到 0.32 同时让琥珀/浅紫预设自动取深字——它们的白字本来就
-            // 贴着 3:1 的线。
+            // 强调底上的字色按**实测对比度**选，而不是亮度阈值：阈值在中间调
+            // 会两边都不过线——银预设 hsl(0,0,60) 亮度 0.3185、玫红 l=61 亮度
+            // 0.244，一个卡在 0.32 下方保白字（2.85:1），一个白字只有 3.6:1；
+            // 把阈值挪到哪儿都只是换哪个预设失败。这里直接算两种字的对比度取高
+            // 者，八枚预设全部过 AA（`accent_presets_clear_aa` 钉住）。
             //
-            // v20: threshold 0.56 -> 0.32. With the accent lifted to #A78BFA
-            // (luminance 0.336) white text only reaches 2.7:1; dark same-hue text
-            // clears 6.2:1. The lower threshold also flips amber/pale-violet
-            // presets to dark text, which their old 3:1 borderline needed anyway.
-            on_accent: if luminance(accent) > 0.32 {
-                hsl(a.accent_h, 45.0, 12.0)
-            } else {
-                Color32::WHITE
+            // Ink on accent is picked by **measured contrast**, not a luminance
+            // threshold: a threshold fails on both sides of the mid-tones (silver
+            // at 0.3185 keeps white at 2.85:1, rose at 0.244 gives 3.6:1) --
+            // moving it only changes which preset breaks. Compare both inks and
+            // take the better one; `accent_presets_clear_aa` pins the result.
+            on_accent: {
+                let dark_ink = hsl(a.accent_h, 45.0, 12.0);
+                if contrast(dark_ink, accent) > contrast(Color32::WHITE, accent) {
+                    dark_ink
+                } else {
+                    Color32::WHITE
+                }
             },
             on_selected: if dir > 0.0 { Color32::WHITE } else { text },
             on_elev: if dir > 0.0 { Color32::WHITE } else { text },
@@ -1045,13 +1050,15 @@ pub fn row_hover() -> Color32 {
 /// as two layers. The pure-black theme does not force #101114 (a #212327 card on black
 /// looks dirty); it steps down its own ladder instead.
 pub fn bench_bg() -> Color32 {
-    // PS 灰下整页工作台底必须是**工作区灰 #282828**：硬编码的 #101114 会让
-    // 页头/面板/画布衬底出现三级互不相关的黑（用户 2026-11-12「色彩深度杂乱」）。
+    // PS 阶梯下整页工作台底取 `palette().surround`，与「壳/顶栏」同档——
+    // 原来硬编码 #282828 与新的中性阶梯差 0.9 L*，页底与框架之间会出现
+    // 一条说不清出处的暗带。底色一律来自 palette，C10 才守得住。
     //
-    // Under PS grey the bench background must be the **workspace grey #282828**:
-    // the hard-coded #101114 produced three unrelated blacks.
+    // Under the PS ladder the bench takes `palette().surround`, the same step as
+    // chrome/bar; the old hard-coded #282828 sat 0.9 L* off the new ladder and
+    // painted a dark seam of unclear origin between page and frame.
     if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Photoshop {
-        return Color32::from_rgb(0x28, 0x28, 0x28);
+        return palette().surround;
     }
     // 纸白：整页工作台用冷调纸灰 #e9ecf0，白卡片浮在其上才有「页 vs 卡」两层；
     // 比衬底 #e2e5e9 亮一档，避免整页读成一块灰板。
@@ -1078,13 +1085,18 @@ pub fn bench_bg() -> Color32 {
 /// in a fixed viewport; a black or tinted matte becomes a "black border" and
 /// biases colour judgement. Neutral mid-grey is what Lightroom/Capture One use.
 pub fn matte() -> Color32 {
-    // PS 的画布衬底与工作区同色 #282828；原来固定 #1F1F1F，在亮灰面板旁
-    // 就是一整块突兀的纯黑。
+    // 画布衬底必须等于**井**这一档：C1 的「井→壳 ≥6 L*」是断言 palette 的，
+    // 而这里原来硬编码 #282828（L*16.1），与井 #181818（L*8.2）只差 7.9——
+    // 画出来的实际差值只有 0.9 L*，测试却在另一组数上通过，是典型的假绿。
+    // 改为直接取 `palette().canvas`，判据与像素从此同一个事实源。
     //
-    // PS uses the workspace grey #282828 as its canvas matte; the fixed #1F1F1F
-    // read as an abrupt black slab next to the light panels.
+    // The matte must equal the **well** step. It used to hard-code #282828
+    // (L*16.1) while the C1 assertion measured palette().canvas (#181818, L*8.2):
+    // the painted well→shell gap was 0.9 L* while the test passed on different
+    // numbers -- a textbook false green. Reading `palette().canvas` makes the
+    // assertion and the pixels share one source of truth.
     if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Photoshop {
-        return Color32::from_rgb(0x28, 0x28, 0x28);
+        return palette().canvas;
     }
     if is_light() {
         Color32::from_rgb(0xE6, 0xE6, 0xE6)
@@ -1105,18 +1117,15 @@ pub fn group_fill() -> Color32 {
     if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Graphite {
         return Color32::from_rgb(0x28, 0x2B, 0x30);
     }
-    // PS 灰的分组面：#505050，与面板 #535353 只差 3 档 —— PS/Lightroom 的右侧
-    // 是**一整块连续面板**，分组靠亮暗双线分隔，不靠把每张卡压成深色块。
-    // 真正内嵌的是输入框（field #424242）。此前分组卡用凹槽色、输入框又另造
-    // 一级纯黑，才出现「几个黑或灰色相差过大」。
+    // PS 灰的分组面：跟随新阶梯从 panel 派生（panel 往白 4.5%，≈#373737）。
+    // 原来硬编码 #505050 是按旧 PS 复刻面板 #535353 定的；面板改成 #2E2E2E 后
+    // 它成了整列里最亮的一块，分组卡读成"贴了张浅灰纸"（审查实测）。
     //
-    // The PS-grey group fill is #505050, only 3 steps below the #535353 panel: in
-    // PS/Lightroom the right column is **one continuous panel**, groups divided by a
-    // light/dark bevel pair rather than dark card slabs. Only inputs sink (field
-    // #424242). Earlier the cards used the sunken shade and inputs invented another
-    // black, which produced the "several unrelated blacks/greys".
+    // The PS-grey group fill now derives from the panel (4.5 % toward white,
+    // ≈#373737). The old literal #505050 was calibrated against the retired
+    // #535353 panel and became the brightest slab in the column.
     if matches!(appearance().theme, ThemeMode::Dark) && appearance().skin == Skin::Photoshop {
-        return Color32::from_rgb(0x50, 0x50, 0x50);
+        return mix(palette().panel, Color32::WHITE, 0.045);
     }
     // 纸白的分组面：#f4f6f8，比纯白面板只沉 3 档 —— 与 WPS 一样靠极淡的冷灰
     // 分组而不是深色卡块；滑轨再由 slider_rail() 往黑叠 12% 得到可见的凹槽。
@@ -1194,19 +1203,32 @@ pub fn knob() -> Color32 {
 /// (egui has no real backdrop blur; faking it produces mud). Both ends start
 /// inside the corner radius so the arc never shows a square stub.
 pub fn glass_edge(p: &Painter, rect: Rect, radius: f32) {
-    let r = radius.max(0.0);
+    // 缩进 1px：浮层自己带 1px 内描边，镜面边必须落在描边**内侧**，否则两条
+    // 亮线叠在同一行上，顶边看起来像 2px 白框（审查实测）。
+    //
+    // Inset by 1 px: the card already carries a 1 px inner ring, so the edge light
+    // has to sit *inside* it -- otherwise both bright lines land on the same row
+    // and the top edge reads as a 2 px white frame.
+    let inner = rect.shrink(1.0);
+    // 半径夹到半边以内：卡片半径比高度一半还大时，横向线段的长度会算成负数。
+    //
+    // Clamp the radius to half the card so the horizontal span can never go negative.
+    let r = radius
+        .max(0.0)
+        .min(inner.width() * 0.5)
+        .min(inner.height() * 0.5);
     p.rect_filled(
         Rect::from_min_size(
-            Pos2::new(rect.left() + r, rect.top() + 0.5),
-            Vec2::new((rect.width() - 2.0 * r).max(0.0), 1.0),
+            Pos2::new(inner.left() + r, inner.top()),
+            Vec2::new((inner.width() - 2.0 * r).max(0.0), 1.0),
         ),
         0.0,
         Color32::from_white_alpha(if is_light() { 90 } else { 14 }),
     );
     p.rect_filled(
         Rect::from_min_size(
-            Pos2::new(rect.left() + r, rect.bottom() - 1.5),
-            Vec2::new((rect.width() - 2.0 * r).max(0.0), 1.0),
+            Pos2::new(inner.left() + r, inner.bottom() - 1.0),
+            Vec2::new((inner.width() - 2.0 * r).max(0.0), 1.0),
         ),
         0.0,
         Color32::from_black_alpha(46),
@@ -2769,6 +2791,29 @@ mod token_tests {
             assert!(contrast(p.text, p.field) >= 7.0);
             // 实心强调色上的字按大字号口径 ≥ 3:1（与 macOS 主按钮一致）。
             assert!(contrast(p.on_accent, p.accent) >= 3.0);
+        }
+    }
+
+    /// 八枚强调色预设：实心底上的字必须过 AA（4.5:1）。
+    /// 这条钉住的是「按对比度选字色」而不是亮度阈值——阈值在中间调必然漏一枚。
+    ///
+    /// All eight accent presets must carry AA-legible ink. This pins the
+    /// contrast-based ink selection; a luminance threshold always leaks one
+    /// mid-tone preset.
+    #[test]
+    fn accent_presets_clear_aa() {
+        for (h, s, l, name) in ACCENT_PRESETS {
+            let p = Palette::of(&Appearance {
+                accent_h: h,
+                accent_s: s,
+                accent_l: l,
+                ..Default::default()
+            });
+            let c = contrast(p.on_accent, p.accent);
+            assert!(
+                c >= 4.5,
+                "预设「{name}」强调底上的文字只有 {c:.2}:1（要 ≥4.5）"
+            );
         }
     }
 
