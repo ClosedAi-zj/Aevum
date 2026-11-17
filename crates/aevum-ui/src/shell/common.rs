@@ -1360,40 +1360,37 @@ pub(super) fn slider_row<K: std::hash::Hash + std::fmt::Debug>(
     // 三角，但本项目在 1280 宽、72% 缩放的实测下三角只有 9×10，读起来像一个小箭头
     // 而不是可抓的把手；圆点在同样尺寸下更容易命中，也和本界面其它圆形控件同一族。
     //
-    // 两行版式里轨道中线离标签只有 13px，12px 的大圆点会顶到标签下缘；照参考图
-    // 的手柄量级收到 9px（悬停 11、按下 8），白点才退成「量程上的一个点了」。
+    // 早期曾按旧参考稿 `.track i` 用 9–10 px 实心圆点 + 柔和落影，并以悬停/按下
+    // 改变尺寸提供反馈；该口径已被下面批准的 v19 空心环口径整体取代，旧尺寸与
+    // 按压形态不再适用，故此处不再复述。
     //
-    // Round knob: on 2026-11-07 the user asked to revert the triangle to the earlier
-    // circle. Photoshop's fader really is a triangle, but measured on this UI at 1280 px
-    // and 72% zoom the triangle is only 9x10 and reads as a small arrow rather than a
-    // grabbable handle; a dot is easier to hit at that size and matches the other round
-    // controls here.
+    // An earlier build used a 9–10 px solid dot with a soft drop shadow and
+    // resize-on-hover/press feedback. The approved v19 ring spec below supersedes
+    // that treatment entirely, so the old dimensions are no longer documented here.
+    // v19 设计稿滑钮口径（2026-11-15 批准的视觉对齐 B）：轨道在滑钮处开一个
+    // 14×7 的孔，滑钮是 11px 空心环、2px 描边 —— 普通 `knob()` 色、悬停提亮、
+    // 按下转 accent。旧口径（10px 实心点 + 落影，照旧参考 `.track i`）与之相比
+    // 存在感弱一档，且与设计稿 v19 之后的形态不一致。
     //
-    // In the two-line form the rail sits only 13 px below the label, so a 12 px dot
-    // collided with the label's lower edge; matching the reference's handle scale, it is
-    // now 9 px (11 hover, 8 pressed), so the white dot reads as a point on the range.
-    // 设计稿 `.track i`：10×10、`#c9ccd3`、`box-shadow:0 1px 2px rgba(0,0,0,.5)`。
-    // 所以静止是 10px 圆点 + 一道柔和落影，没有黑描边也没有亮白填充；悬停微胀
-    // 到 11px 给指认，按下缩到 9px 并转 accent——按压反馈仍要在，但只出现在
-    // 手指按下的那一瞬，不常驻。
-    //
-    // The design's `.track i` is 10x10 `#c9ccd3` with `0 1px 2px rgba(0,0,0,.5)`:
-    // a 10 px dot with a soft drop shadow, no dark outline and no bright white fill.
-    // Hover nudges it to 11 px; pressing shrinks it to 9 px and turns it accent, so
-    // press feedback only exists while the finger is down.
-    let r = if t.dragged() {
-        4.5
+    // v19 knob spec: a 14x7 notch cuts the rail under the handle; the handle is an
+    // 11 px ring with a 2 px stroke in `knob()` colour, brighter on hover, accent
+    // while dragging. The old 10 px solid dot with a drop shadow read a step weaker
+    // and diverged from the approved v19 mock.
+    let notch = Rect::from_center_size(knob, Vec2::new(14.0, 7.0));
+    p.rect_filled(notch, 0.0, theme::group_fill());
+    p.circle_filled(knob, 5.5, theme::group_fill());
+    let ring = if t.dragged() {
+        accent()
     } else if t.hovered() {
-        5.5
+        if theme::is_light() {
+            Color32::from_rgb(0x4A, 0x4E, 0x56)
+        } else {
+            Color32::from_rgb(0xE8, 0xE8, 0xEA)
+        }
     } else {
-        5.0
+        theme::knob()
     };
-    p.circle_filled(
-        knob + Vec2::new(0.0, 1.2),
-        r + 0.4,
-        Color32::from_black_alpha(55),
-    );
-    p.circle_filled(knob, r, if t.dragged() { accent() } else { theme::knob() });
+    p.circle_stroke(knob, 4.5, Stroke::new(2.0, ring));
     // 复位点只在悬停这一行时画：每条推子常年挂一颗蓝点，整列看起来像一排指示灯，
     // 既挤又吵；需要时它就在读数框左边。
     //
