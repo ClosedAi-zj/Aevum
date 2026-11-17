@@ -712,6 +712,28 @@ fn smooth_twice(vals: &mut [f32], bins: usize) {
     }
 }
 
+/// 单通道的**显示值**：与绘制同一条管线（相邻两 bin 求和 / max，再 ^0.55，
+/// 最后两遍 [1,2,1]/4 平滑）。绘制与悬停读数共用它——两处各写一遍，迟早会
+/// 出现「读数 72% 指着一座画面上不存在的峰」。
+///
+/// Display values for one channel: the drawing pipeline in one place (pair sum /
+/// max, then ^0.55, then two smoothing passes). Drawing and hover readout share
+/// it so the number can never disagree with the crest.
+fn pair_levels(h: &[[u32; 256]; 3], ch: usize, bins: usize, max: f32) -> Vec<f32> {
+    let mut vals: Vec<f32> = (0..bins)
+        .map(|b| {
+            let count = h[ch][b * 2] + h[ch][b * 2 + 1];
+            if count == 0 {
+                0.0
+            } else {
+                (count as f32 / max).powf(0.55).clamp(0.0, 1.0)
+            }
+        })
+        .collect();
+    smooth_twice(&mut vals, bins);
+    vals
+}
+
 /// 直方图下方那行拍摄参数，LR 的口径：ISO → 焦距 → 光圈 → 快门，四项各占
 /// 一格。缺项直接省略，不补破折号——四个「—」比一行空着更吵。
 ///
@@ -908,19 +930,7 @@ pub(super) fn histogram(ui: &mut Ui, state: &mut AppState) {
                 // smoothness came from gently varying sample data. This only touches the
                 // display layer. PS's ridges still carry fine saw teeth, so one pass only --
                 // the old four passes smeared a real photo into a blob.
-                let raw: Vec<f32> = (0..bins)
-                    .map(|b| {
-                        let lo = b * 2;
-                        let count = h[ch][lo] + h[ch][lo + 1];
-                        if count == 0 {
-                            0.0
-                        } else {
-                            (count as f32 / max).powf(0.55).clamp(0.0, 1.0)
-                        }
-                    })
-                    .collect();
-                let mut vals = raw.clone();
-                smooth_twice(&mut vals, bins);
+                let vals = pair_levels(&h, ch, bins, max);
                 for (b, &v) in vals.iter().enumerate().take(bins) {
                     let x0 = rect.left() + b as f32 * bar_w;
                     let x1 = x0 + bar_w;
@@ -993,16 +1003,26 @@ pub(super) fn histogram(ui: &mut Ui, state: &mut AppState) {
     //
     // Hover readout (v20 demo): hairline + that column's bar percentage. The
     // slot is already a hover surface, so no new interaction layer is needed.
-    if let Some(pos) = slot_resp
-        .interact_pointer_pos()
-        .filter(|p| rect.contains(*p))
-    {
+    // `Sense::hover()` 的响应上 `interact_pointer_pos()` 恒为 None（它只在
+    // 按下/拖拽时给值），用它判定悬停是一段永远不执行的死代码；改用 `hover_pos()`。
+    //
+    // `interact_pointer_pos()` is always None on a hover-sense response -- it only
+    // reports while a pointer button is held. The hover readout therefore never
+    // fired; `hover_pos()` is the right query.
+    if let Some(pos) = slot_resp.hover_pos().filter(|p| rect.contains(*p)) {
         let t = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
         let bi = ((t * bins as f32) as usize).min(bins - 1);
-        let pair = (0..3)
-            .map(|ch| h[ch][bi * 2] + h[ch][bi * 2 + 1])
-            .fold(0u32, |a: u32, b: u32| a.max(b));
-        let pct = pair as f32 / max * 100.0;
+        // 读数与画出来的高度同口径：绘制走的是 (pair/max)^0.55 再两遍 [1,2,1]/4
+        // 平滑，直接读原始 pair/max 会报出「画面上不存在的峰」（同一列数字对不上
+        // 眼睛看到的山脊）。这里把同一变换重算一遍，三通道取高者。
+        //
+        // The readout reuses the drawing pipeline (pair/max, ^0.55, two smoothing
+        // passes) instead of the raw ratio, which reported peaks the eye cannot
+        // see. Highest channel wins, as in the crest.
+        let level = (0..3)
+            .map(|ch| pair_levels(&h, ch, bins, max)[bi])
+            .fold(0.0f32, f32::max);
+        let pct = level * 100.0;
         let lx = rect.left() + t * rect.width();
         p.line_segment(
             [
