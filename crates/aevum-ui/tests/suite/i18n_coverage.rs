@@ -228,6 +228,13 @@ fn report(items: &[String]) -> String {
 }
 
 /// 探针本身得能报错——否则上面那条测试看到的是「一切正常」而不是「没在记账」。
+/// 缺译记录器是 debug 专供（release 恒为空 Vec），本测试必须同门控，
+/// 否则 release 下必挂——存量假红，2026-11-17 v20 回灌时实锤并修复。
+///
+/// The miss recorder is debug-only (release always returns an empty Vec), so this
+/// probe must carry the same gate -- a pre-existing false red under release,
+/// confirmed and fixed during the v20 backfill.
+#[cfg(debug_assertions)]
 #[test]
 fn the_miss_recorder_actually_records() {
     let _guard = probe_guard();
