@@ -251,7 +251,13 @@ pub(super) fn doc_tab(state: &mut AppState, p: &egui::Painter, ui: &mut Ui, rect
     }
 }
 
-pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
+/// `float = true` 时只画**工具与参数**：文档页签与缩放留在顶栏（demo 的单行顶栏
+/// 里就是这两处），浮卡里再画一遍会出现两个 91%、两个页签。
+///
+/// With `float = true` only tools and parameters are drawn: the document tab and
+/// the zoom readout live in the top bar (the demo's single row), and drawing them
+/// again inside the card produced two 91 % readouts and two tabs.
+pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context, float: bool) {
     let full = ui.max_rect();
     // 选项栏下沿用亮暗双线收口：单条发丝线让两行顶栏糊成一条平带。
     //
@@ -265,12 +271,14 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // The document tab sits at the options bar's left end on its bottom rule: the file
     // name answers "which document is this row editing", so it belongs here, not to the
     // image -- and the canvas gets the whole block back.
-    let tab_rect = Rect::from_min_size(
-        Pos2::new(full.left() + 8.0, full.bottom() - theme::TL_HD_H),
-        Vec2::new(208.0, theme::TL_HD_H),
-    );
-    let tab_painter = ui.painter().clone();
-    doc_tab(state, &tab_painter, ui, tab_rect);
+    if !float {
+        let tab_rect = Rect::from_min_size(
+            Pos2::new(full.left() + 8.0, full.bottom() - theme::TL_HD_H),
+            Vec2::new(208.0, theme::TL_HD_H),
+        );
+        let tab_painter = ui.painter().clone();
+        doc_tab(state, &tab_painter, ui, tab_rect);
+    }
 
     // 选项栏是**单行**：宽窗摆得下工具参数，窄窗只留骨架（文档页签 + 工具身份 +
     // 缩放）。放不下不收，两端文字会直接压在一起（多尺寸扫描在 900/1080 实测
@@ -280,10 +288,20 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
     // ones keep only the frame (document tab + tool identity + zoom). Without this tier
     // the two ends overlap (the multi-size sweep measured 56 collisions at 900/1080).
     // Those parameters already have a second home in the right-hand inspector.
-    let roomy = full.width() >= 1200.0;
+    // 阈值从 1200 收到 480：浮卡形态只有 520–760 宽，按 1200 判会把模块参数
+    // 整段判成"放不下"而隐藏（第一次截图里浮卡只剩工具与缩放）。480 是
+    // 「工具身份 + 一个参数 + 缩放」的最小可用宽度。
+    //
+    // Lowered from 1200 to 480: the floating card is 520-760 wide, and a 1200
+    // threshold hid every module parameter (the first screenshot showed only the
+    // tool menu and the zoom readout). 480 is the minimum that still fits
+    // "tool identity + one parameter + zoom".
+    let roomy = full.width() >= 480.0;
     let mut left_end = full.left();
     ui.horizontal_centered(|ui| {
-        ui.add_space(208.0 + 10.0);
+        if !float {
+            ui.add_space(208.0 + 10.0);
+        }
         group_gap(ui);
         // 工具身份：界面稿 .tool-id 是一颗**下拉**（icon + 名字 + ▼），点了换工具；
         // 之前只画静态名字，工具身份和工具栏读起来像两个东西。
@@ -433,11 +451,22 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
                     egui::ComboBox::from_id_salt("preset-opt")
                         // 预设名可能是「自定义」或者「副本 xxx」——后者是存下来的标识，
                         // 交给 `tr_preset` 认前缀再翻。
-                        .selected_text(
-                            RichText::new(crate::i18n::tr_preset(&current))
-                                .size(SIZE_LABEL)
-                                .color(text()),
-                        )
+                        .selected_text({
+                            // 预设名为空时显示「自定义」：空串会让 ComboBox 画出一个
+                            // 没有任何文字的空框，读起来像一枚坏掉的控件（浮卡里
+                            // 最显眼的两处"字形"就是它和它的箭头）。
+                            //
+                            // Fall back to "自定义" when the preset name is empty: an
+                            // empty string makes the ComboBox render a blank box, which
+                            // reads as a broken control.
+                            let label = crate::i18n::tr_preset(&current);
+                            let label = if label.trim().is_empty() {
+                                crate::i18n::t!("自定义").to_owned()
+                            } else {
+                                label
+                            };
+                            RichText::new(label).size(SIZE_LABEL).color(text())
+                        })
                         // 不收宽度时 ComboBox 吃满横向布局的余宽，下拉箭頭被推到
                         // 行尾、与「自定义」隔出一段空白（用户 2026-11-12「不协调」）。
                         //
@@ -608,73 +637,75 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         //
         // Measured right edge of the left controls; the readouts must not cross it.
         left_end = ui.next_widget_position().x;
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            // 右端只留一枚 ghost 胶囊（界面稿 .opt-chip 的静置态）：透明底、dim 字，
-            // 悬停才抬起。缩放、适应、网格、对比这些都是"怎么看这张图"，
-            // 和左边"当前工具的参数"不是一类事 —— 摊成七颗并排的控件，
-            // 工具栏就成了两段互不相干的按钮条。
-            let w = &mut ui.style_mut().visuals.widgets;
-            w.inactive.weak_bg_fill = Color32::TRANSPARENT;
-            w.inactive.bg_stroke = Stroke::NONE;
-            w.inactive.fg_stroke = Stroke::new(1.0, dim());
-            w.hovered.weak_bg_fill = elev_hover();
-            w.hovered.bg_stroke = Stroke::NONE;
-            w.hovered.fg_stroke = Stroke::new(1.0, text());
-            w.active.weak_bg_fill = selected();
-            w.active.bg_stroke = Stroke::NONE;
-            ui.spacing_mut().button_padding = Vec2::new(9.0, 4.0);
-            ui.menu_button(
-                RichText::new(format!("{:.0}%  ▼", state.zoom * state.fit_scale * 100.0))
-                    .font(mono(SIZE_LABEL)),
-                |ui| {
-                    menu_style(ui);
-                    if menu_item(ui, "适应窗口", "Ctrl+0") {
-                        fit_view(state);
-                        ui.close();
-                    }
-                    if menu_item(ui, "实际像素", "Ctrl+1") {
-                        actual_size(state);
-                        ui.close();
-                    }
-                    if menu_item(ui, "放大", "+") {
-                        state.zoom = (state.zoom * 1.25).min(24.0);
-                        ui.close();
-                    }
-                    if menu_item(ui, "缩小", "−") {
-                        state.zoom = (state.zoom / 1.25).max(0.1);
-                        ui.close();
-                    }
-                    ui.separator();
-                    ui.checkbox(
-                        &mut state.grid,
-                        RichText::new(crate::i18n::t!("网格")).size(SIZE_BODY),
-                    );
-                    ui.checkbox(
-                        &mut state.split,
-                        RichText::new(crate::i18n::t!("前后对比")).size(SIZE_BODY),
-                    );
-                    ui.separator();
-                    ui.menu_button(
-                        RichText::new(crate::i18n::t!("界面字号")).size(SIZE_BODY),
-                        |ui| {
-                            menu_style(ui);
-                            for (i, z) in FONT_ZOOMS.iter().enumerate() {
-                                let on = state.font_level == i;
-                                let label = if on {
-                                    format!("✓ {}%", (z * 100.0).round())
-                                } else {
-                                    format!("   {}%", (z * 100.0).round())
-                                };
-                                if menu_item(ui, &label, "") {
-                                    state.font_level = i;
-                                    ui.close();
+        if !float {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                // 右端只留一枚 ghost 胶囊（界面稿 .opt-chip 的静置态）：透明底、dim 字，
+                // 悬停才抬起。缩放、适应、网格、对比这些都是"怎么看这张图"，
+                // 和左边"当前工具的参数"不是一类事 —— 摊成七颗并排的控件，
+                // 工具栏就成了两段互不相干的按钮条。
+                let w = &mut ui.style_mut().visuals.widgets;
+                w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                w.inactive.bg_stroke = Stroke::NONE;
+                w.inactive.fg_stroke = Stroke::new(1.0, dim());
+                w.hovered.weak_bg_fill = elev_hover();
+                w.hovered.bg_stroke = Stroke::NONE;
+                w.hovered.fg_stroke = Stroke::new(1.0, text());
+                w.active.weak_bg_fill = selected();
+                w.active.bg_stroke = Stroke::NONE;
+                ui.spacing_mut().button_padding = Vec2::new(9.0, 4.0);
+                ui.menu_button(
+                    RichText::new(format!("{:.0}%  ▼", state.zoom * state.fit_scale * 100.0))
+                        .font(mono(SIZE_LABEL)),
+                    |ui| {
+                        menu_style(ui);
+                        if menu_item(ui, "适应窗口", "Ctrl+0") {
+                            fit_view(state);
+                            ui.close();
+                        }
+                        if menu_item(ui, "实际像素", "Ctrl+1") {
+                            actual_size(state);
+                            ui.close();
+                        }
+                        if menu_item(ui, "放大", "+") {
+                            state.zoom = (state.zoom * 1.25).min(24.0);
+                            ui.close();
+                        }
+                        if menu_item(ui, "缩小", "−") {
+                            state.zoom = (state.zoom / 1.25).max(0.1);
+                            ui.close();
+                        }
+                        ui.separator();
+                        ui.checkbox(
+                            &mut state.grid,
+                            RichText::new(crate::i18n::t!("网格")).size(SIZE_BODY),
+                        );
+                        ui.checkbox(
+                            &mut state.split,
+                            RichText::new(crate::i18n::t!("前后对比")).size(SIZE_BODY),
+                        );
+                        ui.separator();
+                        ui.menu_button(
+                            RichText::new(crate::i18n::t!("界面字号")).size(SIZE_BODY),
+                            |ui| {
+                                menu_style(ui);
+                                for (i, z) in FONT_ZOOMS.iter().enumerate() {
+                                    let on = state.font_level == i;
+                                    let label = if on {
+                                        format!("✓ {}%", (z * 100.0).round())
+                                    } else {
+                                        format!("   {}%", (z * 100.0).round())
+                                    };
+                                    if menu_item(ui, &label, "") {
+                                        state.font_level = i;
+                                        ui.close();
+                                    }
                                 }
-                            }
-                        },
-                    );
-                },
-            );
-        });
+                            },
+                        );
+                    },
+                );
+            });
+        }
     });
     // 右段读数（原画布顶行）：画幅·位深 / 蒙版 n 个 / 撤销 Ctrl+Z。用 painter 排在
     // 缩放控件左侧，避免挤进那个 right_to_left 布局；三处都是 11px dim，不参与交互。
@@ -702,7 +733,14 @@ pub(super) fn options_bar(state: &mut AppState, ui: &mut Ui, ctx: &Context) {
         crate::i18n::tr_fmt("蒙版 {} 个", &[&state.params.masks.len()]),
         super::canvas::frame_size_text(state.resolution, bits),
     ];
-    if roomy {
+    // 浮卡里不画这组右段读数：它们按 `full.right()` 绝对定位，塞进 760 宽的卡
+    // 会与本行的控件重叠（第一版在卡尾留下两枚看不懂的字形）。读数在状态栏与
+    // 画布标尺都有，浮卡只放"当前工具的参数"。
+    //
+    // Skip these right-hand readouts inside the floating card: they position
+    // themselves against `full.right()` and overlapped the row's controls in a
+    // 760 px card (the first version left two unreadable glyphs at the card's end).
+    if roomy && !float {
         for text_line in readings {
             let g = p.layout_no_wrap(text_line, font(SIZE_SMALL), dim());
             x -= g.size().x;
@@ -1499,6 +1537,60 @@ pub(super) fn status_bar(state: &mut AppState, ui: &mut Ui) {
             accent(),
         );
     }
+}
+
+/// 选项栏的浮卡形态（v21）：画在画布底部居中，替掉现代布局里那条全宽横带。
+///
+/// 为什么是浮卡而不是横带：横带把窗口切成"顶栏 + 选项栏 + 画布"三段拼贴，
+/// demo 的观感来自"一张桌面 + 一块画布 + 几片浮在上面的卡"。控件内容完全复用
+/// [`options_bar`]，只是换了个容器，所以功能零丢失。
+///
+/// The options bar as a floating card (v21), centred at the canvas bottom instead of
+/// spanning the window. A full-width strip cut the window into three stacked bands;
+/// the demo reads as "one desk, one canvas, a few cards floating over it". The
+/// content is still [`options_bar`] -- only the container changed, so nothing is lost.
+pub(super) fn options_float(state: &mut AppState, ctx: &Context) {
+    const CARD_H: f32 = OPTIONS_H + 6.0;
+    // 胶片浮卡会占住画布底部；选项卡抬到它上面，两者不重叠。
+    //
+    // The filmstrip card owns the canvas bottom; the options card lifts above it.
+    let reserve = if state.frame_count() > 0 {
+        super::timeline::card_height(state) + 16.0
+    } else {
+        12.0
+    };
+    // 每帧算出窗口底部居中的落点：egui 源码注释原话说 `.anchor(…)` 会把浮窗
+    // 钉死成 immovable（判据 ui_tokens::no_floating_window_is_anchored）。
+    // 宽度在 show 外先按同一公式算好，fixed_pos 才能对准中心；Area 仍是
+    // movable(false) 的坞层浮卡，位置跟窗口走而不是跟用户拖拽走。
+    //
+    // Compute the bottom-centre position per frame: `.anchor(…)` freezes a float
+    // into an immovable window (the no-anchor criterion). The width uses the same
+    // formula outside `show` so fixed_pos can centre exactly; the card stays a
+    // non-movable dock-layer float that tracks the window, not the user's drag.
+    let screen = ctx.content_rect();
+    let w = (screen.width() * 0.46).clamp(560.0, 760.0);
+    let pos = Pos2::new(
+        screen.center().x - w * 0.5,
+        screen.bottom() - reserve - CARD_H,
+    );
+    egui::Area::new(egui::Id::unique("options-float"))
+        .order(egui::Order::Middle)
+        .fixed_pos(pos)
+        .movable(false)
+        .show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(w, CARD_H), Sense::hover());
+            let p = ui.painter().clone();
+            p.rect_filled(rect.expand(5.0), 15.0, Color32::from_black_alpha(58));
+            p.rect_filled(rect, 10.0, dock());
+            theme::glass_edge(&p, rect, 10.0);
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(rect.shrink2(Vec2::new(8.0, 3.0)))
+                    .layout(Layout::left_to_right(Align::Center)),
+                |ui| options_bar(state, ui, ctx, true),
+            );
+        });
 }
 
 #[cfg(test)]

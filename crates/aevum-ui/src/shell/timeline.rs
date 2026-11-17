@@ -1065,23 +1065,58 @@ fn filmstrip(state: &mut AppState, ui: &mut Ui, ctx: &Context, rect: Rect) {
                         }
 
                         if i == state.selected {
-                            // 选中（R4，ACR 胶片条读法）：白 2px 环 + 底部 2px
-                            // 强调条——白环在暗底上比强调色环更「实」，强调条
-                            // 与页签下划线同一语言。
+                            // v21：当前帧 = **单条** 2px 强调环 + 晷针（光柱 + 三角）。
+                            // 旧写法是"白环 + 底部强调条"：白环与强调条在缩略图
+                            // 底边叠成两层，读作双线；而且白环比强调色更抢眼，
+                            // 与"紫色只表你在这里"的语义相左。
+                            //
+                            // v21: the current frame is **one** 2 px accent ring plus
+                            // the gnomon (beam + triangle). The old "white ring +
+                            // accent bottom bar" stacked two edges on the thumb's
+                            // bottom and read as a double line; the white ring also
+                            // out-shouted the accent that is supposed to mean
+                            // "you are here".
                             p.rect_stroke(
                                 cell.expand(1.0),
                                 7.0,
-                                Stroke::new(2.0, Color32::WHITE),
+                                Stroke::new(2.0, accent()),
                                 StrokeKind::Inside,
                             );
-                            p.rect_filled(
-                                Rect::from_min_max(
-                                    Pos2::new(cell.left() + 6.0, cell.bottom() - 2.0),
-                                    Pos2::new(cell.right() - 6.0, cell.bottom()),
-                                ),
-                                1.0,
+                            // 晷针：一道 2px 光柱自缩略图下沿往下衰减，顶端一枚小三角。
+                            // 「恒晷」的名字就取自日影——这是别的软件不会画的记号。
+                            //
+                            // The gnomon: a 2 px beam fading downward from the thumb's
+                            // bottom edge, capped by a small triangle.
+                            let gx = cell.center().x;
+                            let g_top = cell.bottom() + 1.0;
+                            let g_bot = g_top + 16.0;
+                            p.add(egui::Shape::convex_polygon(
+                                vec![
+                                    Pos2::new(gx, g_top + 5.0),
+                                    Pos2::new(gx + 4.0, g_top),
+                                    Pos2::new(gx - 4.0, g_top),
+                                ],
                                 accent(),
-                            );
+                                Stroke::NONE,
+                            ));
+                            let seg_h = (g_bot - g_top - 5.0).max(1.0);
+                            for k in 0..4 {
+                                let t0 = k as f32 / 4.0;
+                                let a = (1.0 - t0) * 150.0;
+                                p.rect_filled(
+                                    Rect::from_min_size(
+                                        Pos2::new(gx - 1.0, g_top + 5.0 + seg_h * t0),
+                                        Vec2::new(2.0, seg_h / 4.0),
+                                    ),
+                                    0.0,
+                                    Color32::from_rgba_unmultiplied(
+                                        accent().r(),
+                                        accent().g(),
+                                        accent().b(),
+                                        a as u8,
+                                    ),
+                                );
+                            }
                         } else if cell_resp.hovered() {
                             p.rect_stroke(
                                 cell,

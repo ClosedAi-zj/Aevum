@@ -833,12 +833,13 @@ pub fn needs_translation(s: &str) -> bool {
 
 /// 包一层翻译。只接受字面量——动态拼出来的字符串没有稳定的键，翻不了，
 /// 那种情况应该拆成「模板 + 参数」再翻译模板。
+#[macro_export]
 macro_rules! t {
     ($s:literal) => {
         $crate::i18n::tr($s)
     };
 }
-pub(crate) use t;
+pub use crate::t;
 
 #[cfg(test)]
 mod tests {

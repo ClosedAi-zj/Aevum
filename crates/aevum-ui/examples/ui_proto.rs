@@ -837,7 +837,7 @@ fn tab_row(
         p.txt(
             r.center(),
             egui::Align2::CENTER_CENTER,
-            *label,
+            aevum_ui::i18n::tr(label),
             font,
             if i == cur { T1 } else { T3 },
         );
@@ -1344,7 +1344,8 @@ fn draw_menubar(ui: &mut egui::Ui, st: &mut Proto) {
         if resp.clicked() {
             st.say(
                 ui.ctx(),
-                &format!("「{label}」菜单：原型未接（HTML 稿有完整菜单）"),
+                &aevum_ui::i18n::tr("「{label}」菜单：原型未接（HTML 稿有完整菜单）")
+                    .replace("{label}", label),
             );
         }
         p.txt(
@@ -1853,7 +1854,7 @@ fn draw_status(ui: &mut egui::Ui, frame_ms: f32) {
     // 写死的读数永远绿，等于没有判据（性能验收必须建立在真实测量上）。
     //
     // Real frame time (median of 30); the old hard-coded "8.2 ms" could never fail.
-    let gpu = format!("GPU {frame_ms:.1} ms/帧");
+    let gpu = aevum_ui::i18n::tr("GPU {ms} ms/帧").replace("{ms}", &format!("{:.1}", frame_ms));
     let mono = egui::FontId::monospace(FONT_META); // C8: 读数等宽
     p.txt(
         Pos2::new(cur, cy),
@@ -2358,7 +2359,10 @@ fn draw_left(ui: &mut egui::Ui, rect: Rect, st: &mut Proto) {
             );
             if resp.clicked() {
                 st.preset = i;
-                st.toast_now(ui.ctx(), &format!("已套用预设「{name}」"));
+                st.toast_now(
+                    ui.ctx(),
+                    &aevum_ui::i18n::tr("已套用预设「{name}」").replace("{name}", name),
+                );
             }
         }
         y += PRESETS.len() as f32 * 28.0;
@@ -2376,7 +2380,7 @@ fn draw_left(ui: &mut egui::Ui, rect: Rect, st: &mut Proto) {
     p.txt(
         Pos2::new(rect.right() - 16.0, y + 13.0), // C7
         egui::Align2::RIGHT_CENTER,
-        format!("{HISTORY_TOTAL} 步"),
+        aevum_ui::i18n::tr("{} 步").replace("{}", &HISTORY_TOTAL.to_string()),
         f_small(),
         T4_TEXT,
     );
@@ -2468,7 +2472,8 @@ fn draw_left(ui: &mut egui::Ui, rect: Rect, st: &mut Proto) {
     p.txt(
         Pos2::new(rect.center().x, note_y),
         egui::Align2::CENTER_CENTER,
-        format!("更早 {} 步 · 滚轮查看", HISTORY_TOTAL.saturating_sub(n)),
+        aevum_ui::i18n::tr("更早 {n} 步 · 滚轮查看")
+            .replace("{n}", &HISTORY_TOTAL.saturating_sub(n).to_string()),
         f_small(),
         T4_TEXT,
     );

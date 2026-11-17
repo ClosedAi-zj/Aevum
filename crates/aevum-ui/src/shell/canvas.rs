@@ -114,10 +114,21 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     } else {
         matte()
     };
-    p.rect_filled(body, 0, backdrop);
+    // v21 重构第一步：整块画布区先铺**框架色**，再内缩 8px 画一口**圆角井**。
+    // 旧实现是两条贴边矩形（body / content），四边与面板齐平，读起来是"拼贴"；
+    // demo 里画布是一块凹进桌面里的圆角开口，照片浮在井底之上。
+    //
+    // v21 step 1: the canvas area fills with the **frame** colour, then a rounded
+    // well is inset by 8 px. The old version painted two flush rectangles, which
+    // read as a collage; the demo's canvas is an opening recessed into the desk.
+    const WELL_INSET: f32 = 8.0;
+    const WELL_RADIUS: f32 = 10.0;
+    p.rect_filled(body, 0, chrome());
+    let well = body.shrink(WELL_INSET);
+    p.rect_filled(well, WELL_RADIUS, backdrop);
 
     let gutter = if state.rulers { RULER } else { 0.0 };
-    let content = Rect::from_min_max(body.min + Vec2::splat(gutter), body.max);
+    let content = Rect::from_min_max(well.min + Vec2::splat(gutter), well.max);
     p.rect_filled(
         content,
         0,
@@ -360,16 +371,23 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     // divider and chips are all clipped to `content`, or they paint a dark band over the
     // canvas toolbar and rulers (user screenshot: "one side has a black band at the top").
     let cp = p.clone().with_clip_rect(content);
+    // 照片三层**中性黑影**（v21，demo 口径）：环境影 / 投影 / 接触影。
+    // 旧实现是"下方 5px 一条柔影 + 1px 描边"——描边把照片框成一张卡片，
+    // 而 demo 里照片没有边框，靠阴影的层次浮在井底之上。
+    //
+    // Three neutral shadows (v21, demo): ambient / cast / contact. The old pair of
+    // "one soft band + a 1 px outline" framed the photo like a card; the demo has
+    // no border and lets the shadow stack lift it off the well floor.
+    cp.rect_filled(img.expand(14.0), 0, Color32::from_black_alpha(46));
     cp.rect_filled(
-        img.translate(Vec2::new(0.0, 5.0)),
+        img.translate(Vec2::new(0.0, 10.0)).expand(4.0),
         0,
-        Color32::from_black_alpha(55),
+        Color32::from_black_alpha(64),
     );
-    cp.rect_stroke(
-        img,
+    cp.rect_filled(
+        img.translate(Vec2::new(0.0, 4.0)).expand(1.0),
         0,
-        Stroke::new(1.0, border_strong()),
-        StrokeKind::Outside,
+        Color32::from_black_alpha(90),
     );
 
     match &tex {
