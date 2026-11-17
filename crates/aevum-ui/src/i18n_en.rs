@@ -1166,7 +1166,6 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("更新任务已经在跑了", "An update job is already running"),
     ("更新队列顺序", "Reorder queue"),
     ("更早 {n} 步 · 滚轮查看", "{n} steps earlier · scroll to browse"),
-    ("更早 {n} 步 · 滚轮查看", "{n} steps earlier · scroll to browse"),
     ("替换控制文件失败：{}", "Could not replace the control file: {}"),
     ("最大 / 均值", "Max / mean"),
     ("最大修正", "Max correction"),

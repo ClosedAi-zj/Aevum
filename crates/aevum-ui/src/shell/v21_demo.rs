@@ -193,9 +193,13 @@ const BAR_LIT: Color32 = Color32::from_rgb(0x2F, 0x2F, 0x2F);
 // rounded corners and soft shadow, and gaps instead of full-width hairlines.
 
 /// 顶栏高：够放一行 32px 控件 + 上下 6px。
+///
+/// Top-bar height: one 32 px control row plus 6 px of air above and below.
 pub const TOP_H: f32 = 44.0;
 const BAR_H: f32 = TOP_H;
 /// 状态栏高：macOS 口径的薄信息带，不是 Win 的 24px 工具条。
+///
+/// Status-bar height: macOS's thin readout band, not the 24 px Windows toolbar.
 pub const STATUS_H: f32 = 20.0;
 /// 胶片条底：比画布亮一档——它是要看的内容，不是井。
 const STRIP: Color32 = Color32::from_rgb(0x32, 0x32, 0x32);
@@ -4057,6 +4061,13 @@ fn draw_toast(ctx: &egui::Context, st: &mut Proto, film_h: f32) {
 
 impl Proto {
     /// demo 原样的绘制入口（从 `eframe::App::ui` 搬出来，壳里直接调用）。
+    ///
+    /// `canvas_in` 由 `shell::mod` 从 layout 单源（`canvas_insets` + `centre_rect`）
+    /// 推入：呼吸带与井内缩都不在这里算。
+    ///
+    /// The prototype's own paint entry (moved out of `eframe::App::ui`; the shell
+    /// calls it directly). `canvas_in` arrives from `shell::mod`, derived through
+    /// the layout single source -- no gutter or well inset is computed here.
     pub fn ui(&mut self, root: &mut egui::Ui, canvas_in: &egui::Rect) {
         // eframe 会在窗口创建后用自己的 ppp 覆盖 `new()` 里的设置，所以这里持续校正。
         // 只在偏离时才写，避免每帧触发重排。
