@@ -140,5 +140,8 @@ build/
 Thumbs.db
 .DS_Store
 
+# v18 Tauri PoC 的 4MB 单页稿（内嵌 base64 素材，属实验产物；入口是 frontend/index.html）
+crates/aevum-tauri/frontend/mockup.html
+
 # Rust
 target/
