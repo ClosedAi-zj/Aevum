@@ -232,13 +232,6 @@ pub const DOCK_W: f32 = 296.0;
 /// the five lanes intact.
 pub const FILM_H: f32 = 164.0;
 const DOCK_TABS_H: f32 = 40.0;
-/// 演示照片的像素尺寸。顶栏「画幅」读数与缩放的百分比都从这里算，
-/// 两处写死两个数就会互相矛盾。
-///
-/// Source photo size; the frame readout and the zoom percentage both derive
-/// from it, so the two can never disagree.
-const PHOTO_W: f32 = 1280.0;
-const PHOTO_H: f32 = 720.0;
 
 /// 与 `widgets::BAND_NAMES` / `BAND_HUES` 同一张表。
 const BAND_NAMES: [&str; 8] = ["红", "橙", "黄", "绿", "浅绿", "蓝", "紫", "洋红"];
@@ -369,6 +362,15 @@ pub(super) enum DemoAction {
     /// Keyframe toggle for the current frame: remove, or insert with the
     /// current develop params.
     ToggleKeyframe,
+    /// 重做（命令注册表 history.redo，与快捷键同口径）。
+    /// Redo, via the command registry (same path as the shortcut).
+    Redo,
+    /// 历史跳转：跳到第 n 步（1 开始，history.jump 同参）。
+    /// History jump to step n (1-based, same args as history.jump).
+    JumpHistory(usize),
+    /// 退出应用（无框窗口的「文件 → 退出」）。
+    /// Quit the app (File -> Quit of the frameless window).
+    Quit,
 }
 
 /// demo 侧的动作队列（桥接注入；demo 独立运行时为 None，保留"原型未接"提示）。
@@ -435,6 +437,35 @@ struct Proto {
     /// 当前模块（顶栏 modpick 显示 + 下拉菜单高亮，桥接同步）。
     /// Current module for the top-bar picker label and dropdown highlight.
     module: crate::state::Module,
+    /// 文档名（顶栏页签，桥接同步 `seq.display_name()`）。
+    /// Document name for the top-bar tab, synced from `seq.display_name()`.
+    doc_name: String,
+    /// 已选帧号（filmhead「已选」读数，桥接同步）。
+    /// Selected frame index for the filmhead readout.
+    sel: usize,
+    /// 缩放百分比读数（画布每帧回填；照片像素 / 显示宽）。
+    /// Zoom percent readout, back-filled by the canvas each frame.
+    zoom_pct: f32,
+    /// 「实际大小」对应的 zoom 档（photo_px / fit_w，画布算好后菜单用）。
+    /// The zoom step that renders 1:1 pixels, computed on the canvas.
+    zoom_100: f32,
+    /// 序列帧率（顶栏读数，桥接同步 `state.output_fps`）。
+    /// Sequence fps for the readout, synced from `state.output_fps`.
+    fps: f32,
+    /// 真历史行（label, 是否当前步）：桥接按 (len, cursor) 变更才重建。
+    /// （`hist: usize` 是 demo 原有的选中行号槽，名字别撞。）
+    /// Real history rows; `hist: usize` above is the demo's own row slot.
+    hist_rows: std::sync::Arc<Vec<(String, bool)>>,
+    /// 真历史总步数。
+    /// Real history step count.
+    hist_total: usize,
+    /// 缓存键：上次构建 hist 时的 steps.len()。
+    hist_len: usize,
+    /// 缓存键：上次构建 hist 时的 cursor。
+    hist_cursor: usize,
+    /// 细节组（锐化数量 / 降噪明亮度），桥接双写。
+    /// Detail group (sharpen amount / denoise luma), synced both ways.
+    detail: [f64; 2],
     /// `shot=<path>`：第 3 帧整窗截图后退出。
     /// 锁屏环境无法注入鼠标/键盘，像素级核对只能靠这条内置通道。
     shot: Option<String>,
@@ -950,27 +981,33 @@ fn group_head(
     // 折叠态存 demo 会话（桥接模式同样生效）；不再只是 toast。
     let gid = egui::Id::unique(("v21-group-fold", title));
     let folded = ui.data(|d| d.get_temp::<bool>(gid)).unwrap_or(false);
-    if resp.clicked() {
-        ui.data_mut(|d| d.insert_temp(gid, !folded));
-        // 侧按钮命中区独立于整行：自动 / 复位走真应用。
-        let side_rect = Rect::from_min_size(
-            Pos2::new(row.right() - 52.0, row.top() + 3.0),
-            Vec2::new(48.0, row.height() - 6.0),
-        );
-        let side_resp = ui.interact(
-            side_rect,
-            ui.scope_id().with(("grp-side", title)),
-            Sense::click(),
-        );
-        if side_resp.clicked() {
-            if let Some(a) = &st.actions {
-                match side {
-                    "自动" => a.send(DemoAction::AutoExposure),
-                    "复位" => a.send(DemoAction::ResetParams),
-                    _ => {}
-                }
+    // 侧按钮命中区独立于整行：自动 / 复位走真应用。先测侧钮——点侧钮只发
+    // 动作、不折叠（之前侧钮包在整行点击里，按「复位」连组一起收起来了）。
+    //
+    // The side hit-zone is measured first: clicking 自动/复位 dispatches only,
+    // it used to fold the group as a side effect of living inside the row click.
+    let side_rect = Rect::from_min_size(
+        Pos2::new(row.right() - 52.0, row.top() + 3.0),
+        Vec2::new(48.0, row.height() - 6.0),
+    );
+    let side_resp = ui.interact(
+        side_rect,
+        ui.scope_id().with(("grp-side", title)),
+        Sense::click(),
+    );
+    let mut side_fired = false;
+    if side_resp.clicked() {
+        if let Some(a) = &st.actions {
+            match side {
+                "自动" => a.send(DemoAction::AutoExposure),
+                "复位" => a.send(DemoAction::ResetParams),
+                _ => {}
             }
         }
+        side_fired = true;
+    }
+    if resp.clicked() && !side_fired {
+        ui.data_mut(|d| d.insert_temp(gid, !folded));
     }
     hover_bg(
         ui,
@@ -1201,6 +1238,28 @@ fn band_slider(
 
 // ---------------------------------------------------------------- 顶栏
 
+/// 顶栏菜单项的动作（demo 内直接解释；真 API 走 DemoAction）。
+///
+/// Top-bar menu item commands (interpreted locally; real APIs go via DemoAction).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MenuCmd {
+    Folder,
+    Photos,
+    Export,
+    Quit,
+    Undo,
+    Redo,
+    Auto,
+    Reset,
+    ZoomIn,
+    ZoomOut,
+    Fit,
+    Actual,
+    Presets,
+    Unwired,
+    Sep,
+}
+
 fn draw_menubar(ui: &mut egui::Ui, st: &mut Proto) {
     let rect = ui.max_rect();
     let p = ui.painter().clone();
@@ -1253,39 +1312,222 @@ fn draw_menubar(ui: &mut egui::Ui, st: &mut Proto) {
     );
 
     // 46+32=78 是品牌区实际右缘（晷盘 24±9、品牌名 44 起宽约 32），留 16 呼吸。
+    //
+    // 菜单真实化：文件/编辑/视图是接真动作的下拉（打开/导出/撤销/缩放/面板
+    // 开关），插件/帮助保持「此构建未接」的说明——动作列表见 MenuCmd match。
+    //
+    // Real menus: File/Edit/View drop down onto real actions (open, export,
+    // undo, zoom, panel toggles); Plugins/Help stay honest about their scope.
     let mut x = rect.left() + 94.0;
-    for label in [
+    let menu_labels = [
         crate::i18n::t!("文件"),
         crate::i18n::t!("编辑"),
         crate::i18n::t!("视图"),
         crate::i18n::t!("插件"),
         crate::i18n::t!("帮助"),
-    ] {
+    ];
+    let open_id = ui.scope_id().with("v21-menu-open");
+    let open: Option<usize> = ui.ctx().data(|d| d.get_temp(open_id)).unwrap_or(None);
+    for (mi, label) in menu_labels.iter().enumerate() {
         let r = Rect::from_min_size(Pos2::new(x - 8.0, cy - 13.0), Vec2::new(40.0, 26.0));
-        let resp = ui.interact(r, ui.scope_id().with(("menu", label)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("menu", mi)), Sense::click());
+        let on = open == Some(mi);
         hover_bg(
             ui,
-            ui.scope_id().with(("h_menu", label)),
-            resp.hovered(),
+            ui.scope_id().with(("h_menu", mi)),
+            resp.hovered() || on,
             r,
             8.0,
             BUTTON,
         );
         if resp.clicked() {
-            st.say(
-                ui.ctx(),
-                &crate::i18n::tr("「{label}」菜单：原型未接（HTML 稿有完整菜单）")
-                    .replace("{label}", label),
-            );
+            ui.ctx().data_mut(|d| {
+                d.insert_temp::<Option<usize>>(open_id, if on { None } else { Some(mi) })
+            });
         }
         p.txt(
             Pos2::new(x, cy),
             egui::Align2::LEFT_CENTER,
             label,
             f_bold(FONT_LABEL),
-            if resp.hovered() { T1 } else { T2 },
+            if resp.hovered() || on { T1 } else { T2 },
         );
         x += 44.0;
+    }
+    if let Some(mi) = open {
+        let ctx = ui.ctx().clone();
+        let items: Vec<(String, MenuCmd)> = match mi {
+            0 => vec![
+                (crate::i18n::t!("打开文件夹").to_string(), MenuCmd::Folder),
+                (crate::i18n::t!("选照片…").to_string(), MenuCmd::Photos),
+                (String::new(), MenuCmd::Sep),
+                (crate::i18n::t!("导出…").to_string(), MenuCmd::Export),
+                (String::new(), MenuCmd::Sep),
+                (crate::i18n::t!("退出").to_string(), MenuCmd::Quit),
+            ],
+            1 => vec![
+                (crate::i18n::t!("撤销").to_string(), MenuCmd::Undo),
+                (crate::i18n::t!("重做").to_string(), MenuCmd::Redo),
+                (String::new(), MenuCmd::Sep),
+                (crate::i18n::t!("自动").to_string(), MenuCmd::Auto),
+                (crate::i18n::t!("复位").to_string(), MenuCmd::Reset),
+            ],
+            2 => vec![
+                (crate::i18n::t!("放大").to_string(), MenuCmd::ZoomIn),
+                (crate::i18n::t!("缩小").to_string(), MenuCmd::ZoomOut),
+                (crate::i18n::t!("适应窗口").to_string(), MenuCmd::Fit),
+                (crate::i18n::t!("实际大小").to_string(), MenuCmd::Actual),
+                (String::new(), MenuCmd::Sep),
+                (crate::i18n::t!("预设与历史").to_string(), MenuCmd::Presets),
+            ],
+            3 => vec![(crate::i18n::t!("插件市场…").to_string(), MenuCmd::Unwired)],
+            _ => vec![(
+                crate::i18n::t!("「{label}」菜单：原型未接（HTML 稿有完整菜单）")
+                    .replace("{label}", "帮助"),
+                MenuCmd::Unwired,
+            )],
+        };
+        let menu_x = rect.left() + 94.0 + mi as f32 * 44.0 - 8.0;
+        let menu_pos = Pos2::new(menu_x, cy + 17.0);
+        // 点击捕手垫底：点到菜单外任意处即收起（与 modpick 下拉同一套）。
+        egui::Area::new(open_id.with("catch"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(Pos2::ZERO)
+            .interactable(true)
+            .show(&ctx, |ui| {
+                let resp = ui.allocate_rect(ctx.content_rect(), Sense::click());
+                if resp.clicked() {
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp::<Option<usize>>(open_id, None));
+                }
+            });
+        egui::Area::new(open_id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(menu_pos)
+            .movable(false)
+            .show(&ctx, |ui| {
+                let mu = ui.painter().clone();
+                let row_h = 28.0;
+                let sep_n = items.iter().filter(|(l, _)| l.is_empty()).count() as f32;
+                let menu_rect = Rect::from_min_size(
+                    menu_pos,
+                    Vec2::new(
+                        168.0,
+                        row_h * (items.len() as f32 - sep_n) + sep_n * 9.0 + 10.0,
+                    ),
+                );
+                mu.rect_filled(menu_rect.expand(6.0), 12.0, Color32::from_black_alpha(58));
+                mu.rect_filled(menu_rect, 10.0, FIELD);
+                mu.rect_stroke(
+                    menu_rect,
+                    10.0,
+                    Stroke::new(1.0, Color32::from_black_alpha(96)),
+                    egui::StrokeKind::Inside,
+                );
+                let mut ry = menu_rect.top() + 5.0;
+                for (li, (label, cmd)) in items.iter().enumerate() {
+                    if label.is_empty() {
+                        // 分隔线：上下各留 4px 的暗线
+                        p.hline(
+                            (menu_rect.left() + 8.0)..=(menu_rect.right() - 8.0),
+                            ry + 4.0,
+                            Stroke::new(1.0, Color32::from_black_alpha(72)),
+                        );
+                        ry += 9.0;
+                        continue;
+                    }
+                    let row = Rect::from_min_size(
+                        Pos2::new(menu_rect.left() + 6.0, ry),
+                        Vec2::new(menu_rect.width() - 12.0, row_h),
+                    );
+                    let rr = ui.interact(row, ui.scope_id().with(("mi", li)), Sense::click());
+                    if rr.hovered() {
+                        mu.rect_filled(row, 6.0, BUTTON);
+                    }
+                    mu.txt(
+                        Pos2::new(row.left() + 14.0, row.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        label,
+                        f_small(),
+                        if rr.hovered() { T1 } else { T2 },
+                    );
+                    if rr.clicked() {
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp::<Option<usize>>(open_id, None));
+                        match cmd {
+                            MenuCmd::Folder => {
+                                if let Some(a) = &st.actions {
+                                    a.send(DemoAction::OpenFolder);
+                                }
+                            }
+                            MenuCmd::Photos => {
+                                if let Some(a) = &st.actions {
+                                    a.send(DemoAction::OpenPhotos);
+                                }
+                            }
+                            MenuCmd::Export => {
+                                if let Some(a) = &st.actions {
+                                    a.send(DemoAction::Export);
+                                }
+                            }
+                            MenuCmd::Quit => {
+                                if let Some(a) = &st.actions {
+                                    a.send(DemoAction::Quit);
+                                }
+                            }
+                            MenuCmd::Undo => {
+                                if let Some(a) = &st.actions {
+                                    a.send(DemoAction::Undo);
+                                }
+                            }
+                            MenuCmd::Redo => {
+                                if let Some(a) = &st.actions {
+                                    a.send(DemoAction::Redo);
+                                }
+                            }
+                            MenuCmd::Auto => {
+                                if let Some(a) = &st.actions {
+                                    a.send(DemoAction::AutoExposure);
+                                }
+                            }
+                            MenuCmd::Reset => {
+                                if let Some(a) = &st.actions {
+                                    a.send(DemoAction::ResetParams);
+                                }
+                            }
+                            MenuCmd::ZoomIn => {
+                                st.zoom = (st.zoom * 1.25).clamp(0.25, 4.0);
+                            }
+                            MenuCmd::ZoomOut => {
+                                st.zoom = (st.zoom / 1.25).clamp(0.25, 4.0);
+                            }
+                            MenuCmd::Fit => {
+                                st.zoom = 1.0;
+                                st.pan = Vec2::ZERO;
+                                st.say(ui.ctx(), crate::i18n::t!("已适应窗口"));
+                            }
+                            MenuCmd::Actual => {
+                                st.zoom = st.zoom_100;
+                                st.pan = Vec2::ZERO;
+                            }
+                            MenuCmd::Presets => {
+                                st.left_open = !st.left_open;
+                            }
+                            MenuCmd::Unwired => {
+                                st.say(
+                                    ui.ctx(),
+                                    &crate::i18n::tr(
+                                        "「{label}」菜单：原型未接（HTML 稿有完整菜单）",
+                                    )
+                                    .replace("{label}", label),
+                                );
+                            }
+                            MenuCmd::Sep => {}
+                        }
+                    }
+                    ry += row_h;
+                }
+            });
     }
 
     // 文档名紧跟菜单（macOS 标题栏的做法），工具组居中，动作在右——
@@ -1299,10 +1541,19 @@ fn draw_menubar(ui: &mut egui::Ui, st: &mut Proto) {
     // semibold (within the C8 set), box widened to match. At 13 it drowned.
     let tab = Rect::from_min_size(Pos2::new(x + 16.0, cy - 14.0), Vec2::new(176.0, 28.0));
     p.rect_filled(tab, 8.0, Color32::from_rgb(0x31, 0x31, 0x31));
+    // 文档名来自真序列（单帧报照片名、多帧报文件夹名）；demo 独立运行时
+    // 保留原演示名（doc_name 为空即未桥接）。
+    //
+    // The tab shows the real sequence name; the demo name survives standalone.
+    let doc_label = if st.doc_name.is_empty() {
+        crate::i18n::t!("维港夜景-017").to_string()
+    } else {
+        st.doc_name.clone()
+    };
     p.txt(
         Pos2::new(tab.left() + 12.0, cy),
         egui::Align2::LEFT_CENTER,
-        fit_text(&p, crate::i18n::t!("维港夜景-017"), f_bold(16.0), 148.0),
+        fit_text(&p, &doc_label, f_bold(16.0), 148.0),
         f_bold(16.0),
         T1,
     );
@@ -1341,11 +1592,15 @@ fn draw_menubar(ui: &mut egui::Ui, st: &mut Proto) {
     // out the HUD yields first and 100% never lands on 显影.
     let mut cur = rect.right() - 296.0;
     let zoom_font = f_bold(FONT_SMALL);
-    cur -= text_w(&p, "100%", zoom_font.clone());
+    // 缩放读数来自画布回填的真实百分比（1:1 = 100%），不再写死。
+    //
+    // The zoom readout is the canvas's measured percent, never a literal.
+    let zoom_text = format!("{:.0}%", st.zoom_pct);
+    cur -= text_w(&p, &zoom_text, zoom_font.clone());
     p.txt(
         Pos2::new(cur, cy),
         egui::Align2::LEFT_CENTER,
-        "100%",
+        &zoom_text,
         zoom_font,
         T1,
     );
@@ -1763,15 +2018,12 @@ fn draw_ai_cmdbar(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, st: &mut Pro
         HOVER,
     );
     if resp.clicked() && !st.ai_busy {
-        // 信任态：点击给出"已排队、可取消"的明确承诺（2026 AI-trust 口径），
-        // 而不是静默开始一个用户不知道去哪停的任务。
+        // AI 后端尚未接入（v21 既定范围）：点击如实说明，不摆「已排队」的假
+        // 进度——假装在跑的任务比没有 AI 更伤信任。
         //
-        // Trust state: clicking acknowledges with "queued, cancellable"
-        // instead of silently starting a task the user cannot stop.
-        st.toast_now(
-            ui.ctx(),
-            crate::i18n::t!("已加入队列 · 整段 48 帧 · 可随时取消"),
-        );
+        // The AI backend is not wired in this build: clicking says so. A fake
+        // "queued" progress line would cost more trust than having no AI at all.
+        st.toast_now(ui.ctx(), crate::i18n::t!("AI 尚未接入此版本"));
     }
     let mut tx = bar.left() + 12.0; // C7
     // 在場点：6px 紫圆。Agent 是工具，"AI 在此"是它唯一的紫色用途（C4）。
@@ -1917,7 +2169,7 @@ fn draw_canvas_tools(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, st: &mut 
 /// `frame_ms` 是最近 30 帧的中位数（由 `ui()` 采样后传入）。
 ///
 /// Status line. `frame_ms` is the median of the last 30 frames.
-fn draw_status(ui: &mut egui::Ui, frame_ms: f32) {
+fn draw_status(ui: &mut egui::Ui, st: &Proto, frame_ms: f32) {
     let rect = ui.max_rect();
     let p = ui.painter();
     // 状态栏不再是一条贴底的带子：它直接浮在桌面上，无底色、无上线。
@@ -1963,14 +2215,22 @@ fn draw_status(ui: &mut egui::Ui, frame_ms: f32) {
     );
     cur -= text_w(p, &gpu, mono) + 24.0; // C7
 
-    let frame = format!("{PHOTO_W:.0}×{PHOTO_H:.0} · P3");
-    p.txt(
-        Pos2::new(cur, cy),
-        egui::Align2::RIGHT_CENTER,
-        &frame,
-        f_small(),
-        T3,
-    );
+    // 画幅取真实照片像素（没有照片就不画这条读数）；「· P3」是写死的
+    // 色彩空间元数据，随假数据一起删。
+    //
+    // The frame size is the real photo's pixels (hidden when no photo); the
+    // hard-coded "P3" tag went with the fake metadata.
+    if let Some(t) = &st.photo {
+        let sz = t.size_vec2();
+        let frame = format!("{:.0}×{:.0}", sz.x, sz.y);
+        p.txt(
+            Pos2::new(cur, cy),
+            egui::Align2::RIGHT_CENTER,
+            &frame,
+            f_small(),
+            T3,
+        );
+    }
 }
 
 /// 左侧 AI 工具轨（效果图 `.airail`，56px）：四个按钮，第一个带紫点表示激活。
@@ -2485,10 +2745,18 @@ fn draw_left(ui: &mut egui::Ui, rect: Rect, st: &mut Proto) {
         f_group(),
         T3,
     );
+    // 总步数来自真历史（桥接）；demo 独立时保留演示的 HISTORY_TOTAL。
+    //
+    // The step count comes from the real history; demo keeps its total.
+    let hist_total_label = if st.doc_name.is_empty() {
+        HISTORY_TOTAL
+    } else {
+        st.hist_total
+    };
     p.txt(
         Pos2::new(rect.right() - 16.0, y + 13.0), // C7
         egui::Align2::RIGHT_CENTER,
-        crate::i18n::tr("{n} 步").replace("{n}", &HISTORY_TOTAL.to_string()),
+        crate::i18n::tr("{n} 步").replace("{n}", &hist_total_label.to_string()),
         f_small(),
         T4_TEXT,
     );
@@ -2498,78 +2766,173 @@ fn draw_left(ui: &mut egui::Ui, rect: Rect, st: &mut Proto) {
     let foot_h = 48.0;
     let rows_y = y;
     let avail = (rect.bottom() - foot_h - 30.0 - rows_y).max(0.0);
-    let n = ((avail / 36.0).floor() as usize).clamp(1, HISTORY.len());
-
-    for (i, (label, when, tag)) in HISTORY.iter().enumerate().take(n) {
-        let label = crate::i18n::tr(label);
-        let when = crate::i18n::tr(when);
-        let tag = crate::i18n::tr(tag);
-        let row = Rect::from_min_size(
-            Pos2::new(rect.left() + 8.0, rows_y + i as f32 * 36.0),
-            Vec2::new(rect.width() - 16.0, 36.0),
-        );
-        let resp = ui.interact(row, ui.scope_id().with(("hist", i)), Sense::click());
-        let on = st.hist == i;
-        if on {
-            // C4：同预设行——历史选中也是列表状态，不占紫色。
-            p.rect_filled(row, 6.0, CARD);
-            p.rect_filled(
-                Rect::from_min_size(
-                    Pos2::new(row.left(), row.top() + 6.0),
-                    Vec2::new(2.0, row.height() - 12.0),
-                ),
-                1.0,
-                T1,
+    // 桥接后用真历史行（新→旧、当前步高亮、行点击跳转）；demo 独立时用演示行。
+    //
+    // Real history rows once bridged (newest first, cursor highlighted, click
+    // jumps); the demo rows survive standalone.
+    let bridged = !st.doc_name.is_empty();
+    let rows_n = if bridged {
+        st.hist_rows.len()
+    } else {
+        HISTORY.len()
+    };
+    let n = ((avail / 36.0).floor() as usize).clamp(1, rows_n.max(1));
+    if bridged {
+        if st.hist_rows.is_empty() {
+            p.txt(
+                Pos2::new(rect.center().x, rows_y + 18.0),
+                egui::Align2::CENTER_CENTER,
+                crate::i18n::t!("尚无改动记录。"),
+                f_small(),
+                T4_TEXT,
             );
-        } else if resp.hovered() {
-            p.rect_filled(row, 6.0, HOVER);
         }
-        // 圆点：当前步紫、其余灰（设计稿 `.histrow .dot`）
-        p.circle_filled(
-            Pos2::new(row.left() + 10.0, row.top() + 13.0),
-            3.0,
-            if on { T1 } else { T4 },
-        );
-        // 分类标签：右对齐、与标题同一水平线（原来贴在时间行，比设计稿低一行）
-        let tag_font = f_small();
-        let tag_w = text_w(&p, tag, tag_font.clone()) + 12.0;
-        let tag_rect = Rect::from_min_size(
-            Pos2::new(row.right() - 8.0 - tag_w, row.top() + 6.0),
-            Vec2::new(tag_w, 16.0),
-        );
-        let title_x = row.left() + 24.0; // C7
-        p.txt(
-            Pos2::new(title_x, row.top() + 7.0),
-            egui::Align2::LEFT_TOP,
-            fit_text(&p, label, f_small(), tag_rect.left() - 8.0 - title_x),
-            f_small(),
-            if on { T1 } else { T2 },
-        );
-        p.txt(
-            Pos2::new(title_x, row.top() + 22.0),
-            egui::Align2::LEFT_TOP,
-            when,
-            f_small(),
-            T4_TEXT,
-        );
-        p.rect_filled(
-            tag_rect,
-            4.0, // C6: 3 不在圆角档位
-            // C4: 分类标签是列表状态，不是"当前帧"——用底衬明度区分，不用紫。
-            if on { CARD } else { BUTTON },
-        );
-        p.txt(
-            tag_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            tag,
-            tag_font,
-            if on { T1 } else { T3 },
-        );
-        if resp.clicked() {
-            st.hist = i;
+        for (ri, (label, applied)) in st.hist_rows.iter().enumerate().take(n) {
+            let row = Rect::from_min_size(
+                Pos2::new(rect.left() + 8.0, rows_y + ri as f32 * 36.0),
+                Vec2::new(rect.width() - 16.0, 36.0),
+            );
+            let resp = ui.interact(row, ui.scope_id().with(("rhist", ri)), Sense::click());
+            let on = *applied;
+            if on {
+                p.rect_filled(row, 6.0, CARD);
+                p.rect_filled(
+                    Rect::from_min_size(
+                        Pos2::new(row.left(), row.top() + 6.0),
+                        Vec2::new(2.0, row.height() - 12.0),
+                    ),
+                    1.0,
+                    T1,
+                );
+            } else if resp.hovered() {
+                p.rect_filled(row, 6.0, HOVER);
+            }
+            p.circle_filled(
+                Pos2::new(row.left() + 10.0, row.top() + 13.0),
+                3.0,
+                if on { T1 } else { T4 },
+            );
+            let tag_font = f_small();
+            let title_x = row.left() + 24.0; // C7
+            p.txt(
+                Pos2::new(title_x, row.center().y),
+                egui::Align2::LEFT_CENTER,
+                fit_text(&p, label, f_small(), row.right() - 14.0 - title_x),
+                f_small(),
+                if on { T1 } else { T2 },
+            );
+            if on {
+                // 当前步徽标：右缘一枚「当前」小胶囊（借用分类槽位）。
+                let tag_w = text_w(&p, crate::i18n::t!("当前"), tag_font.clone()) + 12.0;
+                let tag_rect = Rect::from_min_size(
+                    Pos2::new(row.right() - 8.0 - tag_w, row.center().y - 8.0),
+                    Vec2::new(tag_w, 16.0),
+                );
+                p.rect_filled(tag_rect, 4.0, CARD);
+                p.txt(
+                    tag_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    crate::i18n::t!("当前"),
+                    tag_font,
+                    T1,
+                );
+            }
+            if resp.clicked() {
+                if let Some(a) = &st.actions {
+                    // steps() 旧→新；显示新→旧。真实 index = 总行数-1-ri，jump 按 1 计。
+                    let real_index = st.hist_rows.len() - ri;
+                    a.send(DemoAction::JumpHistory(real_index));
+                }
+            }
+            resp.on_hover_text(label);
         }
-        resp.on_hover_text(label);
-    }
+    } else {
+        // 演示行只在演示分支构造：桥接帧不再每帧翻 18 条演示文案。
+        //
+        // Demo rows are built in the demo branch only -- bridged frames stop
+        // re-translating 18 fake rows every frame.
+        let demo_rows = HISTORY
+            .iter()
+            .enumerate()
+            .map(|(i, (label, when, tag))| {
+                (
+                    i,
+                    crate::i18n::tr(label).to_string(),
+                    crate::i18n::tr(when).to_string(),
+                    crate::i18n::tr(tag).to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let n_demo = n;
+        for row in demo_rows.into_iter().take(n_demo) {
+            let (i, label, when, tag) = row;
+            let row = Rect::from_min_size(
+                Pos2::new(rect.left() + 8.0, rows_y + i as f32 * 36.0),
+                Vec2::new(rect.width() - 16.0, 36.0),
+            );
+            let resp = ui.interact(row, ui.scope_id().with(("hist", i)), Sense::click());
+            let on = st.hist == i;
+            if on {
+                // C4：同预设行——历史选中也是列表状态，不占紫色。
+                p.rect_filled(row, 6.0, CARD);
+                p.rect_filled(
+                    Rect::from_min_size(
+                        Pos2::new(row.left(), row.top() + 6.0),
+                        Vec2::new(2.0, row.height() - 12.0),
+                    ),
+                    1.0,
+                    T1,
+                );
+            } else if resp.hovered() {
+                p.rect_filled(row, 6.0, HOVER);
+            }
+            // 圆点：当前步紫、其余灰（设计稿 `.histrow .dot`）
+            p.circle_filled(
+                Pos2::new(row.left() + 10.0, row.top() + 13.0),
+                3.0,
+                if on { T1 } else { T4 },
+            );
+            // 分类标签：右对齐、与标题同一水平线（原来贴在时间行，比设计稿低一行）
+            let tag_font = f_small();
+            let tag_w = text_w(&p, &tag, tag_font.clone()) + 12.0;
+            let tag_rect = Rect::from_min_size(
+                Pos2::new(row.right() - 8.0 - tag_w, row.top() + 6.0),
+                Vec2::new(tag_w, 16.0),
+            );
+            let title_x = row.left() + 24.0; // C7
+            p.txt(
+                Pos2::new(title_x, row.top() + 7.0),
+                egui::Align2::LEFT_TOP,
+                fit_text(&p, &label, f_small(), tag_rect.left() - 8.0 - title_x),
+                f_small(),
+                if on { T1 } else { T2 },
+            );
+            p.txt(
+                Pos2::new(title_x, row.top() + 22.0),
+                egui::Align2::LEFT_TOP,
+                when,
+                f_small(),
+                T4_TEXT,
+            );
+            p.rect_filled(
+                tag_rect,
+                4.0, // C6: 3 不在圆角档位
+                // C4: 分类标签是列表状态，不是"当前帧"——用底衬明度区分，不用紫。
+                if on { CARD } else { BUTTON },
+            );
+            p.txt(
+                tag_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                tag,
+                tag_font,
+                if on { T1 } else { T3 },
+            );
+            if resp.clicked() {
+                st.hist = i;
+            }
+            resp.on_hover_text(label);
+        }
+    } // demo rows else-close
 
     // 列表底部：还有更早的步骤 —— 把「下面空着」变成一条有意义的边界，
     // 而不是留在面板里的一整块死白（源程序 `tabs.rs` 也是用 note() 收尾）。
@@ -2580,14 +2943,19 @@ fn draw_left(ui: &mut egui::Ui, rect: Rect, st: &mut Proto) {
         // C5: 内缩短线也会读数，改成暗线（比底更暗）。
         Stroke::new(1.0, Color32::from_black_alpha(72)),
     );
-    p.txt(
-        Pos2::new(rect.center().x, note_y),
-        egui::Align2::CENTER_CENTER,
-        crate::i18n::tr("更早 {n} 步 · 滚轮查看")
-            .replace("{n}", &HISTORY_TOTAL.saturating_sub(n).to_string()),
-        f_small(),
-        T4_TEXT,
-    );
+    // 「更早」计数同样分真/演示口径；没有更早的步骤时整条提示不画。
+    //
+    // The "earlier" count follows the real/demo split; hidden when nothing hides.
+    let earlier = hist_total_label.saturating_sub(n);
+    if earlier > 0 {
+        p.txt(
+            Pos2::new(rect.center().x, note_y),
+            egui::Align2::CENTER_CENTER,
+            crate::i18n::tr("更早 {n} 步 · 滚轮查看").replace("{n}", &earlier.to_string()),
+            f_small(),
+            T4_TEXT,
+        );
+    }
 
     // 左栏页脚（设计稿 `.lfoot`）：撤销一步 / 回到此处，两个等宽 32px 按钮。
     // 没有它时历史列表下面空着 340px（面板高度的 40%），是整屏最大的一块死白。
@@ -2655,6 +3023,48 @@ fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto) {
 
     let resp = ui.interact(rect, ui.scope_id().with("canvas"), Sense::click_and_drag());
 
+    // Ctrl+0 适应窗口 / Ctrl+1 实际大小：快捷键收进画布（demo 的 zoom 语义住
+    // 这里）；老壳 handle_input 里的同名键已删，避免两边各调一套缩放。
+    //
+    // Ctrl+0 / Ctrl+1 land on the canvas, where the demo's zoom semantics live;
+    // the same keys in the legacy input handler are gone so the two never fight.
+    let (fit_req, actual_req) = ui.input(|i| {
+        (
+            i.modifiers.command && i.key_pressed(egui::Key::Num0),
+            i.modifiers.command && i.key_pressed(egui::Key::Num1),
+        )
+    });
+    // 「实际大小」的 zoom 档按真实照片宽算（照片像素 / 适配显示宽），顺手回填
+    // 给顶栏读数用的两个槽。
+    //
+    // The 1:1 zoom step derives from the real photo width; both slots also feed
+    // the top-bar readout.
+    let photo_px_w = st.photo.as_ref().map(|t| t.size_vec2().x).unwrap_or(960.0);
+    let photo_px_h = st.photo.as_ref().map(|t| t.size_vec2().y).unwrap_or(640.0);
+    let photo_aspect = if photo_px_h > 1.0 {
+        photo_px_w / photo_px_h
+    } else {
+        1.5
+    };
+    let avail0 = rect.shrink(24.0);
+    let base_w0 = avail0.width().min(1180.0);
+    let fit_h = base_w0 / photo_aspect;
+    let base_w0 = if fit_h > avail0.height() {
+        avail0.height() * photo_aspect
+    } else {
+        base_w0
+    };
+    st.zoom_100 = (photo_px_w / base_w0).max(0.05);
+    if fit_req {
+        st.zoom = 1.0;
+        st.pan = Vec2::ZERO;
+        st.say(ui.ctx(), crate::i18n::t!("已适应窗口"));
+    }
+    if actual_req {
+        st.zoom = st.zoom_100;
+        st.pan = Vec2::ZERO;
+    }
+
     if resp.hovered() {
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         if scroll.abs() > 0.1 {
@@ -2683,12 +3093,22 @@ fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto) {
     // 1244 px, and keeping the old cap would buy nothing but wider black
     // margins -- the photo itself would not grow a single pixel.
     let base_w = avail.width().min(1180.0);
+    // 宽高比照真实照片算：写死 1.5 会把 16:9 / 竖图拉成 3:2（用户一放竖图就能看出来）。
+    //
+    // The frame uses the photo's true aspect; the hard-coded 1.5 stretched
+    // portrait and 16:9 shots into 3:2.
     let mut w = base_w * st.zoom;
-    let mut h = w / 1.5;
+    let mut h = w / photo_aspect;
     if h > avail.height() * st.zoom {
         h = avail.height() * st.zoom;
-        w = h * 1.5;
+        w = h * photo_aspect;
     }
+    // 顶栏缩放读数 = 显示宽 / 照片像素宽（1:1 = 100%）。
+    st.zoom_pct = if photo_px_w > 1.0 {
+        w / photo_px_w * 100.0
+    } else {
+        100.0
+    };
     let frame = Rect::from_center_size(rect.center() + st.pan, Vec2::new(w, h));
 
     // 旧版是「光桌」：八层暖白（0xFFF4E2）从照片边缘向外递减，想让照片像
@@ -2913,8 +3333,12 @@ fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto) {
     // The percentage is the real frame-to-source ratio, not `zoom * 100`:
     // zoom 1 means "fit", which lands at 92% for a 1180-wide frame in a 1280-wide
     // photo. Hard-coding 100% fakes the reading and makes both buttons identical.
-    let fit_pct = frame.width() / PHOTO_W * 100.0;
-    let zoom_lbl = format!("{}%", fit_pct.round() as i32);
+    // 百分比与顶栏同源：画布实测（显示宽 / 照片像素宽），PHOTO_W 的演示兜底
+    // 只在没有真照片时生效。
+    //
+    // The percent shares the canvas-measured source with the top bar; the demo
+    // PHOTO_W fallback only applies without a real photo.
+    let zoom_lbl = format!("{:.0}%", st.zoom_pct.round());
     let left = Rect::from_min_max(chip.min, Pos2::new(split, chip.bottom()));
     let right = Rect::from_min_max(Pos2::new(split, chip.top()), chip.max);
     let lr = ui.interact(left, ui.scope_id().with("zoom-100"), Sense::click());
@@ -2940,7 +3364,8 @@ fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto) {
         if rr.hovered() { T1 } else { T3 },
     );
     if lr.clicked() {
-        st.zoom = 1.0;
+        // 「100%」= 实际大小：1 照片像素 = 1 屏幕像素（档位由画布按真照片算）。
+        st.zoom = st.zoom_100;
         st.pan = Vec2::ZERO;
         st.say(ui.ctx(), crate::i18n::t!("缩放 100%"));
     }
@@ -3167,6 +3592,13 @@ fn dock_basic(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, y0: f32, st: &mu
     for (i, label) in labels.iter().enumerate() {
         let digits = usize::from(i == 0);
         let v = &mut st.basic[i];
+        // 档位照 core 的 spec 表：曝光是 -5..5 的 EV 档，其余五杆 -100..100。
+        // 之前整组 -100..100，曝光拉到 50 会直接把 core 的 ±5 EV 顶穿。
+        //
+        // Ranges follow the core spec table: exposure is the ±5 EV tier, the
+        // other five are -100..100; the old uniform range could push exposure
+        // fifty times past its real ceiling.
+        let (min, max) = if i == 0 { (-5.0, 5.0) } else { (-100.0, 100.0) };
         y = slider_row(
             ui,
             p,
@@ -3175,8 +3607,8 @@ fn dock_basic(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, y0: f32, st: &mu
             "basic",
             label,
             v,
-            -100.0,
-            100.0,
+            min,
+            max,
             0.0,
             digits * 2,
             None,
@@ -3245,15 +3677,36 @@ fn dock_basic(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, y0: f32, st: &mu
     }
 
     // 延时序列
+    // 侧标：锚帧来自真关键帧集合（第一个关键帧），没有就留空。
+    //
+    // The side label reports the first real keyframe; empty when none.
+    let anchor_label = if st.kfs.is_empty() {
+        String::new()
+    } else {
+        crate::i18n::tr("锚帧 第 {n} 帧").replace(
+            "{n}",
+            &(st.kfs.iter().copied().min().unwrap_or(0) + 1).to_string(),
+        )
+    };
+    let anchor_label = if st.doc_name.is_empty() {
+        crate::i18n::t!("锚帧 第 12 帧").to_string()
+    } else {
+        anchor_label
+    };
     y = group_head(
         ui,
         p,
         rect,
         y + 4.0,
         crate::i18n::t!("延时序列"),
-        crate::i18n::t!("锚帧 第 12 帧"),
+        &anchor_label,
         st,
     );
+    // 档位照老壳 sequence.rs 的 spec：强度 0..150（默认 100），窗口 3..199 帧
+    // （默认 15）——之前 -100..100 的百分比档位与真语义对不上。
+    //
+    // Ranges follow the legacy sequence panel: strength 0..150, window 3..199
+    // frames; the old -100..100 percent scale matched nothing real.
     y = slider_row(
         ui,
         p,
@@ -3262,9 +3715,9 @@ fn dock_basic(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, y0: f32, st: &mu
         "tl",
         crate::i18n::t!("去闪强度"),
         &mut st.deflicker,
-        -100.0,
-        100.0,
         0.0,
+        150.0,
+        100.0,
         0,
         None,
     );
@@ -3276,9 +3729,9 @@ fn dock_basic(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, y0: f32, st: &mu
         "tl",
         crate::i18n::t!("平滑窗口"),
         &mut st.smooth_win,
-        0.0,
-        100.0,
-        50.0,
+        3.0,
+        199.0,
+        15.0,
         0,
         None,
     );
@@ -3448,14 +3901,42 @@ fn dock_effect(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, y0: f32, st: &m
         crate::i18n::t!("复位"),
         st,
     );
-    let labels = [
-        crate::i18n::t!("去朦胧"),
-        crate::i18n::t!("颗粒"),
-        crate::i18n::t!("暗角"),
-    ];
-    for (i, label) in labels.iter().enumerate() {
+    // ACR Effects 口径：颗粒 / 暗角。去朦胧住在「存在感」（ACR 同款分组），
+    // 之前这里再来一根同参杆，两处各拉各的、互相顶掉。
+    //
+    // ACR Effects: grain / vignette. Dehaze lives in Presence -- the duplicate
+    // slider here fought the other one for the same parameter.
+    for (i, (label, min, max)) in [
+        (crate::i18n::t!("颗粒"), 0.0, 100.0),
+        (crate::i18n::t!("暗角"), -100.0, 100.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let v = &mut st.effects[i];
-        y = slider_row(ui, p, rect, y, "fx", label, v, -100.0, 100.0, 0.0, 0, None);
+        y = slider_row(ui, p, rect, y, "fx", label, v, min, max, 0.0, 0, None);
+    }
+    // 细节：锐化数量 / 降噪明亮度（ACR Detail 的两根主杆；半径等细项留给 v22）。
+    //
+    // Detail: the two ACR primary sliders; the fine-grained ones land in v22.
+    y = group_head(
+        ui,
+        p,
+        rect,
+        y + 4.0,
+        crate::i18n::t!("细节"),
+        crate::i18n::t!("复位"),
+        st,
+    );
+    for (i, (label, min, max)) in [
+        (crate::i18n::t!("锐化 数量"), 0.0, 150.0),
+        (crate::i18n::t!("降噪 明亮度"), 0.0, 100.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let v = &mut st.detail[i];
+        y = slider_row(ui, p, rect, y, "dt", label, v, min, max, 0.0, 0, None);
     }
 }
 
@@ -3478,10 +3959,21 @@ fn draw_film(ui: &mut egui::Ui, st: &mut Proto) {
     //
     // C5: no full-width rule under the film header -- the thumbnail gaps separate
     // the two regions already.
+    // 张数与选区来自真工程（桥接同步）；demo 独立运行时保留演示数。
+    //
+    // Count and selection come from the real project; the demo keeps its
+    // numbers standalone (empty doc_name means not bridged).
+    let count_label = if st.doc_name.is_empty() {
+        crate::i18n::t!("48 张 · 已选 1").to_string()
+    } else {
+        crate::i18n::tr("{total} 张 · 已选 {sel}")
+            .replace("{total}", &st.frames.to_string())
+            .replace("{sel}", "1")
+    };
     p.txt(
         Pos2::new(head.left() + 14.0, cy),
         egui::Align2::LEFT_CENTER,
-        crate::i18n::t!("48 张 · 已选 1"),
+        &count_label,
         f_title(),
         T1,
     );
@@ -3512,11 +4004,32 @@ fn draw_film(ui: &mut egui::Ui, st: &mut Proto) {
     // The three flag chips are gone: they repeat what 「48 张 · 已选 1」 and the
     // star rating already say, three times in one row.
 
-    // 右侧：当前帧读数
+    // 右侧：当前帧读数。帧数与帧率来自真工程（demo 独立时 48 / 24）。
+    //
+    // Right: current-frame readout from the real project (demo: 48 / 24).
+    let total = if st.actions.is_some() {
+        st.frames.max(1)
+    } else {
+        48
+    };
+    let fps = if st.doc_name.is_empty() {
+        24.0_f32
+    } else {
+        st.fps
+    };
+    let fps_text = if (fps - fps.round()).abs() < 0.05 {
+        format!("{:.0}", fps)
+    } else {
+        format!("{:.1}", fps)
+    };
+    let frame_label = crate::i18n::tr("第 {n} 帧 / {total} 帧 · {fps} 帧/秒")
+        .replace("{n}", &(st.film + 1).to_string())
+        .replace("{total}", &total.to_string())
+        .replace("{fps}", &fps_text);
     p.txt(
         Pos2::new(head.right() - 14.0, cy),
         egui::Align2::RIGHT_CENTER,
-        crate::i18n::t!("第 {n} 帧 / 48 · 24 帧/秒").replace("{n}", &(st.film + 1).to_string()),
+        &frame_label,
         f_small(),
         T3,
     );
@@ -4224,7 +4737,7 @@ impl Proto {
             egui::UiBuilder::new().max_rect(status).id_salt("status"),
             |ui| {
                 ui.set_clip_rect(status);
-                draw_status(ui, frame_ms);
+                draw_status(ui, self, frame_ms);
             },
         );
 
@@ -4288,6 +4801,16 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
             rating: 0,
             kfs: Vec::new(),
             module: crate::state::Module::Develop,
+            doc_name: String::new(),
+            sel: 0,
+            zoom_pct: 100.0,
+            zoom_100: 1.0,
+            fps: 24.0,
+            hist_rows: std::sync::Arc::new(Vec::new()),
+            hist_total: 0,
+            hist_len: 0,
+            hist_cursor: 0,
+            detail: [0.0; 2],
             dock_tab: 0,
             mixer_tab: 0,
             prop: 0,
@@ -4370,9 +4893,21 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
         st.basic[3] = state.params.shadows;
         st.basic[4] = state.params.whites;
         st.basic[5] = state.params.blacks;
-        st.effects[0] = state.params.clarity;
-        st.effects[1] = state.params.texture;
-        st.effects[2] = state.params.vibrance;
+        // 存在感：纹理/清晰度/去朦胧/鲜艳度/饱和度（ACR Presence 口径）。
+        st.presence[0] = state.params.texture;
+        st.presence[1] = state.params.clarity;
+        st.presence[2] = state.params.dehaze;
+        st.presence[3] = state.params.vibrance;
+        st.presence[4] = state.params.saturation;
+        // 效果页：颗粒 / 暗角（ACR Effects 口径）+ 细节（锐化 / 降噪）。
+        st.effects[0] = state.params.grain;
+        st.effects[1] = state.params.vignette;
+        st.detail[0] = state.params.sharp_amount;
+        st.detail[1] = state.params.nr_luma;
+        st.mono = state.params.mono_h;
+        // 延时序列：去闪强度/平滑窗口，真值住 state.def_*（3..199 帧 / 0..150）。
+        st.deflicker = state.def_strength;
+        st.smooth_win = state.def_window;
 
         // ---- demo 原样绘制（画布井矩形由 mod.rs 单源推入）----
         st.ui(root, canvas);
@@ -4398,6 +4933,27 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
                         &serde_json::json!({}),
                     );
                 }
+                DemoAction::Redo => {
+                    let ctx = root.ctx();
+                    super::tabs::run_history_command(
+                        state,
+                        ctx,
+                        "history.redo",
+                        &serde_json::json!({}),
+                    );
+                }
+                DemoAction::JumpHistory(step) => {
+                    let ctx = root.ctx();
+                    super::tabs::run_history_command(
+                        state,
+                        ctx,
+                        "history.jump",
+                        &serde_json::json!({ "index": step }),
+                    );
+                }
+                DemoAction::Quit => {
+                    root.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
                 DemoAction::ApplyPreset(i) => {
                     if let Some(name) = aevum_core::grade::PRESET_NAMES.get(i) {
                         state.apply_preset(name);
@@ -4421,7 +4977,10 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
         }
 
         // ---- 控件写回（demo → 真）----
+        // 数组语义以面板标签为准：basic=基本六件、presence=存在感五件、
+        // effects=效果（颗粒/暗角）、detail=细节（锐化/降噪）、mono=黑白混合器。
         let params_before = state.params.clone();
+        let def_before = (state.def_strength, state.def_window);
         state.params.temperature = st.wb_temp;
         state.params.tint = st.wb_tint;
         state.params.hsl_h = st.hsl_h;
@@ -4433,26 +4992,25 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
         state.params.shadows = st.basic[3];
         state.params.whites = st.basic[4];
         state.params.blacks = st.basic[5];
-        state.params.clarity = st.effects[0];
-        state.params.texture = st.effects[1];
-        state.params.vibrance = st.effects[2];
+        state.params.texture = st.presence[0];
+        state.params.clarity = st.presence[1];
+        state.params.dehaze = st.presence[2];
+        state.params.vibrance = st.presence[3];
+        state.params.saturation = st.presence[4];
+        state.params.grain = st.effects[0];
+        state.params.vignette = st.effects[1];
+        state.params.sharp_amount = st.detail[0];
+        state.params.nr_luma = st.detail[1];
+        state.params.mono_h = st.mono;
+        state.def_strength = st.deflicker;
+        state.def_window = st.smooth_win;
         // 参数变了就触发真应用的重算链（demo 独立运行时没有这一步）。
-        if params_before.temperature != state.params.temperature
-            || params_before.tint != state.params.tint
-            || params_before.exposure != state.params.exposure
-            || params_before.contrast != state.params.contrast
-            || params_before.highlights != state.params.highlights
-            || params_before.shadows != state.params.shadows
-            || params_before.whites != state.params.whites
-            || params_before.blacks != state.params.blacks
-            || params_before.clarity != state.params.clarity
-            || params_before.texture != state.params.texture
-            || params_before.vibrance != state.params.vibrance
-            || params_before.hsl_h != state.params.hsl_h
-            || params_before.hsl_s != state.params.hsl_s
-            || params_before.hsl_l != state.params.hsl_l
-        {
+        // GradeParams 是 PartialEq：整结构体比一遍，新增参数不再漏进脏标记。
+        if params_before != state.params {
             state.preview_dirty = true;
+        }
+        // 去闪两杆走的是逐帧测光链，不走显影重算。
+        if (state.def_strength, state.def_window) != def_before {
             state.recompute_deflicker();
         }
 
@@ -4461,5 +5019,30 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
         st.rating = state.ratings.get(&state.selected).copied().unwrap_or(0);
         st.kfs = state.keyframes.keys().copied().collect();
         st.module = state.module;
+        st.sel = state.selected;
+        st.fps = state.output_fps.max(1.0);
+        // 文档名：真序列名（单帧报照片名，多帧报文件夹名——core 口径）。
+        st.doc_name = state
+            .seq
+            .as_ref()
+            .map(|s| s.display_name())
+            .unwrap_or_else(|| crate::i18n::t!("未命名").to_string());
+        // 真历史行：steps() 是旧→新，列表要新→旧；「当前步」= cursor。
+        // 按 (len, cursor) 变更才重建，平常帧零分配。
+        let (hlen, hcur) = (state.history.steps().len(), state.history.cursor());
+        if st.hist_len != hlen || st.hist_cursor != hcur {
+            st.hist_len = hlen;
+            st.hist_cursor = hcur;
+            let rows: Vec<(String, bool)> = state
+                .history
+                .steps()
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(i, s)| (s.label.clone(), i == hcur))
+                .collect();
+            st.hist_rows = std::sync::Arc::new(rows);
+            st.hist_total = hlen;
+        }
     });
 }

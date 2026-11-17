@@ -79,6 +79,21 @@ pub(super) fn handle_input(state: &mut AppState, ctx: &Context) {
         return;
     }
 
+    // 左右方向键：上一帧 / 下一帧（胶片条缩略图点击的同款操作，手不离键盘）。
+    //
+    // Left / Right step frames -- the keyboard twin of clicking the filmstrip.
+    {
+        let d = i8::from(ctx.input(|i| i.key_pressed(Key::ArrowRight)))
+            - i8::from(ctx.input(|i| i.key_pressed(Key::ArrowLeft)));
+        if d != 0 {
+            let n = state.frame_count();
+            if n > 0 {
+                let next = (state.selected as i64 + d as i64).clamp(0, n as i64 - 1);
+                state.set_frame(next as usize);
+            }
+        }
+    }
+
     if ctrl {
         // Ctrl+Shift+M：插件市场。与菜单里标的快捷键一致。
         if shift && ctx.input(|i| i.key_pressed(Key::M)) {
@@ -115,12 +130,11 @@ pub(super) fn handle_input(state: &mut AppState, ctx: &Context) {
         if ctx.input(|i| i.key_pressed(Key::W)) {
             state.close();
         }
-        if ctx.input(|i| i.key_pressed(Key::Num0)) {
-            fit_view(state);
-        }
-        if ctx.input(|i| i.key_pressed(Key::Num1)) {
-            actual_size(state);
-        }
+        // Ctrl+0 / Ctrl+1（适应窗口 / 实际大小）移到 v21 画布（draw_canvas）：
+        // demo 的 zoom 语义住那边，老壳的 state.zoom 在 v21 里没有显示端。
+        //
+        // Ctrl+0 / Ctrl+1 moved to the v21 canvas, where the demo's zoom lives;
+        // the legacy state.zoom has no display path in v21.
         if alt {
             // Ctrl+Alt+1..4 切工作台；Alt+1..7 仍是模块。两组必须分开：模块的
             // 0-5 序号契约写在 `ui.module` 命令与文档里，不能让工作台抢走它。
