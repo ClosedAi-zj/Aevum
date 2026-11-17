@@ -1286,6 +1286,13 @@ fn floating_dock(ctx: &egui::Context, state: &mut AppState, right: bool, full: R
             // A docked panel carries only an inner hairline; a shadow is floating-card
             // grammar and lifts it off the window frame again.
             wide.set(bg, egui::Shape::Rect(body));
+            // 镜面边（v20 demo 回灌）：顶 1px 高光 + 底 1px 暗沿。内描边负责
+            // 边界，它负责朝向——光从上方来，板有了上下之分就不再是一块色纸。
+            //
+            // Specular edge (v20 demo backfill): the inner ring bounds the card,
+            // this tells which way is up -- a top highlight and a dark bottom
+            // line keep it from reading as a flat sheet of colour.
+            crate::theme::glass_edge(&wide, card, dock_radius());
             // 短窗内容被截断时，细滚动条在深底上几乎看不见：再叠一条 12px
             // 由透明到卡底色的渐隐带，明确告诉用户「下面还有分组」。内容能
             // 完整显示时不画，避免凭空多一条灰带。
