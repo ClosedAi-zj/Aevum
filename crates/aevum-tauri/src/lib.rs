@@ -9,8 +9,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::ipc::Channel;
 use tauri::State;
+use tauri::ipc::Channel;
 
 /// 共享渲染参数（前端经 command 修改，渲染线程逐帧读取）。
 ///
@@ -29,7 +29,10 @@ struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Self { exposure: 0.0, contrast: 0.0 }
+        Self {
+            exposure: 0.0,
+            contrast: 0.0,
+        }
     }
 }
 
@@ -113,7 +116,7 @@ fn start_stream(on_frame: Channel<Vec<u8>>, state: State<'_, PocState>) -> Resul
     std::thread::spawn(move || {
         let mut t = 0.0f32;
         loop {
-            let p = params.lock().unwrap().clone();
+            let p = *params.lock().unwrap();
             let frame = render_frame(p, t);
             t += 1.0 / 30.0;
             if on_frame.send(frame).is_err() {
@@ -153,11 +156,11 @@ pub fn run() {
                 let mut ws = tungstenite::accept(sock).unwrap();
                 let mut t = 0.0f32;
                 loop {
-                    let p = params.lock().unwrap().clone();
+                    let p = *params.lock().unwrap();
                     let frame = render_frame(p, t);
                     t += 1.0 / 30.0;
                     use tungstenite::Message;
-                    if ws.send(Message::Binary(frame.into())).is_err() {
+                    if ws.send(Message::Binary(frame)).is_err() {
                         break;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(33));
@@ -171,7 +174,11 @@ pub fn run() {
             params: params.clone(),
             frame_counter: Arc::new(AtomicU64::new(0)),
         })
-        .invoke_handler(tauri::generate_handler![start_stream, set_params, fps_report])
+        .invoke_handler(tauri::generate_handler![
+            start_stream,
+            set_params,
+            fps_report
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
