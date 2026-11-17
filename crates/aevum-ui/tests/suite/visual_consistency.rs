@@ -438,21 +438,26 @@ fn options_bar_sits_on_the_dock_layer() {
     // 菜单行独占 header 骨架层，chrome 留给工具轨。旧版是「header → chrome →
     // dock」三档交错，选项栏比它服务的面板还亮半档，视觉重心漂。
     //
+    // v21 判据迁移：选项栏随新壳改成画布底部的浮卡（`options_float`，住在
+    // toolbar.rs），判据跟着容器走——认 "options-float" 与 `dock()` 底色，
+    // 不许退回 chrome 层。
+    //
     // B0 ruling (2026-11-06): the options bar sits on `dock`, the same layer as the
-    // parameter panel it serves; the menu row owns the `header` skeleton layer and
-    // `chrome` is left to the tool rail. The old stack was header -> chrome -> dock,
-    // with the options bar half a step brighter than the panel it serves.
-    let shell = clean("shell/mod.rs");
-    let i = shell
-        .find("\"options-bar\"")
-        .expect("options-bar 面板不见了");
-    let body = &shell[i..(i + 700).min(shell.len())];
+    // parameter panel it serves. v21 migration: the options bar is now a floating
+    // card at the canvas bottom (`options_float`, living in toolbar.rs), so the
+    // criterion follows the container -- it pins "options-float" on a `dock()` fill,
+    // never back on the chrome layer.
+    let toolbar = clean("shell/toolbar.rs");
+    let i = toolbar
+        .find("\"options-float\"")
+        .expect("options-float 浮卡不见了");
+    let body = &toolbar[i..(i + 700).min(toolbar.len())];
     assert!(
-        body.contains("fill(dock())"),
+        body.contains("dock()"),
         "选项栏底色不是 dock（B0 裁决：应与它服务的面板同层）"
     );
     assert!(
-        !body.contains("fill(chrome())"),
+        !body.contains("chrome()"),
         "选项栏又用回 chrome（三档交错回归）"
     );
 }
