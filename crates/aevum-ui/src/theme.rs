@@ -37,8 +37,8 @@
 //! resources pulled in.
 
 use egui::{
-    Align2, Color32, Context, FontData, FontDefinitions, FontFamily, FontId, Pos2, RichText,
-    Stroke, TextStyle, Vec2,
+    Align2, Color32, Context, FontData, FontDefinitions, FontFamily, FontId, Painter, Pos2, Rect,
+    RichText, Stroke, TextStyle, Vec2,
 };
 
 /// 把白色以 alpha/255 压平到基色上，得到 macOS“深底 + 白叠加”的实际不透明色。
@@ -290,9 +290,16 @@ impl Default for Appearance {
             // colour-grading tools keep the accent dark and quiet so it never competes
             // with the image (reverse-report R10; LightCraft ships #0165dd at l 43.5).
             // The picker can still take it anywhere.
-            accent_h: 210.0,
-            accent_s: 100.0,
-            accent_l: 44.5,
+            // v20 回灌：强调色 = #A78BFA（demo 契约色，壳上 5.5:1）。
+            // 语义收敛：紫只表「你在这里」（当前帧/页签/工具/AI 在場点），
+            // 主按钮/选中底不占紫（demo .btn-render 白底口径）。
+            //
+            // v20 backfill: accent = #A78BFA (demo contract colour, 5.5:1 on shell).
+            // Semantics: violet marks "you are here" only; primary buttons stay
+            // light (demo .btn-render) so the accent never competes with the photo.
+            accent_h: 255.0,
+            accent_s: 92.0,
+            accent_l: 77.0,
             gray_offset: 0,
             radius: 8.0,
             os: crate::platform::OsChoice::Auto,
@@ -306,7 +313,7 @@ impl Default for Appearance {
 /// Accent presets: the seven dots across the panel, one click each.
 pub const ACCENT_PRESETS: [(f32, f32, f32, &str); 8] = [
     (210.0, 100.0, 44.5, "蓝"),
-    (265.0, 86.0, 63.0, "紫"),
+    (255.0, 92.0, 77.0, "紫"),
     (188.0, 92.0, 46.0, "青"),
     (148.0, 56.0, 44.0, "绿"),
     (32.0, 94.0, 53.0, "琥珀"),
@@ -407,27 +414,35 @@ const DARK: Ladder = Ladder {
 // (#282828) while the right panels are light (#535353), and value inputs sink back
 // into dark (#1F1F1F). Text rises to near-white to keep the WCAG assertions green.
 const PHOTOSHOP: Ladder = Ladder {
-    bar: 32.7,      // 菜单行 #535353
-    surround: 15.7, // 画布外 #282828
-    canvas: 16.0,
-    panel: 32.7, // 面板 #535353（PS 实测值）
-    dock: 33.0,
-    chrome: 33.5,
-    bg: 34.0,
-    header: 32.7,
-    // 34.0：刻意与 `slider_rail()`（PS 下 mix(group_fill, 白12%) = #555555）错开——
-    // `rail_count` 判据靠数这种填充矩形计数，撞值会把分组控件误计入推子数。
+    // 2026-11-17 v20 回灌：阶梯改写为 ui_proto demo 的实测十六进制（全暗三层次，
+    // 「井最深 → 壳 → 卡 → 控件」单调递增；与 PS 复刻的「面板亮/工具栏暗」方向不同
+    // ——demo 是新设计契约（C1 八档单调、井→壳 ≥6），PS 复刻阶梯退役）。
     //
-    // 34.0 deliberately misses `slider_rail()` (= #555555 under PS): `rail_count`
-    // counts those filled rects, and a collision would count group widgets as sliders.
-    elev: 36.0, // 控件底：> chrome（深色单调链），且与 slider_rail 错开
-    elev_h: 38.5,
-    field: 26.0, // #424242：PS 输入框凹槽档（面板 83 → 凹槽 66，只差 17）
-    field_hover: 28.5,
-    thumb: 20.0,
-    text: 100.0,
-    muted: 89.0,
-    dim: 86.0,
+    // 2026-11-17 v20 backfill: the ladder now carries the ui_proto demo's measured
+    // hex values (all-dark three layers, well darkest -> shell -> card -> control,
+    // monotonic; the PS-replica "light panel / dark toolbar" direction retires --
+    // the demo is the new contract, C1 eight-step monotonic, well->shell >= 6).
+    bar: 17.0,      // #2A2A2A 顶栏底（亮端 BAR_LIT #2F2F2F = header 19.4）
+    surround: 17.0, // 画布外框 = chrome 同档（demo：全窗 CHROME，井 #1A1A1A 画在其上）
+    canvas: 9.3,
+    panel: 18.9, // #2E2E2E 侧栏/右坞
+    dock: 19.4,
+    chrome: 17.0, // 状态栏 #2A2A2A
+    bg: 17.5,
+    header: 19.4, // #2F2F2F 顶栏亮端
+    // 井→壳 9.3→17.0 = 7.7 ≥6（C1）。各档与 slider_rail 派生（≈#343434）错开，
+    // `rail_count` 判据不会把分组控件误计成推子。
+    //
+    // Well->shell 9.3->17.0 = 7.7 (C1 satisfied). Steps stay clear of the
+    // slider_rail derivative (~#343434) so `rail_count` never miscounts.
+    elev: 28.0,   // #424242 实心按钮（控件层）
+    elev_h: 30.0, // 悬停抬升
+    field: 7.2,   // #161616 输入框/滑轨槽（比井还深的内凹）
+    field_hover: 8.5,
+    thumb: 23.1, // #373737 卡/缩略图底
+    text: 96.5,  // #F5F5F5（T1）
+    muted: 84.2, // #D2D2D2（T2）
+    dim: 70.4,   // #ACACAC（T3）
     dir: 1.0,
 };
 
@@ -704,7 +719,16 @@ impl Palette {
             danger: Color32::from_rgb(0xFF, 0x69, 0x61),
             ok: Color32::from_rgb(0x30, 0xD1, 0x58),
             thumb_bg: nb(l.thumb),
-            on_accent: if luminance(accent) > 0.56 {
+            // v20：阈值 0.56 → 0.32。强调色提到 #A78BFA（亮度 0.336）后，
+            // 白字对比只有 2.7:1，必须换深字（hsl 同相 l=12，6.2:1）。
+            // 阈值压到 0.32 同时让琥珀/浅紫预设自动取深字——它们的白字本来就
+            // 贴着 3:1 的线。
+            //
+            // v20: threshold 0.56 -> 0.32. With the accent lifted to #A78BFA
+            // (luminance 0.336) white text only reaches 2.7:1; dark same-hue text
+            // clears 6.2:1. The lower threshold also flips amber/pale-violet
+            // presets to dark text, which their old 3:1 borderline needed anyway.
+            on_accent: if luminance(accent) > 0.32 {
                 hsl(a.accent_h, 45.0, 12.0)
             } else {
                 Color32::WHITE
@@ -1157,6 +1181,36 @@ pub fn knob() -> Color32 {
     } else {
         Color32::from_rgb(0xC9, 0xCC, 0xD3)
     }
+}
+
+/// 镜面边：浮层顶 1px 高光 + 底 1px 暗沿，表达「这是一块有厚度的板」。
+/// 从 v20 demo 的 `glass_edge` 回灌：只借 Liquid Glass 的**边缘光**，不引入
+/// 任何模糊或透明叠层（egui 没有真实背景模糊，硬做只会得到脏色）。
+/// 两端都从圆角内侧起笔，弧上不出直角。
+///
+/// Specular edge: a 1 px top highlight and a 1 px dark bottom edge, reading as
+/// "a slab with thickness". Ported from the v20 demo's `glass_edge`: only the
+/// edge light of Liquid Glass is borrowed -- no blur, no translucent stack
+/// (egui has no real backdrop blur; faking it produces mud). Both ends start
+/// inside the corner radius so the arc never shows a square stub.
+pub fn glass_edge(p: &Painter, rect: Rect, radius: f32) {
+    let r = radius.max(0.0);
+    p.rect_filled(
+        Rect::from_min_size(
+            Pos2::new(rect.left() + r, rect.top() + 0.5),
+            Vec2::new((rect.width() - 2.0 * r).max(0.0), 1.0),
+        ),
+        0.0,
+        Color32::from_white_alpha(if is_light() { 90 } else { 14 }),
+    );
+    p.rect_filled(
+        Rect::from_min_size(
+            Pos2::new(rect.left() + r, rect.bottom() - 1.5),
+            Vec2::new((rect.width() - 2.0 * r).max(0.0), 1.0),
+        ),
+        0.0,
+        Color32::from_black_alpha(46),
+    );
 }
 
 // 尺寸全部对齐界面设计稿的 L3 段：
@@ -2722,19 +2776,61 @@ mod token_tests {
     fn material_ramp_is_monotonic() {
         for p in modes() {
             let l = luminance;
-            let (panel, dock, chrome, bg) = (l(p.panel), l(p.dock), l(p.chrome), l(p.bg));
-            // 深色往亮里走、浅色往暗里走，两条都必须是单调的层级。
-            // 三张表的层级方向一致：画布外围最暗 → 画布 → 面板 → 侧栏 → 栏 → 浮层。
-            assert!(l(p.surround) < l(p.canvas));
-            assert!(l(p.canvas) < panel);
-            assert!(panel < dock);
-            assert!(dock < chrome);
-            assert!(chrome < bg);
-            // 控件底：深色主题要比栏更亮（抬起），浅色主题要比面板更暗（凹下去）。
-            if p.text[0] > 128 {
-                assert!(l(p.elev) > chrome);
+            let (sur, can, panel, dock, chrome, bg) = (
+                l(p.surround),
+                l(p.canvas),
+                l(p.panel),
+                l(p.dock),
+                l(p.chrome),
+                l(p.bg),
+            );
+            // 两条单调层级并存（v20 回灌后）：
+            // - Dark/Light 旧契约：画布外围最暗 → 画布 → 面板 → 侧栏 → 栏。
+            // - Photoshop（v20 demo 契约，C1）：井最深，框比井亮 ≥6，
+            //   照片从井里浮起来——方向整体反转，由本分支单独守卫。
+            //
+            // Two monotonic directions coexist after the v20 backfill: the old
+            // surround-darkest contract for Dark/Light, and the demo C1 contract
+            // (well darkest, frame >= +6 brighter) for the Photoshop ladder.
+            if can < sur {
+                // demo 契约（PS 阶梯）：井最深 → 框（chrome，比井亮 ≥6 L*）→ 面板/坞 → 卡 → 控件。
+                // luminance() 返回 0-1 相对亮度；L* 断言先做 CIE 换算（苹果不比橘子）。
+                let ls = |y: f32| {
+                    if y > 0.008_856 {
+                        116.0 * y.powf(1.0 / 3.0) - 16.0
+                    } else {
+                        903.3 * y
+                    }
+                };
+                let (can_l, panel_l, dock_l, chrome_l, bg_l) =
+                    (ls(can), ls(panel), ls(dock), ls(chrome), ls(bg));
+                let thumb_l = ls(l(p.thumb_bg));
+                let elev_l = ls(l(p.elev));
+                let elev_h_l = ls(l(p.elev_hover));
+                assert!(can_l < chrome_l);
+                assert!(
+                    (chrome_l - can_l) >= 6.0,
+                    "well->shell {} < 6",
+                    chrome_l - can_l
+                );
+                assert!(chrome_l <= bg_l + 0.5);
+                assert!(bg_l <= panel_l + 0.5);
+                assert!(panel_l <= dock_l + 0.5);
+                assert!(dock_l <= thumb_l + 0.5);
+                assert!(thumb_l <= elev_l + 0.5);
+                assert!(elev_l <= elev_h_l + 0.5);
             } else {
-                assert!(l(p.elev) < panel);
+                // 旧契约：画布外围最暗 → 画布 → 面板 → 侧栏 → 栏。
+                assert!(sur < can);
+                assert!(can < panel);
+                assert!(panel < dock);
+                assert!(dock < chrome);
+                assert!(chrome < bg);
+                if p.text[0] > 128 {
+                    assert!(l(p.elev) > chrome);
+                } else {
+                    assert!(l(p.elev) < panel);
+                }
             }
         }
     }
