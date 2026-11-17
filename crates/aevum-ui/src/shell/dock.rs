@@ -773,7 +773,7 @@ pub(super) fn histogram(ui: &mut Ui, state: &mut AppState) {
     //
     // Height fills the caller's slot (cap 94): the floating card gives 63 (.histcard img),
     // the dock gives 94 (.hist-svg). A hard 94 blew the card up by 26 px.
-    let (slot, _) = ui.allocate_exact_size(
+    let (slot, slot_resp) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), ui.available_height().min(94.0)),
         Sense::hover(),
     );
@@ -988,6 +988,37 @@ pub(super) fn histogram(ui: &mut Ui, state: &mut AppState) {
         p.add(shape.clone());
     }
 
+    // 悬停读数（v20 demo 口径）：竖线 + 该列柱高百分比。波形从装饰变成
+    // 可查询的仪表；slot 本就是 hover 响应面，无需新增交互层。
+    //
+    // Hover readout (v20 demo): hairline + that column's bar percentage. The
+    // slot is already a hover surface, so no new interaction layer is needed.
+    if let Some(pos) = slot_resp
+        .interact_pointer_pos()
+        .filter(|p| rect.contains(*p))
+    {
+        let t = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+        let bi = ((t * bins as f32) as usize).min(bins - 1);
+        let pair = (0..3)
+            .map(|ch| h[ch][bi * 2] + h[ch][bi * 2 + 1])
+            .fold(0u32, |a: u32, b: u32| a.max(b));
+        let pct = pair as f32 / max * 100.0;
+        let lx = rect.left() + t * rect.width();
+        p.line_segment(
+            [
+                Pos2::new(lx, rect.top() + 2.0),
+                Pos2::new(lx, rect.bottom()),
+            ],
+            Stroke::new(1.0, Color32::from_white_alpha(26)),
+        );
+        p.text(
+            Pos2::new((lx + 6.0).min(rect.right() - 40.0), rect.top() + 10.0),
+            egui::Align2::LEFT_CENTER,
+            format!("{pct:.0}%"),
+            egui::FontId::proportional(crate::theme::SIZE_SMALL),
+            theme::text(),
+        );
+    }
     // 剪切角标：左右一对小三角压在直方图顶角，平时只描一道细边，真裁切才着色。
     // 角标就是裁切罩的开关，读数与提示都收进悬停；原先下面那行「阴影 0.0% /
     // 高光 0.0%」被反馈太啰嗦，静态不再留文字。
