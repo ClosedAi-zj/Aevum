@@ -540,3 +540,76 @@ fn empty_state_welcome_page_is_full_and_shared() {
 fn crate_theme_panel_side() -> Color32 {
     Color32::from_rgb(0x2E, 0x2E, 0x2E)
 }
+
+/// 引导页两枚按钮必须与卡片同轴：按钮组中心 == 卡片中心。
+///
+/// 用户 2026-11-14 报「对齐」：原式 `cx + (2i-1)*(bw/2+6)` 让 i=0 左缘落在
+/// `cx-70`、i=1 左缘落在 `cx+70`，组跨度 `cx-70..cx+198`，整体中心 `cx+64`——
+/// 整组右偏 64px。判据从**画出来的矩形**取几何（不是读源码常量），所以改回
+/// 任何偏心写法都会红。
+///
+/// The two welcome buttons must share the card's axis: the pair's centre equals the
+/// card's centre. The old `cx + (2i-1)*(bw/2+6)` put i=0 at `cx-70` and i=1 at
+/// `cx+70`, spanning `cx-70..cx+198` with its centre at `cx+64` -- 64 px right.
+/// Geometry is read from the **painted rects**, not from source constants, so any
+/// return of an off-centre formula goes red.
+#[test]
+fn empty_state_welcome_buttons_are_centred() {
+    let _guard = crate::common::i18n_guard();
+    i18n::set(Lang::ZH);
+    let ctx = context();
+    let shapes = empty_shapes(&ctx);
+    let fills = rect_fills(&shapes);
+
+    // 主按钮 = ACCENT 128×32；次按钮 = BUTTON 128×32。两枚都要，缺一枚说明
+    // 引导页退化，居中也就无从谈起。
+    // Primary = ACCENT 128x32, secondary = BUTTON 128x32. Both required; a missing
+    // one means the welcome page regressed and "centred" is meaningless.
+    let pick = |c: Color32| -> Option<Rect> {
+        fills
+            .iter()
+            .find(|(r, f)| {
+                *f == c && (r.width() - 128.0).abs() < 1.0 && (r.height() - 32.0).abs() < 1.0
+            })
+            .map(|(r, _)| *r)
+    };
+    let primary =
+        pick(Color32::from_rgb(0xA7, 0x8B, 0xFA)).unwrap_or_else(|| panic!("引导页主按钮没画出来"));
+    let secondary =
+        pick(Color32::from_rgb(0x42, 0x42, 0x42)).unwrap_or_else(|| panic!("引导页次按钮没画出来"));
+
+    // 卡片：640×320 的 PANEL_SIDE 底，中心就是那根竖轴。
+    // Card: the 640x320 PANEL_SIDE fill; its centre is the axis.
+    let card = fills
+        .iter()
+        .find(|(r, c)| {
+            *c == crate_theme_panel_side()
+                && r.width() > 600.0
+                && r.width() < 660.0
+                && r.height() > 280.0
+        })
+        .map(|(r, _)| *r)
+        .unwrap_or_else(|| panic!("引导卡没画出来，无法验证居中"));
+
+    let group = primary.union(secondary);
+    let total_w = primary.width() + secondary.width() + 12.0;
+    assert!(
+        (group.width() - total_w).abs() < 0.5,
+        "两枚按钮间距不是 12px（实际 {}px）",
+        group.width() - primary.width() - secondary.width()
+    );
+    assert!(
+        (group.center().x - card.center().x).abs() < 1.0,
+        "按钮组没有与卡片同轴：组中心 x={:.1}，卡片中心 x={:.1}，偏 {:.1}px",
+        group.center().x,
+        card.center().x,
+        group.center().x - card.center().x,
+    );
+    // 同一行：两枚按钮顶边齐平，否则「居中」只对了横向还是歪的。
+    // Same row: equal top edges, or "centred" only holds horizontally.
+    assert!(
+        (primary.top() - secondary.top()).abs() < 0.5,
+        "两枚按钮不在同一行（顶边差 {:.1}px）",
+        primary.top() - secondary.top()
+    );
+}

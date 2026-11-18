@@ -34,6 +34,7 @@ mod mcp_routes_contract;
 mod palette_actions;
 mod perf_budget;
 mod preview_budget;
+mod preview_wiring;
 mod readme_shots;
 mod screen_audio;
 mod screen_def;

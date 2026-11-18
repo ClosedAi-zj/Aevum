@@ -3244,6 +3244,17 @@ fn draw_welcome_page(
     if let Some(actions) = &st.actions {
         let bw = 128.0;
         let by = card.top() + 186.0;
+        // 两枚按钮以 `cx` 为轴左右对称：i=0 左缘 = cx-bw-6，i=1 左缘 = cx+6。
+        // 合起来占 [cx-bw-6, cx+bw+6]，组中心正好是 cx，与卡片、标记、标题同一根
+        // 竖轴。此前用的是 `cx + (2i-1)*(bw/2+6)`：i=0 左缘 cx-70、i=1 左缘 cx+70，
+        // 组跨度 cx-70..cx+198，中心落在 cx+64——整组右偏 64px，用户报的「对齐」
+        // 就是这个。
+        //
+        // The two buttons are mirrored about `cx`: left edge is cx-bw-6 for i=0 and
+        // cx+6 for i=1, so the pair spans [cx-bw-6, cx+bw+6] and its centre is exactly
+        // cx -- the same vertical axis as the card, the mark and the title. The old
+        // `cx + (2i-1)*(bw/2+6)` put the group at cx-70..cx+198, centre cx+64: shifted
+        // 64 px right, which is the "alignment" the user reported.
         for (i, (label, action)) in [
             (crate::i18n::t!("打开文件夹"), DemoAction::OpenFolder),
             (crate::i18n::t!("选照片…"), DemoAction::OpenPhotos),
@@ -3251,10 +3262,8 @@ fn draw_welcome_page(
         .into_iter()
         .enumerate()
         {
-            let r = Rect::from_min_size(
-                Pos2::new(cx + (i as f32 * 2.0 - 1.0) * (bw / 2.0 + 6.0), by),
-                Vec2::new(bw, 32.0),
-            );
+            let left = if i == 0 { cx - bw - 6.0 } else { cx + 6.0 };
+            let r = Rect::from_min_size(Pos2::new(left, by), Vec2::new(bw, 32.0));
             let resp = ui.interact(r, ui.scope_id().with(("welcome-open", i)), Sense::click());
             let (fill, text) = if i == 0 {
                 (
@@ -4248,7 +4257,21 @@ fn release_notes_latest() -> &'static str {
 /// appearance page only reports genuine read-only values.
 fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut RealAppState) {
     let p = ui.painter().clone();
-    let outer = rect.shrink(24.0);
+    // 面板到井边的内缩：8px。井本身已经相对窗框内缩 `WELL_INSET=8`，两层叠起来
+    // 是 16px 的桌面留白——面板仍然「浮」着，但不至于像 24px 那版把四周掏出一圈
+    // 空槽（用户 2026-11-14 报的「边缘这么大的空隙」）。桌面设置页的惯例是面板
+    // 贴到内容区边缘，靠圆角与 1px 描边分层，不靠大面积留白。出图核对：8px 下
+    // 左右两栏文字既不贴井边也不与分栏线相撞，取 8；12px 是备选，未采用。
+    //
+    // The panel's inset to the well edge: 8 px. The well itself is already 8 px
+    // (`WELL_INSET`) inside the frame, so 16 px of desk remains -- the panel still
+    // floats, without the ring of empty well the 24 px version hollowed out (the
+    // user's "the edge gap is huge" note, 2026-11-14). Desktop settings pages run
+    // the panel out to the content edge and separate it with radius plus a 1 px
+    // stroke, not with wide margins. Verified in the shot: at 8 px neither column's
+    // copy touches the well edge or the divider, so 8 it is; 12 px was the fallback
+    // and was not needed.
+    let outer = rect.shrink(8.0);
     let left_w = 216.0;
     // 原 16px 缝转为面板内的栏间留白：右栏文字停在原位，不跳字。
     // The old 16px gap becomes in-panel breathing room; right copy stays put.

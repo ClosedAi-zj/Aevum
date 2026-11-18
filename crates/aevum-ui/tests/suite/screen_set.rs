@@ -160,11 +160,23 @@ fn screen_set_has_real_tabs_and_no_fake_controls() {
 
     // 右列内容随页签切换；默认值必须是真实档位，不是假开关。
     // The right column changes with the tab; the default shows real values.
+    //
+    // 这里只按列取窗：左栏页签文字落在 x≈92–116，右栏文字从左栏右缘 + 24 内距
+    // 起排（面板 8px 贴井后是 x≈324），所以 300 是干净的分栏缝。此前写 330 是
+    // 按 24px 贴井那版的 340 卡出来的；面板贴边（2026-11-14）后右列只左移 16px
+    // 就掉出了这个窗，判据红的是自己的魔数、不是界面。
+    //
+    // The window here only separates the columns: left-column tab labels sit at
+    // x≈92-116, right-column copy starts at the left column's right edge plus 24
+    // (x≈324 once the panel hugs the well by 8), so 300 is the clean seam. The old
+    // 330 was cut against the 24 px-inset version's 340; once the panel moved to the
+    // edge the right column shifted 16 px left and fell out of the window -- the
+    // criterion was red on its own magic number, not on the UI.
     fn right_has(ctx: &egui::Context, state: &mut AppState, label: &str) -> bool {
         text_rects(&paint(ctx, state))
             .into_iter()
             .filter(|(_, r)| {
-                r.left() > 330.0 && r.right() < 960.0 && r.top() > 60.0 && r.bottom() < 790.0
+                r.left() > 300.0 && r.right() < 960.0 && r.top() > 60.0 && r.bottom() < 790.0
             })
             .any(|(t, _)| t == label)
     }

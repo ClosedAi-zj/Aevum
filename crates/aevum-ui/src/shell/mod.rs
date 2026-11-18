@@ -295,4 +295,31 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
                     });
             });
     }
+
+    // ---- 帧尾驱动：预览任务的唯一调度点 ----
+    //
+    // 预览是「有脏标记就排一次后台渲染」的拉取式任务：`ensure_preview` 读
+    // `preview_dirty` / `preview_inflight`，脏了就把渲染任务扔进线程池，回包在
+    // `poll` 里落到 `state.texture`。**没有这一行，标记永远是脏的、任务永远不发**，
+    // 表现就是用户报告的「导入照片后画布一片空白、滑块怎么拖都不刷新」。
+    //
+    // 位置与旧壳一致：帧尾、所有绘制之后。因为函数内部要读
+    // `ctx.input(|i| i.pointer.any_down())` 判断「这一帧是不是在拖草图」——必须在
+    // egui 收完本帧输入、画完本帧之后调用，才能在松手的那一帧补全量。
+    //
+    // v21 换壳（b963631）时从旧 `shell.rs` 末尾漏搬了这一句，生产调用点归零，
+    // P0 回归判据 `preview_wiring.rs` 是这条线的看门人。
+    //
+    // The tail-end driver: the single scheduling point for preview jobs. Preview is a
+    // pull-based job -- `ensure_preview` reads `preview_dirty` / `preview_inflight`,
+    // posts a render when dirty, and the reply lands on `state.texture` in `poll`.
+    // **Without this line the flag stays dirty and no job is ever posted**, which is
+    // exactly the user's report: "import a photo and the canvas stays blank, sliders
+    // never refresh it". Same position as the legacy shell -- at the tail, after every
+    // paint -- because it reads `ctx.input(|i| i.pointer.any_down())` to decide whether
+    // this frame is a drag sketch; it must run after egui has collected input and
+    // painted, so the release frame can top up with a full render. The v21 shell swap
+    // (b963631) dropped this line, taking the production call count to zero;
+    // `preview_wiring.rs` guards the wire.
+    state.ensure_preview(&ctx);
 }
