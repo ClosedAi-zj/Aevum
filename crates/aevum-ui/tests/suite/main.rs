@@ -27,6 +27,7 @@ mod delivery_panel;
 mod dock_fit;
 mod empty_state;
 mod export_path;
+mod frame_drivers;
 mod i18n_coverage;
 mod i18n_errors;
 mod i18n_literals;

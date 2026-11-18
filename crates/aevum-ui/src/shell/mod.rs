@@ -207,6 +207,22 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     debug_export_confirm(&ctx);
     debug_apply_flow(state);
 
+    // ---- 帧首记帧号：撤销历史按帧记账的起点 ----
+    //
+    // `History::push_with` 的合并判据里有一条 `frame > 0` 与一条
+    // `frame - tip.frame <= MERGE_FRAME_TOLERANCE`：没有这一行，`frame` 恒为 0，
+    // 合并条件永远不成立，帧尾的 `history_commit` 就会**每帧记一步**——拖一次滑块
+    // 灌进几十行历史，面板随即被刷爆。旧壳（`b963631` 之前的 `shell.rs`）在 `ui()`
+    // 开头就调它，v21 换壳时与 `history_commit` 一起漏搬，本轮成对补回。
+    //
+    // Numbers the frame for undo-history bookkeeping. `History::push_with` merges on
+    // `frame > 0` plus `frame - tip.frame <= MERGE_FRAME_TOLERANCE`; without this call
+    // `frame` stays 0, the merge test can never hold, and the tail `history_commit`
+    // records **one step per frame** -- a single slider drag would flood the panel.
+    // The legacy shell called it at the top of `ui()`, the v21 swap dropped it together
+    // with `history_commit`, and this round restores the pair.
+    state.history.begin_frame();
+
     // ---- 输入收账：拖放打开 + 全局快捷键（与旧壳同一入口）----
     handle_input(state, &ctx);
 
@@ -296,7 +312,50 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
             });
     }
 
-    // ---- 帧尾驱动：预览任务的唯一调度点 ----
+    // ---- 帧尾驱动一：撤销历史落账 ----
+    //
+    // `history_commit` 拿当前状态和光标处的快照比，不一样就记一步（控件登记过
+    // 文案就用文案，没登记就按字段比对认类）。它**设计上就是每帧调用**：合并
+    // 交给 `Step::cat` / 拖动序号，不靠调用方攒批量。v21 换壳时这一句也漏搬了，
+    // 生产调用点归零，后果是撤销/重做与历史面板全哑——`steps()` 永远只有一条
+    // 初始步、`can_undo()` 恒 false。
+    //
+    // 顺序照旧壳：先记账，再把「这一帧新出现的错误」抬成弹窗，最后才调度预览。
+    //
+    // Tail driver #1: record the undo history. `history_commit` compares the current
+    // state against the snapshot at the cursor and records a step when they differ (a
+    // registered label wins, otherwise the field-comparison class is used). It is
+    // **designed to be called every frame**: merging is `Step::cat` / drag-serial
+    // work, not the caller's batch job. The v21 swap dropped this call too, taking the
+    // production call count to zero -- undo/redo and the history panel went silent
+    // (`steps()` held only the initial step and `can_undo()` was always false). Order
+    // follows the legacy shell: book-keep first, then promote new errors to a dialog,
+    // and only then schedule the preview.
+    state.history_commit();
+
+    // ---- 帧尾驱动二：新错误抬成弹窗 ----
+    //
+    // 全仓四十余处 `state.error = Some(...)` 都靠这一处统一兜住：`error` 一变就
+    // 同步进 `error_modal`，再由下面的 `windows::error_dialog` 画出来。**两条必须
+    // 成对**：只同步不画等于白补，只画不同步则弹窗永远不出现。
+    //
+    // 顺序也有讲究：`sync_error_dialog` 必须排在 `error_dialog` 之前，否则这一帧
+    // 新产生的错误要等到下一帧才可见。
+    //
+    // Tail driver #2: promote new errors to a dialog. The forty-odd
+    // `state.error = Some(...)` sites are all covered here: when `error` changes it is
+    // copied into `error_modal`, and `windows::error_dialog` below paints it. The two
+    // **must be paired** -- syncing without painting is a no-op, painting without
+    // syncing never fires. Order matters as well: `sync_error_dialog` has to run before
+    // `error_dialog`, or an error raised this frame only shows up on the next one.
+    state.sync_error_dialog();
+    // 弹窗画在最后：它是对「刚才那次操作失败」的确认，压住所有浮层。
+    //
+    // The dialog paints last: it acknowledges a failed action and sits above every
+    // other layer.
+    windows::error_dialog(state, &ctx);
+
+    // ---- 帧尾驱动三：预览任务的唯一调度点 ----
     //
     // 预览是「有脏标记就排一次后台渲染」的拉取式任务：`ensure_preview` 读
     // `preview_dirty` / `preview_inflight`，脏了就把渲染任务扔进线程池，回包在

@@ -6434,6 +6434,16 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
         // 截图验证通道：AEVUM_DEMO_PHOTO=<path> 直接同步解码注入 demo 的照片位，
         // 绕开真应用的异步预览链（--shot 第 3 帧就退出，异步预览来不及完成）。
         // 正常运行时不设置该变量，照片完全来自 state.texture。
+        // 注意：这条通道**只服务 frame 模块**（见下方收窄的条件），其余屏要照片
+        // 必须走 `AEVUM_LOAD`——否则旁路会把预览断线重新盖住。
+        //
+        // Shot channel: AEVUM_DEMO_PHOTO=<path> decodes synchronously into the demo's
+        // photo slot, bypassing the app's async preview chain (--shot exits on frame
+        // 3, the async preview cannot finish). Normal runs leave the variable unset
+        // and the photo comes entirely from state.texture. Note this channel now
+        // **serves the frame module only** (see the narrowed condition below); every
+        // other screen must get its photo through `AEVUM_LOAD`, or the bypass would
+        // cover a broken preview wire again.
         if st.photo.is_none() {
             if let Some(path) = std::env::var_os("AEVUM_DEMO_PHOTO") {
                 if let Ok(bytes) = std::fs::read(path) {
@@ -6453,16 +6463,29 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
                         // `state.texture`，否则截图第 3 帧会停在「正在解码…」。只
                         // 在 frame 模块注入，render/merge 的既有截图基线不动。
                         //
+                        // **`st.photo` 也一并收进这个条件（本轮改动）**：此前它
+                        // 无条件注入，预览链断了截图照样显示照片——旁路把 P0 掩盖
+                        // 了。收窄后，除 frame 外的屏（尤其是显影屏）只能靠
+                        // `AEVUM_LOAD` 走真实的 `state.texture`，断线无处可藏。
+                        //
                         // Feed the same image into the real state too: the retained
                         // frame canvas reads `state.texture`, which would otherwise
                         // still be decoding on shot frame 3. Only for the frame
                         // module, so render/merge baselines stay unchanged.
+                        //
+                        // **`st.photo` is now gated by the same condition (this
+                        // round)**: it used to be injected unconditionally, so the
+                        // shot still showed a photo after the preview chain broke --
+                        // the bypass hid the P0. Narrowed, every other screen (the
+                        // develop well above all) can only get a photo through
+                        // `AEVUM_LOAD` and the real `state.texture`, so a broken wire
+                        // has nowhere to hide.
                         if state.texture.is_none() && state.module == crate::state::Module::Frame {
                             state.texture = Some(tex.clone());
                             state.resolution = Some((w, h));
                             state.preview_size = [w, h];
+                            st.photo = Some(tex);
                         }
-                        st.photo = Some(tex);
                     }
                 }
             }
