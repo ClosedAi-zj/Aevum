@@ -110,7 +110,7 @@ fn screen_render_has_real_workspace_and_no_coming_soon_toast() {
     let zero = texts(&paint(&ctx, &mut empty));
     assert!(
         zero.iter()
-            .any(|t| t == i18n::t!("还没有序列 · 文件 → 打开照片…")),
+            .any(|t| t == i18n::t!("导入照片后在这里排队导出")),
         "zero-frame render well is missing the import guide"
     );
     for needle in ["队列", "导出设置", "立即导出"] {

@@ -120,7 +120,7 @@ fn screen_seq_has_real_table_and_no_coming_soon_toast() {
     let zero = texts(&paint(&ctx, &mut empty));
     assert!(
         zero.iter()
-            .any(|t| t == i18n::t!("还没有序列 · 文件 → 打开照片…")),
+            .any(|t| t == i18n::t!("导入照片后在这里逐帧查看")),
         "zero-frame sequence well is missing the import guide"
     );
     assert!(

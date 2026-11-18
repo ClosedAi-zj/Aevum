@@ -167,7 +167,7 @@ fn screen_audio_has_real_track_and_no_fake_waveform() {
     let zero = texts(&zero_shapes);
     assert!(
         zero.iter()
-            .any(|t| t == i18n::t!("还没有序列 · 文件 → 打开照片…")),
+            .any(|t| t == i18n::t!("导入照片后在这里配乐与调音")),
         "zero-frame audio well is missing the import guide"
     );
     assert!(

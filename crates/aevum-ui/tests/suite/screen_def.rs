@@ -140,8 +140,7 @@ fn screen_def_has_real_curve_and_no_coming_soon_toast() {
     let zero_shapes = paint(&ctx, &mut empty);
     let zero = texts(&zero_shapes);
     assert!(
-        zero.iter()
-            .any(|t| t == i18n::t!("还没有序列 · 文件 → 打开照片…")),
+        zero.iter().any(|t| t == i18n::t!("导入照片后分析逐帧亮度")),
         "zero-frame deflicker well is missing the import guide"
     );
     assert!(

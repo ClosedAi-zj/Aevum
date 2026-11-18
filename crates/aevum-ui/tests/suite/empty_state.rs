@@ -390,13 +390,15 @@ fn empty_state_shows_import_entry() {
     // 静态：两枚按钮仍走真 DemoAction，且真的被 send 出去（可点，不是装饰）。
     // Static: both buttons still send real DemoActions -- clickable, not decoration.
     let src = clean_v21();
-    let well = body(&src, "fn draw_empty_well");
+    // 两个按钮现在画在全局统一引导页里，dev 与五个 0 帧屏共用同一段真动作。
+    // Both buttons now live in the one shared welcome page used by every empty screen.
+    let page = body(&src, "fn draw_welcome_page");
     assert!(
-        well.contains("DemoAction::OpenFolder") && well.contains("DemoAction::OpenPhotos"),
+        page.contains("DemoAction::OpenFolder") && page.contains("DemoAction::OpenPhotos"),
         "空态导入入口不再是两个真动作"
     );
     assert!(
-        well.contains("a.send(action)"),
+        page.contains("actions.send(action)"),
         "空态导入按钮没有把动作送进队列"
     );
 
@@ -438,4 +440,103 @@ fn empty_state_shows_import_entry() {
         })
         .count();
     assert!(primary >= 1, "空态主导入按钮没有画出来（或尺寸/配色漂移）");
+}
+
+/// 全局统一饱满引导页：空态有卡、有真主按钮、有淡提示，且没有黑画布矩形。
+///
+/// 静态部分钉住「共用一套绘制」「阴影构造在照片分支内」，运行期双向检查
+/// 空态无影 / 有照片保留影。把 `let frame = if st.photo.is_some()` 改回无条件
+/// 构造，或把某个空态绕开 `draw_welcome_page`，这条都会红。
+///
+/// Shared full welcome page: an empty well shows the card, a real primary button
+/// and a quiet footer, with no black photo surrogate. Static checks pin the shared
+/// painter and the photo-only shadow construction; runtime checks look at both
+/// sides of the photo branch. Restoring the unconditional frame turns this red.
+#[test]
+fn empty_state_welcome_page_is_full_and_shared() {
+    let _guard = crate::common::i18n_guard();
+    i18n::set(Lang::ZH);
+    let src = clean_v21();
+
+    let page = body(&src, "fn draw_welcome_page");
+    assert!(
+        page.contains("PANEL_SIDE") && page.contains("f_bold(20.0)") && page.contains("f_title()"),
+        "统一引导页丢了卡片底 / 20px 标题 / 说明档位"
+    );
+    assert!(
+        body(&src, "fn draw_empty_well").contains("draw_welcome_page(")
+            && body(&src, "fn draw_well_guide").contains("draw_welcome_page("),
+        "dev 或 0 帧屏绕开了统一引导页"
+    );
+    assert!(
+        !src.contains("还没有序列 · 文件 → 打开照片…")
+            && !body(&src, "fn draw_well_guide").contains("520.0"),
+        "引导页又退回了旧的 seq 专用文案 / 520px 小卡"
+    );
+
+    // 假画布根因：frame 构造与三层黑影必须都在 `photo.is_some()` 分支里。
+    // Root cause: frame construction and all three shadows must sit in the photo branch.
+    let canvas = body(&src, "fn draw_canvas_photo");
+    let guard = canvas
+        .find("let frame = if st.photo.is_some()")
+        .unwrap_or_else(|| panic!("画布 frame 又变成无条件构造"));
+    let shadow = canvas
+        .find("Color32::from_black_alpha(46)")
+        .unwrap_or_else(|| panic!("画布环境影不见了"));
+    assert!(guard < shadow, "环境影画在照片分支之前，空态又会出现黑方块");
+
+    let ctx = context();
+    let empty = empty_shapes(&ctx);
+    let empty_texts = texts(&empty);
+    let footer = i18n::t!("支持 JPG / PNG / TIFF · 也可拖入文件夹");
+    assert!(
+        empty_texts.iter().any(|(t, _)| t.as_str() == footer),
+        "统一引导页缺底部格式 / 拖拽提示"
+    );
+    let cards = rect_fills(&empty)
+        .iter()
+        .filter(|(r, c)| {
+            *c == crate_theme_panel_side()
+                && r.width() > 600.0
+                && r.width() < 660.0
+                && r.height() > 280.0
+        })
+        .count();
+    assert!(
+        cards >= 1,
+        "空态没有 640x320 的饱满引导卡（实际 {cards} 块）"
+    );
+    let fake_canvas = rect_fills(&empty)
+        .iter()
+        .filter(|(r, c)| {
+            *c == Color32::from_black_alpha(46) && r.width() > 300.0 && r.height() > 100.0
+        })
+        .count();
+    assert_eq!(fake_canvas, 0, "空态又画出大块黑影相纸：{fake_canvas} 块");
+    let primary = rect_fills(&empty)
+        .iter()
+        .filter(|(r, c)| {
+            *c == Color32::from_rgb(0xA7, 0x8B, 0xFA)
+                && (r.width() - 128.0).abs() < 1.0
+                && (r.height() - 32.0).abs() < 1.0
+        })
+        .count();
+    assert!(primary >= 1, "统一引导页没有可点的主按钮");
+
+    // 双向：有照片时环境影照旧，不能为了过空态判据把真照片的影删掉。
+    // Two-sided: real photos keep the ambient shadow; the empty-side fix must not
+    // strip the genuine photo treatment.
+    let photo_shadow = rect_fills(&photo_shapes(&ctx))
+        .iter()
+        .filter(|(r, c)| {
+            *c == Color32::from_black_alpha(46) && r.width() > 300.0 && r.height() > 100.0
+        })
+        .count();
+    assert!(photo_shadow >= 1, "有照片时环境影不见了");
+}
+
+/// 与 v21_demo 的 PANEL_SIDE 同值；判据里写一次，免得把 token 名暴露成 pub。
+/// Same value as v21_demo::PANEL_SIDE without making the token public.
+fn crate_theme_panel_side() -> Color32 {
+    Color32::from_rgb(0x2E, 0x2E, 0x2E)
 }

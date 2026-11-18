@@ -165,7 +165,7 @@ fn screen_merge_has_real_type_cards_and_no_coming_soon_toast() {
     assert!(
         zero_texts
             .iter()
-            .any(|t| *t == i18n::t!("还没有序列 · 文件 → 打开照片…")),
+            .any(|t| *t == i18n::t!("导入照片后在这里合并多张照片")),
         "zero-frame merge well is missing the import guide"
     );
     for needle in ["合成类型", "HDR 合并", "全景拼接", "焦点合成"] {

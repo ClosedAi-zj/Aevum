@@ -109,7 +109,7 @@ fn screen_frame_has_real_canvas_and_no_coming_soon_toast() {
     let zero = texts(&paint(&ctx, &mut empty));
     assert!(
         zero.iter()
-            .any(|t| t == i18n::t!("还没有序列 · 文件 → 打开照片…")),
+            .any(|t| t == i18n::t!("导入照片后调整画幅与取景")),
         "zero-frame frame well is missing the import guide"
     );
     assert!(

@@ -3160,84 +3160,157 @@ fn draw_left(ui: &mut egui::Ui, rect: Rect, st: &mut Proto) {
 
 // ---------------------------------------------------------------- 画布
 
-/// 空态引导块：品牌 / 一句欢迎 / 两个真导入按钮，不画任何相纸或辅助线。
+/// 全局统一饱满引导页：几何标记 / 屏标题 / 一句说明 / 两个真按钮 / 一行淡提示。
 ///
-/// 按钮沿用原空态的两个 `DemoAction`（打开文件夹 / 选照片），保持行为可点；
-/// 所有颜色都从 v21 token 派生，不新增裸 `Color32`。
+/// 所有空态屏（dev 与五个 0 帧屏）都走这一处，只有标题与说明不同。卡片占井宽
+/// 72%（上限 640），高 320：比旧版 520×120 的小卡饱满得多，但仍是井内一张卡，
+/// 不画相纸、投影或任何假画布边界。两枚按钮沿用 `DemoAction`，独立原型无动作
+/// 队列时整段按钮区不画，绝不摆点了没反应的假控件。
 ///
-/// Empty-state welcome: brand, one hint and the two real import buttons. No photo
-/// surrogate and no editing guides. Both buttons keep their original DemoActions.
-fn draw_empty_well(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, st: &mut Proto) {
-    let c = rect.center();
+/// Shared full welcome page: one geometric mark, a screen title, one honest hint,
+/// two real buttons and a quiet footer. Every empty screen uses this single painter;
+/// only title and subtitle differ. The card takes 72% of the well (capped at 640)
+/// by 320 px: much fuller than the old 520x120 chip, yet still one card on the
+/// bare well -- no photo surrogate, no drop shadow, no fake frame. Buttons keep
+/// their real `DemoAction`s; without an action queue the button band is omitted.
+fn draw_welcome_page(
+    ui: &mut egui::Ui,
+    p: &egui::Painter,
+    rect: Rect,
+    st: &mut Proto,
+    title: &str,
+    subtitle: &str,
+) {
+    let well = rect.shrink(16.0);
+    let card_w = (well.width() * 0.72).clamp(360.0, 640.0);
+    let card_h = 320.0_f32.min(well.height());
+    let card = Rect::from_center_size(well.center(), Vec2::new(card_w, card_h));
+    let seam = shade(PANEL_SIDE, 0.82);
+    p.rect_filled(card, 12.0, PANEL_SIDE);
+    // 两道 1px 暗线分出「标记 / 文案 / 入口 / 提示」四段，不用亮线（C5）。
+    // Two 1px dark seams separate mark / copy / actions / footer (C5: no light rules).
+    p.hline(
+        (card.left() + 24.0)..=(card.right() - 24.0),
+        card.top() + 86.0,
+        Stroke::new(1.0, seam),
+    );
+    p.hline(
+        (card.left() + 24.0)..=(card.right() - 24.0),
+        card.top() + 246.0,
+        Stroke::new(1.0, seam),
+    );
+
+    // 标记只用几何形：方框 + 日点 + 山线，线条取自既有文字档，不引素材。
+    // Geometric mark only: frame, sun dot and a mountain line in existing text tiers.
+    let cx = card.center().x;
+    let mark = Rect::from_center_size(Pos2::new(cx, card.top() + 52.0), Vec2::new(40.0, 28.0));
+    p.rect_stroke(mark, 6.0, Stroke::new(1.0, T2), egui::StrokeKind::Inside);
+    p.circle_filled(Pos2::new(cx - 8.0, card.top() + 47.0), 3.0, T2);
+    for [a, b] in [
+        [
+            Pos2::new(cx - 14.0, card.top() + 64.0),
+            Pos2::new(cx - 2.0, card.top() + 52.0),
+        ],
+        [
+            Pos2::new(cx - 2.0, card.top() + 52.0),
+            Pos2::new(cx + 5.0, card.top() + 61.0),
+        ],
+        [
+            Pos2::new(cx + 5.0, card.top() + 61.0),
+            Pos2::new(cx + 14.0, card.top() + 54.0),
+        ],
+    ] {
+        p.line_segment([a, b], Stroke::new(1.0, T3));
+    }
+
     p.txt(
-        Pos2::new(c.x, c.y - 52.0),
+        Pos2::new(cx, card.top() + 114.0),
         egui::Align2::CENTER_CENTER,
-        crate::i18n::t!("恒晷"),
+        title,
         f_bold(20.0),
         T1,
     );
     p.txt(
-        Pos2::new(c.x, c.y - 18.0),
+        Pos2::new(cx, card.top() + 148.0),
         egui::Align2::CENTER_CENTER,
-        crate::i18n::t!("把照片或文件夹拖进来开始"),
+        subtitle,
         f_title(),
         T4_TEXT,
     );
-    // 只有桥接进真应用（动作队列存在）时才画可点按钮：独立原型的旧静态占位
-    // 不再伪装成按钮——空态不该有点了没反应的东西。
-    //
-    // Buttons appear only when wired to the real app; the standalone prototype no
-    // longer fakes clickable controls on an empty well.
-    if st.actions.is_none() {
-        return;
-    }
-    let bw = 128.0;
-    let by = c.y + 18.0;
-    for (i, (label, action)) in [
-        (crate::i18n::t!("打开文件夹"), DemoAction::OpenFolder),
-        (crate::i18n::t!("选照片…"), DemoAction::OpenPhotos),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let r = Rect::from_min_size(
-            Pos2::new(c.x + (i as f32 * 2.0 - 1.0) * (bw / 2.0 + 5.0), by),
-            Vec2::new(bw, 32.0),
-        );
-        let resp = ui.interact(r, ui.scope_id().with(("empty-open", i)), Sense::click());
-        let (fill, text) = if i == 0 {
-            (
-                if resp.hovered() {
-                    shade(ACCENT, 1.08)
-                } else {
-                    ACCENT
-                },
-                CANVAS,
-            )
-        } else {
-            (
-                if resp.hovered() {
-                    shade(BUTTON, 1.12)
-                } else {
-                    BUTTON
-                },
-                T1,
-            )
-        };
-        p.rect_filled(r, 6.0, fill);
-        p.txt(
-            r.center(),
-            egui::Align2::CENTER_CENTER,
-            label,
-            f_bold(FONT_SMALL),
-            text,
-        );
-        if resp.clicked() {
-            if let Some(a) = &st.actions {
-                a.send(action);
+
+    // 只有桥接进真应用（动作队列存在）时才画可点按钮：独立原型不摆假按钮。
+    // Buttons appear only when wired to the real app; the standalone prototype
+    // never fakes clickable controls on an empty well.
+    if let Some(actions) = &st.actions {
+        let bw = 128.0;
+        let by = card.top() + 186.0;
+        for (i, (label, action)) in [
+            (crate::i18n::t!("打开文件夹"), DemoAction::OpenFolder),
+            (crate::i18n::t!("选照片…"), DemoAction::OpenPhotos),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let r = Rect::from_min_size(
+                Pos2::new(cx + (i as f32 * 2.0 - 1.0) * (bw / 2.0 + 6.0), by),
+                Vec2::new(bw, 32.0),
+            );
+            let resp = ui.interact(r, ui.scope_id().with(("welcome-open", i)), Sense::click());
+            let (fill, text) = if i == 0 {
+                (
+                    if resp.hovered() {
+                        shade(ACCENT, 1.08)
+                    } else {
+                        ACCENT
+                    },
+                    CANVAS,
+                )
+            } else {
+                (
+                    if resp.hovered() {
+                        shade(BUTTON, 1.12)
+                    } else {
+                        BUTTON
+                    },
+                    T1,
+                )
+            };
+            p.rect_filled(r, 6.0, fill);
+            p.txt(
+                r.center(),
+                egui::Align2::CENTER_CENTER,
+                label,
+                f_bold(FONT_SMALL),
+                text,
+            );
+            if resp.clicked() {
+                actions.send(action);
             }
         }
     }
+
+    p.txt(
+        Pos2::new(cx, card.top() + 280.0),
+        egui::Align2::CENTER_CENTER,
+        crate::i18n::t!("支持 JPG / PNG / TIFF · 也可拖入文件夹"),
+        f_small(),
+        T4_TEXT,
+    );
+}
+
+/// 显影空态：直接把引导页画在井底上，没有相纸或画布矩形边界。
+///
+/// Develop empty state: the welcome page sits right on the bare well; no photo
+/// surrogate and no canvas rectangle boundary.
+fn draw_empty_well(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, st: &mut Proto) {
+    draw_welcome_page(
+        ui,
+        p,
+        rect,
+        st,
+        crate::i18n::t!("恒晷"),
+        crate::i18n::t!("把照片或文件夹拖进来开始"),
+    );
 }
 
 // ---------------------------------------------------------------- 八屏路由
@@ -3269,7 +3342,7 @@ fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto, app: &mut RealAppState) {
 /// Sequence screen: reuse the retained preview column and table card, but **not**
 /// `seq_table::page()` -- its bench head plus back chip would double the v21 title
 /// bar inside the well. The head here uses the v21 section-title grammar instead.
-fn draw_screen_seq(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+fn draw_screen_seq(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut RealAppState) {
     let p = ui.painter().clone();
     let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
     p.txt(
@@ -3314,14 +3387,14 @@ fn draw_screen_seq(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut Rea
         // Zero frames must not paint the table skeleton: the preview card would show
         // fake readings like "0001 / 0". Show one honest guide; hand over to the
         // retained cards only when at least one frame exists.
-        let card = Rect::from_center_size(body.center(), Vec2::new(body.width().min(520.0), 120.0));
-        p.rect_filled(card, 8.0, PANEL_SIDE);
-        p.txt(
-            card.center(),
-            egui::Align2::CENTER_CENTER,
-            crate::i18n::t!("还没有序列 · 文件 → 打开照片…"),
-            f_small(),
-            T3,
+        draw_well_guide(
+            ui,
+            &p,
+            rect,
+            head.bottom(),
+            st,
+            crate::i18n::t!("序列帧表"),
+            crate::i18n::t!("导入照片后在这里逐帧查看"),
         );
         return;
     }
@@ -3549,7 +3622,7 @@ fn draw_def_curve(
 /// 去闪烁屏（def）：真实逐帧亮度曲线 + 去闪参数组。
 ///
 /// Deflicker screen: the real per-frame luminance curve plus the deflicker group.
-fn draw_screen_def(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+fn draw_screen_def(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut RealAppState) {
     let p = ui.painter().clone();
     let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
     p.txt(
@@ -3561,20 +3634,16 @@ fn draw_screen_def(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut Rea
     );
     let n = app.frame_count();
     if n == 0 {
-        // 0 帧：只画一句真实引导，不画曲线/刻度/假亮度。
-        // Zero frames: one honest guide, no curve, ticks or fake luminance.
-        let body = Rect::from_min_max(
-            Pos2::new(rect.left() + 16.0, head.bottom() + 12.0),
-            Pos2::new(rect.right() - 16.0, rect.bottom() - 16.0),
-        );
-        let card = Rect::from_center_size(body.center(), Vec2::new(body.width().min(520.0), 120.0));
-        p.rect_filled(card, 8.0, PANEL_SIDE);
-        p.txt(
-            card.center(),
-            egui::Align2::CENTER_CENTER,
-            crate::i18n::t!("还没有序列 · 文件 → 打开照片…"),
-            f_small(),
-            T3,
+        // 0 帧：只画统一引导页，不画曲线/刻度/假亮度。
+        // Zero frames: the shared welcome page only, no curve, ticks or fake luminance.
+        draw_well_guide(
+            ui,
+            &p,
+            rect,
+            head.bottom(),
+            st,
+            crate::i18n::t!("去闪烁"),
+            crate::i18n::t!("导入照片后分析逐帧亮度"),
         );
         return;
     }
@@ -3662,7 +3731,7 @@ fn draw_screen_dev(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut Re
 /// Frame screen: v21 head plus the retained canvas body (image / crop / motion /
 /// handles / rulers) and the frame group on the right. `canvas_panel(embed=true)`
 /// skips its own chrome and rounded well so the v21 well is not framed twice.
-fn draw_screen_frame(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+fn draw_screen_frame(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut RealAppState) {
     let p = ui.painter().clone();
     let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
     p.txt(
@@ -3674,7 +3743,15 @@ fn draw_screen_frame(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut R
     );
     let n = app.frame_count();
     if n == 0 {
-        draw_well_guide(&p, rect, head.bottom());
+        draw_well_guide(
+            ui,
+            &p,
+            rect,
+            head.bottom(),
+            st,
+            crate::i18n::t!("构图"),
+            crate::i18n::t!("导入照片后调整画幅与取景"),
+        );
         return;
     }
     let sub = app
@@ -3731,7 +3808,7 @@ fn draw_screen_frame(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut R
 /// 导出屏（render）：v21 页头 + 保留层三栏导出工作台。
 ///
 /// Render screen: v21 head plus the retained three-column export workspace.
-fn draw_screen_render(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+fn draw_screen_render(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut RealAppState) {
     let p = ui.painter().clone();
     let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
     p.txt(
@@ -3743,7 +3820,15 @@ fn draw_screen_render(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut 
     );
     let n = app.frame_count();
     if n == 0 {
-        draw_well_guide(&p, rect, head.bottom());
+        draw_well_guide(
+            ui,
+            &p,
+            rect,
+            head.bottom(),
+            st,
+            crate::i18n::t!("导出"),
+            crate::i18n::t!("导入照片后在这里排队导出"),
+        );
         return;
     }
     let sub = crate::i18n::tr_fmt(
@@ -3771,23 +3856,27 @@ fn draw_screen_render(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut 
     );
 }
 
-/// 0 帧空态的统一引导：页头之下只有一句真实提示。
+/// 0 帧空态的统一引导：页头之下的井区交给同一张饱满引导页。
 ///
-/// Shared zero-frame guide: one honest line under the screen head.
-fn draw_well_guide(p: &egui::Painter, rect: Rect, head_bottom: f32) {
+/// 每屏只传自己的标题与用途说明；小卡与「还没有序列」这句 seq 专用文案一并退场。
+///
+/// Shared zero-frame guide: the well under the screen head goes to the one full
+/// welcome page. Each screen passes only its own title and honest purpose line;
+/// the old 520x120 chip and the sequence-specific copy are gone.
+fn draw_well_guide(
+    ui: &mut egui::Ui,
+    p: &egui::Painter,
+    rect: Rect,
+    head_bottom: f32,
+    st: &mut Proto,
+    title: &str,
+    subtitle: &str,
+) {
     let body = Rect::from_min_max(
         Pos2::new(rect.left() + 16.0, head_bottom + 12.0),
         Pos2::new(rect.right() - 16.0, rect.bottom() - 16.0),
     );
-    let card = Rect::from_center_size(body.center(), Vec2::new(body.width().min(520.0), 120.0));
-    p.rect_filled(card, 8.0, PANEL_SIDE);
-    p.txt(
-        card.center(),
-        egui::Align2::CENTER_CENTER,
-        crate::i18n::t!("还没有序列 · 文件 → 打开照片…"),
-        f_small(),
-        T3,
-    );
+    draw_welcome_page(ui, p, body, st, title, subtitle);
 }
 
 /// 合成类型卡：五个真实合成分组的入口；点击把其余四组折起并展开目标组。
@@ -3863,7 +3952,7 @@ fn draw_merge_types(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, app: &mut 
 /// 合成屏（merge）：左列真实合成类型卡 + 右列保留层参数组。
 ///
 /// Merge screen: real type cards on the left, the retained parameter groups right.
-fn draw_screen_merge(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+fn draw_screen_merge(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut RealAppState) {
     let p = ui.painter().clone();
     let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
     p.txt(
@@ -3875,7 +3964,15 @@ fn draw_screen_merge(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut R
     );
     let n = app.frame_count();
     if n == 0 {
-        draw_well_guide(&p, rect, head.bottom());
+        draw_well_guide(
+            ui,
+            &p,
+            rect,
+            head.bottom(),
+            st,
+            crate::i18n::t!("合成"),
+            crate::i18n::t!("导入照片后在这里合并多张照片"),
+        );
         return;
     }
     let sub = crate::i18n::tr_fmt("{} 帧", &[&n.to_string()]);
@@ -3923,7 +4020,7 @@ fn draw_screen_merge(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut R
 ///
 /// Audio screen: v21 head, one real audio-track card and the audio group. No real
 /// music means no waveform is painted at all.
-fn draw_screen_audio(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+fn draw_screen_audio(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut RealAppState) {
     let p = ui.painter().clone();
     let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
     p.txt(
@@ -3954,7 +4051,15 @@ fn draw_screen_audio(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut R
         );
     }
     if app.frame_count() == 0 {
-        draw_well_guide(&p, rect, head.bottom());
+        draw_well_guide(
+            ui,
+            &p,
+            rect,
+            head.bottom(),
+            st,
+            crate::i18n::t!("音频"),
+            crate::i18n::t!("导入照片后在这里配乐与调音"),
+        );
         return;
     }
     let body = Rect::from_min_max(
@@ -4134,75 +4239,6 @@ fn release_notes_latest() -> &'static str {
     &section[..end]
 }
 
-/// 左栏固定所需高度：标题区 88 + 每行页签 40×5 + 返回前留白 24 + 按钮 28 + 底部 24。
-///
-/// Height the left column always needs: 88 head + five 40px tab rows, then a
-/// 24px gap, the 28px back button and a 24px bottom inset.
-fn set_left_content_height() -> f32 {
-    88.0 + SetTab::ALL.len() as f32 * 40.0 + 24.0 + 28.0 + 24.0
-}
-
-/// 键值分区所需高度：每节 24 小标题 + 8 间距 + 每行 36 + 24 节尾。
-///
-/// Height of the flat key-value sections: 24 heading + 8 gap + 36 per row
-/// plus a 24px tail, for each section in order.
-fn set_sections_height(row_counts: &[usize]) -> f32 {
-    row_counts
-        .iter()
-        .map(|n| 24.0 + 8.0 + *n as f32 * 36.0 + 24.0)
-        .sum()
-}
-
-/// 用一次不可见的子 Ui 量出保留层控件的实际高度：不画、不可交互，只取底边。
-///
-/// Measure a retained widget tab with one invisible sizing child: nothing is
-/// painted or interactive; only the laid-out bottom edge is read back.
-fn set_widget_content_height(
-    ui: &mut egui::Ui,
-    app: &mut RealAppState,
-    probe: Rect,
-    salt: &'static str,
-    widget: fn(&mut RealAppState, &mut egui::Ui),
-) -> f32 {
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(probe)
-            .id_salt(salt)
-            .sizing_pass()
-            .invisible(),
-    );
-    widget(app, &mut child);
-    (child.min_rect().bottom() - probe.top()).clamp(0.0, probe.height())
-}
-
-/// 右栏当前页签所需总高（含标题区 80 与底部留白 24）。
-///
-/// Height the current right-hand tab needs, including the 80px title band and
-/// the 24px bottom inset. Static rows are measured from the same pitch the
-/// painter uses; retained widget tabs get one invisible sizing pass; release
-/// notes deliberately fill the well.
-fn set_right_content_height(
-    ui: &mut egui::Ui,
-    app: &mut RealAppState,
-    tab: SetTab,
-    probe: Rect,
-) -> f32 {
-    let head = 80.0;
-    let foot = 24.0;
-    let body = match tab {
-        SetTab::Appearance => set_sections_height(&[2, 2]),
-        SetTab::About => set_sections_height(&[2, 1]),
-        SetTab::Release => probe.height(),
-        SetTab::Keys => {
-            set_widget_content_height(ui, app, probe, "set-keys-size", super::tabs::keys_tab)
-        }
-        SetTab::Info => {
-            set_widget_content_height(ui, app, probe, "set-info-size", super::tabs::info_tab)
-        }
-    };
-    head + body + foot
-}
-
 /// 设置屏（v22）：井内两列卡（A13）。左列页签，右列真实内容。
 ///
 /// 不依赖照片：0 帧也完整显示；快捷键/信息只做保留层的薄出口，外观只读真实档位。
@@ -4221,19 +4257,12 @@ fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut Real
     let mut tab = ui
         .memory(|m| m.data.get_temp::<SetTab>(tab_id))
         .unwrap_or(SetTab::Appearance);
-    // 面板只包住内容：左栏固定结构与当前页签右栏取大，夹在井高以内。
-    // The panel hugs its content: max of the fixed left column and this tab's
-    // right column, clamped to the well.
-    let probe = Rect::from_min_size(
-        Pos2::new(outer.left() + left_w + right_pad, outer.top() + 80.0),
-        Vec2::new(
-            (outer.width() - left_w - right_pad - 24.0).max(0.0),
-            (outer.height() - 80.0 - 24.0).max(0.0),
-        ),
-    );
-    let panel_h = set_left_content_height()
-        .max(set_right_content_height(ui, app, tab, probe))
-        .min(outer.height());
+    // 面板铺满整口井：撤销上一轮的内容自适应收高——收高后下方露大片空井，
+    // 用户明确不要。右栏靠真实分区与舒展行距分布内容，不靠缩短面板假"填满"。
+    // The panel fills the whole well: the previous content-hugging height left a
+    // large empty well below it, which the user rejected. The right column now
+    // distributes real sections with roomier rows instead of faking density.
+    let panel_h = outer.height();
     let panel = Rect::from_min_size(outer.min, Vec2::new(outer.width(), panel_h));
     let left = Rect::from_min_size(panel.min, Vec2::new(left_w, panel_h));
     let right = Rect::from_min_max(Pos2::new(left.right(), panel.top()), panel.max);
@@ -4295,7 +4324,10 @@ fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut Real
         if resp.clicked() {
             tab = *item;
         }
-        y += 40.0;
+        // 行高 36 + 12 间距：整栏铺满后页签不再挤成顶部一小坨（C7 两档皆在册）。
+        // Row height 36 plus a 12px gap: in a full-height panel the tabs no
+        // longer bunch into one small stack at the top (both steps are on-scale).
+        y += 48.0;
     }
     ui.memory_mut(|m| m.data.insert_temp(tab_id, tab));
 
@@ -4367,13 +4399,23 @@ fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut Real
             let display_rows = [
                 (crate::t!("主题"), tr(a.theme.cn()).to_owned()),
                 (crate::t!("皮肤"), tr(a.skin.cn()).to_owned()),
+                (
+                    crate::t!("强调色"),
+                    format!("{:.0} / {:.0} / {:.0}", a.accent_h, a.accent_s, a.accent_l),
+                ),
+                (crate::t!("外壳形态"), tr(a.os.cn()).to_owned()),
             ];
             let interface_rows = [
                 (crate::t!("信息密度"), tr(a.density.cn()).to_owned()),
                 (crate::t!("字号"), crate::t!("本版界面字号固定").to_owned()),
+                (crate::t!("控件圆角"), format!("{:.0} px", a.radius)),
+                (crate::t!("界面亮度"), format!("{:+}", a.gray_offset)),
             ];
-            // 两段分区把四行收在上半部，下面不再是一整片空地。
-            // Two sections lift the four rows back into the upper half.
+            // 两节各四行真实只读项，按 16/24 的档位铺到面板中下部；下端只留
+            // 适度呼吸，不再是一整片空井。多出的两行不是凑数：都取自 theme 唯一出口。
+            // Two sections of four genuine read-only values spread down the panel
+            // with on-scale 16/24 spacing; only modest breathing room is left. The
+            // extra rows are not filler -- each comes from the theme single source.
             let next = draw_set_section(&p, content, crate::t!("显示"), &display_rows);
             draw_set_section(
                 &p,
@@ -4423,20 +4465,22 @@ fn draw_set_section(p: &egui::Painter, r: Rect, title: &str, rows: &[(&str, Stri
         r.top() + 24.0,
         Stroke::new(1.0, shade(PANEL_SIDE, 0.82)),
     );
-    let rows_top = r.top() + 24.0 + 8.0;
+    // 小标题下留 16px，行距 36 行高 + 8 间隔，节尾 24px；三档全在 C7 内。
+    // 16px under the heading, 36px rows with 8px gaps, 24px tail -- all C7 steps.
+    let rows_top = r.top() + 24.0 + 16.0;
     draw_set_rows(
         p,
         Rect::from_min_max(Pos2::new(r.left(), rows_top), r.max),
         rows,
     );
-    rows_top + rows.len() as f32 * 36.0 + 24.0
+    rows_top + rows.len() as f32 * 44.0 + 24.0
 }
 
 /// 键值行：外观/关于共用，flat sections + 暗分节线（C5）。
 /// Key-value rows shared by Appearance and About; flat, dark seams only.
 fn draw_set_rows(p: &egui::Painter, r: Rect, rows: &[(&str, String)]) {
     for (i, (key, value)) in rows.iter().enumerate() {
-        let y = r.top() + i as f32 * 36.0;
+        let y = r.top() + i as f32 * 44.0;
         p.txt(
             Pos2::new(r.left(), y),
             egui::Align2::LEFT_TOP,
@@ -4609,37 +4653,47 @@ fn draw_canvas_photo(ui: &mut egui::Ui, st: &mut Proto) {
     } else {
         100.0
     };
-    let frame = Rect::from_center_size(rect.center() + st.pan, Vec2::new(w, h));
+    // 空态不构造相纸矩形，更不画任何一层影：井底直接留给统一引导页。
+    // 这是截图里那块「黑画布」的根因——矩形与三层黑影原先在空态也照画。
+    // Empty constructs no photo rectangle and paints no shadow layer at all; the
+    // bare well hosts the shared welcome page. That unconditional frame plus three
+    // shadows was the black surrogate block seen in the empty-state screenshot.
+    let frame = if st.photo.is_some() {
+        let frame = Rect::from_center_size(rect.center() + st.pan, Vec2::new(w, h));
 
-    // 旧版是「光桌」：八层暖白（0xFFF4E2）从照片边缘向外递减，想让照片像
-    // 唯一光源一样发光。实测它在暖黑底上叠出一条**粉橙色脏晕**——暖白加暖底
-    // 还是暖白，紧贴照片彩色内容时读成"画面颜色渗出来了"（用户点名：颜色太丑）。
-    //
-    // 改为深色界面对媒体对象的标准处理：三层**中性黑影**，照片靠影浮起、
-    // 边缘干净利落，画布上没有任何彩色溢出：
-    //   ① 环境影 —— 大而淡，把照片从井底托起一档；
-    //   ② 投影 —— 下移 10px，读出"照片悬浮在井上方"；
-    //   ③ 接触影 —— 紧贴边缘的一圈深影，给照片厚度。
-    // 黑色只会压暗底色、不引入色相（混黑保中性），脏色问题从根上消失。
-    //
-    // The old "light table" spilled eight layers of warm white from the photo
-    // edge; over the warm-black well they compounded into a pinkish-brown halo
-    // that read as the image bleeding colour. Replaced with the standard dark-UI
-    // treatment for media: three neutral black shadows (ambient / cast / contact)
-    // lift the photo with a clean edge -- black darkens the warm ground without
-    // introducing any hue, so the dirty tint is gone at the root.
-    p.rect_filled(frame.expand(14.0), 8.0, Color32::from_black_alpha(46));
-    p.rect_filled(
-        frame.translate(Vec2::new(0.0, 10.0)).expand(4.0),
-        6.0,
-        Color32::from_black_alpha(64),
-    );
-    p.rect_filled(
-        frame.translate(Vec2::new(0.0, 4.0)).expand(1.0),
-        2.0,
-        Color32::from_black_alpha(90),
-    );
-    if let Some(t) = &st.photo {
+        // 旧版是「光桌」：八层暖白（0xFFF4E2）从照片边缘向外递减，想让照片像
+        // 唯一光源一样发光。实测它在暖黑底上叠出一条**粉橙色脏晕**——暖白加暖底
+        // 还是暖白，紧贴照片彩色内容时读成"画面颜色渗出来了"（用户点名：颜色太丑）。
+        //
+        // 改为深色界面对媒体对象的标准处理：三层**中性黑影**，照片靠影浮起、
+        // 边缘干净利落，画布上没有任何彩色溢出：
+        //   ① 环境影 —— 大而淡，把照片从井底托起一档；
+        //   ② 投影 —— 下移 10px，读出"照片悬浮在井上方"；
+        //   ③ 接触影 —— 紧贴边缘的一圈深影，给照片厚度。
+        // 黑色只会压暗底色、不引入色相（混黑保中性），脏色问题从根上消失。
+        //
+        // The old "light table" spilled eight layers of warm white from the photo
+        // edge; over the warm-black well they compounded into a pinkish-brown halo
+        // that read as the image bleeding colour. Replaced with the standard dark-UI
+        // treatment for media: three neutral black shadows (ambient / cast / contact)
+        // lift the photo with a clean edge -- black darkens the warm ground without
+        // introducing any hue, so the dirty tint is gone at the root.
+        p.rect_filled(frame.expand(14.0), 8.0, Color32::from_black_alpha(46));
+        p.rect_filled(
+            frame.translate(Vec2::new(0.0, 10.0)).expand(4.0),
+            6.0,
+            Color32::from_black_alpha(64),
+        );
+        p.rect_filled(
+            frame.translate(Vec2::new(0.0, 4.0)).expand(1.0),
+            2.0,
+            Color32::from_black_alpha(90),
+        );
+        Some(frame)
+    } else {
+        None
+    };
+    if let (Some(frame), Some(t)) = (frame, &st.photo) {
         p.image(
             t.id(),
             frame,
@@ -4647,16 +4701,17 @@ fn draw_canvas_photo(ui: &mut egui::Ui, st: &mut Proto) {
             Color32::WHITE,
         );
     } else {
-        // 空态是一个干净的起点，不是一张不存在的照片：只画品牌与真导入入口。
-        // #313131 假照片块与它上面的一切编辑辅助层在这里一起消失。
+        // 空态是一个干净的起点，不是一张不存在的照片：只画统一引导页。
+        // 假照片块、相纸边界、三层黑影与一切编辑辅助层在这里一起消失。
         //
-        // Empty is a clean starting point, not a photo that does not exist: brand
-        // and the two real import actions only; the fake #313131 frame is gone.
+        // Empty is a clean starting point, not a photo that does not exist: only
+        // the shared welcome page. Fake photo, frame edges, shadow layers and all
+        // editing guides disappear together.
         draw_empty_well(ui, &p, rect, st);
     }
     // 顶部光边：1px 白，只在照片存在时画（空态的占位块不是光源）。
     // 它是"相纸边缘反射顶光"的信号——很细，但在 25% 缩略图下仍给照片一条清晰上沿。
-    if st.photo.is_some() {
+    if let Some(frame) = frame {
         p.hline(
             (frame.left() + 1.0)..=(frame.right() - 1.0),
             frame.top() + 0.5,
@@ -4665,7 +4720,7 @@ fn draw_canvas_photo(ui: &mut egui::Ui, st: &mut Proto) {
     }
     // 三分构图线只对真实照片有意义：空态画在「不存在的照片」上就是假预览。
     // Rule-of-thirds guides belong to a real photo; on an empty well they fake one.
-    if st.has_photo() {
+    if let Some(frame) = frame {
         for i in 1..3 {
             let x = frame.left() + frame.width() * i as f32 / 3.0;
             let y = frame.top() + frame.height() * i as f32 / 3.0;
@@ -4685,7 +4740,7 @@ fn draw_canvas_photo(ui: &mut egui::Ui, st: &mut Proto) {
     // 空态没有照片：不画蒙版圆和控制点（空画布上一枚孤零零的圆读成 bug）。
     // No photo: skip the mask circle and handles -- a lone circle on an empty
     // well reads as a rendering bug.
-    if st.photo.is_some() {
+    if let Some(frame) = frame {
         let mc = Pos2::new(
             frame.left() + frame.width() * 0.56,
             frame.top() + frame.height() * 0.30,
