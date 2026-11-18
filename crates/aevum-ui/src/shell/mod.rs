@@ -62,7 +62,6 @@ mod common;
 mod dialogs;
 #[allow(dead_code)]
 mod dock;
-#[allow(dead_code)]
 mod export_ws;
 #[allow(dead_code)]
 mod flow_panel;

@@ -36,6 +36,8 @@ mod perf_budget;
 mod preview_budget;
 mod readme_shots;
 mod screen_def;
+mod screen_merge;
+mod screen_render;
 mod screen_seq;
 mod ui_tokens;
 mod visual_consistency;

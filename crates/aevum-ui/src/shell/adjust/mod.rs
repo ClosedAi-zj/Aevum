@@ -71,6 +71,13 @@ pub(super) fn deflicker_panel(state: &mut AppState, ui: &mut Ui) {
     sequence::adjust_deflicker(state, ui);
 }
 
+/// v22 merge 屏复用的合成参数组：只把 `merge::adjust_merge` 透出，不改组内行为。
+///
+/// v22 merge screen reuse: a thin pass-through to `merge::adjust_merge`.
+pub(super) fn merge_panel(state: &mut AppState, ui: &mut Ui) {
+    merge::adjust_merge(state, ui);
+}
+
 pub(crate) fn reset_group(state: &mut AppState, key: &str) {
     // 推子参数组与表外字段：口径在 controls::neutralise_group——复位按钮和
     // 「眼睛」旁路必须是同一个动作，两边各写一份迟早对不上。

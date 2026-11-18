@@ -2351,14 +2351,16 @@ fn draw_status(ui: &mut egui::Ui, st: &Proto, frame_ms: f32) {
     }
 }
 
-/// 分屏「下一版接入」提示：T2 只把 `if m != Develop` 改成八臂结构。
+/// 分屏「下一版接入」提示：T2 把 `if m != Develop` 改成八臂结构。
 ///
-/// 六个未接屏各有一条臂、文案与 v21 完全一致；`Dev` 是现役界面、`Set` 不经过
-/// 模块下拉，两臂刻意留空。T3–T5 每接完一屏删一条臂，8/8 后整段删除。
+/// T4a 后只剩 `Frame` / `Audio` 两臂仍发提示；`Seq` / `Def` / `Render` / `Merge`
+/// 已接真实内容，`Dev` 是现役界面，`Set` 不经过模块下拉，五臂刻意留空。T4b/T5
+/// 接完剩余屏后整段删除。
 ///
-/// Per-screen "next build" toast: T2 only turns the old `if m != Develop` into
-/// eight arms. The six unwired screens keep the exact v21 copy; `Dev` is live and
-/// `Set` never comes from the module picker, so both arms stay empty by design.
+/// Per-screen "next build" toast: T2 turned the old `if m != Develop` into eight
+/// arms. After T4a only `Frame` / `Audio` still toast; `Seq` / `Def` / `Render` /
+/// `Merge` are live, `Dev` already was, and `Set` never comes from the module
+/// picker, so those five arms stay empty by design.
 fn toast_next_build(ctx: &egui::Context, st: &mut Proto, screen: Screen) {
     match screen {
         // T3a：序列屏已接入真实帧表，不再提示「下一版接入」。
@@ -2367,9 +2369,11 @@ fn toast_next_build(ctx: &egui::Context, st: &mut Proto, screen: Screen) {
         Screen::Def => {}
         Screen::Dev => {}
         Screen::Frame => say_screen_unwired(ctx, st, "构图"),
-        Screen::Render => say_screen_unwired(ctx, st, "成片"),
+        // T4a：导出屏已接入真实三栏工作台。
+        Screen::Render => {}
         Screen::Audio => say_screen_unwired(ctx, st, "声音"),
-        Screen::Merge => say_screen_unwired(ctx, st, "合成"),
+        // T4a：合成屏已接入真实类型卡与参数组。
+        Screen::Merge => {}
         Screen::Set => {}
     }
 }
@@ -3698,15 +3702,198 @@ fn draw_screen_frame(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut 
     draw_canvas_photo(ui, st);
 }
 
-fn draw_screen_render(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
-    draw_canvas_photo(ui, st);
+/// 导出屏（render）：v21 页头 + 保留层三栏导出工作台。
+///
+/// Render screen: v21 head plus the retained three-column export workspace.
+fn draw_screen_render(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+    let p = ui.painter().clone();
+    let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
+    p.txt(
+        Pos2::new(head.left() + 16.0, head.center().y),
+        egui::Align2::LEFT_CENTER,
+        crate::i18n::t!("导出"),
+        f_group(),
+        T2,
+    );
+    let n = app.frame_count();
+    if n == 0 {
+        draw_well_guide(&p, rect, head.bottom());
+        return;
+    }
+    let sub = crate::i18n::tr_fmt(
+        "{} 帧 · 队列 {} 项",
+        &[&n.to_string(), &app.queue.len().to_string()],
+    );
+    p.txt(
+        Pos2::new(head.right() - 16.0, head.center().y),
+        egui::Align2::RIGHT_CENTER,
+        sub,
+        f_small(),
+        T4_TEXT,
+    );
+    let body = Rect::from_min_max(
+        Pos2::new(rect.left() + 16.0, head.bottom() + 12.0),
+        Pos2::new(rect.right() - 16.0, rect.bottom() - 16.0),
+    );
+    let ctx = ui.ctx().clone();
+    ui.scope_builder(
+        egui::UiBuilder::new().max_rect(body).id_salt("render-body"),
+        |ui| {
+            ui.set_clip_rect(body);
+            super::export_ws::body(app, ui, &ctx, body);
+        },
+    );
+}
+
+/// 0 帧空态的统一引导：页头之下只有一句真实提示。
+///
+/// Shared zero-frame guide: one honest line under the screen head.
+fn draw_well_guide(p: &egui::Painter, rect: Rect, head_bottom: f32) {
+    let body = Rect::from_min_max(
+        Pos2::new(rect.left() + 16.0, head_bottom + 12.0),
+        Pos2::new(rect.right() - 16.0, rect.bottom() - 16.0),
+    );
+    let card = Rect::from_center_size(body.center(), Vec2::new(body.width().min(520.0), 120.0));
+    p.rect_filled(card, 8.0, PANEL_SIDE);
+    p.txt(
+        card.center(),
+        egui::Align2::CENTER_CENTER,
+        crate::i18n::t!("还没有序列 · 文件 → 打开照片…"),
+        f_small(),
+        T3,
+    );
+}
+
+/// 合成类型卡：五个真实合成分组的入口；点击把其余四组折起并展开目标组。
+///
+/// Merge type card: entries to the five real groups. Clicking collapses the other
+/// four and expands the target, using the existing `collapsed`/`dock_focus` state.
+fn draw_merge_types(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, app: &mut RealAppState) {
+    const KEYS: [(&str, &str); 5] = [
+        ("hdr", "HDR 合并"),
+        ("pano", "全景拼接"),
+        ("stack", "星空堆栈"),
+        ("timeblend", "时间合成"),
+        ("focus", "焦点合成"),
+    ];
+    let card = Rect::from_min_size(
+        rect.min,
+        Vec2::new(rect.width(), 48.0 + 44.0 * KEYS.len() as f32),
+    );
+    p.rect_filled(card, 8.0, PANEL_SIDE);
+    p.txt(
+        Pos2::new(card.left() + 16.0, card.top() + 20.0),
+        egui::Align2::LEFT_CENTER,
+        crate::i18n::t!("合成类型"),
+        f_bold(FONT_SMALL),
+        T2,
+    );
+    // 选中态不另存字段：恰好只有一组展开时，它就是当前类型。
+    // No extra selected field: exactly one open group means it is the current type.
+    let open_count = KEYS
+        .iter()
+        .filter(|(key, _)| !app.collapsed.contains(*key))
+        .count();
+    let active = if open_count == 1 {
+        KEYS.iter()
+            .find(|(key, _)| !app.collapsed.contains(*key))
+            .map(|(key, _)| *key)
+    } else {
+        None
+    };
+    let mut y = card.top() + 40.0;
+    for (i, (key, label)) in KEYS.iter().enumerate() {
+        let row = Rect::from_min_size(
+            Pos2::new(card.left() + 8.0, y),
+            Vec2::new(card.width() - 16.0, 40.0),
+        );
+        let resp = ui.interact(row, ui.scope_id().with(("merge-kind", i)), Sense::click());
+        let is_active = active == Some(*key);
+        if is_active {
+            p.rect_filled(row, 6.0, BUTTON);
+        } else if resp.hovered() {
+            p.rect_filled(row, 6.0, shade(PANEL_SIDE, 1.24));
+        }
+        p.txt(
+            Pos2::new(row.left() + 12.0, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            crate::i18n::tr(label),
+            f_small(),
+            if is_active { T1 } else { T2 },
+        );
+        if resp.clicked() {
+            for (other, _) in KEYS {
+                if other != *key {
+                    app.collapsed.insert(other);
+                }
+            }
+            app.collapsed.remove(*key);
+            app.dock_focus = Some((*key).to_owned());
+        }
+        y += 44.0;
+    }
+}
+
+/// 合成屏（merge）：左列真实合成类型卡 + 右列保留层参数组。
+///
+/// Merge screen: real type cards on the left, the retained parameter groups right.
+fn draw_screen_merge(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+    let p = ui.painter().clone();
+    let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
+    p.txt(
+        Pos2::new(head.left() + 16.0, head.center().y),
+        egui::Align2::LEFT_CENTER,
+        crate::i18n::t!("合成"),
+        f_group(),
+        T2,
+    );
+    let n = app.frame_count();
+    if n == 0 {
+        draw_well_guide(&p, rect, head.bottom());
+        return;
+    }
+    let sub = crate::i18n::tr_fmt("{} 帧", &[&n.to_string()]);
+    p.txt(
+        Pos2::new(head.right() - 16.0, head.center().y),
+        egui::Align2::RIGHT_CENTER,
+        sub,
+        f_small(),
+        T4_TEXT,
+    );
+    let body = Rect::from_min_max(
+        Pos2::new(rect.left() + 16.0, head.bottom() + 12.0),
+        Pos2::new(rect.right() - 16.0, rect.bottom() - 16.0),
+    );
+    let cards_w = 300.0_f32.min((body.width() * 0.45).max(240.0));
+    let params_w = 300.0_f32.min((body.width() - cards_w - 12.0).max(240.0));
+    let total = cards_w + 12.0 + params_w;
+    let start_x = body.center().x - total * 0.5;
+    let cards = Rect::from_min_size(
+        Pos2::new(start_x, body.top()),
+        Vec2::new(cards_w, body.height()),
+    );
+    let params = Rect::from_min_max(
+        Pos2::new(cards.right() + 12.0, body.top()),
+        Pos2::new(start_x + total, body.bottom()),
+    );
+    draw_merge_types(ui, &p, cards, app);
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(params)
+            .id_salt("merge-params"),
+        |ui| {
+            ui.set_clip_rect(params);
+            egui::ScrollArea::vertical()
+                .id_salt("merge-params-scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    super::adjust::merge_panel(app, ui);
+                });
+        },
+    );
 }
 
 fn draw_screen_audio(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
-    draw_canvas_photo(ui, st);
-}
-
-fn draw_screen_merge(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
     draw_canvas_photo(ui, st);
 }
 
