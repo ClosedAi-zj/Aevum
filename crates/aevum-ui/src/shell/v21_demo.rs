@@ -151,6 +151,10 @@ const ACCENT: Color32 = Color32::from_rgb(0xA7, 0x8B, 0xFA);
 // ACCENT_SOFT 已删：紫色收敛到"当前帧/当前页签/当前工具"后，不再有软底用途。
 // 列表选中态改用 CARD 提亮（材质表达状态，不占颜色）。
 const HAIRLINE: Color32 = Color32::from_rgb(0x64, 0x64, 0x64);
+/// 闪烁帧语义色（琥珀）：只表检测到的闪烁，不做装饰。
+///
+/// Flicker semantic amber: detected flicker only, never decoration.
+const FLICKER: Color32 = Color32::from_rgb(0xE3, 0xA8, 0x3C);
 const HOVER: Color32 = Color32::from_rgba_premultiplied(50, 50, 50, 48);
 
 // ---- 光照端点：从 token 派生的两级明度，不是新的颜色 ----
@@ -2359,7 +2363,8 @@ fn toast_next_build(ctx: &egui::Context, st: &mut Proto, screen: Screen) {
     match screen {
         // T3a：序列屏已接入真实帧表，不再提示「下一版接入」。
         Screen::Seq => {}
-        Screen::Def => say_screen_unwired(ctx, st, "去闪"),
+        // T3b：去闪屏已接入真实曲线与参数组。
+        Screen::Def => {}
         Screen::Dev => {}
         Screen::Frame => say_screen_unwired(ctx, st, "构图"),
         Screen::Render => say_screen_unwired(ctx, st, "成片"),
@@ -3376,8 +3381,313 @@ fn draw_screen_seq(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut Rea
     );
 }
 
-fn draw_screen_def(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
-    draw_canvas_photo(ui, st);
+/// 去闪曲线左侧刻度槽宽：A18 要求 ≥56px，取 64（8px 档）。
+/// Deflicker curve axis gutter: A18 asks for ≥56 px; 64 keeps the 8 px grid.
+const DEF_AXIS_W: f32 = 64.0;
+
+/// 亮度读数：保留一位小数只在低值段有意义，高位四舍五入。
+/// Luminance label: one decimal only where it matters, whole numbers above.
+fn def_lum_label(v: f64) -> String {
+    if v >= 9.95 {
+        format!("{v:.0}")
+    } else {
+        format!("{v:.1}")
+    }
+}
+
+/// 对数轴刻度：1/2/5 × 10^n，只留落在真实值域内的值，最多 5 档。
+/// Log ticks at 1/2/5 × 10^n inside the real range, capped at five labels.
+fn def_log_ticks(lo: f64, hi: f64) -> Vec<f64> {
+    let mut cand = Vec::new();
+    let mut decade = 0.1_f64;
+    while decade <= 100_000.0 {
+        for m in [1.0_f64, 2.0, 5.0] {
+            let v = m * decade;
+            if v >= lo && v <= hi {
+                cand.push(v);
+            }
+        }
+        decade *= 10.0;
+    }
+    if cand.len() < 2 {
+        // 1/2/5 档太稀（例如 79–100 只剩 100）：按真实值域补一组 1/2/5×10^n 步长。
+        // Sparse 1/2/5 candidates (e.g. 79–100 leaves only 100): fill with a
+        // 1/2/5 x 10^n step over the real domain.
+        let range = (hi - lo).max(1e-6);
+        let mag = 10f64.powf((range / 4.0).log10().floor());
+        let norm = range / 4.0 / mag;
+        let step = if norm <= 1.0 {
+            mag
+        } else if norm <= 2.0 {
+            2.0 * mag
+        } else if norm <= 5.0 {
+            5.0 * mag
+        } else {
+            10.0 * mag
+        };
+        let mut v = (lo / step).ceil() * step;
+        while v <= hi {
+            cand.push(v);
+            v += step;
+        }
+    }
+    cand.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    cand.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    if cand.len() < 2 {
+        cand = vec![lo, hi];
+    }
+    while cand.len() > 5 {
+        let stride = (cand.len() as f32 / 5.0).ceil() as usize;
+        cand = cand.into_iter().step_by(stride.max(1)).collect();
+    }
+    cand
+}
+
+/// 画 def 屏的逐帧亮度曲线：灰=原始、紫=去闪后、琥珀点=检测到的闪烁帧。
+///
+/// Deflicker curve: grey raw, violet corrected, amber dots on detected flicker.
+fn draw_def_curve(
+    p: &egui::Painter,
+    card: Rect,
+    app: &RealAppState,
+    raw: &[(usize, f64)],
+    fixed: &[(usize, f64)],
+    lo_data: f64,
+    hi_data: f64,
+) {
+    p.rect_filled(card, 8.0, PANEL_SIDE);
+    let n = app.frame_count();
+    p.txt(
+        Pos2::new(card.left() + 16.0, card.top() + 20.0),
+        egui::Align2::LEFT_CENTER,
+        crate::i18n::t!("逐帧亮度"),
+        f_bold(FONT_SMALL),
+        T2,
+    );
+    // 图例右对齐：原始 / 去闪后 / 闪烁。颜色只从 token 取。
+    // 窄井放不下标题 + 三枚图例时整组收起，绝不让英文长词压到标题上。
+    //
+    // Right-aligned legend: raw / corrected / flicker, token colours only. On a
+    // narrow well the legend is dropped whole so long English labels never hit
+    // the title (the 900 px tier's measured failure).
+    if card.width() >= 480.0 {
+        let lf = f_small();
+        let items = [
+            (crate::i18n::t!("原始"), T4),
+            (crate::i18n::t!("去闪后"), ACCENT),
+            (crate::i18n::t!("闪烁"), FLICKER),
+        ];
+        let mut total = 0.0;
+        for (label, _) in items {
+            total += 6.0 + 4.0 + text_w(p, label, lf.clone()) + 12.0;
+        }
+        let mut lx = card.right() - 16.0 - total;
+        for (label, color) in items {
+            p.rect_filled(
+                Rect::from_center_size(Pos2::new(lx + 3.0, card.top() + 20.0), Vec2::splat(6.0)),
+                1.0,
+                color,
+            );
+            p.txt(
+                Pos2::new(lx + 10.0, card.top() + 20.0),
+                egui::Align2::LEFT_CENTER,
+                label,
+                lf.clone(),
+                T4_TEXT,
+            );
+            lx += 6.0 + 4.0 + text_w(p, label, lf.clone()) + 12.0;
+        }
+    }
+
+    let chart = Rect::from_min_max(
+        Pos2::new(card.left() + DEF_AXIS_W, card.top() + 40.0),
+        Pos2::new(card.right() - 16.0, card.bottom() - 32.0),
+    );
+    if chart.width() < 60.0 || chart.height() < 60.0 {
+        return;
+    }
+    p.rect_filled(chart, 6.0, FIELD);
+    // 对数值域：真实 min/max 各让 10%，再夹到正数（log 轴不允许 0）。
+    // Log domain: pad the real min/max by 10%, clamped positive.
+    let lo = (lo_data * 0.9).max(0.5);
+    let hi = (hi_data * 1.1).max(lo * 1.05);
+    let ln_lo = lo.ln();
+    let span = (hi.ln() - ln_lo).max(1e-6);
+    let x_at =
+        |i: usize| chart.left() + chart.width() * i as f32 / n.max(2).saturating_sub(1) as f32;
+    let y_at = |v: f64| chart.bottom() - chart.height() * ((v.max(lo).ln() - ln_lo) / span) as f32;
+
+    for tick in def_log_ticks(lo, hi) {
+        let y = y_at(tick);
+        p.hline(chart.x_range(), y, Stroke::new(1.0, shade(FIELD, 1.75)));
+        p.txt(
+            Pos2::new(chart.left() - 8.0, y),
+            egui::Align2::RIGHT_CENTER,
+            def_lum_label(tick),
+            f_small(),
+            T4_TEXT,
+        );
+    }
+    // x 轴真刻度：首帧 / 中间帧 / 末帧的帧号（1 开始）。
+    // True x ticks: first / middle / last frame numbers, 1-based.
+    for idx in [0usize, n / 2, n.saturating_sub(1)] {
+        p.txt(
+            Pos2::new(x_at(idx), chart.bottom() + 10.0),
+            egui::Align2::CENTER_CENTER,
+            format!("{}", idx + 1),
+            egui::FontId::monospace(FONT_SMALL),
+            T4_TEXT,
+        );
+    }
+
+    if raw.len() > 1 {
+        p.add(egui::Shape::line(
+            raw.iter()
+                .map(|(i, v)| Pos2::new(x_at(*i), y_at(*v)))
+                .collect(),
+            Stroke::new(1.0, T4),
+        ));
+        p.add(egui::Shape::line(
+            fixed
+                .iter()
+                .map(|(i, v)| Pos2::new(x_at(*i), y_at(*v)))
+                .collect(),
+            Stroke::new(1.2, ACCENT),
+        ));
+    }
+
+    // 闪烁帧：对中心差分残差取局部极大，避免把整体亮度趋势误标成闪烁。
+    // Flicker frames: local maxima of the central-difference residual, so a smooth
+    // brightness ramp is never mistaken for flicker.
+    let vals: Vec<f64> = raw.iter().map(|(_, v)| *v).collect();
+    let resid: Vec<f64> = (0..raw.len())
+        .map(|k| {
+            let pred = match (k.checked_sub(1), vals.get(k + 1)) {
+                (Some(p), Some(n)) => (vals[p] + *n) * 0.5,
+                (Some(p), None) => vals[p],
+                (None, Some(n)) => *n,
+                (None, None) => vals[k],
+            };
+            (vals[k] - pred).abs()
+        })
+        .collect();
+    let tol = ((hi_data - lo_data).abs() * 0.012).max(1.5);
+    for k in 0..raw.len() {
+        let left = if k > 0 { resid[k - 1] } else { 0.0 };
+        let right = resid.get(k + 1).copied().unwrap_or(0.0);
+        if resid[k] > tol && resid[k] >= left && resid[k] >= right {
+            let (i, v) = raw[k];
+            p.circle_filled(Pos2::new(x_at(i), y_at(v)), 2.5, FLICKER);
+        }
+    }
+
+    let current = app.selected.min(n.saturating_sub(1));
+    p.vline(x_at(current), chart.y_range(), Stroke::new(1.0, T2));
+}
+
+/// 去闪烁屏（def）：真实逐帧亮度曲线 + 去闪参数组。
+///
+/// Deflicker screen: the real per-frame luminance curve plus the deflicker group.
+fn draw_screen_def(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+    let p = ui.painter().clone();
+    let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
+    p.txt(
+        Pos2::new(head.left() + 16.0, head.center().y),
+        egui::Align2::LEFT_CENTER,
+        crate::i18n::t!("去闪烁"),
+        f_group(),
+        T2,
+    );
+    let n = app.frame_count();
+    if n == 0 {
+        // 0 帧：只画一句真实引导，不画曲线/刻度/假亮度。
+        // Zero frames: one honest guide, no curve, ticks or fake luminance.
+        let body = Rect::from_min_max(
+            Pos2::new(rect.left() + 16.0, head.bottom() + 12.0),
+            Pos2::new(rect.right() - 16.0, rect.bottom() - 16.0),
+        );
+        let card = Rect::from_center_size(body.center(), Vec2::new(body.width().min(520.0), 120.0));
+        p.rect_filled(card, 8.0, PANEL_SIDE);
+        p.txt(
+            card.center(),
+            egui::Align2::CENTER_CENTER,
+            crate::i18n::t!("还没有序列 · 文件 → 打开照片…"),
+            f_small(),
+            T3,
+        );
+        return;
+    }
+    let raw: Vec<(usize, f64)> = app
+        .metrics
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| m.map(|m| (i, m.mean * 255.0)))
+        .collect();
+    if raw.len() < 2 {
+        let body = Rect::from_min_max(
+            Pos2::new(rect.left() + 16.0, head.bottom() + 12.0),
+            Pos2::new(rect.right() - 16.0, rect.bottom() - 16.0),
+        );
+        let card = Rect::from_center_size(body.center(), Vec2::new(body.width().min(520.0), 120.0));
+        p.rect_filled(card, 8.0, PANEL_SIDE);
+        p.txt(
+            card.center(),
+            egui::Align2::CENTER_CENTER,
+            crate::i18n::t!("测光中…"),
+            f_small(),
+            T3,
+        );
+        return;
+    }
+    let fixed: Vec<(usize, f64)> = raw
+        .iter()
+        .map(|(i, v)| (*i, v * 2f64.powf(app.offset_at(*i) as f64)))
+        .collect();
+    let mut lo_data = f64::INFINITY;
+    let mut hi_data = f64::NEG_INFINITY;
+    for (_, v) in raw.iter().chain(fixed.iter()) {
+        lo_data = lo_data.min(*v);
+        hi_data = hi_data.max(*v);
+    }
+    let sub = crate::i18n::tr_fmt(
+        "{} 帧 · 亮度 {} ~ {}",
+        &[
+            &n.to_string(),
+            &def_lum_label(lo_data),
+            &def_lum_label(hi_data),
+        ],
+    );
+    p.txt(
+        Pos2::new(head.right() - 16.0, head.center().y),
+        egui::Align2::RIGHT_CENTER,
+        sub,
+        f_small(),
+        T4_TEXT,
+    );
+
+    let body = Rect::from_min_max(
+        Pos2::new(rect.left() + 16.0, head.bottom() + 12.0),
+        Pos2::new(rect.right() - 16.0, rect.bottom() - 16.0),
+    );
+    let params_w = 300.0_f32.min((body.width() - 220.0).max(240.0));
+    let plot = Rect::from_min_max(
+        body.min,
+        Pos2::new(body.right() - params_w - 12.0, body.bottom()),
+    );
+    let params = Rect::from_min_max(
+        Pos2::new(plot.right() + 12.0, body.top()),
+        body.right_bottom(),
+    );
+    draw_def_curve(&p, plot, app, &raw, &fixed, lo_data, hi_data);
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(params)
+            .id_salt("def-params"),
+        |ui| {
+            ui.set_clip_rect(params);
+            super::adjust::deflicker_panel(app, ui);
+        },
+    );
 }
 
 fn draw_screen_dev(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
@@ -4719,7 +5029,7 @@ fn draw_film(ui: &mut egui::Ui, st: &mut Proto) {
         let keys: [(&str, Color32); 3] = [
             (crate::i18n::t!("原始"), Color32::from_rgb(0x7F, 0x7F, 0x7F)),
             (crate::i18n::t!("去闪"), ACCENT),
-            (crate::i18n::t!("闪烁"), Color32::from_rgb(0xE3, 0xA8, 0x3C)),
+            (crate::i18n::t!("闪烁"), FLICKER),
         ];
         let mut lw = 0.0;
         for (t, _) in keys {
@@ -4914,7 +5224,7 @@ fn draw_ramp(p: &egui::Painter, rect: Rect, cur: usize, n: usize) {
             ),
             0.0, // C6: 数据柱方角
             if is_flick {
-                Color32::from_rgb(0xE3, 0xA8, 0x3C)
+                FLICKER
             } else {
                 Color32::from_rgb(0x7F, 0x7F, 0x7F)
             },

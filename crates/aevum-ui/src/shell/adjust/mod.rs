@@ -62,6 +62,15 @@ fn flat_speed(retime: &Retime) -> Option<f64> {
         .then_some(want)
 }
 
+/// v22 def 屏复用的去闪烁参数组：只把 `sequence::adjust_deflicker` 透出给同层
+/// 路由使用，不改保留层内部行为。
+///
+/// v22 def screen reuse of the deflicker group: a thin pass-through so the sibling
+/// router can call it without changing the retained panel's behaviour.
+pub(super) fn deflicker_panel(state: &mut AppState, ui: &mut Ui) {
+    sequence::adjust_deflicker(state, ui);
+}
+
 pub(crate) fn reset_group(state: &mut AppState, key: &str) {
     // 推子参数组与表外字段：口径在 controls::neutralise_group——复位按钮和
     // 「眼睛」旁路必须是同一个动作，两边各写一份迟早对不上。
