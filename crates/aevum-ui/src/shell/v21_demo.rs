@@ -4134,6 +4134,75 @@ fn release_notes_latest() -> &'static str {
     &section[..end]
 }
 
+/// 左栏固定所需高度：标题区 88 + 每行页签 40×5 + 返回前留白 24 + 按钮 28 + 底部 24。
+///
+/// Height the left column always needs: 88 head + five 40px tab rows, then a
+/// 24px gap, the 28px back button and a 24px bottom inset.
+fn set_left_content_height() -> f32 {
+    88.0 + SetTab::ALL.len() as f32 * 40.0 + 24.0 + 28.0 + 24.0
+}
+
+/// 键值分区所需高度：每节 24 小标题 + 8 间距 + 每行 36 + 24 节尾。
+///
+/// Height of the flat key-value sections: 24 heading + 8 gap + 36 per row
+/// plus a 24px tail, for each section in order.
+fn set_sections_height(row_counts: &[usize]) -> f32 {
+    row_counts
+        .iter()
+        .map(|n| 24.0 + 8.0 + *n as f32 * 36.0 + 24.0)
+        .sum()
+}
+
+/// 用一次不可见的子 Ui 量出保留层控件的实际高度：不画、不可交互，只取底边。
+///
+/// Measure a retained widget tab with one invisible sizing child: nothing is
+/// painted or interactive; only the laid-out bottom edge is read back.
+fn set_widget_content_height(
+    ui: &mut egui::Ui,
+    app: &mut RealAppState,
+    probe: Rect,
+    salt: &'static str,
+    widget: fn(&mut RealAppState, &mut egui::Ui),
+) -> f32 {
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(probe)
+            .id_salt(salt)
+            .sizing_pass()
+            .invisible(),
+    );
+    widget(app, &mut child);
+    (child.min_rect().bottom() - probe.top()).clamp(0.0, probe.height())
+}
+
+/// 右栏当前页签所需总高（含标题区 80 与底部留白 24）。
+///
+/// Height the current right-hand tab needs, including the 80px title band and
+/// the 24px bottom inset. Static rows are measured from the same pitch the
+/// painter uses; retained widget tabs get one invisible sizing pass; release
+/// notes deliberately fill the well.
+fn set_right_content_height(
+    ui: &mut egui::Ui,
+    app: &mut RealAppState,
+    tab: SetTab,
+    probe: Rect,
+) -> f32 {
+    let head = 80.0;
+    let foot = 24.0;
+    let body = match tab {
+        SetTab::Appearance => set_sections_height(&[2, 2]),
+        SetTab::About => set_sections_height(&[2, 1]),
+        SetTab::Release => probe.height(),
+        SetTab::Keys => {
+            set_widget_content_height(ui, app, probe, "set-keys-size", super::tabs::keys_tab)
+        }
+        SetTab::Info => {
+            set_widget_content_height(ui, app, probe, "set-info-size", super::tabs::info_tab)
+        }
+    };
+    head + body + foot
+}
+
 /// 设置屏（v22）：井内两列卡（A13）。左列页签，右列真实内容。
 ///
 /// 不依赖照片：0 帧也完整显示；快捷键/信息只做保留层的薄出口，外观只读真实档位。
@@ -4145,30 +4214,42 @@ fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut Real
     let p = ui.painter().clone();
     let outer = rect.shrink(24.0);
     let left_w = 216.0;
-    let left = Rect::from_min_size(outer.min, Vec2::new(left_w, outer.height()));
-    // 缝为 0：两栏共用一张面板底，中间只留一道淡线（B 方案）。
-    // Zero seam: both columns share one panel ground, parted by a faint rule.
-    let right = Rect::from_min_max(Pos2::new(left.right(), outer.top()), outer.max);
     // 原 16px 缝转为面板内的栏间留白：右栏文字停在原位，不跳字。
     // The old 16px gap becomes in-panel breathing room; right copy stays put.
     let right_pad = 24.0 + 16.0;
-    // 单面板一次画底，不叠投影，也不做「卡中卡」（A13 / 禁止项 16）。
-    // One fill for the whole panel: no drop shadow, no card-in-card.
-    p.rect_filled(outer, 12.0, PANEL_SIDE);
-    // 1px 淡竖线只表分栏，上下各留 24px；与暗分节线同口径，不新造颜色。
-    // A 1px faint rule marks the columns, inset 24px; same token as dark seams.
-    p.line_segment(
-        [
-            Pos2::new(left.right(), outer.top() + 24.0),
-            Pos2::new(left.right(), outer.bottom() - 24.0),
-        ],
-        Stroke::new(1.0, shade(PANEL_SIDE, 0.82)),
-    );
-
     let tab_id = ui.scope_id().with("v22-set-tab");
     let mut tab = ui
         .memory(|m| m.data.get_temp::<SetTab>(tab_id))
         .unwrap_or(SetTab::Appearance);
+    // 面板只包住内容：左栏固定结构与当前页签右栏取大，夹在井高以内。
+    // The panel hugs its content: max of the fixed left column and this tab's
+    // right column, clamped to the well.
+    let probe = Rect::from_min_size(
+        Pos2::new(outer.left() + left_w + right_pad, outer.top() + 80.0),
+        Vec2::new(
+            (outer.width() - left_w - right_pad - 24.0).max(0.0),
+            (outer.height() - 80.0 - 24.0).max(0.0),
+        ),
+    );
+    let panel_h = set_left_content_height()
+        .max(set_right_content_height(ui, app, tab, probe))
+        .min(outer.height());
+    let panel = Rect::from_min_size(outer.min, Vec2::new(outer.width(), panel_h));
+    let left = Rect::from_min_size(panel.min, Vec2::new(left_w, panel_h));
+    let right = Rect::from_min_max(Pos2::new(left.right(), panel.top()), panel.max);
+    // 单面板一次画底，不叠投影，也不做「卡中卡」（A13 / 禁止项 16）。
+    // One fill for the whole panel: no drop shadow, no card-in-card.
+    p.rect_filled(panel, 12.0, PANEL_SIDE);
+    // 1px 淡竖线只表分栏，上下各留 24px；与暗分节线同口径，不新造颜色。
+    // A 1px faint rule marks the columns, inset 24px; same token as dark seams.
+    p.line_segment(
+        [
+            Pos2::new(left.right(), panel.top() + 24.0),
+            Pos2::new(left.right(), panel.bottom() - 24.0),
+        ],
+        Stroke::new(1.0, shade(PANEL_SIDE, 0.82)),
+    );
+
     p.txt(
         Pos2::new(left.left() + 24.0, left.top() + 24.0),
         egui::Align2::LEFT_TOP,
