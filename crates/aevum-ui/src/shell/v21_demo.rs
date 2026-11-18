@@ -483,6 +483,15 @@ struct Proto {
 }
 
 impl Proto {
+    /// 空态判据：照片位为空就没有「正在预览的照片」。派生而非存字段，
+    /// 避免第二份状态与桥接的 `st.photo` 漂移（v21 的老毛病：两处同源）。
+    ///
+    /// Single derived source of truth for the empty state: never cached, because a
+    /// second flag would drift from the bridged `st.photo`.
+    fn has_photo(&self) -> bool {
+        self.photo.is_some()
+    }
+
     fn say(&mut self, ctx: &egui::Context, msg: &str) {
         let t = ctx.input(|i| i.time);
         self.toast = Some((msg.to_string(), t));
@@ -1593,14 +1602,21 @@ fn draw_menubar(ui: &mut egui::Ui, st: &mut Proto) {
     //
     // The zoom readout is the canvas's measured percent, never a literal.
     let zoom_text = format!("{:.0}%", st.zoom_pct);
+    // 空态没有照片就没有缩放对象：读数整段不画（不画「—」占位）。
+    // 只省文字、不省宽度，撤销与任务胶囊仍按同一条基线右对齐。
+    //
+    // No photo, no zoom subject: omit the readout entirely (no dash placeholder).
+    // Keep the width reservation so undo / task pill stay on the same baseline.
     cur -= text_w(&p, &zoom_text, zoom_font.clone());
-    p.txt(
-        Pos2::new(cur, cy),
-        egui::Align2::LEFT_CENTER,
-        &zoom_text,
-        zoom_font,
-        T1,
-    );
+    if st.has_photo() {
+        p.txt(
+            Pos2::new(cur, cy),
+            egui::Align2::LEFT_CENTER,
+            &zoom_text,
+            zoom_font,
+            T1,
+        );
+    }
     cur -= 18.0;
     {
         let font = f_small();
@@ -1974,6 +1990,12 @@ fn glass_edge(p: &egui::Painter, rect: Rect, r: f32) {
 /// presence dot (C4) -- copy, key cap and progress stay neutral. Edges via
 /// [`glass_edge`]; the shadow matches the bottom tool bar (black 70 / offset 4).
 fn draw_ai_cmdbar(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, st: &mut Proto) {
+    // 没有照片就没有可下指令的对象：命令条整条不画（有照片时行为原样）。
+    // No photo, no subject to prompt about: the whole bar is omitted; photo path
+    // keeps its exact behaviour.
+    if !st.has_photo() {
+        return;
+    }
     let bar_h = 34.0;
     let text = if st.ai_busy {
         crate::i18n::t!("正在执行：去闪 + 日转夜 ramp（28 / 48 帧）")
@@ -2057,6 +2079,12 @@ fn draw_ai_cmdbar(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, st: &mut Pro
 /// Floating tool bar at the bottom of the canvas: window-level chrome moved up,
 /// canvas-level tools moved next to the photo.
 fn draw_canvas_tools(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, st: &mut Proto) {
+    // 抓手 / 整段 / 单帧都作用在照片上：空态入口早退，调用点保持对称。
+    // Hand / whole-sequence / single-frame all act on a photo; early-out keeps
+    // both canvas call sites symmetric.
+    if !st.has_photo() {
+        return;
+    }
     let bar_h = 34.0;
     let bar = Rect::from_center_size(
         Pos2::new(rect.center().x, rect.bottom() - 32.0 - bar_h * 0.5),
@@ -3012,6 +3040,86 @@ fn draw_left(ui: &mut egui::Ui, rect: Rect, st: &mut Proto) {
 
 // ---------------------------------------------------------------- 画布
 
+/// 空态引导块：品牌 / 一句欢迎 / 两个真导入按钮，不画任何相纸或辅助线。
+///
+/// 按钮沿用原空态的两个 `DemoAction`（打开文件夹 / 选照片），保持行为可点；
+/// 所有颜色都从 v21 token 派生，不新增裸 `Color32`。
+///
+/// Empty-state welcome: brand, one hint and the two real import buttons. No photo
+/// surrogate and no editing guides. Both buttons keep their original DemoActions.
+fn draw_empty_well(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, st: &mut Proto) {
+    let c = rect.center();
+    p.txt(
+        Pos2::new(c.x, c.y - 52.0),
+        egui::Align2::CENTER_CENTER,
+        crate::i18n::t!("恒晷"),
+        f_bold(20.0),
+        T1,
+    );
+    p.txt(
+        Pos2::new(c.x, c.y - 18.0),
+        egui::Align2::CENTER_CENTER,
+        crate::i18n::t!("把照片或文件夹拖进来开始"),
+        f_title(),
+        T4_TEXT,
+    );
+    // 只有桥接进真应用（动作队列存在）时才画可点按钮：独立原型的旧静态占位
+    // 不再伪装成按钮——空态不该有点了没反应的东西。
+    //
+    // Buttons appear only when wired to the real app; the standalone prototype no
+    // longer fakes clickable controls on an empty well.
+    if st.actions.is_none() {
+        return;
+    }
+    let bw = 128.0;
+    let by = c.y + 18.0;
+    for (i, (label, action)) in [
+        (crate::i18n::t!("打开文件夹"), DemoAction::OpenFolder),
+        (crate::i18n::t!("选照片…"), DemoAction::OpenPhotos),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let r = Rect::from_min_size(
+            Pos2::new(c.x + (i as f32 * 2.0 - 1.0) * (bw / 2.0 + 5.0), by),
+            Vec2::new(bw, 32.0),
+        );
+        let resp = ui.interact(r, ui.scope_id().with(("empty-open", i)), Sense::click());
+        let (fill, text) = if i == 0 {
+            (
+                if resp.hovered() {
+                    shade(ACCENT, 1.08)
+                } else {
+                    ACCENT
+                },
+                CANVAS,
+            )
+        } else {
+            (
+                if resp.hovered() {
+                    shade(BUTTON, 1.12)
+                } else {
+                    BUTTON
+                },
+                T1,
+            )
+        };
+        p.rect_filled(r, 6.0, fill);
+        p.txt(
+            r.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            f_bold(FONT_SMALL),
+            text,
+        );
+        if resp.clicked() {
+            if let Some(a) = &st.actions {
+                a.send(action);
+            }
+        }
+    }
+}
+
 fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto) {
     let rect = ui.max_rect();
     let p = ui.painter().clone();
@@ -3144,61 +3252,12 @@ fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto) {
             Color32::WHITE,
         );
     } else {
-        p.rect_filled(frame, 3.0, Color32::from_rgb(0x31, 0x31, 0x31)); // C6
-        // 空态接真应用：打开文件夹 / 选照片（demo 独立运行时保留静态占位）。
+        // 空态是一个干净的起点，不是一张不存在的照片：只画品牌与真导入入口。
+        // #313131 假照片块与它上面的一切编辑辅助层在这里一起消失。
         //
-        // Empty state wired to the real app: open folder / pick photos.
-        if st.actions.is_some() {
-            let bw = 128.0;
-            let by = frame.center().y + 18.0;
-            for (i, (label, action)) in [
-                (crate::i18n::t!("打开文件夹"), DemoAction::OpenFolder),
-                (crate::i18n::t!("选照片…"), DemoAction::OpenPhotos),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let r = Rect::from_min_size(
-                    Pos2::new(
-                        frame.center().x + (i as f32 * 2.0 - 1.0) * (bw / 2.0 + 5.0),
-                        by,
-                    ),
-                    Vec2::new(bw, 32.0),
-                );
-                let resp = ui.interact(r, ui.scope_id().with(("empty-open", i)), Sense::click());
-                p.rect_filled(
-                    r,
-                    6.0,
-                    if i == 0 {
-                        if resp.hovered() {
-                            Color32::from_rgb(0xB8, 0x9E, 0xFB)
-                        } else {
-                            ACCENT
-                        }
-                    } else if resp.hovered() {
-                        Color32::from_rgb(0x4A, 0x4A, 0x4A)
-                    } else {
-                        BUTTON
-                    },
-                );
-                p.text(
-                    r.center(),
-                    egui::Align2::CENTER_CENTER,
-                    label,
-                    f_bold(FONT_SMALL),
-                    if i == 0 {
-                        Color32::from_rgb(0x18, 0x18, 0x18)
-                    } else {
-                        T1
-                    },
-                );
-                if resp.clicked() {
-                    if let Some(a) = &st.actions {
-                        a.send(action);
-                    }
-                }
-            }
-        }
+        // Empty is a clean starting point, not a photo that does not exist: brand
+        // and the two real import actions only; the fake #313131 frame is gone.
+        draw_empty_well(ui, &p, rect, st);
     }
     // 顶部光边：1px 白，只在照片存在时画（空态的占位块不是光源）。
     // 它是"相纸边缘反射顶光"的信号——很细，但在 25% 缩略图下仍给照片一条清晰上沿。
@@ -3209,19 +3268,23 @@ fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto) {
             Stroke::new(1.0, Color32::from_white_alpha(26)), // M2: 46 太亮成相框，压到 26
         );
     }
-    for i in 1..3 {
-        let x = frame.left() + frame.width() * i as f32 / 3.0;
-        let y = frame.top() + frame.height() * i as f32 / 3.0;
-        p.vline(
-            x,
-            frame.y_range(),
-            Stroke::new(1.0, Color32::from_white_alpha(22)),
-        );
-        p.hline(
-            frame.x_range(),
-            y,
-            Stroke::new(1.0, Color32::from_white_alpha(22)),
-        );
+    // 三分构图线只对真实照片有意义：空态画在「不存在的照片」上就是假预览。
+    // Rule-of-thirds guides belong to a real photo; on an empty well they fake one.
+    if st.has_photo() {
+        for i in 1..3 {
+            let x = frame.left() + frame.width() * i as f32 / 3.0;
+            let y = frame.top() + frame.height() * i as f32 / 3.0;
+            p.vline(
+                x,
+                frame.y_range(),
+                Stroke::new(1.0, Color32::from_white_alpha(22)),
+            );
+            p.hline(
+                frame.x_range(),
+                y,
+                Stroke::new(1.0, Color32::from_white_alpha(22)),
+            );
+        }
     }
 
     // 空态没有照片：不画蒙版圆和控制点（空画布上一枚孤零零的圆读成 bug）。
@@ -3306,70 +3369,74 @@ fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto) {
     // right half is the action (fit to window). It used to be one sentence with the
     // whole pill wired to "fit", so clicking the number did something else entirely.
     // C7: 14/34/6 归到 16/32/8。C10: 底衬用 CHROME token，不硬编码。
-    let chip = Rect::from_min_size(
-        Pos2::new(rect.left() + 16.0, rect.bottom() - 32.0),
-        Vec2::new(158.0, 24.0),
-    );
-    p.rect_filled(
-        chip.translate(Vec2::new(0.0, 3.0)),
-        8.0,
-        Color32::from_black_alpha(60),
-    );
-    p.rect_filled(chip, 8.0, CHROME);
-    glass_edge(&p, chip, 8.0);
-    let split = chip.left() + 56.0; // C7: 54 → 56
-    p.vline(
-        split,
-        (chip.top() + 8.0)..=(chip.bottom() - 8.0),
-        Stroke::new(1.0, Color32::from_black_alpha(120)),
-    );
-    // 百分比必须是**真实比例** frame.width / 源图宽，不是 `zoom * 100`：
-    // zoom=1 是「适应窗口」，fit 之后照片往往只有 92%（1180 / 1280），
-    // 写死 100% 就是骗读数，而且会让「100%」和「适应窗口」两个按钮看着一样。
-    //
-    // The percentage is the real frame-to-source ratio, not `zoom * 100`:
-    // zoom 1 means "fit", which lands at 92% for a 1180-wide frame in a 1280-wide
-    // photo. Hard-coding 100% fakes the reading and makes both buttons identical.
-    // 百分比与顶栏同源：画布实测（显示宽 / 照片像素宽），PHOTO_W 的演示兜底
-    // 只在没有真照片时生效。
-    //
-    // The percent shares the canvas-measured source with the top bar; the demo
-    // PHOTO_W fallback only applies without a real photo.
-    let zoom_lbl = format!("{:.0}%", st.zoom_pct.round());
-    let left = Rect::from_min_max(chip.min, Pos2::new(split, chip.bottom()));
-    let right = Rect::from_min_max(Pos2::new(split, chip.top()), chip.max);
-    let lr = ui.interact(left, ui.scope_id().with("zoom-100"), Sense::click());
-    let rr = ui.interact(right, ui.scope_id().with("zoom-fit"), Sense::click());
-    if lr.hovered() {
-        p.rect_filled(left, 8.0, Color32::from_rgb(0x42, 0x42, 0x42));
-    }
-    if rr.hovered() {
-        p.rect_filled(right, 8.0, Color32::from_rgb(0x42, 0x42, 0x42));
-    }
-    p.txt(
-        left.center(),
-        egui::Align2::CENTER_CENTER,
-        zoom_lbl,
-        f_bold(FONT_SMALL),
-        if lr.hovered() { T1 } else { T2 },
-    );
-    p.txt(
-        right.center(),
-        egui::Align2::CENTER_CENTER,
-        crate::i18n::t!("适应窗口"),
-        f_small(),
-        if rr.hovered() { T1 } else { T3 },
-    );
-    if lr.clicked() {
-        // 「100%」= 实际大小：1 照片像素 = 1 屏幕像素（档位由画布按真照片算）。
-        st.zoom = st.zoom_100;
-        st.pan = Vec2::ZERO;
-        st.say(ui.ctx(), crate::i18n::t!("缩放 100%"));
-    }
-    if rr.clicked() {
-        st.zoom = 1.0;
-        st.pan = Vec2::ZERO;
-        st.say(ui.ctx(), crate::i18n::t!("已适应窗口"));
+    // 缩放 chip 整段只对照片有意义：空态不画读数、不画「适应窗口」动作。
+    // The whole zoom chip is photo-only: no readout and no "fit" action when empty.
+    if st.has_photo() {
+        let chip = Rect::from_min_size(
+            Pos2::new(rect.left() + 16.0, rect.bottom() - 32.0),
+            Vec2::new(158.0, 24.0),
+        );
+        p.rect_filled(
+            chip.translate(Vec2::new(0.0, 3.0)),
+            8.0,
+            Color32::from_black_alpha(60),
+        );
+        p.rect_filled(chip, 8.0, CHROME);
+        glass_edge(&p, chip, 8.0);
+        let split = chip.left() + 56.0; // C7: 54 → 56
+        p.vline(
+            split,
+            (chip.top() + 8.0)..=(chip.bottom() - 8.0),
+            Stroke::new(1.0, Color32::from_black_alpha(120)),
+        );
+        // 百分比必须是**真实比例** frame.width / 源图宽，不是 `zoom * 100`：
+        // zoom=1 是「适应窗口」，fit 之后照片往往只有 92%（1180 / 1280），
+        // 写死 100% 就是骗读数，而且会让「100%」和「适应窗口」两个按钮看着一样。
+        //
+        // The percentage is the real frame-to-source ratio, not `zoom * 100`:
+        // zoom 1 means "fit", which lands at 92% for a 1180-wide frame in a 1280-wide
+        // photo. Hard-coding 100% fakes the reading and makes both buttons identical.
+        // 百分比与顶栏同源：画布实测（显示宽 / 照片像素宽），PHOTO_W 的演示兜底
+        // 只在没有真照片时生效。
+        //
+        // The percent shares the canvas-measured source with the top bar; the demo
+        // PHOTO_W fallback only applies without a real photo.
+        let zoom_lbl = format!("{:.0}%", st.zoom_pct.round());
+        let left = Rect::from_min_max(chip.min, Pos2::new(split, chip.bottom()));
+        let right = Rect::from_min_max(Pos2::new(split, chip.top()), chip.max);
+        let lr = ui.interact(left, ui.scope_id().with("zoom-100"), Sense::click());
+        let rr = ui.interact(right, ui.scope_id().with("zoom-fit"), Sense::click());
+        if lr.hovered() {
+            p.rect_filled(left, 8.0, Color32::from_rgb(0x42, 0x42, 0x42));
+        }
+        if rr.hovered() {
+            p.rect_filled(right, 8.0, Color32::from_rgb(0x42, 0x42, 0x42));
+        }
+        p.txt(
+            left.center(),
+            egui::Align2::CENTER_CENTER,
+            zoom_lbl,
+            f_bold(FONT_SMALL),
+            if lr.hovered() { T1 } else { T2 },
+        );
+        p.txt(
+            right.center(),
+            egui::Align2::CENTER_CENTER,
+            crate::i18n::t!("适应窗口"),
+            f_small(),
+            if rr.hovered() { T1 } else { T3 },
+        );
+        if lr.clicked() {
+            // 「100%」= 实际大小：1 照片像素 = 1 屏幕像素（档位由画布按真照片算）。
+            st.zoom = st.zoom_100;
+            st.pan = Vec2::ZERO;
+            st.say(ui.ctx(), crate::i18n::t!("缩放 100%"));
+        }
+        if rr.clicked() {
+            st.zoom = 1.0;
+            st.pan = Vec2::ZERO;
+            st.say(ui.ctx(), crate::i18n::t!("已适应窗口"));
+        }
     }
 
     // 收起态的入口在工具轨第一项（「预设」），画布内不再放第二枚按钮：
@@ -3453,61 +3520,77 @@ fn draw_dock(ui: &mut egui::Ui, st: &mut Proto) {
         Pos2::new(rect.left() + 16.0, tabs_rect.bottom() + 12.0),
         Vec2::new(rect.width() - 32.0, 84.0),
     );
-    draw_histogram(ui, &p, hist);
-    // 刻度 + RGB 读数
-    let ty = hist.bottom() + 4.0;
-    for (i, m) in ["0", "50", "100"].iter().enumerate() {
-        let x = hist.left() + hist.width() * i as f32 / 2.0;
+    // 有照片才画波形与 RGB 读数；空态画一个 FIELD 空槽 + 一行淡提示。
+    // 坞容器与页签不收起（S1 跨屏壳一致），但槽内零柱、零假读数。
+    //
+    // Photo: real histogram + RGB readouts. Empty: a FIELD slot and one muted
+    // hint -- the dock shell stays put (S1) with zero bars and zero fake numbers.
+    let ry = hist.bottom() + 20.0;
+    if st.has_photo() {
+        draw_histogram(ui, &p, hist);
+        // 刻度 + RGB 读数
+        let ty = hist.bottom() + 4.0;
+        for (i, m) in ["0", "50", "100"].iter().enumerate() {
+            let x = hist.left() + hist.width() * i as f32 / 2.0;
+            p.txt(
+                Pos2::new(x, ty),
+                if i == 0 {
+                    egui::Align2::LEFT_TOP
+                } else if i == 2 {
+                    egui::Align2::RIGHT_TOP
+                } else {
+                    egui::Align2::CENTER_TOP
+                },
+                *m,
+                f_small(),
+                T4_TEXT,
+            );
+        }
+        // RGB 读数：按直方图宽度三等分，色块与数字共用一条水平中线。
+        // 之前用固定 62px 步长 —— 右半空出一大片（两个读数宽），左侧三个数字挤在一起，
+        // 色块又比数字低 2px，整块看着像没对齐的表格。
+        //
+        // RGB readouts split the histogram width into three equal columns, swatch and
+        // number sharing one centre line. A fixed 62 px stride left the right half empty,
+        // crammed the three numbers together and dropped the swatches 2 px below the text.
+        let colw = hist.width() / 3.0;
+        for (i, (c, v)) in [
+            (Color32::from_rgb(0xE0, 0x6A, 0x5C), "128"),
+            (Color32::from_rgb(0x6C, 0xC0, 0x6A), "142"),
+            (Color32::from_rgb(0x5C, 0x8A, 0xE0), "96"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            // 每组（色块 + 数字）在各自三等分里**居中**：左对齐会让第三组把右侧三分之一
+            // 空着，而 100 刻度还在最右边，读起来像少了两个读数。
+            // Each swatch+number pair is centred inside its third: left-aligning left the
+            // last third empty while the 100 tick still sat at the far right.
+            let font = f_small();
+            let tw = text_w(&p, v, font.clone());
+            let x0 = hist.left() + (i as f32 + 0.5) * colw - (12.0 + tw) / 2.0;
+            let cy_r = ry + 7.0;
+            p.rect_filled(
+                Rect::from_center_size(Pos2::new(x0 + 4.0, cy_r), Vec2::splat(8.0)),
+                3.0,
+                *c,
+            );
+            p.txt(
+                Pos2::new(x0 + 12.0, cy_r),
+                egui::Align2::LEFT_CENTER,
+                *v,
+                font,
+                T2,
+            );
+        }
+    } else {
+        p.rect_filled(hist, 8.0, FIELD);
         p.txt(
-            Pos2::new(x, ty),
-            if i == 0 {
-                egui::Align2::LEFT_TOP
-            } else if i == 2 {
-                egui::Align2::RIGHT_TOP
-            } else {
-                egui::Align2::CENTER_TOP
-            },
-            *m,
+            hist.center(),
+            egui::Align2::CENTER_CENTER,
+            crate::i18n::t!("无照片时直方图无意义"),
             f_small(),
             T4_TEXT,
-        );
-    }
-    // RGB 读数：按直方图宽度三等分，色块与数字共用一条水平中线。
-    // 之前用固定 62px 步长 —— 右半空出一大片（两个读数宽），左侧三个数字挤在一起，
-    // 色块又比数字低 2px，整块看着像没对齐的表格。
-    //
-    // RGB readouts split the histogram width into three equal columns, swatch and
-    // number sharing one centre line. A fixed 62 px stride left the right half empty,
-    // crammed the three numbers together and dropped the swatches 2 px below the text.
-    let ry = ty + 16.0;
-    let colw = hist.width() / 3.0;
-    for (i, (c, v)) in [
-        (Color32::from_rgb(0xE0, 0x6A, 0x5C), "128"),
-        (Color32::from_rgb(0x6C, 0xC0, 0x6A), "142"),
-        (Color32::from_rgb(0x5C, 0x8A, 0xE0), "96"),
-    ]
-    .iter()
-    .enumerate()
-    {
-        // 每组（色块 + 数字）在各自三等分里**居中**：左对齐会让第三组把右侧三分之一
-        // 空着，而 100 刻度还在最右边，读起来像少了两个读数。
-        // Each swatch+number pair is centred inside its third: left-aligning left the
-        // last third empty while the 100 tick still sat at the far right.
-        let font = f_small();
-        let tw = text_w(&p, v, font.clone());
-        let x0 = hist.left() + (i as f32 + 0.5) * colw - (12.0 + tw) / 2.0;
-        let cy_r = ry + 7.0;
-        p.rect_filled(
-            Rect::from_center_size(Pos2::new(x0 + 4.0, cy_r), Vec2::splat(8.0)),
-            3.0,
-            *c,
-        );
-        p.txt(
-            Pos2::new(x0 + 12.0, cy_r),
-            egui::Align2::LEFT_CENTER,
-            *v,
-            font,
-            T2,
         );
     }
 
@@ -3944,6 +4027,22 @@ fn dock_effect(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, y0: f32, st: &m
 fn draw_film(ui: &mut egui::Ui, st: &mut Proto) {
     let rect = ui.max_rect();
     let p = ui.painter().clone();
+    // 空态没有序列：胶片条底色由 `ui()` 画，这里只留一行诚实的头行标签。
+    // 不画 48/24、已选 1、星级、假缩略图、假关键帧与假亮度柱。
+    //
+    // Empty means no sequence: the strip fill comes from `ui()` and only an honest
+    // header label is painted here -- no fake counts, stars, thumbs or keyframes.
+    if !st.has_photo() {
+        let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 36.0));
+        p.txt(
+            Pos2::new(head.left() + 14.0, head.center().y),
+            egui::Align2::LEFT_CENTER,
+            crate::i18n::t!("胶片条 · 无序列"),
+            f_title(),
+            T3,
+        );
+        return;
+    }
     let photo = st.photo.clone();
     // 底色 `STRIP` 与顶部分界线由 `ui()` 画；这里只画内容。
     // The strip's fill and top seam are drawn in `ui()`.

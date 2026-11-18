@@ -1113,6 +1113,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("无参数", "No parameters"),
     ("无损、通用，网络与后期都吃得下", "Lossless and universal; fine for the web and for retouching"),
     ("无数据", "No data"),
+    ("无照片时直方图无意义", "Histogram is empty without a photo"),
     ("无细节阈值", "Featureless threshold"),
     ("日期 / 时间", "Date / time"),
     ("日转夜延时里相机一直在拉长曝光、开大光圈，去闪会把日夜过渡当成闪烁压掉；用 EXIF 的曝光三要素把相机补偿剥掉，只压真正的测光误差（只重分配每帧曝光，不改总亮度）", "In a day-to-night timelapse the camera keeps lengthening the shutter and opening the aperture, so deflicker would flatten the transition as if it were flicker; the EXIF exposure triplet lets it strip the camera compensation and trim only real metering error (per-frame exposure is redistributed, total brightness is not)."),
