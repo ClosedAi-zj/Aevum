@@ -4146,11 +4146,24 @@ fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut Real
     let outer = rect.shrink(24.0);
     let left_w = 216.0;
     let left = Rect::from_min_size(outer.min, Vec2::new(left_w, outer.height()));
-    let right = Rect::from_min_max(Pos2::new(left.right() + 16.0, outer.top()), outer.max);
-    // 两列同底同圆角，不叠投影（A13 / 禁止项 16）。
-    // Both columns share one fill and radius; no drop shadow.
-    p.rect_filled(left, 12.0, PANEL_SIDE);
-    p.rect_filled(right, 12.0, PANEL_SIDE);
+    // 缝为 0：两栏共用一张面板底，中间只留一道淡线（B 方案）。
+    // Zero seam: both columns share one panel ground, parted by a faint rule.
+    let right = Rect::from_min_max(Pos2::new(left.right(), outer.top()), outer.max);
+    // 原 16px 缝转为面板内的栏间留白：右栏文字停在原位，不跳字。
+    // The old 16px gap becomes in-panel breathing room; right copy stays put.
+    let right_pad = 24.0 + 16.0;
+    // 单面板一次画底，不叠投影，也不做「卡中卡」（A13 / 禁止项 16）。
+    // One fill for the whole panel: no drop shadow, no card-in-card.
+    p.rect_filled(outer, 12.0, PANEL_SIDE);
+    // 1px 淡竖线只表分栏，上下各留 24px；与暗分节线同口径，不新造颜色。
+    // A 1px faint rule marks the columns, inset 24px; same token as dark seams.
+    p.line_segment(
+        [
+            Pos2::new(left.right(), outer.top() + 24.0),
+            Pos2::new(left.right(), outer.bottom() - 24.0),
+        ],
+        Stroke::new(1.0, shade(PANEL_SIDE, 0.82)),
+    );
 
     let tab_id = ui.scope_id().with("v22-set-tab");
     let mut tab = ui
@@ -4237,19 +4250,19 @@ fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut Real
     }
 
     p.txt(
-        Pos2::new(right.left() + 24.0, right.top() + 24.0),
+        Pos2::new(right.left() + right_pad, right.top() + 24.0),
         egui::Align2::LEFT_TOP,
         crate::i18n::tr(tab.label()),
         f_group(),
         T1,
     );
     p.hline(
-        (right.left() + 24.0)..=(right.right() - 24.0),
+        (right.left() + right_pad)..=(right.right() - 24.0),
         right.top() + 64.0,
         Stroke::new(1.0, shade(PANEL_SIDE, 0.82)),
     );
     let content = Rect::from_min_max(
-        Pos2::new(right.left() + 24.0, right.top() + 80.0),
+        Pos2::new(right.left() + right_pad, right.top() + 80.0),
         Pos2::new(right.right() - 24.0, right.bottom() - 24.0),
     );
     match tab {
@@ -4270,33 +4283,72 @@ fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut Real
             // Read-only values from theme; no fake switches.
             let a = crate::theme::appearance();
             let tr = crate::i18n::tr;
-            draw_set_rows(
+            let display_rows = [
+                (crate::t!("主题"), tr(a.theme.cn()).to_owned()),
+                (crate::t!("皮肤"), tr(a.skin.cn()).to_owned()),
+            ];
+            let interface_rows = [
+                (crate::t!("信息密度"), tr(a.density.cn()).to_owned()),
+                (crate::t!("字号"), crate::t!("本版界面字号固定").to_owned()),
+            ];
+            // 两段分区把四行收在上半部，下面不再是一整片空地。
+            // Two sections lift the four rows back into the upper half.
+            let next = draw_set_section(&p, content, crate::t!("显示"), &display_rows);
+            draw_set_section(
                 &p,
-                content,
-                &[
-                    (crate::t!("主题"), tr(a.theme.cn()).to_owned()),
-                    (crate::t!("皮肤"), tr(a.skin.cn()).to_owned()),
-                    (crate::t!("信息密度"), tr(a.density.cn()).to_owned()),
-                    (crate::t!("字号"), crate::t!("本版界面字号固定").to_owned()),
-                ],
+                Rect::from_min_max(Pos2::new(content.left(), next), content.max),
+                crate::t!("界面"),
+                &interface_rows,
             );
         }
         SetTab::About => {
             // 关于取品牌与 Cargo 的真实值，不写死版本号字面量。
             // About uses brand and Cargo values, never a literal version.
             use aevum_core::brand;
-            draw_set_rows(
+            let project_rows = [
+                (crate::t!("项目"), brand::TITLE.to_owned()),
+                (crate::t!("版本"), brand::version().to_owned()),
+            ];
+            let license_rows = [(crate::t!("许可"), env!("CARGO_PKG_LICENSE").to_owned())];
+            let next = draw_set_section(&p, content, crate::t!("项目"), &project_rows);
+            draw_set_section(
                 &p,
-                content,
-                &[
-                    (crate::t!("项目"), brand::TITLE.to_owned()),
-                    (crate::t!("版本"), brand::version().to_owned()),
-                    (crate::t!("许可"), env!("CARGO_PKG_LICENSE").to_owned()),
-                ],
+                Rect::from_min_max(Pos2::new(content.left(), next), content.max),
+                crate::t!("许可"),
+                &license_rows,
             );
         }
         SetTab::Release => draw_set_release(&p, content),
     }
+}
+
+/// 分区小标题 + 暗分节线 + 键值行；返回下一分区的起点。
+///
+/// 小标题用 13px 粗体但降到 T4_TEXT，弱于右栏页签标题，不与它抢层级；
+/// 分节线沿用 C5 的暗线口径，不引入新颜色。
+///
+/// A dim section heading, a dark seam, then the key-value rows; returns the
+/// next section's top. The heading is deliberately quieter than the tab title.
+fn draw_set_section(p: &egui::Painter, r: Rect, title: &str, rows: &[(&str, String)]) -> f32 {
+    p.txt(
+        Pos2::new(r.left(), r.top()),
+        egui::Align2::LEFT_TOP,
+        title,
+        f_group(),
+        T4_TEXT,
+    );
+    p.hline(
+        r.left()..=r.right(),
+        r.top() + 24.0,
+        Stroke::new(1.0, shade(PANEL_SIDE, 0.82)),
+    );
+    let rows_top = r.top() + 24.0 + 8.0;
+    draw_set_rows(
+        p,
+        Rect::from_min_max(Pos2::new(r.left(), rows_top), r.max),
+        rows,
+    );
+    rows_top + rows.len() as f32 * 36.0 + 24.0
 }
 
 /// 键值行：外观/关于共用，flat sections + 暗分节线（C5）。

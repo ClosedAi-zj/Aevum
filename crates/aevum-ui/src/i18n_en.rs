@@ -1406,6 +1406,7 @@ pub(crate) static ENTRIES: &[(&str, &str)] = &[
     ("画面", "Picture"),
     ("画面比例", "Aspect ratio"),
     ("画面里没有可用的竖直主直线", "No usable dominant vertical line in this frame"),
+    ("界面", "Interface"),
     ("界面字号", "UI text size"),
     ("界面布局", "Interface Layout"),
     ("界面明暗微调", "Interface brightness trim"),
