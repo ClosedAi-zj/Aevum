@@ -1873,13 +1873,13 @@ fn draw_menubar(ui: &mut egui::Ui, st: &mut Proto) {
     //
     // 点击 modpick 开合；开启时一块全屏点击捕手垫底（点到菜单外即收起），
     // 菜单本体画在 Foreground 层——不受顶栏 clip_rect 裁剪。行点击发
-    // DemoAction::SelectModule（真 API：state.module），非显影模块 toast 说明
-    // 该屏在下一版接入。仅开发屏有完整界面是 v21 的既定范围（PROGRESS-v21 §6）。
+    // DemoAction::SelectModule（真 API：state.module）。八屏现在都有真实内容，
+    // 选任何模块都不再弹说明 toast。
     //
     // Seven-module dropdown: a full-screen click catcher underneath closes the
     // menu on outside clicks; rows send DemoAction::SelectModule (the real
-    // state.module). Non-Develop picks toast that their screens land in the next
-    // build -- the documented v21 scope.
+    // state.module). All eight screens now carry real content, so picking any
+    // module no longer raises an explanatory toast.
     let modmenu_id = ui.scope_id().with("modmenu");
     let open = ui
         .ctx()
@@ -1954,13 +1954,6 @@ fn draw_menubar(ui: &mut egui::Ui, st: &mut Proto) {
                         if let Some(a) = &st.actions {
                             a.send(DemoAction::SelectModule(m));
                         }
-                        // T2 只把 toast 改成分屏结构：六个未接屏仍各自发提示，
-                        // 显影屏是 v21 现役界面、从始至终不提示。删臂是 T3–T5 的事。
-                        //
-                        // T2 only restructures the toast per screen: the six unwired
-                        // screens still toast, Develop never did. Deleting an arm is
-                        // T3-T5 work.
-                        toast_next_build(ui.ctx(), st, Screen::from_module(m));
                         ui.ctx().data_mut(|d| d.insert_temp(modmenu_id, false));
                     }
                     ry += row_h;
@@ -2349,42 +2342,6 @@ fn draw_status(ui: &mut egui::Ui, st: &Proto, frame_ms: f32) {
             T3,
         );
     }
-}
-
-/// 分屏「下一版接入」提示：T2 把 `if m != Develop` 改成八臂结构。
-///
-/// T4a 后只剩 `Frame` / `Audio` 两臂仍发提示；`Seq` / `Def` / `Render` / `Merge`
-/// 已接真实内容，`Dev` 是现役界面，`Set` 不经过模块下拉，五臂刻意留空。T4b/T5
-/// 接完剩余屏后整段删除。
-///
-/// Per-screen "next build" toast: T2 turned the old `if m != Develop` into eight
-/// arms. After T4a only `Frame` / `Audio` still toast; `Seq` / `Def` / `Render` /
-/// `Merge` are live, `Dev` already was, and `Set` never comes from the module
-/// picker, so those five arms stay empty by design.
-fn toast_next_build(ctx: &egui::Context, st: &mut Proto, screen: Screen) {
-    match screen {
-        // T3a：序列屏已接入真实帧表，不再提示「下一版接入」。
-        Screen::Seq => {}
-        // T3b：去闪屏已接入真实曲线与参数组。
-        Screen::Def => {}
-        Screen::Dev => {}
-        Screen::Frame => say_screen_unwired(ctx, st, "构图"),
-        // T4a：导出屏已接入真实三栏工作台。
-        Screen::Render => {}
-        Screen::Audio => say_screen_unwired(ctx, st, "声音"),
-        // T4a：合成屏已接入真实类型卡与参数组。
-        Screen::Merge => {}
-        Screen::Set => {}
-    }
-}
-
-/// 一条「下一版接入」提示；屏名走 `tr()`，模板与 v21 同一把钥匙。
-/// One "next build" toast; the label goes through `tr()` with the v21 template key.
-fn say_screen_unwired(ctx: &egui::Context, st: &mut Proto, label: &'static str) {
-    st.say(
-        ctx,
-        &crate::i18n::tr("「{m}」屏将在下一版接入").replace("{m}", crate::i18n::tr(label)),
-    );
 }
 
 /// 左侧 AI 工具轨（效果图 `.airail`，56px）：四个按钮，第一个带紫点表示激活。
@@ -3698,8 +3655,77 @@ fn draw_screen_dev(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut Re
     draw_canvas_photo(ui, st);
 }
 
-fn draw_screen_frame(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
-    draw_canvas_photo(ui, st);
+/// 构图屏（frame）：v21 页头 + 保留层画布主体（图像/裁剪/运动/手柄/标尺）
+/// 与右列画幅参数组。`canvas_panel` 以 `embed=true` 调用，跳过它自己的 chrome
+/// 与圆角井，避免在 v21 井内出现第二层边框。
+///
+/// Frame screen: v21 head plus the retained canvas body (image / crop / motion /
+/// handles / rulers) and the frame group on the right. `canvas_panel(embed=true)`
+/// skips its own chrome and rounded well so the v21 well is not framed twice.
+fn draw_screen_frame(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+    let p = ui.painter().clone();
+    let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
+    p.txt(
+        Pos2::new(head.left() + 16.0, head.center().y),
+        egui::Align2::LEFT_CENTER,
+        crate::i18n::t!("构图"),
+        f_group(),
+        T2,
+    );
+    let n = app.frame_count();
+    if n == 0 {
+        draw_well_guide(&p, rect, head.bottom());
+        return;
+    }
+    let sub = app
+        .resolution
+        .map(|(w, h)| format!("{w} × {h} · {}", crate::i18n::tr(app.aspect.label())))
+        .unwrap_or_default();
+    if !sub.is_empty() {
+        p.txt(
+            Pos2::new(head.right() - 16.0, head.center().y),
+            egui::Align2::RIGHT_CENTER,
+            sub,
+            f_small(),
+            T4_TEXT,
+        );
+    }
+    let body = Rect::from_min_max(
+        Pos2::new(rect.left() + 16.0, head.bottom() + 12.0),
+        Pos2::new(rect.right() - 16.0, rect.bottom() - 16.0),
+    );
+    let params_w = 300.0_f32.min((body.width() - 240.0).max(240.0));
+    let canvas_rect = Rect::from_min_max(
+        body.min,
+        Pos2::new(body.right() - params_w - 12.0, body.bottom()),
+    );
+    let params = Rect::from_min_max(
+        Pos2::new(canvas_rect.right() + 12.0, body.top()),
+        body.right_bottom(),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(canvas_rect)
+            .id_salt("frame-canvas"),
+        |ui| {
+            ui.set_clip_rect(canvas_rect);
+            super::canvas::canvas_panel(app, ui, 0.0, true);
+        },
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(params)
+            .id_salt("frame-params"),
+        |ui| {
+            ui.set_clip_rect(params);
+            egui::ScrollArea::vertical()
+                .id_salt("frame-params-scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    super::adjust::frame_panel(app, ui);
+                });
+        },
+    );
 }
 
 /// 导出屏（render）：v21 页头 + 保留层三栏导出工作台。
@@ -3893,8 +3919,167 @@ fn draw_screen_merge(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut R
     );
 }
 
-fn draw_screen_audio(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
-    draw_canvas_photo(ui, st);
+/// 音频屏：v21 页头 + 音轨卡 + 音频参数组；没有真实配乐绝不画波形。
+///
+/// Audio screen: v21 head, one real audio-track card and the audio group. No real
+/// music means no waveform is painted at all.
+fn draw_screen_audio(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+    let p = ui.painter().clone();
+    let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
+    p.txt(
+        Pos2::new(head.left() + 16.0, head.center().y),
+        egui::Align2::LEFT_CENTER,
+        crate::i18n::t!("音频"),
+        f_group(),
+        T2,
+    );
+    let codec = app
+        .audio_info
+        .as_ref()
+        .filter(|p| p.has_stream())
+        .map(|p| p.codec.clone());
+    let duration = app
+        .audio_info
+        .as_ref()
+        .filter(|p| p.has_stream())
+        .map(|p| p.duration)
+        .unwrap_or(0.0);
+    if let Some(c) = &codec {
+        p.txt(
+            Pos2::new(head.right() - 16.0, head.center().y),
+            egui::Align2::RIGHT_CENTER,
+            format!("{c} · {}", audio_time(duration)),
+            f_small(),
+            T4_TEXT,
+        );
+    }
+    if app.frame_count() == 0 {
+        draw_well_guide(&p, rect, head.bottom());
+        return;
+    }
+    let body = Rect::from_min_max(
+        Pos2::new(rect.left() + 16.0, head.bottom() + 12.0),
+        Pos2::new(rect.right() - 16.0, rect.bottom() - 16.0),
+    );
+    let params_w = 300.0_f32.min((body.width() - 280.0).max(240.0));
+    let track = Rect::from_min_max(
+        body.min,
+        Pos2::new(body.right() - params_w - 12.0, body.bottom()),
+    );
+    let params = Rect::from_min_max(
+        Pos2::new(track.right() + 12.0, body.top()),
+        body.right_bottom(),
+    );
+    draw_audio_track(&p, track, app);
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(params)
+            .id_salt("audio-params"),
+        |ui| {
+            ui.set_clip_rect(params);
+            egui::ScrollArea::vertical()
+                .id_salt("audio-params-scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    super::adjust::audio_panel(app, ui);
+                });
+        },
+    );
+}
+
+/// 音轨卡：只列真实探针信息；没有采样就不画波形。
+///
+/// Audio-track card: real probe data only; without samples there is no waveform.
+fn draw_audio_track(p: &egui::Painter, card: Rect, app: &RealAppState) {
+    p.rect_filled(card, 8.0, PANEL_SIDE);
+    p.txt(
+        Pos2::new(card.left() + 16.0, card.top() + 20.0),
+        egui::Align2::LEFT_CENTER,
+        crate::i18n::t!("音轨"),
+        f_bold(FONT_SMALL),
+        T2,
+    );
+    let Some(path) = &app.render_audio else {
+        p.txt(
+            card.center(),
+            egui::Align2::CENTER_CENTER,
+            crate::i18n::t!("未选择配乐"),
+            f_small(),
+            T3,
+        );
+        return;
+    };
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| crate::i18n::t!("配乐").to_string());
+    p.txt(
+        Pos2::new(card.left() + 16.0, card.top() + 48.0),
+        egui::Align2::LEFT_CENTER,
+        name,
+        f_bold(FONT_SMALL),
+        T1,
+    );
+    let Some(info) = app.audio_info.as_ref() else {
+        let text = if app.audio_probe_err.is_some() {
+            crate::i18n::t!("配乐无法读取")
+        } else {
+            crate::i18n::t!("正在探测…")
+        };
+        p.txt(
+            Pos2::new(card.left() + 16.0, card.top() + 76.0),
+            egui::Align2::LEFT_CENTER,
+            text,
+            f_small(),
+            T4_TEXT,
+        );
+        return;
+    };
+    if !info.has_stream() {
+        p.txt(
+            Pos2::new(card.left() + 16.0, card.top() + 76.0),
+            egui::Align2::LEFT_CENTER,
+            crate::i18n::t!("配乐没有音频轨"),
+            f_small(),
+            T4_TEXT,
+        );
+        return;
+    }
+    let row = |label: &str, value: String, y: f32| {
+        p.txt(
+            Pos2::new(card.left() + 16.0, y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            f_small(),
+            T4_TEXT,
+        );
+        p.txt(
+            Pos2::new(card.right() - 16.0, y),
+            egui::Align2::RIGHT_CENTER,
+            value,
+            f_small(),
+            T2,
+        );
+    };
+    row(
+        crate::i18n::t!("编码"),
+        info.codec.clone(),
+        card.top() + 80.0,
+    );
+    row(
+        crate::i18n::t!("时长"),
+        audio_time(info.duration),
+        card.top() + 104.0,
+    );
+}
+
+/// 秒数 → `mm:ss.ss`，只用于真实探针时长。
+/// Seconds -> `mm:ss.ss`, only for a real probe duration.
+fn audio_time(seconds: f64) -> String {
+    let total = seconds.max(0.0);
+    let minutes = (total / 60.0).floor() as u64;
+    let secs = total - minutes as f64 * 60.0;
+    format!("{minutes:02}:{secs:05.2}")
 }
 
 /// 设置屏（T2 占位）：flat sections 单栏卡 + 返回入口。不画照片、网格或假数据。
@@ -5809,11 +5994,25 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
                             [w as usize, h as usize],
                             img.as_raw(),
                         );
-                        st.photo = Some(root.ctx().load_texture(
+                        let tex = root.ctx().load_texture(
                             "demo-verify-photo",
                             color,
                             egui::TextureOptions::LINEAR,
-                        ));
+                        );
+                        // 同一张图也灌进真状态：frame 的保留层画布只读
+                        // `state.texture`，否则截图第 3 帧会停在「正在解码…」。只
+                        // 在 frame 模块注入，render/merge 的既有截图基线不动。
+                        //
+                        // Feed the same image into the real state too: the retained
+                        // frame canvas reads `state.texture`, which would otherwise
+                        // still be decoding on shot frame 3. Only for the frame
+                        // module, so render/merge baselines stay unchanged.
+                        if state.texture.is_none() && state.module == crate::state::Module::Frame {
+                            state.texture = Some(tex.clone());
+                            state.resolution = Some((w, h));
+                            state.preview_size = [w, h];
+                        }
+                        st.photo = Some(tex);
                     }
                 }
             }

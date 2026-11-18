@@ -78,6 +78,20 @@ pub(super) fn merge_panel(state: &mut AppState, ui: &mut Ui) {
     merge::adjust_merge(state, ui);
 }
 
+/// v22 frame 屏复用的画幅参数组：只透出 `geometry::adjust_frame`。
+///
+/// v22 frame screen reuse: pass-through to `geometry::adjust_frame`.
+pub(super) fn frame_panel(state: &mut AppState, ui: &mut Ui) {
+    geometry::adjust_frame(state, ui);
+}
+
+/// v22 audio 屏复用的音频参数组：只透出 `audio::adjust_audio`。
+///
+/// v22 audio screen reuse: pass-through to `audio::adjust_audio`.
+pub(super) fn audio_panel(state: &mut AppState, ui: &mut Ui) {
+    audio::adjust_audio(state, ui);
+}
+
 pub(crate) fn reset_group(state: &mut AppState, key: &str) {
     // 推子参数组与表外字段：口径在 controls::neutralise_group——复位按钮和
     // 「眼睛」旁路必须是同一个动作，两边各写一份迟早对不上。

@@ -50,9 +50,7 @@ mod v21_demo;
 mod adjust;
 #[allow(dead_code)]
 mod bench;
-#[allow(dead_code)]
 mod canvas;
-#[allow(dead_code)]
 mod canvas_cards;
 #[allow(dead_code)]
 mod chrome;

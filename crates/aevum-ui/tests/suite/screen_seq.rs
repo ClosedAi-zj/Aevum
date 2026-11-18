@@ -84,15 +84,6 @@ fn clean_v21() -> String {
 
 /// 截出一个函数体（到下一个顶层 `fn` 为止）。
 /// Slice one function body up to the next top-level `fn`.
-fn body<'a>(src: &'a str, name: &str) -> &'a str {
-    let start = src
-        .find(name)
-        .unwrap_or_else(|| panic!("v21_demo.rs 找不到 {name}"));
-    let rest = &src[start..];
-    let end = rest.find("\nfn ").map(|i| start + i).unwrap_or(src.len());
-    &src[start..end]
-}
-
 #[test]
 fn screen_seq_has_real_table_and_no_coming_soon_toast() {
     let _guard = crate::common::i18n_guard();
@@ -101,10 +92,9 @@ fn screen_seq_has_real_table_and_no_coming_soon_toast() {
     // 静态：Seq 臂已清空，不再给「下一版接入」。把它改回去这条必红。
     // Static: the Seq arm is empty; restoring the toast turns this red.
     let src = clean_v21();
-    let toast = body(&src, "fn toast_next_build");
     assert!(
-        toast.contains("Screen::Seq => {}"),
-        "sequence screen still queues the 「下一版接入」 toast"
+        !src.contains("fn toast_next_build") && !src.contains("下一版接入"),
+        "sequence screen still carries the 「下一版接入」 toast"
     );
 
     let ctx = context();

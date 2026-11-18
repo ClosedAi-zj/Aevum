@@ -76,25 +76,15 @@ fn clean_v21() -> String {
         .join("\n")
 }
 
-fn body<'a>(src: &'a str, name: &str) -> &'a str {
-    let start = src
-        .find(name)
-        .unwrap_or_else(|| panic!("v21_demo.rs 找不到 {name}"));
-    let rest = &src[start..];
-    let end = rest.find("\nfn ").map(|i| start + i).unwrap_or(src.len());
-    &src[start..end]
-}
-
 #[test]
 fn screen_render_has_real_workspace_and_no_coming_soon_toast() {
     let _guard = crate::common::i18n_guard();
     i18n::set(Lang::ZH);
 
     let src = clean_v21();
-    let toast = body(&src, "fn toast_next_build");
     assert!(
-        toast.contains("Screen::Render => {}"),
-        "render screen still queues the 「下一版接入」 toast"
+        !src.contains("fn toast_next_build") && !src.contains("下一版接入"),
+        "render screen still carries the 「下一版接入」 toast"
     );
 
     let ctx = context();

@@ -32,7 +32,7 @@ use egui::{
 
 // ---------------------------------------------------------------- 画布
 
-pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) {
+pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32, embed: bool) {
     // 右边界以「整窗右缘减去右侧面板」为准，再与 egui 给的剩余区取小：
     // 正常帧两者相等；egui 的 Panel 用记忆宽度缩剩余区的那几帧，取小值把画布
     // 拉回真实边界（见 `mod.rs` 里的说明）。
@@ -60,7 +60,7 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     // top is the first place the eye lands, on a danger fill with white text; clicking
     // × or "清除" dismisses it. The status bar keeps its short summary -- both read the
     // same `state.error`.
-    if let Some(err) = state.error.clone() {
+    if !embed && let Some(err) = state.error.clone() {
         let g = p.layout_no_wrap(err.to_owned(), font(SIZE_LABEL), on_accent());
         let pad_x = 12.0;
         let close_w = 22.0;
@@ -123,9 +123,18 @@ pub(super) fn canvas_panel(state: &mut AppState, ui: &mut Ui, right_inset: f32) 
     // read as a collage; the demo's canvas is an opening recessed into the desk.
     const WELL_INSET: f32 = 8.0;
     const WELL_RADIUS: f32 = 10.0;
-    p.rect_filled(body, 0, chrome());
-    let well = body.shrink(WELL_INSET);
-    p.rect_filled(well, WELL_RADIUS, backdrop);
+    // 嵌入 v22 井时不再铺自己的 chrome/圆角井：v21 已经画过一层，重复会成双层边框。
+    // When embedded in the v22 well, skip the local chrome and rounded well: v21
+    // already painted them, and a second layer reads as a double frame.
+    let well = if embed {
+        body
+    } else {
+        p.rect_filled(body, 0, chrome());
+        body.shrink(WELL_INSET)
+    };
+    if !embed {
+        p.rect_filled(well, WELL_RADIUS, backdrop);
+    }
 
     let gutter = if state.rulers { RULER } else { 0.0 };
     let content = Rect::from_min_max(well.min + Vec2::splat(gutter), well.max);
