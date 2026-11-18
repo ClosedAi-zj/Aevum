@@ -4082,41 +4082,133 @@ fn audio_time(seconds: f64) -> String {
     format!("{minutes:02}:{secs:05.2}")
 }
 
-/// 设置屏（T2 占位）：flat sections 单栏卡 + 返回入口。不画照片、网格或假数据。
+/// 设置屏五个页签：选中态存在 egui 的 id-map 里，不进 Proto、不落盘。
 ///
-/// Settings (T2 placeholder): one flat section with a back action. No photo,
-/// grid or fake data is painted here.
-fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
+/// The five settings tabs; the selected one lives in egui's id map, never in
+/// Proto or settings.json.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SetTab {
+    Appearance,
+    Keys,
+    Info,
+    About,
+    Release,
+}
+
+impl SetTab {
+    /// 表驱动：数组顺序就是左列顺序（A13 两列卡的左列）。
+    /// Table-driven: array order is the left-column order.
+    const ALL: [Self; 5] = [
+        Self::Appearance,
+        Self::Keys,
+        Self::Info,
+        Self::About,
+        Self::Release,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Appearance => "外观",
+            Self::Keys => "快捷键",
+            Self::Info => "信息",
+            Self::About => "关于",
+            Self::Release => "发布说明",
+        }
+    }
+}
+
+/// 最新一节发布说明：CHANGELOG 的首个 `## v…` 块，交给通用解析器渲染。
+///
+/// The newest release section: the first `## v…` block of CHANGELOG.md,
+/// handed to the shared parser.
+fn release_notes_latest() -> &'static str {
+    const SRC: &str = include_str!("../../../../CHANGELOG.md");
+    let Some(start) = SRC.find("\n## v") else {
+        return SRC;
+    };
+    let section = &SRC[start + 1..];
+    let end = section[3..]
+        .find("\n## ")
+        .map(|i| i + 3)
+        .unwrap_or(section.len());
+    &section[..end]
+}
+
+/// 设置屏（v22）：井内两列卡（A13）。左列页签，右列真实内容。
+///
+/// 不依赖照片：0 帧也完整显示；快捷键/信息只做保留层的薄出口，外观只读真实档位。
+///
+/// Settings (v22): a two-column card inside the well (A13). Tabs left, real
+/// content right. No photo dependency; retained tabs are thin wrappers and the
+/// appearance page only reports genuine read-only values.
+fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, app: &mut RealAppState) {
     let p = ui.painter().clone();
-    let card_w = (rect.width() - 48.0).min(520.0);
-    let card = Rect::from_center_size(
-        Pos2::new(rect.center().x, rect.top() + rect.height() * 0.38),
-        Vec2::new(card_w, 168.0),
-    );
-    p.rect_filled(card, 8.0, PANEL_SIDE);
+    let outer = rect.shrink(24.0);
+    let left_w = 216.0;
+    let left = Rect::from_min_size(outer.min, Vec2::new(left_w, outer.height()));
+    let right = Rect::from_min_max(Pos2::new(left.right() + 16.0, outer.top()), outer.max);
+    // 两列同底同圆角，不叠投影（A13 / 禁止项 16）。
+    // Both columns share one fill and radius; no drop shadow.
+    p.rect_filled(left, 12.0, PANEL_SIDE);
+    p.rect_filled(right, 12.0, PANEL_SIDE);
+
+    let tab_id = ui.scope_id().with("v22-set-tab");
+    let mut tab = ui
+        .memory(|m| m.data.get_temp::<SetTab>(tab_id))
+        .unwrap_or(SetTab::Appearance);
     p.txt(
-        Pos2::new(card.left() + 24.0, card.top() + 24.0),
+        Pos2::new(left.left() + 24.0, left.top() + 24.0),
         egui::Align2::LEFT_TOP,
         crate::i18n::t!("设置"),
         f_bold(FONT_TITLE),
         T1,
     );
-    // 分区线比卡底更暗（C5：只允许暗线，不许全宽亮线）。
-    // Section seam darker than the card (C5: dark seams only, no light rules).
+    // 暗线分节（C5：全宽亮线 = 0）。
+    // Dark seam only (C5: zero full-width light rules).
     p.hline(
-        (card.left() + 24.0)..=(card.right() - 24.0),
-        card.top() + 56.0,
+        (left.left() + 24.0)..=(left.right() - 24.0),
+        left.top() + 64.0,
         Stroke::new(1.0, shade(PANEL_SIDE, 0.82)),
     );
-    p.txt(
-        Pos2::new(card.left() + 24.0, card.top() + 76.0),
-        egui::Align2::LEFT_TOP,
-        crate::i18n::t!("即将接入"),
-        f_small(),
-        T4_TEXT,
-    );
+
+    let mut y = left.top() + 88.0;
+    for (i, item) in SetTab::ALL.iter().enumerate() {
+        let row = Rect::from_min_size(
+            Pos2::new(left.left() + 8.0, y),
+            Vec2::new(left_w - 16.0, 36.0),
+        );
+        let active = *item == tab;
+        let resp = ui.interact(row, ui.scope_id().with(("set-tab", i)), Sense::click());
+        if active {
+            p.rect_filled(row, 6.0, shade(CARD, 1.16));
+            // 紫只表「你在这里」：当前页签一道竖线（C4）。
+            // Violet means "you are here": one bar on the active tab.
+            p.rect_filled(
+                Rect::from_min_size(Pos2::new(row.left(), row.top() + 6.0), Vec2::new(2.0, 24.0)),
+                0.0,
+                ACCENT,
+            );
+        } else if resp.hovered() {
+            p.rect_filled(row, 6.0, shade(CARD, 1.06));
+        }
+        p.txt(
+            Pos2::new(row.left() + 16.0, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            crate::i18n::tr(item.label()),
+            f_tab(active),
+            if active { T1 } else { T2 },
+        );
+        if resp.clicked() {
+            tab = *item;
+        }
+        y += 40.0;
+    }
+    ui.memory_mut(|m| m.data.insert_temp(tab_id, tab));
+
+    // 返回与齿轮开合共用 CloseSettings：两条回路都回 dev 屏。
+    // Back and the gear share CloseSettings: both routes return to dev.
     let back = Rect::from_min_size(
-        Pos2::new(card.right() - 24.0 - 96.0, card.bottom() - 24.0 - 28.0),
+        Pos2::new(left.right() - 24.0 - 96.0, left.bottom() - 24.0 - 28.0),
         Vec2::new(96.0, 28.0),
     );
     let resp = ui.interact(back, ui.scope_id().with("set-back"), Sense::click());
@@ -4141,6 +4233,151 @@ fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, _app: &mut Rea
             a.send(DemoAction::CloseSettings);
         } else {
             st.settings_open = false;
+        }
+    }
+
+    p.txt(
+        Pos2::new(right.left() + 24.0, right.top() + 24.0),
+        egui::Align2::LEFT_TOP,
+        crate::i18n::tr(tab.label()),
+        f_group(),
+        T1,
+    );
+    p.hline(
+        (right.left() + 24.0)..=(right.right() - 24.0),
+        right.top() + 64.0,
+        Stroke::new(1.0, shade(PANEL_SIDE, 0.82)),
+    );
+    let content = Rect::from_min_max(
+        Pos2::new(right.left() + 24.0, right.top() + 80.0),
+        Pos2::new(right.right() - 24.0, right.bottom() - 24.0),
+    );
+    match tab {
+        // 薄出口：保留层只出内容，版面仍是 v21 井内的这一列。
+        // Thin wrappers: retained layers supply content only.
+        SetTab::Keys => {
+            let mut child =
+                ui.new_child(egui::UiBuilder::new().max_rect(content).id_salt("set-keys"));
+            super::tabs::keys_tab(app, &mut child);
+        }
+        SetTab::Info => {
+            let mut child =
+                ui.new_child(egui::UiBuilder::new().max_rect(content).id_salt("set-info"));
+            super::tabs::info_tab(app, &mut child);
+        }
+        SetTab::Appearance => {
+            // 外观只读 theme 唯一出口的真实档位，不放假开关。
+            // Read-only values from theme; no fake switches.
+            let a = crate::theme::appearance();
+            let tr = crate::i18n::tr;
+            draw_set_rows(
+                &p,
+                content,
+                &[
+                    (crate::t!("主题"), tr(a.theme.cn()).to_owned()),
+                    (crate::t!("皮肤"), tr(a.skin.cn()).to_owned()),
+                    (crate::t!("信息密度"), tr(a.density.cn()).to_owned()),
+                    (crate::t!("字号"), crate::t!("本版界面字号固定").to_owned()),
+                ],
+            );
+        }
+        SetTab::About => {
+            // 关于取品牌与 Cargo 的真实值，不写死版本号字面量。
+            // About uses brand and Cargo values, never a literal version.
+            use aevum_core::brand;
+            draw_set_rows(
+                &p,
+                content,
+                &[
+                    (crate::t!("项目"), brand::TITLE.to_owned()),
+                    (crate::t!("版本"), brand::version().to_owned()),
+                    (crate::t!("许可"), env!("CARGO_PKG_LICENSE").to_owned()),
+                ],
+            );
+        }
+        SetTab::Release => draw_set_release(&p, content),
+    }
+}
+
+/// 键值行：外观/关于共用，flat sections + 暗分节线（C5）。
+/// Key-value rows shared by Appearance and About; flat, dark seams only.
+fn draw_set_rows(p: &egui::Painter, r: Rect, rows: &[(&str, String)]) {
+    for (i, (key, value)) in rows.iter().enumerate() {
+        let y = r.top() + i as f32 * 36.0;
+        p.txt(
+            Pos2::new(r.left(), y),
+            egui::Align2::LEFT_TOP,
+            key,
+            f_label(),
+            T3,
+        );
+        p.txt(
+            Pos2::new(r.left() + 160.0, y),
+            egui::Align2::LEFT_TOP,
+            value,
+            f_label(),
+            T1,
+        );
+        if i + 1 < rows.len() {
+            p.hline(
+                r.left()..=r.right(),
+                y + 28.0,
+                Stroke::new(1.0, shade(PANEL_SIDE, 0.82)),
+            );
+        }
+    }
+}
+
+/// 发布说明页：flat 列表，不编号、不造内容；超出井高就停（不溢出到壳）。
+/// Release notes: a flat list, never numbered; stop at the well bottom.
+fn draw_set_release(p: &egui::Painter, r: Rect) {
+    use crate::shell::markdown::{NoteLine, Span, parse_release_notes};
+    let mut y = r.top();
+    for line in parse_release_notes(release_notes_latest()) {
+        match &line {
+            NoteLine::Heading(_, text) => {
+                p.txt(
+                    Pos2::new(r.left(), y),
+                    egui::Align2::LEFT_TOP,
+                    text,
+                    f_group(),
+                    T1,
+                );
+                y += 28.0;
+            }
+            NoteLine::Bullet(spans) | NoteLine::Body(spans) => {
+                let bullet = matches!(&line, NoteLine::Bullet(_));
+                let mut text = String::new();
+                for span in spans.iter() {
+                    match span {
+                        Span::Text(t) | Span::Bold(t) | Span::Code(t) => text.push_str(t),
+                        Span::Link { text: label, .. } => text.push_str(label),
+                    }
+                }
+                if bullet {
+                    text.insert_str(0, "· ");
+                }
+                p.txt(
+                    Pos2::new(r.left(), y),
+                    egui::Align2::LEFT_TOP,
+                    text,
+                    f_small(),
+                    if bullet { T2 } else { T3 },
+                );
+                y += 20.0;
+            }
+            NoteLine::Rule => {
+                p.hline(
+                    r.left()..=r.right(),
+                    y + 4.0,
+                    Stroke::new(1.0, shade(PANEL_SIDE, 0.82)),
+                );
+                y += 12.0;
+            }
+            NoteLine::Blank => y += 8.0,
+        }
+        if y > r.bottom() - 20.0 {
+            break;
         }
     }
 }
@@ -5957,7 +6194,9 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
             // The presets/history card starts collapsed, the v20/v21 default: an
             // open card on the empty well eats nearly a quarter of the width.
             left_open: false,
-            settings_open: false,
+            // 截图通道：AEVUM_SHOT_SET=1 让第 3 帧直接停在设置屏，不改帧时序。
+            // Shot channel: pin frame 3 to Settings without touching shot timing.
+            settings_open: std::env::var_os("AEVUM_SHOT_SET").is_some(),
             presets_open: true,
             dt_hist: [0.0; 30],
             dt_n: 0,
