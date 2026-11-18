@@ -4922,7 +4922,12 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
             smooth_win: 0.0,
             preset: 0,
             hist: 0,
-            left_open: true,
+            // 预设/历史浮层默认收起：v20/v21 口径如此，空态展开会白占近 1/4 宽。
+            // 用户点左轨「预设」仍可随时展开，有照片时行为不变。
+            //
+            // The presets/history card starts collapsed, the v20/v21 default: an
+            // open card on the empty well eats nearly a quarter of the width.
+            left_open: false,
             presets_open: true,
             dt_hist: [0.0; 30],
             dt_n: 0,
