@@ -19,6 +19,25 @@
 mod preview;
 mod table;
 
+/// v22 井内回接用的两个薄出口：只暴露预览列与帧表卡，不暴露整页页头。
+///
+/// Two thin exits for the v22 well: the preview column and the table card only,
+/// deliberately not the whole-page head.
+pub(super) fn preview_column(state: &mut AppState, ui: &mut Ui, rect: egui::Rect) {
+    preview::column(state, ui, rect);
+}
+
+pub(super) fn table_card(state: &mut AppState, ui: &mut Ui, rect: egui::Rect) {
+    table::card(state, ui, rect);
+}
+
+/// 千分位：页头副行复用保留层同一套数字格式。
+///
+/// Thousands separator: the head subtitle reuses the retained layer's formatter.
+pub(super) fn thousands(n: usize) -> String {
+    preview::thousands(n)
+}
+
 use egui::{Context, Ui};
 
 use super::bench;

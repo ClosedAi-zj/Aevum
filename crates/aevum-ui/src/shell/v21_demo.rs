@@ -2357,7 +2357,8 @@ fn draw_status(ui: &mut egui::Ui, st: &Proto, frame_ms: f32) {
 /// `Set` never comes from the module picker, so both arms stay empty by design.
 fn toast_next_build(ctx: &egui::Context, st: &mut Proto, screen: Screen) {
     match screen {
-        Screen::Seq => say_screen_unwired(ctx, st, "序列"),
+        // T3a：序列屏已接入真实帧表，不再提示「下一版接入」。
+        Screen::Seq => {}
         Screen::Def => say_screen_unwired(ctx, st, "去闪"),
         Screen::Dev => {}
         Screen::Frame => say_screen_unwired(ctx, st, "构图"),
@@ -3277,49 +3278,125 @@ fn draw_empty_well(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, st: &mut Pr
 
 /// 画布路由：只替换井内容，壳层（顶栏/左轨/坞/胶片/状态栏）一行不动。
 /// Canvas router: replace the well's content only; the v21 shell stays untouched.
-fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto) {
+fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto, app: &mut RealAppState) {
     let rect = ui.max_rect();
     match st.screen() {
-        Screen::Seq => draw_screen_seq(ui, rect, st),
-        Screen::Def => draw_screen_def(ui, rect, st),
-        Screen::Dev => draw_screen_dev(ui, rect, st),
-        Screen::Frame => draw_screen_frame(ui, rect, st),
-        Screen::Render => draw_screen_render(ui, rect, st),
-        Screen::Audio => draw_screen_audio(ui, rect, st),
-        Screen::Merge => draw_screen_merge(ui, rect, st),
-        Screen::Set => draw_screen_set(ui, rect, st),
+        Screen::Seq => draw_screen_seq(ui, rect, st, app),
+        Screen::Def => draw_screen_def(ui, rect, st, app),
+        Screen::Dev => draw_screen_dev(ui, rect, st, app),
+        Screen::Frame => draw_screen_frame(ui, rect, st, app),
+        Screen::Render => draw_screen_render(ui, rect, st, app),
+        Screen::Audio => draw_screen_audio(ui, rect, st, app),
+        Screen::Merge => draw_screen_merge(ui, rect, st, app),
+        Screen::Set => draw_screen_set(ui, rect, st, app),
     }
 }
 
-/// T2 骨架：八屏先共用 v21 现役画布内容，接屏时只替换单个 adapter 的函数体。
+/// 八屏 adapter：T3 起逐屏替换函数体；未接的屏继续转调 v21 现役画布内容。
 ///
-/// T2 skeleton: the eight adapters share the live v21 canvas body; each screen
-/// replaces only its own adapter when it lands.
-fn draw_screen_seq(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+/// Eight screen adapters: T3 onward replaces them one by one; unwired screens keep
+/// forwarding to the live v21 canvas body.
+///
+/// 序列屏：复用保留层的预览列与帧表卡，但**不用** `seq_table::page()`——它自带
+/// bench 页头与返回块，塞进 v21 井会变成双层标题栏。页头改用 v21 自己的分区标题。
+///
+/// Sequence screen: reuse the retained preview column and table card, but **not**
+/// `seq_table::page()` -- its bench head plus back chip would double the v21 title
+/// bar inside the well. The head here uses the v21 section-title grammar instead.
+fn draw_screen_seq(ui: &mut egui::Ui, rect: Rect, _st: &mut Proto, app: &mut RealAppState) {
+    let p = ui.painter().clone();
+    let head = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 32.0));
+    p.txt(
+        Pos2::new(head.left() + 16.0, head.center().y),
+        egui::Align2::LEFT_CENTER,
+        crate::i18n::t!("序列帧表"),
+        f_group(),
+        T2,
+    );
+    let n = app.frame_count();
+    // 空态只在井内卡片里说一次引导，页头副行留空，避免同一句话出现两遍。
+    // Empty state says the guide once, in the well card; the head subtitle stays empty.
+    let sub = if n == 0 {
+        String::new()
+    } else {
+        crate::i18n::tr_fmt(
+            "{} 帧 · {} fps",
+            &[
+                &super::seq_table::thousands(n),
+                &format!("{:.0}", app.output_fps),
+            ],
+        )
+    };
+    if !sub.is_empty() {
+        p.txt(
+            Pos2::new(head.right() - 16.0, head.center().y),
+            egui::Align2::RIGHT_CENTER,
+            sub,
+            f_small(),
+            T4_TEXT,
+        );
+    }
+
+    let body = Rect::from_min_max(
+        Pos2::new(rect.left() + 16.0, head.bottom() + 12.0),
+        Pos2::new(rect.right() - 16.0, rect.bottom() - 16.0),
+    );
+    if n == 0 {
+        // 0 帧不画空表格骨架：预览卡会显示「0001 / 0」这类假读数，宁可只留一句
+        // 真实引导。1 帧起才交给保留层两张卡。
+        //
+        // Zero frames must not paint the table skeleton: the preview card would show
+        // fake readings like "0001 / 0". Show one honest guide; hand over to the
+        // retained cards only when at least one frame exists.
+        let card = Rect::from_center_size(body.center(), Vec2::new(body.width().min(520.0), 120.0));
+        p.rect_filled(card, 8.0, PANEL_SIDE);
+        p.txt(
+            card.center(),
+            egui::Align2::CENTER_CENTER,
+            crate::i18n::t!("还没有序列 · 文件 → 打开照片…"),
+            f_small(),
+            T3,
+        );
+        return;
+    }
+
+    let left_w = crate::theme::side_col(body.width(), crate::theme::SIDE_COL_W);
+    let left = Rect::from_min_size(body.left_top(), Vec2::new(left_w, body.height()));
+    let right = Rect::from_min_max(
+        Pos2::new(left.right() + 12.0, body.top()),
+        body.right_bottom(),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new().max_rect(body).id_salt("seq-body"),
+        |ui| {
+            ui.set_clip_rect(body);
+            super::seq_table::preview_column(app, ui, left);
+            super::seq_table::table_card(app, ui, right);
+        },
+    );
+}
+
+fn draw_screen_def(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
     draw_canvas_photo(ui, st);
 }
 
-fn draw_screen_def(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+fn draw_screen_dev(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
     draw_canvas_photo(ui, st);
 }
 
-fn draw_screen_dev(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+fn draw_screen_frame(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
     draw_canvas_photo(ui, st);
 }
 
-fn draw_screen_frame(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+fn draw_screen_render(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
     draw_canvas_photo(ui, st);
 }
 
-fn draw_screen_render(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+fn draw_screen_audio(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
     draw_canvas_photo(ui, st);
 }
 
-fn draw_screen_audio(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
-    draw_canvas_photo(ui, st);
-}
-
-fn draw_screen_merge(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+fn draw_screen_merge(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
     draw_canvas_photo(ui, st);
 }
 
@@ -3327,7 +3404,7 @@ fn draw_screen_merge(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
 ///
 /// Settings (T2 placeholder): one flat section with a back action. No photo,
 /// grid or fake data is painted here.
-fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto) {
+fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto, _app: &mut RealAppState) {
     let p = ui.painter().clone();
     let card_w = (rect.width() - 48.0).min(520.0);
     let card = Rect::from_center_size(
@@ -4943,7 +5020,11 @@ impl Proto {
     /// The prototype's own paint entry (moved out of `eframe::App::ui`; the shell
     /// calls it directly). `canvas_in` arrives from `shell::mod`, derived through
     /// the layout single source -- no gutter or well inset is computed here.
-    pub fn ui(&mut self, root: &mut egui::Ui, canvas_in: &egui::Rect) {
+    ///
+    /// `app` is the real state, passed through so screen adapters can call the
+    /// retained painters (which all take `&mut AppState`) without a second sync.
+    /// `app` 是真状态：屏 adapter 直接把它转交给保留层绘制函数，避免二次同步。
+    pub fn ui(&mut self, root: &mut egui::Ui, canvas_in: &egui::Rect, app: &mut RealAppState) {
         // eframe 会在窗口创建后用自己的 ppp 覆盖 `new()` 里的设置，所以这里持续校正。
         // 只在偏离时才写，避免每帧触发重排。
         {
@@ -5085,7 +5166,7 @@ impl Proto {
             egui::UiBuilder::new().max_rect(canvas).id_salt("canvas"),
             |ui| {
                 ui.set_clip_rect(canvas);
-                draw_canvas(ui, self);
+                draw_canvas(ui, self, app);
             },
         );
         root.scope_builder(
@@ -5314,7 +5395,7 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
             st.hist_total = hlen;
         }
         // ---- demo 原样绘制（画布井矩形由 mod.rs 单源推入）----
-        st.ui(root, canvas);
+        st.ui(root, canvas, state);
 
         // ---- 执行 demo 触发的真应用动作 ----
         let actions: Vec<DemoAction> = action_queue

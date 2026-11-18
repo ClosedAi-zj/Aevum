@@ -78,7 +78,6 @@ mod menu;
 mod pages;
 #[allow(dead_code)]
 mod palette;
-#[allow(dead_code)]
 mod seq_table;
 #[allow(dead_code)]
 mod tabs;

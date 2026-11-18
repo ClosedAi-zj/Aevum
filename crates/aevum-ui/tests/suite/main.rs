@@ -35,5 +35,6 @@ mod palette_actions;
 mod perf_budget;
 mod preview_budget;
 mod readme_shots;
+mod screen_seq;
 mod ui_tokens;
 mod visual_consistency;

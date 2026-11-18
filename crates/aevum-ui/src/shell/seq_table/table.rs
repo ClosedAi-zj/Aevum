@@ -632,27 +632,26 @@ fn selection_bar(state: &mut AppState, ui: &mut Ui, rect: Rect, sel: usize, n: u
     // "Export selected" and "clear selection" have no target yet: this bench has a single
     // `selected: usize` and no export-selected entry point, so both stay dimmed rather
     // than pretending to work.
-    let _ = bar_button(
-        ui,
-        &p,
-        r.right() + 2.0,
-        rect,
-        crate::i18n::t!("导出所选"),
-        false,
-    );
+    let export = crate::i18n::t!("导出所选");
+    let export_w = p
+        .layout_no_wrap(export.to_owned(), font(11.0), dim())
+        .size()
+        .x
+        + 14.0;
     let cw = p
         .layout_no_wrap(crate::i18n::t!("取消全选").to_owned(), font(11.0), dim())
         .size()
         .x
         + 14.0;
-    let _ = bar_button(
-        ui,
-        &p,
-        rect.right() - 10.0 - cw,
-        rect,
-        crate::i18n::t!("取消全选"),
-        false,
-    );
+    let cancel_x = rect.right() - 10.0 - cw;
+    // 窄井（900px 窗口）放不下「导出所选」时整枚收掉，绝不压到右端的取消钮。
+    //
+    // At a narrow well (900 px window) the export button is dropped whole rather than
+    // overlapping the right-anchored clear button.
+    if r.right() + 2.0 + export_w + 8.0 <= cancel_x {
+        let _ = bar_button(ui, &p, r.right() + 2.0, rect, export, false);
+    }
+    let _ = bar_button(ui, &p, cancel_x, rect, crate::i18n::t!("取消全选"), false);
 }
 
 /// 选择条上的文字按钮（高 22，圆角 4）。返回矩形与响应。

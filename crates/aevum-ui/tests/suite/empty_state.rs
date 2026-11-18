@@ -9,7 +9,7 @@
 //! the resulting shapes, the same way `i18n_coverage` does.
 
 use aevum_ui::i18n::{self, Lang};
-use aevum_ui::state::AppState;
+use aevum_ui::state::{AppState, Module};
 use aevum_ui::{shell, theme};
 
 use egui::epaint::ClippedShape;
@@ -53,6 +53,9 @@ fn paint(ctx: &egui::Context, state: &mut AppState) -> Vec<ClippedShape> {
 /// Empty state: the bridge sees `texture == None`, hence `has_photo() == false`.
 fn empty_shapes(ctx: &egui::Context) -> Vec<ClippedShape> {
     let mut state = AppState::new();
+    // 空态判据钉的是显影井：T3 起默认模块是 Sequence，会先画序列屏。
+    // These criteria pin the develop well; from T3 the default module is Sequence.
+    state.module = Module::Develop;
     paint(ctx, &mut state)
 }
 
@@ -61,6 +64,7 @@ fn empty_shapes(ctx: &egui::Context) -> Vec<ClippedShape> {
 fn photo_shapes(ctx: &egui::Context) -> Vec<ClippedShape> {
     let mut state = AppState::demo();
     state.install_demo_textures(ctx);
+    state.module = Module::Develop;
     paint(ctx, &mut state)
 }
 
