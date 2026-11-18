@@ -4,11 +4,13 @@
 //! 1. 输入收账：拖放打开 + 全局快捷键（`menu::handle_input`）；
 //! 2. 布局单源：画布井矩形由 `layout::canvas_insets` + `layout::centre_rect`
 //!    推导（`CANVAS_GAP` 只在 layout 里加一次），交给 `v21_demo` 绘制；
-//! 3. 帧尾挂载：demo 原型没有的浮层——导出确认窗、工作流面板。
+//! 3. 帧尾挂载：demo 原型没有的浮层——导出确认窗、工作流面板、告警状态栏、
+//!    子窗口关闭钮皮肤、无边框窗口的缩放热区。
 //!
 //! UI shell (v21): the whole window is drawn from scratch by `v21_demo`. This
 //! module only (1) collects input, (2) derives the canvas rect from the layout
-//! single source, and (3) mounts the float layers the prototype lacks.
+//! single source, and (3) mounts the layers the prototype lacks (export dialog,
+//! workflow card, notice bar, close-button skin, resize handles).
 //!
 //! 功能层（影像 / 参数 / 缩略图 / 菜单 / 状态）通过 `AppState` 的接口调用，
 //! 不在这里排版；旧版面已删除（备份在 `backup/shell-v20-*`）。
@@ -133,6 +135,16 @@ const UV: Rect = Rect {
 /// The v21 top bar is `v21_demo::TOP_H`; the two currently agree.
 pub(crate) const BAR_H: f32 = 44.0;
 
+/// 状态栏高度：v21 底边那条带子的高度，直接取 `v21_demo` 的口径。
+///
+/// 两处各写一遍必然会漂：告警状态栏的挂载槽位按它算，判据「这条文案是不是落在
+/// 状态栏里」也按它算——所以对外只留这一个数。
+///
+/// Status-bar height: the v21 bottom strip, taken straight from `v21_demo` so the
+/// number exists once. The notice-bar slot is laid out with it, and the criterion
+/// "is this text inside the status row" reads it as well.
+pub const STATUS_BAR_H: f32 = v21_demo::STATUS_H;
+
 /// 井相对框架的统一内缩：四周留 8px，井才"凹"得出来。
 /// 坞侧的呼吸带不在这算——`layout::canvas_insets` 是它的唯一出口（v21_demo
 /// 旧版把 8px 同时当呼吸带，右侧因此比这里少 2px；接回单源后井右侧由
@@ -201,6 +213,19 @@ fn debug_apply_flow(state: &mut AppState) {
 }
 
 pub fn ui(state: &mut AppState, root: &mut Ui) {
+    // ---- 每帧第一件事：把 core 压下的告警搬进状态栏 ----
+    //
+    // 护带目录写不进去、设置文件只读、路径被同名文件占住这类事实，用户必须
+    // 在**点保存之前**就看见——晚一帧，那一下可能已经点下去了。所以这条排在
+    // 所有绘制与帧号记账之前，与旧壳（`b963631` 之前的 `shell.rs`）同一位置；
+    // v21 换壳时漏搬，生产调用点归零，后果是写盘失败全程静默。
+    //
+    // First thing every frame: move the notices core has queued into the status
+    // bar. "The sidecar folder is not writable / the settings file is read-only /
+    // the path is taken by a file" must be visible **before** the user hits save;
+    // one frame late and that click has already happened. Same slot as the legacy
+    // shell; the v21 swap dropped it, so write failures went silent.
+    state.drain_notices();
     let ctx = root.ctx().clone();
 
     // ---- 首帧调试钩子（--shot 截图回归的入口）----
@@ -354,6 +379,92 @@ pub fn ui(state: &mut AppState, root: &mut Ui) {
     // The dialog paints last: it acknowledges a failed action and sits above every
     // other layer.
     windows::error_dialog(state, &ctx);
+
+    // ---- 帧尾挂载三：告警状态栏 ----
+    //
+    // demo 的底边只是一行装饰读数（「就绪 · 硬件加速 · 画幅 · GPU 时间」），没有
+    // 告警的位置。`drain_notices` 把告警搬进 `state.notices` 之后必须**有人画**，
+    // 否则状态栏是空的，写盘失败依旧静默——这正是「补一半」最容易犯的错。
+    //
+    // 这里复用 v20 的 `toolbar::status_bar`（旧壳在 `StatusSlot` 处挂的那一个）：
+    // 它自带告警文案 +「+N」+ 点一下消一条，还有长任务进度与边车提示三格，
+    // 语义与旧壳完全一致。占位就是 demo 状态栏那 20px：整条底色先盖掉装饰读数，
+    // 再画状态栏内容——「状态栏只在有话要说时才存在」这条口径照旧，没话要说时
+    // 一个形状都不建，`--selftest` 的形状计数与截图回归都不受影响。
+    //
+    // Tail mount #3: the notice bar. The prototype's bottom edge is a decorative
+    // readout row with no slot for notices; `drain_notices` fills `state.notices`,
+    // so **something has to paint it** or the bar stays empty and the write failure
+    // stays silent. The v20 `toolbar::status_bar` is reused as-is (the same widget
+    // the legacy shell mounted at `StatusSlot`): it already carries the notice text
+    // plus "+N" plus click-to-dismiss, along with the long-task and sidecar slots.
+    // The slot is the prototype's 20 px status row: cover the decorative readout
+    // first, then paint the bar, so "the status bar exists only when it has
+    // something to say" still holds -- no shapes at all when it is quiet, which is
+    // what `--selftest` shape counts and the screenshot regression rely on.
+    if toolbar::status_bar_needed(state) {
+        let status = Rect::from_min_max(
+            Pos2::new(full.left(), full.bottom() - STATUS_BAR_H),
+            full.max,
+        );
+        root.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(status)
+                .id_salt("status-bar"),
+            |ui| {
+                ui.set_clip_rect(status);
+                ui.painter().rect_filled(status, 0.0, crate::theme::bar());
+                toolbar::status_bar(state, ui);
+            },
+        );
+    }
+
+    // ---- 帧尾挂载四：子窗口关闭钮的 hover 皮肤（纯观感）----
+    //
+    // egui 内建的 ✕ 只有 ~20px、hover 只换笔画色，与标题栏按钮不是一套规格。
+    // `style_close_buttons` 在 Tooltip 层叠画 28×28 的圆角按钮（静止态接管外观，
+    // hover 换 Windows 红底白叉）；点击行为仍归 egui 自己的关闭钮，所以挂在所有
+    // 浮窗之后、缩放热区之前即可。v21 换壳时漏搬，这一句归零 = 皮肤全哑。
+    //
+    // Tail mount #4: the sub-window close button skin (cosmetic only). It paints a
+    // 28x28 rounded button on the Tooltip layer -- click handling stays with egui's
+    // own close button -- so it goes after every floating window and before the
+    // resize handles. The v21 swap dropped the call, leaving the skin dead.
+    windows::style_close_buttons(&ctx);
+
+    // ---- 帧尾挂载五：无边框窗口的拖拽缩放热区 ----
+    //
+    // 窗口是无边框自绘的（`decorations = false`），系统不再给边框，四边四角的
+    // 缩放全靠 `chrome::window_resize` 用隐形 `interact` 区自己做：鼠标压上去换
+    // 缩放光标，按下就把 `ViewportCommand::BeginResize(方向)` 交给系统去拖。
+    // **没有这一句，窗口边缘完全拖不动**——这是用户报「窗口拖边缘改不了大小」
+    // 的根因，`--selftest` 测不到（它只数形状，热区是隐形的）。
+    //
+    // 位置与旧壳一致，且必须在**最后**：`ui.interact` 的命中优先级按注册顺序排，
+    // 最后注册的热区压在所有面板之上，否则坞 / 胶片条 / 状态栏会先吃掉指针，
+    // 边缘 5px 变成死区。传入 `full`（整窗 = `root.max_rect()`），热区不吃 clip
+    // ——它画在窗口最外圈，本来就在所有面板之外。
+    //
+    // 参数口径：`window_resize(ui, ctx, full)`，`ui` 要一个能注册交互的 Ui（根 Ui
+    // 即可，它覆盖整窗、clip 就是窗口），`full` 必须是**整窗矩形**而不是某个
+    // 子区，函数内部按 `full` 的四边四角算八个热区。
+    //
+    // Tail mount #5: the borderless window's drag-to-resize zones. The window draws
+    // its own chrome (`decorations = false`), so the system ships no border and
+    // `chrome::window_resize` builds the four edges and four corners out of
+    // invisible `interact` rects: hovering swaps the cursor, pressing hands
+    // `ViewportCommand::BeginResize(direction)` to the system. **Without this line
+    // the window edge cannot be dragged at all** -- the root cause of "I cannot
+    // resize the window by its edge", which `--selftest` cannot see (it counts
+    // shapes; these zones are invisible). It must come **last**: `ui.interact` hit
+    // priority follows registration order, so the handles registered last sit above
+    // every panel; otherwise the dock / filmstrip / status bar eat the pointer and
+    // the outer 5 px become dead. `full` is the whole window (`root.max_rect()`);
+    // the zones live on the outermost ring, outside every panel, so no clip is
+    // needed. Signature: `window_resize(ui, ctx, full)` -- any Ui that can register
+    // interactions (the root Ui, which covers and clips to the whole window) plus
+    // the **whole-window** rect the function slices into eight handles.
+    chrome::window_resize(root, &ctx, full);
 
     // ---- 帧尾驱动三：预览任务的唯一调度点 ----
     //

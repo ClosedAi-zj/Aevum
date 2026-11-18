@@ -44,5 +44,6 @@ mod screen_merge;
 mod screen_render;
 mod screen_seq;
 mod screen_set;
+mod shell_chrome;
 mod ui_tokens;
 mod visual_consistency;
