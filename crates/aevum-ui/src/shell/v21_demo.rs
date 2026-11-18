@@ -341,6 +341,57 @@ fn text_w(p: &egui::Painter, text: &str, font: egui::FontId) -> f32 {
 
 // ---------------------------------------------------------------- 状态
 
+/// 八屏 id（派生自 `module` + `settings_open`，不另存字段）。
+///
+/// 前七屏一一对应 `state::Module`，`Set` 是 v22 新增的第八屏：它不进
+/// `Module::ALL`、不占 Alt+数字下标，只由左轨设置图标切换。
+///
+/// The eight screen ids, derived from `module` plus `settings_open` rather than
+/// stored: the first seven mirror `state::Module`, `Set` is the eighth screen and
+/// stays out of `Module::ALL` so the Alt+digit index contract cannot shift.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Screen {
+    Seq,
+    Def,
+    Dev,
+    Frame,
+    Render,
+    Audio,
+    Merge,
+    Set,
+}
+
+impl Screen {
+    /// 模块 → 屏 id（`Set` 不来自模块）。
+    /// Module -> screen id (`Set` never comes from a module).
+    fn from_module(m: crate::state::Module) -> Screen {
+        match m {
+            crate::state::Module::Sequence => Screen::Seq,
+            crate::state::Module::Deflicker => Screen::Def,
+            crate::state::Module::Develop => Screen::Dev,
+            crate::state::Module::Frame => Screen::Frame,
+            crate::state::Module::Render => Screen::Render,
+            crate::state::Module::Audio => Screen::Audio,
+            crate::state::Module::Merge => Screen::Merge,
+        }
+    }
+
+    /// 屏 id → 真模块；`Set` 返回 `None`（它不落 `Module`）。
+    /// Screen id -> real module; `Set` yields `None` because it is not a module.
+    fn module(self) -> Option<crate::state::Module> {
+        match self {
+            Screen::Seq => Some(crate::state::Module::Sequence),
+            Screen::Def => Some(crate::state::Module::Deflicker),
+            Screen::Dev => Some(crate::state::Module::Develop),
+            Screen::Frame => Some(crate::state::Module::Frame),
+            Screen::Render => Some(crate::state::Module::Render),
+            Screen::Audio => Some(crate::state::Module::Audio),
+            Screen::Merge => Some(crate::state::Module::Merge),
+            Screen::Set => None,
+        }
+    }
+}
+
 /// demo 界面 → 真应用的动作（不捕获借用；桥接每帧 drain 后调用真 API）。
 #[derive(Clone, Copy, Debug)]
 pub(super) enum DemoAction {
@@ -355,6 +406,15 @@ pub(super) enum DemoAction {
     /// 模块切换：真 API（state.module），非 Develop 模块的界面在后续构建。
     /// Module switch via the real API; non-Develop UIs land in a later build.
     SelectModule(crate::state::Module),
+    /// 打开设置屏（左轨设置图标）。`settings_open` 是内存态，不落盘。
+    /// Open the settings screen from the rail icon; memory-only, never persisted.
+    OpenSettings,
+    /// 关闭设置屏（设置屏返回入口或再次点图标）。
+    /// Close the settings screen from its back action or a second icon click.
+    CloseSettings,
+    /// 按屏切换（八屏路由入口）；`Set` 走 `settings_open`，其余映射回 module。
+    /// Switch by screen id; `Set` flips `settings_open`, the rest map back to module.
+    SelectScreen(Screen),
     /// 星级：写到 state.ratings（当前帧）。
     /// Star rating written to state.ratings for the current frame.
     SetRating(u8),
@@ -411,6 +471,13 @@ struct Proto {
     /// Whether the left panel is open. Collapsing hands its 204 px back to the
     /// canvas — the first move when the photo matters more than the lists.
     left_open: bool,
+    /// 设置屏是否打开（v22 第八屏的唯一存储字段）。**不写盘、不进
+    /// `Module::ALL`**：`Screen::Set` 由它派生，模块下标与 Alt+数字契约不动。
+    ///
+    /// Whether the settings screen is open: the only stored field v22 adds for
+    /// screen eight. Never persisted and never inserted into `Module::ALL`, so the
+    /// module index and Alt+digit contract stay intact.
+    settings_open: bool,
     /// 预设分组是否展开（设计稿 `h4 .chev`）。
     presets_open: bool,
     /// 最近 30 帧的帧时间（ms）。状态栏显示**中位数**：瞬时 `stable_dt` 会把首帧
@@ -490,6 +557,16 @@ impl Proto {
     /// second flag would drift from the bridged `st.photo`.
     fn has_photo(&self) -> bool {
         self.photo.is_some()
+    }
+
+    /// 当前屏 id：设置态优先，否则由 `module` 派生。不存第二份屏状态。
+    /// Current screen id: settings wins, otherwise derived from `module`.
+    fn screen(&self) -> Screen {
+        if self.settings_open {
+            Screen::Set
+        } else {
+            Screen::from_module(self.module)
+        }
     }
 
     fn say(&mut self, ctx: &egui::Context, msg: &str) {
@@ -1262,6 +1339,9 @@ enum MenuCmd {
     Fit,
     Actual,
     Presets,
+    /// 设置屏（第八屏）：走内存态，不落盘、不改模块下标。
+    /// Settings (screen eight): memory-only, never persisted, no module index change.
+    Settings,
     Unwired,
     Sep,
 }
@@ -1369,6 +1449,8 @@ fn draw_menubar(ui: &mut egui::Ui, st: &mut Proto) {
                 (String::new(), MenuCmd::Sep),
                 (crate::i18n::t!("导出…").to_string(), MenuCmd::Export),
                 (String::new(), MenuCmd::Sep),
+                (crate::i18n::t!("设置").to_string(), MenuCmd::Settings),
+                (String::new(), MenuCmd::Sep),
                 (crate::i18n::t!("退出").to_string(), MenuCmd::Quit),
             ],
             1 => vec![
@@ -1474,6 +1556,13 @@ fn draw_menubar(ui: &mut egui::Ui, st: &mut Proto) {
                             MenuCmd::Export => {
                                 if let Some(a) = &st.actions {
                                     a.send(DemoAction::Export);
+                                }
+                            }
+                            MenuCmd::Settings => {
+                                if let Some(a) = &st.actions {
+                                    a.send(DemoAction::OpenSettings);
+                                } else {
+                                    st.settings_open = true;
                                 }
                             }
                             MenuCmd::Quit => {
@@ -1861,13 +1950,13 @@ fn draw_menubar(ui: &mut egui::Ui, st: &mut Proto) {
                         if let Some(a) = &st.actions {
                             a.send(DemoAction::SelectModule(m));
                         }
-                        if m != crate::state::Module::Develop {
-                            st.say(
-                                ui.ctx(),
-                                &crate::i18n::tr("「{m}」屏将在下一版接入")
-                                    .replace("{m}", crate::i18n::tr(m.cn())),
-                            );
-                        }
+                        // T2 只把 toast 改成分屏结构：六个未接屏仍各自发提示，
+                        // 显影屏是 v21 现役界面、从始至终不提示。删臂是 T3–T5 的事。
+                        //
+                        // T2 only restructures the toast per screen: the six unwired
+                        // screens still toast, Develop never did. Deleting an arm is
+                        // T3-T5 work.
+                        toast_next_build(ui.ctx(), st, Screen::from_module(m));
                         ui.ctx().data_mut(|d| d.insert_temp(modmenu_id, false));
                     }
                     ry += row_h;
@@ -2258,6 +2347,36 @@ fn draw_status(ui: &mut egui::Ui, st: &Proto, frame_ms: f32) {
     }
 }
 
+/// 分屏「下一版接入」提示：T2 只把 `if m != Develop` 改成八臂结构。
+///
+/// 六个未接屏各有一条臂、文案与 v21 完全一致；`Dev` 是现役界面、`Set` 不经过
+/// 模块下拉，两臂刻意留空。T3–T5 每接完一屏删一条臂，8/8 后整段删除。
+///
+/// Per-screen "next build" toast: T2 only turns the old `if m != Develop` into
+/// eight arms. The six unwired screens keep the exact v21 copy; `Dev` is live and
+/// `Set` never comes from the module picker, so both arms stay empty by design.
+fn toast_next_build(ctx: &egui::Context, st: &mut Proto, screen: Screen) {
+    match screen {
+        Screen::Seq => say_screen_unwired(ctx, st, "序列"),
+        Screen::Def => say_screen_unwired(ctx, st, "去闪"),
+        Screen::Dev => {}
+        Screen::Frame => say_screen_unwired(ctx, st, "构图"),
+        Screen::Render => say_screen_unwired(ctx, st, "成片"),
+        Screen::Audio => say_screen_unwired(ctx, st, "声音"),
+        Screen::Merge => say_screen_unwired(ctx, st, "合成"),
+        Screen::Set => {}
+    }
+}
+
+/// 一条「下一版接入」提示；屏名走 `tr()`，模板与 v21 同一把钥匙。
+/// One "next build" toast; the label goes through `tr()` with the v21 template key.
+fn say_screen_unwired(ctx: &egui::Context, st: &mut Proto, label: &'static str) {
+    st.say(
+        ctx,
+        &crate::i18n::tr("「{m}」屏将在下一版接入").replace("{m}", crate::i18n::tr(label)),
+    );
+}
+
 /// 左侧 AI 工具轨（效果图 `.airail`，56px）：四个按钮，第一个带紫点表示激活。
 fn draw_rail(ui: &mut egui::Ui, st: &mut Proto) {
     let rect = ui.max_rect();
@@ -2282,11 +2401,12 @@ fn draw_rail(ui: &mut egui::Ui, st: &mut Proto) {
     //
     // 批量 is pinned to the rail's bottom edge: five buttons stacked from the top
     // only fill the upper quarter of an 800 px column.
-    let items: [(&str, u8, bool); 5] = [
+    let items: [(&str, u8, bool); 6] = [
         (crate::i18n::t!("预设"), 4, false),
         (crate::i18n::t!("对话"), 0, false),
         (crate::i18n::t!("本帧"), 1, false),
         (crate::i18n::t!("蒙版"), 2, false),
+        (crate::i18n::t!("设置"), 5, false),
         (crate::i18n::t!("批量"), 3, true),
     ];
     let mut top = rect.top() + 8.0;
@@ -2310,8 +2430,8 @@ fn draw_rail(ui: &mut egui::Ui, st: &mut Proto) {
         //
         // C4: only ONE violet bar. "Panel open" now uses a brighter plate (material),
         // leaving the amber bar exclusively for "current tool".
-        let selected = *kind == 0;
-        let panel_open = *kind == 4 && st.left_open;
+        let selected = *kind == 0 && !st.settings_open;
+        let panel_open = (*kind == 4 && st.left_open) || (*kind == 5 && st.settings_open);
         // 图标底座：每枚图标坐在自己的圆角方块上，方块有上亮下暗的光照。
         // 之前图标是"悬在竖线上的线稿"，因为没有承载物；有了底座，工具轨从
         // 一列符号变成一排可点的控件——这是 Figma/VS Code 活动栏的共同语法。
@@ -2406,6 +2526,24 @@ fn draw_rail(ui: &mut egui::Ui, st: &mut Proto) {
                 }
                 p.add(egui::Shape::closed_line(pts, Stroke::new(1.3, col)));
             }
+            // 齿轮（设置）：圆环 + 八枚短齿，沿用其余图标的 1.5px 线稿口径。
+            //
+            // Gear (settings): a ring plus eight short teeth, same 1.5 px line
+            // grammar as the other rail glyphs.
+            5 => {
+                p.circle_stroke(c, 5.5, Stroke::new(1.5, col));
+                p.circle_stroke(c, 2.0, Stroke::new(1.5, col));
+                for k in 0..8 {
+                    let ang = k as f32 * std::f32::consts::TAU / 8.0;
+                    p.line_segment(
+                        [
+                            Pos2::new(c.x + 6.0 * ang.cos(), c.y + 6.0 * ang.sin()),
+                            Pos2::new(c.x + 7.6 * ang.cos(), c.y + 7.6 * ang.sin()),
+                        ],
+                        Stroke::new(1.5, col),
+                    );
+                }
+            }
             // 方框 + 加号（批量）
             _ => {
                 p.rect_stroke(
@@ -2439,6 +2577,21 @@ fn draw_rail(ui: &mut egui::Ui, st: &mut Proto) {
         if resp.clicked() {
             if *kind == 4 {
                 st.left_open = !st.left_open;
+            } else if *kind == 5 {
+                // 设置图标是开合开关：打开时再点一次等于返回（CloseSettings）。
+                // The settings icon toggles: clicking again while open backs out.
+                let action = if st.settings_open {
+                    DemoAction::CloseSettings
+                } else {
+                    // 打开走按屏路由入口：T2 用它证明 `SelectScreen` 真的通到 Set 屏。
+                    // Opening goes through the screen router, proving SelectScreen -> Set.
+                    DemoAction::SelectScreen(Screen::Set)
+                };
+                if let Some(a) = &st.actions {
+                    a.send(action);
+                } else {
+                    st.settings_open = !st.settings_open;
+                }
             } else {
                 st.say(
                     ui.ctx(),
@@ -3120,7 +3273,120 @@ fn draw_empty_well(ui: &mut egui::Ui, p: &egui::Painter, rect: Rect, st: &mut Pr
     }
 }
 
+// ---------------------------------------------------------------- 八屏路由
+
+/// 画布路由：只替换井内容，壳层（顶栏/左轨/坞/胶片/状态栏）一行不动。
+/// Canvas router: replace the well's content only; the v21 shell stays untouched.
 fn draw_canvas(ui: &mut egui::Ui, st: &mut Proto) {
+    let rect = ui.max_rect();
+    match st.screen() {
+        Screen::Seq => draw_screen_seq(ui, rect, st),
+        Screen::Def => draw_screen_def(ui, rect, st),
+        Screen::Dev => draw_screen_dev(ui, rect, st),
+        Screen::Frame => draw_screen_frame(ui, rect, st),
+        Screen::Render => draw_screen_render(ui, rect, st),
+        Screen::Audio => draw_screen_audio(ui, rect, st),
+        Screen::Merge => draw_screen_merge(ui, rect, st),
+        Screen::Set => draw_screen_set(ui, rect, st),
+    }
+}
+
+/// T2 骨架：八屏先共用 v21 现役画布内容，接屏时只替换单个 adapter 的函数体。
+///
+/// T2 skeleton: the eight adapters share the live v21 canvas body; each screen
+/// replaces only its own adapter when it lands.
+fn draw_screen_seq(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+    draw_canvas_photo(ui, st);
+}
+
+fn draw_screen_def(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+    draw_canvas_photo(ui, st);
+}
+
+fn draw_screen_dev(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+    draw_canvas_photo(ui, st);
+}
+
+fn draw_screen_frame(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+    draw_canvas_photo(ui, st);
+}
+
+fn draw_screen_render(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+    draw_canvas_photo(ui, st);
+}
+
+fn draw_screen_audio(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+    draw_canvas_photo(ui, st);
+}
+
+fn draw_screen_merge(ui: &mut egui::Ui, _rect: Rect, st: &mut Proto) {
+    draw_canvas_photo(ui, st);
+}
+
+/// 设置屏（T2 占位）：flat sections 单栏卡 + 返回入口。不画照片、网格或假数据。
+///
+/// Settings (T2 placeholder): one flat section with a back action. No photo,
+/// grid or fake data is painted here.
+fn draw_screen_set(ui: &mut egui::Ui, rect: Rect, st: &mut Proto) {
+    let p = ui.painter().clone();
+    let card_w = (rect.width() - 48.0).min(520.0);
+    let card = Rect::from_center_size(
+        Pos2::new(rect.center().x, rect.top() + rect.height() * 0.38),
+        Vec2::new(card_w, 168.0),
+    );
+    p.rect_filled(card, 8.0, PANEL_SIDE);
+    p.txt(
+        Pos2::new(card.left() + 24.0, card.top() + 24.0),
+        egui::Align2::LEFT_TOP,
+        crate::i18n::t!("设置"),
+        f_bold(FONT_TITLE),
+        T1,
+    );
+    // 分区线比卡底更暗（C5：只允许暗线，不许全宽亮线）。
+    // Section seam darker than the card (C5: dark seams only, no light rules).
+    p.hline(
+        (card.left() + 24.0)..=(card.right() - 24.0),
+        card.top() + 56.0,
+        Stroke::new(1.0, shade(PANEL_SIDE, 0.82)),
+    );
+    p.txt(
+        Pos2::new(card.left() + 24.0, card.top() + 76.0),
+        egui::Align2::LEFT_TOP,
+        crate::i18n::t!("即将接入"),
+        f_small(),
+        T4_TEXT,
+    );
+    let back = Rect::from_min_size(
+        Pos2::new(card.right() - 24.0 - 96.0, card.bottom() - 24.0 - 28.0),
+        Vec2::new(96.0, 28.0),
+    );
+    let resp = ui.interact(back, ui.scope_id().with("set-back"), Sense::click());
+    p.rect_filled(
+        back,
+        6.0,
+        if resp.hovered() {
+            shade(BUTTON, 1.12)
+        } else {
+            BUTTON
+        },
+    );
+    p.txt(
+        back.center(),
+        egui::Align2::CENTER_CENTER,
+        crate::i18n::t!("返回"),
+        f_small(),
+        T1,
+    );
+    if resp.clicked() {
+        if let Some(a) = &st.actions {
+            a.send(DemoAction::CloseSettings);
+        } else {
+            st.settings_open = false;
+        }
+    }
+}
+
+fn draw_canvas_photo(ui: &mut egui::Ui, st: &mut Proto) {
     let rect = ui.max_rect();
     let p = ui.painter().clone();
     // 井的底色、圆角与内阴影由 `ui()` 画。
@@ -4928,6 +5194,7 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
             // The presets/history card starts collapsed, the v20/v21 default: an
             // open card on the empty well eats nearly a quarter of the width.
             left_open: false,
+            settings_open: false,
             presets_open: true,
             dt_hist: [0.0; 30],
             dt_n: 0,
@@ -5099,7 +5366,22 @@ pub(super) fn ui(state: &mut RealAppState, root: &mut egui::Ui, canvas: &egui::R
                 DemoAction::AutoExposure => state.auto_exposure(root.ctx()),
                 DemoAction::ResetParams => state.reset_params(),
                 DemoAction::SetFrame(i) => state.set_frame(i),
-                DemoAction::SelectModule(m) => state.module = m,
+                DemoAction::SelectModule(m) => {
+                    state.module = m;
+                    // 选模块即离开设置屏：Screen 是派生值，必须清掉设置态。
+                    // Picking a module leaves settings: Screen is derived, so the
+                    // settings flag must be cleared explicitly.
+                    st.settings_open = false;
+                }
+                DemoAction::OpenSettings => st.settings_open = true,
+                DemoAction::CloseSettings => st.settings_open = false,
+                DemoAction::SelectScreen(s) => match s.module() {
+                    Some(m) => {
+                        state.module = m;
+                        st.settings_open = false;
+                    }
+                    None => st.settings_open = true,
+                },
                 DemoAction::SetRating(n) => {
                     state.ratings.insert(state.selected, n);
                 }
